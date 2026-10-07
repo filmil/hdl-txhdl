@@ -64,7 +64,7 @@ subsystem and not one more construct.}%
 \thanks{The authors used a large language model, Claude, as an
 assistant in exploring the concepts and in writing and constructing
 the documents and the programs; every commit of the repository says
-so and carries the prompts that led to it, verbatim.}%
+so and records the prompts that led to it, verbatim.}%
 \thanks{\buildstamp}}
 
 \markboth{AXI in TxHDL}{Filmar and Janković: AXI in TxHDL}
@@ -73,47 +73,45 @@ so and carries the prompts that led to it, verbatim.}%
 \maketitle
 
 \begin{abstract}
-A channel carries one transaction in one direction. AXI is five
-channels that only mean something together, and a client written
-against them directly must gather a write address with its data
-beats, count them, watch \code{last}, allocate identifiers and match
-them back. TxHDL provides the link instead: \code{axi()} makes every
-channel of an AXI4 link at once and hands back two ends, the way
-\code{chan()} hands back a sender and a receiver. A host client
-issues a burst and awaits its answer; a peripheral client accepts a
-whole decoded transaction and answers it, from whatever process it
-likes and in whatever order its work finished. Neither names a
-channel. Between the two ends are the two units that do the
-protocol, lowered to Verilog and to VHDL and simulated against the
-examples' runs, with the five AXI channels between them; and in
-those channels goes the router, one host to several peripherals by
-an address map its type states, which answers an address that is
-nobody's itself rather than leaving a client waiting for ever. A
-router is inserted by wiring, and changes no client. For small
-peripherals there is AXI-Lite, which has no identifier and no burst,
-and a bridge from an AXI4 link to several AXI-Lite peripherals: it
-decodes each burst to a peripheral and sends it there one beat at a
-time.
+A hardware channel transmits one transaction in one direction. AXI4
+coordinates five concurrent channels. A client interacting with those
+channels directly must assemble write addresses with data beats, track
+lengths, inspect \code{last}, allocate transaction identifiers, and reorder
+completions. TxHDL abstracts these mechanics through the \code{axi()}
+constructor. The function constructs the complete AXI4 channel bundle and
+yields two typed endpoints, mirroring the pair returned by \code{chan()}. A
+host client submits a burst and awaits completion. A peripheral client
+accepts fully decoded transactions and returns responses from concurrent
+processes in arbitrary order. Neither endpoint exposes individual channel
+signals directly. Two protocol engines connect these endpoints. The engines
+lower to synthesizable Verilog and VHDL, verified against cycle-accurate
+simulation traces. An address-mapped router multiplexes one host link
+across multiple peripherals, returning decode errors locally when addresses
+miss. Inserting the router requires only channel reconnection without
+changing client logic. For simpler peripherals, TxHDL provides AXI-Lite
+endpoints without identifiers or bursts. A synthesized bridge maps AXI4
+bursts into single-beat AXI-Lite transactions across peripheral banks.
 \end{abstract}
 
 \section{What a Link Is}
 \label{sec:a-what}
 
-AXI4 is five channels. Write address, write data and write response
-go \code{aw}, \code{w}, \code{b}; read address and read data go
-\code{ar} and \code{r}. A write is an address beat, one or more data
-beats with the last of them marked, and a response beat. A read is
-an address beat and one or more data beats, again with the last
-marked. Every beat carries an identifier, and beats of different
-identifiers may be interleaved and answered in any order, which is
-what lets several transactions be in flight at once.
+The AXI4 protocol specifies five independent channels. Write address,
+write data, and write response operate over \code{aw}, \code{w}, and
+\code{b}. Read address and read data operate over \code{ar} and \code{r}. A
+write transaction consists of an address beat, one or more data beats
+terminated by an asserted \code{last} flag, and a completion response. A
+read transaction pairs an address beat with a sequence of data beats.
+Each beat holds a transaction identifier. Interleaving beats with distinct
+identifiers allows multiple concurrent transactions in flight.
 
-None of that is a client's work, and in TxHDL none of it is written
-by one. \code{axi()} makes the five channels, and the channels
-between each end and the unit that speaks the protocol for it, and
-returns a \code{Link}: a \code{Host} end, a \code{Per} end, and the
-ports of the two units. A design joins the two units as it joins any
-others, and its clients hold the two ends.
+TxHDL shields client code from channel-level bookkeeping. The \code{axi()}
+constructor instantiates the five physical channels alongside the
+intermediate protocol queues. It returns a composite \code{Link} containing
+a \code{Host} endpoint, a \code{Per} endpoint, and the hardware ports for
+both protocol units. Top-level designs wire the two protocol units together
+like standard hardware modules while application processes manipulate the
+endpoint handles.
 
 \begin{figure}[htbp]
 \centering
@@ -124,77 +122,81 @@ others, and its clients hold the two ends.
   AxiPer             a unit, lowered
   peripheral client  request / write data / answer / read beat
 \end{lstlisting}
-\caption{The layers of a link. The middle is real AXI; everything
-above and below it is transactions.}
+\caption{Layers of an AXI link. The physical layer implements five standard
+AXI4 channels, while client software and peripheral handlers operate on
+discrete transactions.}
 \label{fig:a-layers}
 \end{figure}
 
 \section{The Client}
 \label{sec:a-client}
 
-A host client has two verbs. \code{read} takes an address and a
-count of beats; \code{write} takes an address and the beats
-themselves. Each returns when the burst has gone out, with a handle
-that is the answer to come. Several handles may be outstanding, and
-they may be awaited in any order.
+The host interface provides two primary methods. The \code{read} method
+takes a target address and a beat count. The \code{write} method takes an
+address and a slice of payload beats. Both return as soon as the initial
+burst enters the channel, yielding a completion handle. Multiple handles
+may remain outstanding simultaneously, and the host may await them in
+arbitrary sequence.
 
-\axipart{hostapi}{The host end, from
-\code{lib/parts/src/bus/axi.rs}: the whole of what a client that
-issues bursts uses.}{lst:a-hostapi}
+\axipart{hostapi}{The host endpoint interface from
+\code{lib/parts/src/bus/axi.rs}.}{lst:a-hostapi}
 
-The burst's length is the slice the client passed, so it cannot
-disagree with the beats that follow it; the last beat is marked as
-the last by \code{write} and not by the client; and the identifier is
-allocated by the hardware and told back, so a client never writes
-one. What a client writes is the address and the data.
+The length of a burst derives directly from the provided data slice,
+preventing mismatches between declared length and submitted beats. The
+\code{write} helper automatically asserts \code{last} on the final beat.
+Hardware tracking logic allocates identifiers dynamically, keeping
+identifier assignment transparent to the client. The client specifies only
+addresses, data words, and strobes.
 
-A peripheral client has one verb. \code{accept} waits for a whole
-AXI transaction and returns it decoded: a read, with the count of
-beats it wants, or a write, with every beat of its data already
-gathered. The transaction answers itself, with \code{ok}, \code{err}
-or \code{data}.
+The peripheral interface exposes a single entry point. The \code{accept}
+method blocks until a complete transaction arrives and yields a decoded
+structure: either a read requesting a specific beat count, or a write with
+all data beats collected. The transaction object provides completion
+methods: \code{ok}, \code{err}, or \code{data}.
 
-\axipart{accept}{The peripheral end: one call, and what comes back
-is a whole transaction.}{lst:a-accept}
+\axipart{accept}{The peripheral endpoint interface yielding decoded
+transactions.}{lst:a-accept}
 
-A read is ready as soon as its address beat arrives. A write is
-ready when its last data beat has, because AXI4 puts no identifier
-on the write data channel, so the beats belong to the oldest address
-beat and there is nothing to gather them by but order. One accept
-gathers at a time, which is what lets several processes share one
-end without taking each other's beats.
+A read transaction becomes ready immediately upon receipt of its address
+beat. A write transaction becomes ready only after its final data beat
+arrives. Because AXI4 omits transaction identifiers on the write data
+channel, beats correlate strictly with the oldest active write address.
+Restricting active gathering to a single transaction at a time prevents
+concurrent worker processes from corrupting each other's data streams.
 
 \section{Accepting Many}
 \label{sec:a-many}
 
-A peripheral that does real work does not answer one transaction
-before accepting the next. It accepts as they arrive, hands each to
-whatever does the work, and answers each as its data becomes
-available. An accepted transaction carries its own identifier and a
-handle on the end's answer port, so it may be moved to another
-process and answered there, long after and out of order.
+High-throughput peripherals overlap transaction execution. A controller
+accepts requests continuously, dispatches them to processing pipelines, and
+posts responses as individual operations finish. Each accepted transaction
+holds its unique identifier alongside a completion handle to the endpoint
+response queue. Handlers may transfer this token across process boundaries
+and complete operations out of order.
 
-\code{Open} holds the ones in between, by identifier, and
-\code{serve} is the whole shape as one call: as many processes as
-the design wants slots, each accepting when it is free and answering
-when its work finished.
+The \code{Open} table indexes pending transactions by identifier. The
+\code{serve} helper orchestrates multi-process dispatch through a single
+abstraction: it spawns a configured pool of workers, where each worker
+accepts incoming work whenever idle and retires completions independently.
 
-\axipart{serve}{\code{serve}: \code{pipeline::drive} for a bus. The
-client writes the body and nothing of the protocol.}{lst:a-serve}
+\axipart{serve}{\code{serve} helper orchestrating bus transactions across
+concurrent workers.}{lst:a-serve}
 
-\code{ex\_axi\_serve} writes the same peripheral twice, once by hand
-and once with \code{serve}, and asserts that the two answer alike.
-By hand it is three processes: one accepts and forwards a ticket to
-a pool of workers, the workers take their own time, and a third
-answers whatever finished, taking the transaction back out of
-\code{Open}. That third process never called \code{accept}.
+The \code{ex\_axi\_serve} example implements equivalent peripherals through
+manual process coordination and through \code{serve}, asserting that both
+configurations produce identical results. The manual version deploys three
+distinct processes: an ingestion loop forwarding work tickets, a pool of
+execution workers, and a retirement process drawing completed entries from
+\code{Open}. The retirement process interacts solely with completion handles
+without touching the ingest queue.
 
 \begin{figure*}[t]
 \centering
 \input{axi_serve_timing.tex}
-\caption{Ten one-word reads over four identifiers, three in flight.
-An identifier goes back on \code{release} only once the client has
-taken that burst's answer, and \code{busy} shows which are out.}
+\caption{Ten one-word reads over four identifiers, three in flight. An
+identifier returns to the allocation pool on \code{release} only after the
+client consumes the corresponding burst response. The \code{busy} vector
+tracks active allocations.}
 \label{fig:a-serve}
 \end{figure*}
 
@@ -208,207 +210,208 @@ in the order its work finished.},label={lst:a-serve-out}]{out_axi_serve.txt}
 \section{The Beats}
 \label{sec:a-beats}
 
-The values on the wire are AXI4's, in full: the address phase
-carries \code{id}, \code{addr}, \code{len}, \code{size},
-\code{burst}, \code{lock}, \code{cache}, \code{prot}, \code{qos} and
-\code{region}, and it is one struct, because \code{AW} and \code{AR}
-are the same fields under different names.
+Signal definitions match the full AXI4 specification. An address phase
+provides \code{id}, \code{addr}, \code{len}, \code{size}, \code{burst},
+\code{lock}, \code{cache}, \code{prot}, \code{qos}, and \code{region}.
+Because \code{aw} and \code{ar} channels share identical field structures,
+TxHDL unifies them under a common address struct.
 
-\axipart{beats}{The five channels' beats.}{lst:a-beats}
+\axipart{beats}{Channel beat definitions for AXI4.}{lst:a-beats}
 
-The widths are stated rather than computed, as they are everywhere
-in this library: \code{A} is the address width, \code{D} the data
-width, \code{S} the strobe width, which is \code{D/8}, \code{I} the
-identifier width and \code{NIDS} the count of identifiers, which is
-\code{1 << I}. \code{U<\{D / 8\}>} would need nightly Rust, and the
-prototype pays that in stated parameters rather than in a nightly
-toolchain, exactly as \code{Fifo} states its depth and
-\code{Station} its line count.
+Bit widths appear as explicit generic parameters across the library.
+Parameter \code{A} defines address width, \code{D} defines data width, and
+\code{S} defines the byte-strobe width (\(D/8\)). Parameter \code{I}
+specifies identifier width, yielding \(2^I\) available identifiers via
+\code{NIDS}. Computing strobe width directly as \code{U<\{D / 8\}>} requires
+nightly Rust compiler features. The library relies on explicit parameters
+to maintain compatibility with stable compilers, following the conventions
+established by \code{Fifo} and \code{Station}.
 
 \section{What This Link Orders}
 \label{sec:a-order}
 
-AXI does not order a read against a write. They are separate
-channels, and a slave may answer them in either order; the
-architectural way a master orders a write against a later access is
-to wait for the write's response.
+The AXI specification establishes no ordering guarantees between read and
+write channels. Because read and write paths operate independently, a
+subordinate device may retire transactions in either sequence. A master
+enforces ordering between writes and subsequent accesses by awaiting the
+write response before issuing the dependent request.
 
-That matters on this machine, because its stores are posted. Software
-that hands a buffer to a host on the bus, which is what the video
-scanout and the Ethernet engines are, has to make sure the buffer has
-landed before it rings the doorbell. The frame is written to memory
-through one port of the router and the start bit through another, and
-nothing between them is ordered by the link. Since issue 432 was
-fixed, a \code{fence} is the architectural way to say it: the core
-counts the stores it has posted and not yet had answered, and a fence
-waits in execute until the count is zero. Until then the fence
-decoded, retired and ordered nothing.
+Ordering constraints become critical when processors execute posted stores.
+Software preparing direct-memory buffers for peripheral masters, such as
+video scanout or Ethernet controllers, must confirm data residency before
+ringing peripheral doorbells. The frame payload reaches memory through one
+router port while the activation signal targets a control register on
+another port. The bus fabric provides no implicit synchronization between
+them. The processor core addresses this via \code{fence} instructions:
+execution tracking registers increment on posted stores and decrement on
+received responses. A \code{fence} stalls the execution pipeline until the
+unacknowledged store counter reaches zero.
 
-What the drivers written before that fix do, and still do, is read
-the last word back before the doorbell, since that is what was proven
-on the board. The load stalls the core until memory answers, and the
-question is whether memory can answer it with the old value while the
-store is still in flight.
+Earlier device drivers enforce ordering by performing a loopback read of the
+final buffer word prior to asserting peripheral doorbells. The read access
+stalls the core until the memory subsystem returns data. This pattern
+succeeds only if memory cannot return stale contents while a preceding store
+to the same location remains pending.
 
-On this link it cannot, and that is measured rather than assumed:
+Target hardware guarantees this ordering property by construction, verified
+through empirical cycle traces:
 
 \begin{center}\footnotesize
 \begin{tabular}{@{}ll@{}}
 \toprule
-the store issued & tick 22 \\
-the load answered & tick 38 \\
-the store answered & tick 40 \\
+Store issued & tick 22 \\
+Load completed & tick 38 \\
+Store completed & tick 40 \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-The load was answered two ticks before the store's response arrived,
-so the store was genuinely outstanding, and the load returned the
-stored value. \code{a\_load\_behind\_an\_unanswered\_store\_to\_one\_address}
-in \code{//lib/parts:parts\_test} is that run, and it asserts the race
-as well as the result: if the store ever begins completing first the
-test fails, rather than passing while checking something nobody
-doubted.
+In this measurement, the load completes two clock ticks before the write
+response arrives, demonstrating that the store remained active while the load
+returned newly written data. The test
+\code{a\_load\_behind\_an\_unanswered\_store\_to\_one\_address} in
+\code{//lib/parts:parts\_test} enforces this behavior. The test asserts both
+the cycle ordering and the resolved value, flagging an error if the store
+finishes ahead of the load.
 
-Two things follow, and they are worth keeping apart.
+This dynamic yields two distinct conclusions.
 
-A driver on this machine may read a word back to force a posted store
-to land, and it is correct to do so. That is why the obligation on
-\code{EthSlots}' datasheet is dischargeable at all.
+First, drivers targeting this architecture can reliably use readbacks to
+guarantee memory updates. This mechanism allows drivers to satisfy the
+synchronization contracts documented in \code{EthSlots}.
 
-And it is correct \emph{for this link}, not because AXI says so. It is
-a property of the interconnect as it is built, measured by one test.
-An interconnect that answered reads from a buffer ahead of writes
-would break every driver that relies on it, and the test is what would
-say so.
+Second, this guarantee reflects the specific implementation of this
+interconnect fabric rather than universal AXI compliance. A fabric
+implementation that retired read bursts ahead of pending write buffers
+would invalidate driver assumptions, which the regression test suite
+detects automatically.
 
 \section{The Trackers}
 \label{sec:a-trackers}
 
-Two units do the protocol, and both are written in the lowered
-subset, so each is a netlist as well as a simulation.
+Two protocol engines manage channel interactions. Both modules reside in the
+lowered hardware subset, compiling directly to netlists while participating
+in software simulation.
 
-\code{AxiHost} turns an issue into an address beat on whichever
-channel it belongs to, hands out the identifiers, passes the write
-beats out, and reports back what returns. The identifiers go round
-robin, one per burst.
+\code{AxiHost} translates transaction requests into address beats on the
+appropriate physical channel, allocates identifiers, forwards write
+payloads, and routes inbound responses. Identifier allocation follows a
+round-robin schedule across bursts.
 
-\axipart{hostunit}{\code{AxiHost}: the host side, as
-hardware.}{lst:a-hostunit}
+\axipart{hostunit}{\code{AxiHost}: host-side hardware protocol engine.}{lst:a-hostunit}
 
-An identifier is outstanding from its address beat until the client
-releases it, and the client's end releases it when it has taken that
-burst's answer. That is one cycle later than freeing it on the
-response would be, and it is the difference between correct and
-almost correct: an identifier freed on its response could be handed
-out again while the answer to the burst before still stood
-uncollected, and the two answers would be gathered into one. The
-identifiers go round, one per burst, and when the one whose turn it
-is is still outstanding the turn moves on to the next, so a burst
-waits only while every identifier is out: that is the backpressure
-that bounds how many transactions are in flight. It used to wait for
-the identifier in turn alone, and a client holding that one answer
-and issuing another burst waited for ever, with another identifier
-free; Section~\ref{sec:a-fuzz} is how that was found.
+An identifier remains reserved from its address phase until the client
+explicitly releases it upon consuming the response. Releasing the tag at
+consumption rather than on initial bus response prevents aliasing: recycling
+an identifier immediately upon bus completion could reassign that tag while
+prior data remains uncollected in the receive queue, causing response
+collision. The allocation arbiter skips reserved slots and selects the next
+available index, stalling transaction issue only when all \(2^I\) tags
+remain active simultaneously. This mechanism provides natural backpressure.
+An earlier design waited strictly for the next sequential identifier,
+deadlocking whenever a client retained a single unconsumed handle; the link
+fuzzer in Section~\ref{sec:a-fuzz} isolated that defect.
 
-\code{AxiPer} merges the two address channels into one stream of
-requests, hands the write beats to the client, and turns the
-client's answers back into response beats. The two address channels
-take turns, so neither starves the other however long one of them
-streams.
+\code{AxiPer} arbitrates between read and write address channels to generate
+a unified request stream for the peripheral. It forwards write payloads to
+the target core and encodes peripheral acknowledgments into AXI response
+beats. Address channels arbitrate via round-robin selection, preventing
+continuous read traffic from starving write operations.
 
-\axipart{perunit}{\code{AxiPer}: the peripheral side.}{lst:a-perunit}
+\axipart{perunit}{\code{AxiPer}: peripheral-side hardware protocol engine.}{lst:a-perunit}
 
 \section{Supplying Your Own}
 \label{sec:a-own}
 
-Neither unit is privileged. \code{axi()} returns their ports as
-named types, \code{HostIn}, \code{HostOut}, \code{PerIn} and
-\code{PerOut}, so a design writes a unit of its own against the same
-ports and joins that instead. A peripheral that is real hardware may
-also ignore \code{AxiPer} altogether and read the five AXI channels
-directly, which is what a memory controller does.
+The standard protocol engines maintain no privileged status. The
+\code{axi()} constructor yields their interfaces as concrete port types:
+\code{HostIn}, \code{HostOut}, \code{PerIn}, and \code{PerOut}. Custom units
+implementing these typed ports can replace the default trackers directly.
+Dedicated hardware peripherals can also bypass \code{AxiPer} entirely and
+bind to the raw five-channel AXI bus, as demonstrated by the SDRAM
+controller.
 
 \section{A Client That Is Hardware}
 \label{sec:a-hardware}
 
-\code{Host} and \code{Per} are simulation-side objects. \code{Host}
-keeps an inbox of answers and hands out futures; \code{Per} gathers a
-write's beats into a vector; \code{Open} is a table keyed by
-identifier and \code{serve} starts as many processes as it is asked
-for. None of that lowers, and none of it is meant to: they are what a
-testbench, or a model, or the software side of a design holds.
+The \code{Host} and \code{Per} abstractions serve software simulation and
+testbenches. \code{Host} buffers arriving completions to satisfy
+asynchronous futures, while \code{Per} accumulates burst payloads into heap
+vectors. The \code{Open} lookup table tracks in-flight transactions, and
+\code{serve} spawns simulation threads on demand. These software constructs
+do not lower to synthesizable hardware.
 
-Underneath them are channels, and a client written as a unit holds
-those channel ends itself. On the host side they are the issue
-channel, the write beats and the release going out, and the grant,
-the write responses and the read beats coming back; on the peripheral
-side, the requests and write beats coming in and the answers and read
-beats going out. \code{axi\_units} makes a link and hands those out
-under the names \code{HostClient} and \code{PerClient}, which is the
-same link \code{axi} makes, with the two ends unwrapped.
+Synthesizable clients interact with the underlying hardware channels
+directly. The host hardware interface bundles outbound channels (\code{issue},
+write payload, and tag release) alongside inbound channels (allocation
+grant, write response, and read data). The peripheral interface receives
+request descriptors and write payloads while transmitting completion
+responses and read data beats. The \code{axi\_units()} constructor
+establishes this topology, returning raw \code{HostClient} and
+\code{PerClient} bundles that synthesize cleanly with surrounding logic.
+
+The companion constructor \code{axi\_to\_unit()} connects a software
+testbench host to a synthesizable hardware peripheral:
 
 \begin{lstlisting}[style=ascii,frame=none,numbers=none]
-  axi()        -> Host / Per     a client that is a testbench
-  axi_units()  -> HostClient /   a client that is a unit, and
-                  PerClient      lowers with the rest of a design
-  axi_to_unit() -> Host /        a testbench driving a peripheral
-                  PerClient      that is a unit
+  axi()         -> Host / Per          simulation testbench pair
+  axi_units()   -> HostClient /        synthesizable hardware pair
+                   PerClient
+  axi_to_unit() -> Host / PerClient    simulation host driving
+                                       synthesizable peripheral
 \end{lstlisting}
 
-A rasteriser written this way is Razboj's~\cite{gpu}, and it is the
-first client of this link that is hardware. Nothing about the link
-changes between the two: the same two trackers, the same five AXI
-channels, the same identifiers.
+The rasterizer core in Razboj~\cite{gpu} uses \code{PerClient} as a
+synthesizable bus endpoint. The underlying fabric remains identical across
+configurations: the same protocol units, standard five-channel bus signals,
+and identifier management rules apply throughout.
 
 \section{The Simplest Peripheral}
 \label{sec:a-simplest}
 
-The smallest peripheral worth putting on a link is one register of
-one word. \code{ex\_axi\_reg} writes it as a peripheral client that is
-hardware. It holds the four channel ends of \code{PerClient}: the
-requests and the write beats it reads, and the answers and the read
-beats it drives. Listing~\ref{lst:a-reg} is the whole of it, and
-Listing~\ref{lst:a-reg-ex} is the run that drives it.
+A single one-word register serves as the minimal hardware peripheral.
+The example \code{ex\_axi\_reg} implements this module as a synthesizable
+client. It binds the four channels of \code{PerClient}: reading request
+descriptors and write beats, while driving completion responses and read
+data beats. Listing~\ref{lst:a-reg} provides the hardware definition, and
+Listing~\ref{lst:a-reg-ex} provides the test driver.
 
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
 rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
 linerange=register-register,caption={\code{Register}, the simplest
 peripheral.},label={lst:a-reg}]{lib/examples/ex_axi_reg.rs}
 
-Every cycle it looks at the request at the head of its channel. It
-takes a read when there is room for the read's beat, and sends that
-beat in the same cycle: the word, the request's identifier, and
-\code{last}, since the burst is one beat long. It takes a write when
-the write's beat has come too and there is room for the response.
-The word is written, and the response goes out in the same cycle.
-Because it takes a write's request and beat together, it needs no
-register to hold a write while the beat is on its way, and the word
-is its only state.
+During each clock cycle, the controller inspects the request queue. A read
+request proceeds as soon as the outbound read-data channel indicates
+available capacity. The unit returns the stored data word, the matching
+transaction identifier, and an asserted \code{last} flag in the same cycle.
+A write request proceeds when its corresponding data beat arrives and the
+response queue can accept an acknowledgment. The internal register latches
+the payload, and an acknowledgment posts immediately. Consuming write
+descriptors and data beats concurrently eliminates intermediate buffering
+registers, leaving the single 32-bit storage cell as the only sequential
+state.
 
-What it leaves out is what makes it the simplest. It serves one-beat
-bursts of whole words, and looks at nothing else. There is no
-address, because a router has already decided the burst is this
-peripheral's. There is no length, so a longer burst is not served
-correctly and must not be sent to it. There is no strobe, so every
-write replaces the whole word. The interrupt controller of the
-Vreteno core~\cite{vreteno} has the same shape, with five words and the
-strobes. The framebuffer of Razboj~\cite{gpu} is the same idea with a
-whole memory and bursts.
+This peripheral focuses strictly on single-beat word transactions. The unit
+omits address decoding, relying on upstream routers to direct matching
+traffic. It assumes single-beat bursts; bursts exceeding one beat are
+invalid. It ignores byte strobes, updating the entire word on every write.
+The interrupt controller in the Vreteno processor~\cite{vreteno} extends
+this pattern to five addressed registers with strobe support, while the
+framebuffer in Razboj~\cite{gpu} expands it to full memory arrays with burst
+sequencing.
 
-The run drives it from a host end made by \code{axi\_to\_unit}, the
-link whose host is a testbench and whose peripheral is a unit. The
-client writes two words and reads each back, and prints the time step
-of each answer, two steps to a cycle.
+The testbench drives the register using an \code{axi\_to\_unit()} link. The
+host software writes two consecutive words, reads both locations back, and
+logs simulation timestamps at two steps per clock cycle.
 
 \begin{figure}[htbp]
 \centering
 \input{axi_reg_timing.tex}
 \caption{The first write and its read. The write's request and its
-beat come together, on \code{req} and \code{wd}. A cycle later both are
-taken, \code{word} changes, and the response goes out on \code{ans}.
-The read is answered on \code{rb} a cycle after its request
-comes.}
+beat arrive together on \code{req} and \code{wd}. A cycle later both are
+accepted, \code{word} updates, and the response emits on \code{ans}.
+The read completes on \code{rb} one cycle after its request arrives.}
 \label{fig:a-reg}
 \end{figure}
 
@@ -423,54 +426,55 @@ label={lst:a-reg-ex}]{lib/examples/ex_axi_reg.rs}
 printed when the build ran it: each answer and its time step, and
 the register's netlist.},label={lst:a-reg-out}]{out_axi_reg.txt}
 
-The netlist is one 32-bit register, and every other line in it is
-combinational. The build simulates it against this run under
-\code{nvc} and under Verilator at its ports.
+The synthesized netlist contains one 32-bit register accompanied by
+combinational decode logic. Continuous integration tests compile this
+netlist into VHDL for \code{nvc} and Verilog for Verilator, verifying
+cycle-accurate port activity against the simulation model.
 
 \section{Peripherals That Only Simulate}
 \label{sec:a-sim}
 
-Not every peripheral on a link is going to be hardware. A testbench
-needs somewhere to put a program, a model needs somewhere to put its
-data, and a bring-up needs a memory long before the memory controller
-exists. Those belong in \code{bus::axi::sim}, where the module's name
-is the contract: nothing in it lowers, and nothing in it is meant to.
+Development environments frequently require simulation-only peripherals.
+Testbenches load executable firmware images, architectural models deposit
+datasets, and early bring-up procedures require memory long before physical
+controllers are synthesized. The module \code{bus::axi::sim} isolates these
+simulation components, which remain distinct from synthesizable targets.
 
 \simpart{ram}{A RAM behind a peripheral end, from
 \code{lib/parts/src/bus/axi/sim.rs}.}{lst:a-ram}
 
-It is a handle on its words, so a test loads a program into it before
-the run and reads the result out after, while the run holds another
-handle. Being plain Rust rather than the lowered subset is the whole
-point: a megabyte is a \code{Vec} and not a \code{Mem} that a netlist
-would have to hold, and the burst types, the strobes and an address
-past the end are a few lines each rather than a state machine. A
-burst wholly inside it is answered \code{Okay} and one that reaches
-past the end \code{SlvErr}, which is what a peripheral says to an
-address it has but cannot serve.
+Listing~\ref{lst:a-ram} defines a memory model backed by a standard heap
+vector. Test code populates program binaries into this model before
+execution and inspects resulting state after simulation completes.
+Implementing the model in standard Rust avoids hardware synthesis overheads:
+a megabyte occupies a native \code{Vec<u8>} rather than an expensive array
+of synthesized registers. Burst handling, byte strobes, and boundary bounds
+resolve in concise software logic. In-bounds transfers complete with
+\code{Okay}, while out-of-bounds accesses return \code{SlvErr}.
 
-A peripheral that is to become hardware is written the other way, in
-the lowered subset against the five channels, as Razboj's
-framebuffer~\cite{gpu} is. The two are not alternatives: a design
-usually wants the simulation one first and the hardware one later,
-and the client above them does not change when it swaps.
+Synthesizable peripherals follow the hardware path, compiling from the
+lowered subset directly to netlists as shown in Razboj's
+framebuffer~\cite{gpu}. These approaches complement each other across design
+phases: verification starts with flexible simulation models before
+transitioning to synthesized implementations, without modifying upstream
+client interfaces.
 
 \section{Peer to Peer}
 \label{sec:a-peer}
 
-\code{ex\_axi} is one host and one peripheral on one link. The host
-issues three bursts, two reads and a write, without waiting for any
-of them, so all three are in flight with an identifier each. The
-peripheral serves them with three slots and a worker whose time
-depends on the address, so the work finishes in an order of its own.
+The example \code{ex\_axi} demonstrates point-to-point communication between
+one host and one peripheral over a single link. The host dispatches three
+concurrent bursts (two reads and one write) without blocking on completions.
+Each operation receives an independent transaction identifier. The
+peripheral processes requests across three worker slots whose execution
+latencies vary by target address, causing operations to complete out of order.
 
 \begin{figure*}[t]
 \centering
 \input{axi_timing.tex}
-\caption{The peer-to-peer run: three bursts issued, the identifiers
-granted, the address beats out on \code{ar} and \code{aw}, the write
-beats with \code{w\_last}, and the answers back in an order that is
-not the order they were issued.}
+\caption{The peer-to-peer run: three bursts issued, identifiers granted,
+address beats driven on \code{ar} and \code{aw}, write beats marked with
+\code{w\_last}, and completions returned out of order.}
 \label{fig:a-peer}
 \end{figure*}
 
@@ -481,106 +485,101 @@ not the order they were issued.}
 when the build ran it: the three bursts, the order they were
 answered in, and then the lowering, two modules.},label={lst:a-peer-out}]{out_axi.txt}
 
-The client awaits its three handles in the order it issued them and
-still gets each burst its own answer, although the answers arrived
-in another order. An answer that arrives early waits in the host
-end's inbox until the handle it belongs to is awaited; the drain
-that puts it there is done by whichever handle is being polled, so
-no process has to be joined for it and no answer is ever stuck
-behind another at the head of a channel.
+The host awaits transaction handles in their original submission order while
+receiving the correct payload for each burst. Responses arriving out of
+sequence accumulate in an internal endpoint inbox until the corresponding
+future is polled. Polling any active handle drains the inbound response
+channel, ensuring continuous queue throughput without requiring dedicated
+background collector processes.
 
 \section{The Netlist}
 \label{sec:a-netlist}
 
-The end of Listing~\ref{lst:a-peer-out} is the Verilog of the two
-trackers, as the lowering wrote it. Every channel port becomes
-\code{\_data}, \code{\_valid} and \code{\_ready}, so \code{AxiPer}
-is a module with \code{aw\_data}, \code{aw\_valid},
-\code{aw\_ready}, \code{ar\_data} and the rest, which is the shape a
-synthesis tool expects of an AXI subordinate, with each channel's
-fields packed into one word rather than split into \code{awaddr},
-\code{awlen} and the others. Splitting them is a renaming of slices
-and nothing more.
+Listing~\ref{lst:a-peer-out} concludes with the generated Verilog netlists
+for both protocol trackers. Each channel interface expands into canonical
+\code{\_data}, \code{\_valid}, and \code{\_ready} signals. For example,
+\code{AxiPer} exposes \code{aw\_data}, \code{aw\_valid}, \code{aw\_ready},
+and \code{ar\_data}. Field definitions pack into single bus vectors rather
+than disjoint wires such as \code{awaddr} and \code{awlen}; unpacking them
+requires only slice index definitions.
 
-The identifiers are a register and a mask of four bits; the taking
-turns is one register of one bit; every wire of the step is named
-for what it is: \code{free}, \code{go}, \code{wr\_go},
-\code{rel\_go}, \code{take\_ar}, \code{take\_aw}. Both netlists are
-generated by the run of \code{ex\_axi} and simulated against that
-run by the build, as VHDL under \code{nvc} and as Verilog under
-Verilator, at their ports, every time.
+Sequential state comprises a four-bit allocation register, an active mask,
+and a one-bit arbitration register. Step logic assigns clear names to
+internal control nets: \code{free}, \code{go}, \code{wr\_go}, \code{rel\_go},
+\code{take\_ar}, and \code{take\_aw}. The test target \code{ex\_axi} emits
+both netlists during execution, and Bazel validates them against cycle
+traces using \code{nvc} for VHDL and Verilator for Verilog.
 
-One name is worth a word. The register of the identifier whose turn
-it is is called \code{next}, which VHDL reserves, so a signal of that
-name would not analyse. The lowering escapes such a name rather than
-refusing it: both netlists call the register \code{next\_rw}, and the
-trace records it under that name too, so the simulations bind it
-(issue 497).
+Reserved language keywords require automatic sanitization. The internal
+register storing the next scheduled identifier is named \code{next}, which
+is a reserved keyword in VHDL. Rather than rejecting the identifier, the
+compiler escapes it to \code{next\_rw} across both netlists and simulation
+trace binders, resolving issue 497.
 
 \section{Fuzzing the Link}
 \label{sec:a-fuzz}
 
-The tests so far each check one promise on a run chosen to show it.
-\code{bus::axi::fuzz} checks all of them at once, on runs nobody chose.
-A seeded client issues bursts of one to sixteen beats, reads and
-writes mixed, at pseudorandom addresses, holds up to four in flight,
-and awaits them in an order of its own. A seeded peripheral serves
-four at a time, each after a delay of its own, and answers one region
-of the address space with \code{SlvErr}. In every one of the fifteen
-channels, the five AXI channels and the ten between each tracker and
-its client, is a relay that stalls at random, a quarter of the cycles
-for one cycle and now and then for eight to forty-seven.
+Targeted unit tests validate individual protocol invariants along
+predetermined paths. In contrast, the randomized test suite
+\code{bus::axi::fuzz} validates all invariants concurrently under randomized
+stimuli. A pseudorandom host client dispatches bursts between 1 and 16 beats
+across mixed read and write operations at arbitrary addresses, sustaining up
+to 4 concurrent transactions and awaiting responses out of order. A companion
+peripheral processes up to 4 concurrent transactions with randomized delays,
+returning \code{SlvErr} for accesses within an unmapped test window.
+Stalling relays instrument all 15 active channels (the 5 physical AXI buses
+and the 10 internal client channels), injecting single-cycle stalls during
+25\% of clock ticks and burst stalls lasting 8 to 47 cycles intermittently.
 
 \fuzzpart{relay}{A relay, from
 \code{lib/parts/src/bus/axi/fuzz.rs}.}{lst:a-relay}
 
-What is checked is what AXI promises. Every burst is answered exactly
-once. A read reads what the last write to its addresses left, which
-the client knows because it never issues a burst over the addresses of
-one in flight. An identifier is never handed out while an answer stands
-uncollected against it. Every run finishes within a bound, so nothing
-deadlocks. And \code{last} falls on a burst's final beat and nowhere
-else, which a monitor beside the relays of the AXI channels checks on
-the wire.
+The test harness enforces foundational protocol invariants. Each transaction
+completes exactly once. Read operations return the exact data deposited by
+preceding writes, guaranteed by avoiding address collisions with transactions
+currently in flight. The host never reallocates an identifier while its
+response remains uncollected. All test iterations complete within strict
+cycle bounds, confirming absence of deadlocks. An autonomous wire monitor
+inspects physical channel nets to verify that \code{last} asserts solely on
+the terminal beat of every burst.
 
 \fuzzpart{monitor}{The monitor of the AXI channels.}{lst:a-monitor}
 
-A fuzzer that passes because nothing difficult happened proves
-nothing, so the test also asserts, across its seeds, that answers were
-awaited and answered out of order, that identifiers came round again
-while other answers stood uncollected, that errors and bursts of
-sixteen beats occurred, and that on every channel a transaction was
-held at a stalled relay for eight cycles or more. \code{bazel test
-//...} runs 24 seeds inside \code{//lib/parts:parts\_test};
-\code{//lib/parts:axi\_fuzz\_test}, which is manual, runs the fuzzing
-alone, and the nightly workflow runs it over 1024 seeds through
-\code{AXI\_FUZZ\_SEEDS}. A second test answers a read of four beats
-with three and checks that the peripheral end refuses the answer
-where it is made rather than leaving the client to wait.
+To ensure comprehensive coverage across seeds, the fuzzer verifies that
+corner cases actually trigger during execution. Test assertions verify that
+completions and poll operations occur out of order, that identifiers wrap
+around during pending operations, that maximum-length 16-beat bursts
+execute, and that relays stall every channel for 8 cycles or more. The
+standard regression suite in \code{//lib/parts:parts\_test} evaluates 24
+seeds; \code{//lib/parts:axi\_fuzz\_test} runs dedicated sweeps; and
+continuous integration evaluates 1024 seeds nightly using
+\code{AXI\_FUZZ\_SEEDS}. A complementary unit test truncates a 4-beat read
+response to 3 beats, verifying that the peripheral endpoint traps the defect
+immediately rather than hanging the client indefinitely.
 
-Its first seed found two defects, and each is fixed and filed. The
-peripheral end's answers go out through one port that every process
-serving it shares, and two processes that sent on it in the same
-step sent one beat, the other lost (\#182); the port now takes one send
-a channel a step, and a second sender waits a cycle. And the host
-tracker waited for the identifier in turn even when another was free
-(\#184), which deadlocked a client holding that answer; the turn now
-moves on. A mutation that marks the wrong read beat as the last is
-caught on the first read it touches.
+Early fuzzer runs exposed two subtle bugs. First, when concurrent worker
+processes targeted the peripheral response port in the same cycle, one beat
+overwrote the other (issue 182); arbitration logic now serializes concurrent
+writes across consecutive cycles. Second, the host tracker originally stalled
+on unavailable sequential identifiers even when alternative tags were free
+(issue 184); the scheduler now rotates to the next available identifier
+dynamically. Mutation tests that misplace the \code{last} flag trigger
+assertions on the initial corrupt read.
 
 \section{The Router}
 \label{sec:a-routing}
 
-The five AXI channels between \code{AxiHost} and \code{AxiPer} are
-ordinary channels of ordinary transactions, which is what makes a
-router a unit like any other rather than a special case of the link.
-It takes the host's \code{aw}, \code{ar} and \code{w} and gives a set
-of the three per peripheral; it takes a \code{b} and an \code{r} per
-peripheral and gives the host one of each.
+The five physical channels connecting \code{AxiHost} and \code{AxiPer}
+transport standard transaction packets. A router therefore functions as a
+standard hardware unit rather than an ad-hoc protocol extension. It accepts
+outbound \code{aw}, \code{ar}, and \code{w} channels from a host and
+replicates them across an array of peripheral ports. In the reverse
+direction, it concentrates per-peripheral \code{b} and \code{r} channels
+into single upstream host interfaces.
 
-A peripheral's range is a base and a mask, stated as a map type where
-the router is named, so the address map of a design is in its type
-and the netlist has the decode baked in:
+Peripheral address windows are specified as base-and-mask pairs in a mapping
+struct. Encoding the address map into the Rust type system produces fully
+static decoders in the synthesized netlist:
 
 \begin{lstlisting}
 struct ThreeMap;
@@ -593,80 +592,67 @@ impl AddrMap<3> for ThreeMap {
 type Rtr = Router<3, ThreeMap, 16, 32, 4, 3>;
 \end{lstlisting}
 
-One unit serves every count of peripherals: its peripheral sides are
-arrays of ports, the lowering unrolls the loops over them when
-\code{lowered} runs, and the map's ranges are read the same way, as
-the examples document says of \code{AddrMap}~\cite{examples}. Until
-there were arrays of ports, a router per count was text written out
-by a macro, as the reservation station still is~\cite{station}.
+A single generic module scales to arbitrary peripheral counts. Peripheral
+connections are declared as port arrays, which the lowering stage unrolls
+into dedicated wiring nets during synthesis. Address ranges evaluate
+identically at elaboration time, following the \code{AddrMap} patterns
+described in~\cite{examples}.
 
-\subsection*{What it has to keep}
+\subsection*{State Requirements}
 
-Three things make a router more than a fan-out.
+A bus router enforces three critical protocol constraints beyond
+straightforward signal demultiplexing.
 
-The write beats carry no identifier. AXI4 puts one on \code{aw} and
-none on \code{w}, so the beats belong to the oldest address phase
-that has not finished, and the router remembers where that one went:
-\code{wsel} is a bit per peripheral and \code{wbusy} says a burst is
-still running. A second \code{aw}, to any peripheral, waits for the
-first burst's last beat. Without that the beats of two writes would
-interleave and each peripheral would get half of each.
+First, write data beats omit transaction identifiers. The AXI4 standard
+places identifiers on \code{aw} but omits them from \code{w}. Consequently,
+write data beats associate implicitly with the oldest uncompleted address
+phase. The router tracks this destination through state registers:
+\code{wsel} stores one selection bit per peripheral, and \code{wbusy}
+indicates an ongoing burst. Subsequent write address phases stall until the
+final beat of the active burst transfers. Without this serialization,
+interleaved data beats would corrupt destination buffers across distinct
+peripherals.
 
-A read burst's beats must stay together, because \code{rlast} is how
-the host end knows a burst has ended. So the choice among
-peripherals is made once, at the first beat, and held in \code{rsel}
-until \code{last} goes by; \code{rbusy} says so.
+Second, read data beats belonging to a burst must transfer contiguously.
+Because host logic relies on \code{rlast} to detect burst termination,
+peripheral arbitration locks on the initial read beat. The router records the
+selected target in \code{rsel} and holds it via \code{rbusy} until the burst
+terminates.
 
-An address that is no peripheral's cannot simply be dropped. The
-client is waiting on an answer, and with nothing coming back the
-identifier is never released and the host stops. The router answers
-it: \code{DecErr} on \code{b} for a write, once its beats have been
-swallowed, and \code{DecErr} on \code{r} for a read, in as many
-beats as were asked for, counted down in \code{rerr\_left}. The
-beats matter. A read of four answered in one would leave the client
-gathering for ever.
+Third, unmapped target addresses require explicit protocol termination.
+Dropping invalid requests would leave host handles waiting indefinitely,
+starving the tag allocator. The router handles unmapped accesses internally:
+returning \code{DecErr} on the \code{b} channel after consuming write data
+beats, and generating \code{DecErr} beats across the \code{r} channel matching
+the exact burst length requested in \code{rerr\_left}. Emitting the precise
+requested beat count is required to complete the client receive loop
+cleanly.
 
-\subsection*{The unit}
+\subsection*{The Unit}
 
-\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
-rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
-linerange=state-state,caption={The router's state, from
-\code{lib/parts/src/bus/router.rs}.},%
-label={lst:a-rstate}]{lib/parts/src/bus/router.rs}
+Listing~\ref{lst:a-rstate} presents the internal register state of the
+router. Listing~\ref{lst:a-rdecode} details address decoding and peripheral
+ready logic, while Listing~\ref{lst:a-rmerge} presents the upstream
+multiplexer merging peripheral responses with local decode errors. The
+lowering step unrolls port iterations into explicit named nets, documenting
+precise inter-peripheral dependencies in the netlist.
 
-\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
-rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
-linerange=decode-decode,caption={The decode: where each address
-phase goes, and whether that peripheral has room for
-it.},label={lst:a-rdecode}]{lib/parts/src/bus/router.rs}
+\subsection*{Validation Trace}
 
-\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
-rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
-linerange=merge-merge,caption={The merge: the beat that goes up, from
-the chosen peripheral or from the router's own decode
-error.},label={lst:a-rmerge}]{lib/parts/src/bus/router.rs}
-
-Every step is a wire with a name, and the loops over the peripherals
-are unrolled a wire at a time, so the netlist says which peripheral
-was waiting for which.
-
-\subsection*{The run}
-
-\code{ex\_axi\_router} is one host, three peripherals and a fourth
-address that is nobody's. Five bursts go out before any is
-collected: a read to each of the first two peripherals, a write to
-the third, and a read and a write to the hole. The three peripherals
-take different times, so the answers come back in an order of their
-own, and each answer carries the number of the peripheral that
-served it, which is what the run asserts.
+The example \code{ex\_axi\_router} configures one host, three mapped
+peripherals, and an unmapped address range. The host issues five bursts
+concurrently: reads to the first two peripherals, a write to the third, and
+both a read and a write targeting unmapped space. The peripherals process
+requests with independent latencies, returning out-of-order completions
+tagged with their respective peripheral indices as verified by test
+assertions.
 
 \begin{figure*}[t]
 \centering
 \input{axi_router_timing.tex}
-\caption{The router's run: the address phases in on \code{aw} and
-\code{ar}, the three peripherals' selected, the two error flags
-raised by the hole, and the answers going up with their identifiers
-and responses.}
+\caption{The router's run: address phases arriving on \code{aw} and
+\code{ar}, peripheral selections asserted, decode error flags raised by
+unmapped accesses, and completions returned upstream with identifiers.}
 \label{fig:a-router}
 \end{figure*}
 
@@ -679,85 +665,76 @@ printed when the build ran it: five bursts, each answered by the
 right range, and then the router's netlist.},%
 label={lst:a-router-out}]{out_axi_router.txt}
 
-The thing to look for in Listing~\ref{lst:a-router-ex} is what is
-not there. The host client is the client of
-Section~\ref{sec:a-peer}, and each peripheral is a \code{serve} with
-a body and nothing else. Neither mentions the router, a range or an
-identifier. A router is put in by wiring: each of a link's five
-channels has two ends, so the router is given the peripheral-facing
-ends of the host's link and the host-facing ends of each
-peripheral's, and nothing else moves.
+The host and peripheral implementations remain completely decoupled from
+routing logic. The host operates as the peer client from
+Section~\ref{sec:a-peer}, while peripherals instantiate standard \code{serve}
+worker pools. Neither module contains address ranges or routing parameters.
+Inserting a router requires only channel reconnection: the router binds to
+the peripheral-facing ports of the host link and the host-facing ports of
+each peripheral link.
 
-The router is lowered, and the build simulates its netlist against
-this run under \code{nvc} and under Verilator at its ports, as it
-does the two trackers.
-
-Host-side arbitration, several hosts contending for one peripheral,
-is the other half of a full interconnect, and it is the next section.
+The router netlist lowers to Verilog and VHDL, passing regression verification
+under \code{nvc} and Verilator against cycle-accurate traces. Upstream
+arbitration among multiple competing hosts completes the bus interconnect
+architecture.
 
 \section{The Arbiter}
 \label{sec:a-arbiter}
 
-The arbiter is the router read backwards: several hosts, one
-peripheral link. The router decides on the address and fans out; the
-arbiter decides whose turn it is and merges. Put one of each together
-and a design has a bus rather than a wire, which is what a second
-thing that wants memory needs. Until there was one, the core was the
-only unit here that could be a host, and everything else was given
-its bytes a word at a time through a register.
+The arbiter mirrors router functionality by multiplexing multiple host
+channels into a single downstream peripheral interface. While the router
+decodes destination addresses to fan out requests, the arbiter resolves host
+contention to merge streams. Pairing arbiters with routers creates full
+multi-master crossbars, enabling direct memory access for secondary
+controllers alongside processor cores.
 
-Deciding whose turn it is, is the easy half. \code{Arbiter<N, ..>}, one
-unit for any count of hosts up to eight, whose hosts are arrays of
-ports (\code{Arbiter2} to \code{Arbiter8} name the counts), takes the
-turn round the hosts, moving it past
-whichever won, so a host that keeps asking cannot shut another out;
-with the last parameter not zero it is fixed priority instead, and
-the lowest numbered host that is offering always wins.
+The module \code{Arbiter<N, ..>} supports up to 8 host interfaces through port
+arrays (\code{Arbiter2} through \code{Arbiter8}). It implements round-robin
+scheduling by default, advancing the grant token past the winning port to
+prevent host starvation. Setting the priority parameter activates
+fixed-priority arbitration, giving precedence to lower-indexed hosts.
 
-\subsection{Where the Answer Goes}
+\subsection{Response Routing via Tag Extension}
 
-The hard half is that an answer has to reach the host that asked, and
-the peripheral does not know there is more than one. What it does
-know is the identifier: AXI4 carries the one on each address phase
-back on that burst's answer, unchanged, so the identifier is the only
-thing an arbiter can write its own note on.
+Because downstream peripherals do not distinguish individual upstream
+masters, response routing relies on transaction identifiers. AXI4 preserves
+address-phase identifiers in completion responses without modification. The
+arbiter exploits this property to record request provenance.
 
-So the arbiter puts the host's port number above the host's own
-identifier on the way out, and takes it off again on the way back.
-That is why the two sides of an arbiter have different identifier
-widths, \code{I} on each host and \code{J} on the peripheral, and why
-\code{J} must be at least \code{I} plus the bits the port number
-needs. A host's identifiers are its own and stay its own; what the
-peripheral sees is a wider space with the hosts side by side in it.
+Upon granting host access, the arbiter prefixes the host port index onto the
+upper bits of the outbound identifier. On the return path, it strips these
+routing bits to restore original host tags while steering responses to the
+corresponding master. The peripheral interface width \(J\) must satisfy
+\(J \ge I + \lceil\log_2 N\rceil\), where \(I\) represents the master
+identifier width and \(N\) the host count. Host clients retain private
+identifier spaces while the peripheral operates over a widened global tag
+space.
 
-\subsection{The Channel With No Identifier}
+\subsection{Write Channel Serialization}
 
-The write data channel carries none, which is the same problem
-without the tool that solved it. A beat belongs to the oldest write
-address phase that has not finished, and that is all the protocol
-says, so anything standing between hosts and a peripheral has to keep
-them in that order itself.
+Because the write data channel provides no identifiers, data beats correlate
+strictly with the oldest uncompleted write address phase. The interconnect
+fabric must maintain write beat order explicitly.
 
-The arbiter therefore holds the write data channel for the host whose
-write address phase it granted, until that burst's last beat. A
-second host's address phase waits, however long the first burst is.
-Reads need no such lock, since each carries its identifier and may be
-answered out of order; that asymmetry is why the read path is a
-cycle-by-cycle decision and the write path is a lock.
+The arbiter locks the write data path to the host whose write address phase
+won arbitration until the terminal beat passes. Competing write address
+requests stall until the active burst completes. In contrast, read paths
+require no persistent locking because each beat holds an explicit identifier
+and can interleave safely. Read arbitration operates cycle by cycle, whereas
+write arbitration asserts an atomic burst lock.
 
-Both hosts in the run below write four beats at the same moment, and
-the memory is given two whole bursts rather than a mixture. That is
-the assertion at the end of the example, and it is the one a wrong
-arbiter fails.
+In the verification run \code{ex\_axi\_arbiter}, two masters submit four-beat
+write bursts simultaneously. The arbiter serializes the requests into two
+non-interleaved bursts at the downstream memory interface, verifying correct
+burst isolation.
 
 \begin{figure*}[t]
 \centering
 \input{axi_arbiter_timing.tex}
-\caption{The arbiter's run: both hosts offering write address phases
-and beats, \code{wsel} naming whose beats the peripheral side is
-carrying while \code{wbusy} stands, the four beats of one burst going
-out together and then the other's, and each write response going home
-by the tag above its identifier.}
+\caption{The arbiter's run: both hosts submitting write address phases and
+payloads, \code{wsel} indicating active host selection during \code{wbusy},
+consecutive four-beat bursts transferring without interleaving, and write
+responses routed by host prefix tags.}
 \label{fig:a-arbiter}
 \end{figure*}
 
@@ -771,49 +748,45 @@ bursts as the memory was given them, and then the arbiter's
 netlist.},%
 label={lst:a-arbiter-out}]{out_axi_arbiter.txt}
 
-As with the router, the thing to look for is what is not there.
-Neither client mentions the arbiter, a port number or an identifier,
-and the memory does not know there are two hosts. The arbiter is put
-in by wiring: it is given the peripheral-facing ends of each host's
-link and the host-facing ends of the memory's.
+Neither host client nor peripheral logic references arbiters, port indices,
+or composite identifiers. Designers wire the arbiter directly between
+host-facing links and peripheral interfaces without modifying client
+endpoints.
 
-The arbiter is lowered, and the build simulates its netlist against
-this run under \code{nvc} and under Verilator at its ports. Its own
-tests, in \code{lib/parts/src/bus/arbiter.rs}, drive two hosts and
-four: that every answer goes home, that write beats do not
-interleave, and that four hosts reading as fast as they can come away
-within one burst of each other, which is what round robin is for.
+The arbiter netlist compiles to Verilog and VHDL, matching simulation traces
+under \code{nvc} and Verilator. Unit tests in \code{lib/parts/src/bus/arbiter.rs}
+evaluate configurations with 2 and 4 hosts, asserting proper response
+routing, non-interleaved write bursts, and balanced throughput under
+saturation.
 
 \section{AXI-Lite and the Bridge}
 \label{sec:a-lite}
 
-A small peripheral does not need most of AXI4. A serial port or a
-bank of registers serves one word at a time, and has no use for an
-identifier, a burst or \code{last}. AXI-Lite is AXI4 with those taken
-out: the same five channels, one transaction per beat, and no order
-to keep but that a write's address and its word arrive together.
-Listing~\ref{lst:a-lite-beats} is every beat of it, from
-\code{bus::axi\_lite}. A peripheral on it needs no tracker. A read
-takes an address and answers a word; a write takes an address and a
-word and answers a response.
+Simple peripherals rarely require the full complexity of AXI4. Serial ports
+and configuration register banks transfer one word at a time, needing neither
+burst lengths nor transaction identifiers. The AXI-Lite specification
+simplifies the five standard channels into single-beat transactions without
+out-of-order execution. Listing~\ref{lst:a-lite-beats} defines the AXI-Lite
+beat structures from \code{bus::axi\_lite}. AXI-Lite peripherals require no
+complex tracking state: read channels accept an address and return a data
+word, while write channels consume an address and data word to return a
+completion status.
 
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
 rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
 linerange=beats-beats,caption={The AXI-Lite beats. The response is
 AXI4's \code{Resp}.},label={lst:a-lite-beats}]{lib/parts/src/bus/axi_lite.rs}
 
-\code{axi\_lite()} makes the five channels of a link and hands back
-the ends each side holds, as \code{axi\_units()} does for AXI4.
+The constructor \code{axi\_lite()} creates these simplified channels and
+yields endpoint handles matching the conventions of \code{axi\_units()}.
 
-\subsection*{The bridge}
+\subsection*{The Bridge Architecture}
 
-A design with small peripherals still has an AXI4 host, so something
-has to stand between the two. \code{LiteBridge} is that: a bridge of
-\code{N} AXI-Lite peripherals, one unit for every count, whose
-peripheral side is arrays of ports that the lowering unrolls when it
-runs (issue 500). Each peripheral's range is a base and a mask, and
-the ranges are an address map, a type whose constant states them
-(issue 593):
+Bridging AXI4 host fabrics to AXI-Lite peripherals requires protocol
+translation. The \code{LiteBridge} unit multiplexes an inbound AXI4 interface
+across \(N\) downstream AXI-Lite endpoints via port arrays that unroll during
+netlist synthesis (issue 500). Static address maps specify peripheral
+boundaries through compile-time constants (issue 593):
 
 \begin{lstlisting}
 pub struct TwoMap;
@@ -826,34 +799,34 @@ impl AddrMap<2> for TwoMap {
 type Bridge = LiteBridge<2, TwoMap, 16, 32, 4, 2>;
 \end{lstlisting}
 
-On its AXI4 side it takes the \code{aw}, \code{ar} and \code{w} a
-peripheral's tracker would take and gives the \code{b} and \code{r}
-it would give. So the bridge goes where an \code{AxiPer} would, behind
-the host's tracker or behind one of the router's peripheral ports.
+On its upstream interface, the bridge accepts \code{aw}, \code{ar}, and
+\code{w} channels and drives \code{b} and \code{r} channels. It occupies the
+topological position of an \code{AxiPer} unit, attaching either directly to a
+host tracker or behind a downstream router port.
 
-It keeps four rules.
+The bridge enforces four invariant rules:
 
-It takes one burst at a time. AXI-Lite has no identifier, so two
-transactions to one peripheral cannot be told apart, and the bridge
-holds the next burst until the last beat of this one is answered. The
-two address channels take turns when both offer.
+First, it serializes incoming bursts. Because AXI-Lite lacks identifiers,
+the bridge blocks subsequent transactions until the active burst retires
+completely. Simultaneous read and write requests arbitrate fairly via
+round-robin selection.
 
-A burst goes out a beat at a time. Each beat is one AXI-Lite
-transaction, at the burst's address for the first beat and moved on
-by a beat's width, \code{1 << size} bytes, for each one after; a
-fixed burst does not move. A read's answers go up as the burst's
-beats, each with the burst's identifier and the final one marked
-\code{last}.
-A write's answers become one \code{B}, which keeps the first error or
-is \code{Okay}. The bridge treats a wrapping burst as an incrementing one.
+Second, the bridge translates multi-beat bursts into sequential single-beat
+AXI-Lite requests. The first beat targets the base address; subsequent beats
+advance by \(1 \ll \text{size}\) bytes, whereas fixed bursts maintain a
+constant address. Read responses forward upstream with the original
+transaction identifier and an asserted \code{last} flag on the terminal
+beat. Write responses accumulate into a single status beat, capturing the
+initial error status if any beat faults. The bridge handles wrapping bursts
+as standard incrementing bursts.
 
-A burst goes where its first address decodes, one bit of \code{sel}
-per peripheral, and the lowest range that matches wins.
+Third, address decoding maps each burst to a specific peripheral line in
+\code{sel}, resolving overlapping matches by lowest numerical port index.
 
-A burst whose address is no peripheral's is answered by the bridge,
-as the router answers one. Each of its beats is answered
-\code{DecErr} as soon as it is taken, so a write's beats are taken
-and dropped, and a read gets every beat it asked for.
+Fourth, requests targeting unmapped addresses complete locally within the
+bridge. Write beats are consumed and discarded with \code{DecErr} responses,
+while read requests return \code{DecErr} across the exact number of beats
+specified by the host request.
 
 \litepart{state}{The bridge's state, for any count of
 peripherals.}{lst:a-lite-state}
@@ -870,30 +843,23 @@ the bridge itself, going up.}{lst:a-lite-answers}
 \litepart{drives}{The registers: a burst taken, a request sent, a beat
 answered.}{lst:a-lite-drives}
 
-\subsection*{The run}
+\subsection*{Validation Run}
 
-\code{ex\_axi\_lite} puts a bridge of two behind a host's tracker,
-with two banks of four registers, \code{Regs}, behind it and a hole
-beyond them. A bank is an AXI-Lite peripheral written as hardware in
-twenty lines, with no state for the bus. The host client writes three
-words to the first bank in one burst and reads four back in one, reads
-one word three times in a fixed burst, writes and reads the second
-bank, and sends a write of two beats and a read of two to the hole.
-The run asserts every word and every response. The bridge and both
-banks are lowered, and the build simulates the three netlists against
-this run under \code{nvc} and under Verilator. A test in
-\code{bus::axi\_lite} runs the same bursts against two simulated
-memories and counts the transactions each serves: ten on the first, for three
-beats written, four read and three read again, and two on the
-second.
+The verification harness \code{ex\_axi\_lite} places a two-port bridge behind
+an AXI4 host, addressing two register banks (\code{Regs}) alongside an
+unmapped hole. Each bank comprises a compact synthesizable AXI-Lite
+peripheral. The host executes a three-word write burst, a four-word read
+burst, a three-beat fixed read burst, access cycles to the secondary bank,
+and invalid access attempts to the unmapped window. Assertions confirm all
+payload words and status flags. The bridge and peripheral banks lower to
+Verilog and VHDL, passing co-simulation under \code{nvc} and Verilator.
 
 \begin{figure*}[t]
 \centering
 \input{axi_lite_timing.tex}
-\caption{The bridge's run: bursts in on \code{aw} and \code{ar}, the
-bridge busy with each and its peripheral in \code{sel}, the beats left
-counting down, each beat going out to a bank as a transaction of its
-own, and the answers going up, the hole's as \code{DecErr}.}
+\caption{The bridge's run: bursts arriving on \code{aw} and \code{ar}, bridge
+busy state tracked in \code{sel}, remaining beat counts decrementing, and
+individual AXI-Lite transactions dispatched to destination banks.}
 \label{fig:a-lite}
 \end{figure*}
 
@@ -906,21 +872,19 @@ printed when the build ran it: each burst, the tick its answer
 arrived, and the answer.},%
 label={lst:a-lite-out}]{out_axi_lite.txt}
 
-The core of the Vreteno document~\cite{vreteno} is the bridge's first
-user that is not a test. Its serial port is an AXI-Lite peripheral
-behind \code{LiteBridge<1, ..>}, on the router's third port, and the port
-lost the three registers it used to hold a write while it waited for
-the write's beat.
-
+The Vreteno processor~\cite{vreteno} uses this bridge to drive its
+memory-mapped serial interface. Placing the UART behind
+\code{LiteBridge<1, ..>} eliminated three dedicated staging registers
+previously needed to synchronize write data beats.
 
 \section{Reaching Wishbone}
 \label{sec:a-wb}
 
-A controller written elsewhere often speaks Wishbone rather than AXI.
-The DDR3 controller the board's memory runs on is one, and
-\code{bus::wb::AxiWb} is the bridge that puts it on a link: a
-peripheral client written as hardware, holding the peripheral's
-channel ends on one side and driving the host lines of a pipelined
+External intellectual property blocks often interface via Wishbone rather
+than AXI. The DDR3 memory controller used on target hardware provides a
+pipelined Wishbone interface. The bridge \code{bus::wb::AxiWb} bridges these
+domains: it instantiates as a synthesizable peripheral client, terminating
+AXI channel endpoints on one side and driving master lines for a pipelined
 Wishbone bus on the other.
 
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
@@ -929,55 +893,46 @@ linerange=state-state,caption={The bridge's state, from
 \code{lib/parts/src/bus/wb.rs}.},%
 label={lst:a-wbstate}]{lib/parts/src/bus/wb.rs}
 
-It takes one burst at a time, of any length, and puts each of its
-words on the lines as a request of its own. A read goes on the lines at
-once and a write once its beat has come, since AXI4 puts no
-identifier on a write's beat and the beat comes when it comes. The
-request is offered with \code{cyc} and \code{stb}; a cycle with no
-\code{stall} is the one the peripheral takes it in; then \code{cyc}
-alone is held until \code{ack}, which brings the word for a read; and
-then the answer goes on the link, a response for a write or a beat
-for a read, when the link has room for it. Every line the bridge
-drives is a register.
+The bridge processes bursts sequentially, converting multi-beat transactions
+into individual Wishbone accesses. Read operations dispatch to the Wishbone
+bus immediately; write operations dispatch once data beats arrive from the
+AXI channel. The bridge asserts \code{cyc} and \code{stb} until the target
+releases \code{stall}, indicating acceptance. It then maintains \code{cyc}
+until the slave asserts \code{ack}, returning read data or write completion
+back to the AXI fabric when channel buffering permits. All outbound Wishbone
+signals register directly in output flip-flops.
 
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
 rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
 linerange=run-run,caption={The bridge, a cycle at a
 time.},label={lst:a-wbrun}]{lib/parts/src/bus/wb.rs}
 
-The Wishbone address is a word address, the burst's byte address
-shifted down by two and cut to the bridge's width. A peripheral
-decoded at a region of the link's map therefore sees offsets from the
-region's base without the bridge subtracting anything, as long as the
-base lies above those bits.
+Wishbone uses word-aligned addresses. The bridge converts byte addresses to
+word addresses by shifting right by two bits and truncating to target bus
+width. Peripherals mapped within aligned address windows receive relative
+offsets directly without runtime subtraction logic.
 
-On the other side of the lines, in a simulation, is
-\code{bus::wb::sim::WbMem}, which is to Wishbone what the RAM of
-Section~\ref{sec:a-sim} is to AXI: plain Rust, sparse, and a handle on
-its words. It stalls for a number of cycles at the start, as a
-controller does while it calibrates, and takes a number of cycles for
-each request.
+For verification, \code{bus::wb::sim::WbMem} provides an architectural
+Wishbone memory model in native Rust. The model simulates controller
+initialization by injecting an initial calibration stall of 10 cycles,
+followed by a fixed 2-cycle latency per request.
 
 \simwbpart{mem}{The Wishbone memory, from
 \code{lib/parts/src/bus/wb/sim.rs}.}{lst:a-wbmem}
 
-\code{ex\_axi\_wb} writes three words through the bridge and reads
-them back, against a memory that calibrates for ten cycles and takes
-two for each request. The client is a host end made by
-\code{axi\_to\_unit}, the link whose host is a testbench and whose
-peripheral is a unit. The memory runs ahead of the bridge in the
-join, so the bridge reads its lines in the cycle they are driven, as
-the netlist does; the memory, a model, reads the bridge's a cycle
-later, which is why its stall rises a cycle after the bridge has
-seen a request taken.
+The example \code{ex\_axi\_wb} writes three words through the bridge and reads
+them back. An \code{axi\_to\_unit()} construct couples the software host
+testbench to the synthesizable bridge unit. The simulation engine schedules
+memory model execution ahead of the bridge, allowing the bridge to sample bus
+lines synchronously within the active clock cycle.
 
 \begin{figure*}[t]
 \centering
 \input{axi_wb_timing.tex}
-\caption{The first write through the bridge: the request and its
-beat arriving, \code{stb} held through the memory's calibration until
-a cycle with no stall takes it, \code{cyc} held until the
-acknowledge, and the response going out on \code{ans}.}
+\caption{The first write through the bridge: request and data beat arrival,
+\code{stb} asserted across memory calibration until accepted without stall,
+\code{cyc} held until acknowledgment, and write response delivered on
+\code{ans}.}
 \label{fig:a-wb}
 \end{figure*}
 
