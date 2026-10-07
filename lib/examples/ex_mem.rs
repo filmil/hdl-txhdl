@@ -5,6 +5,11 @@
 //! register; `read` is a plain read, and lowers to an index. The
 //! memory is untraced, so the waveform shows the ports, and the
 //! lowering is checked against them.
+//!
+//! A read that is a wire is what LUT RAM does and a block RAM does not,
+//! so the memory says so: `#[ram_style("distributed")]` puts the
+//! `ram_style` attribute on it in both netlists, for Vivado (issue
+//! 1371), and both simulators take the netlists with it.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{signal, Clock, DefaultClock, In, Mem, Out, Running, Unit};
 use txhdl::types::{Bit, U};
@@ -12,6 +17,7 @@ use txhdl::{lower, when, Trace};
 
 #[derive(Trace, Default)]
 pub struct Scratch {
+    #[ram_style("distributed")]
     pub m: Mem<U<8>, 16>,
 }
 

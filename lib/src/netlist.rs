@@ -262,6 +262,12 @@ pub trait Fields {
     /// memory of more than 4096 bits has the ports a block RAM has
     /// leaves it alone (issue 1285). Empty when there are none.
     const DISTRIBUTED: &'static [&'static str] = &[];
+    /// What each memory asks Vivado to make it, by name:
+    /// `#[ram_style("block")]` on a field, or `"distributed"`,
+    /// `"registers"` or `"ultra"`, and `#[distributed]` as
+    /// `"distributed"` (issue 1371). The netlists say it as the
+    /// `ram_style` attribute. Empty when there are none.
+    const RAM_STYLES: &'static [(&'static str, &'static str)] = &[];
     /// Every field of the unit, as its name, what it is, how wide it
     /// is, and how many words it holds if it is a memory.
     fn fields() -> Vec<(&'static str, Option<Kind>, usize, usize)>;
@@ -876,6 +882,9 @@ pub struct Lowered {
     /// The memories [`Fields::DISTRIBUTED`] names: meant to be LUT RAM,
     /// so not held to a block RAM's ports (issue 1285).
     pub distributed: Vec<&'static str>,
+    /// The memories [`Fields::RAM_STYLES`] names, with what each asks
+    /// Vivado to make it (issue 1371).
+    pub ram_styles: Vec<(&'static str, &'static str)>,
     /// A port's trace scope when it is not the port's own name: a
     /// channel two units share under one name in the run has a port
     /// name of its own on each side.
@@ -965,6 +974,7 @@ pub fn foreign(
         init_regs: Vec::new(),
         async_regs: Vec::new(),
         distributed: Vec::new(),
+        ram_styles: Vec::new(),
         aliases: Vec::new(),
         nets: Vec::new(),
         unregistered: Vec::new(),
@@ -2085,6 +2095,16 @@ impl Lowered {
             .iter()
             .any(|(n, k, _, _)| *n == t && *k == Some(Kind::Mem))
     }
+
+    /// What memory `m` asks Vivado to make it: its `#[ram_style]`, or
+    /// `"distributed"` for `#[distributed]` (issue 1371).
+    pub fn ram_style(&self, m: &str) -> Option<&'static str> {
+        self.ram_styles
+            .iter()
+            .find(|(n, _)| *n == m)
+            .map(|(_, st)| *st)
+            .or_else(|| self.distributed.contains(&m).then_some("distributed"))
+    }
     /// The width of an expression, as far as the netlist can tell:
     /// what an extension's replication needs.
     fn ewidth(&self, e: &Expr) -> usize {
@@ -2305,6 +2325,11 @@ impl Lowered {
                 // A memory, zero at the start as the runtime's is, then
                 // its first words if the example gave them.
                 Some(Kind::Mem) => {
+                    // What the memory asks Vivado to make it, said where
+                    // it is declared (issue 1371).
+                    if let Some(st) = self.ram_style(n) {
+                        writeln!(out, "  (* ram_style = \"{st}\" *)").unwrap();
+                    }
                     writeln!(
                         out,
                         "  reg {}{n} [0:{}];\n  integer {n}_i;\n  \
@@ -2717,6 +2742,8 @@ impl Lowered {
         if !self.async_regs.is_empty() {
             out.push_str("  attribute ASYNC_REG : string;\n");
         }
+        // Whether `attribute ram_style : string;` is declared yet.
+        let mut styled = false;
         for (n, k, w, d) in &self.fields {
             let init = if *w == 1 {
                 "'0'".to_string()
@@ -2763,7 +2790,21 @@ impl Lowered {
                         d - 1,
                         ty(*w)
                     )
-                    .unwrap()
+                    .unwrap();
+                    // The attribute is declared once in the
+                    // architecture, and given to each memory that asks
+                    // (issue 1371).
+                    if let Some(st) = self.ram_style(n) {
+                        if !std::mem::replace(&mut styled, true) {
+                            writeln!(out, "  attribute ram_style : string;")
+                                .unwrap();
+                        }
+                        writeln!(
+                            out,
+                            "  attribute ram_style of {n} : signal is \"{st}\";"
+                        )
+                        .unwrap();
+                    }
                 }
                 _ => {}
             }
@@ -4151,6 +4192,10 @@ impl Lowered {
             if *k != Some(Kind::Mem)
                 || w * d <= 4096
                 || self.distributed.contains(m)
+                || matches!(
+                    self.ram_style(m),
+                    Some("distributed" | "registers")
+                )
             {
                 continue;
             }
@@ -4251,6 +4296,7 @@ mod tests {
             init_regs: Vec::new(),
             async_regs: Vec::new(),
             distributed: Vec::new(),
+            ram_styles: Vec::new(),
             aliases: Vec::new(),
             nets: Vec::new(),
             unregistered: Vec::new(),
