@@ -29,3 +29,17 @@ config ETH_VRETENO
 	  because Zephyr's `net_pkt` is a chain of fragments and both
 	  `net_pkt_read` and `net_pkt_write` linearise. That is why the
 	  hardware needs no scatter-gather.
+
+config ETH_VRETENO_PROFILE
+	bool "Count the Vreteno Ethernet driver's cycles"
+	depends on ETH_VRETENO
+	help
+	  The driver counts the frames it receives and sends, and the
+	  core's cycles each path takes, the copy into or out of the slot
+	  apart, and how often a send waits for the transmitter. The
+	  counts are `eth_vreteno_prof` in `vreteno/eth_vreteno.h`, for
+	  an application to report (issue 1230).
+
+	  Off by default: two reads of the cycle counter a frame are
+	  cheap, but they are not nothing, and a profile is a build of
+	  its own.

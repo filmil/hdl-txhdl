@@ -60,6 +60,20 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #include <zephyr/sys/sys_io.h>
 #include <vreteno/regs/ethslots.h>
 
+#ifdef CONFIG_ETH_VRETENO_PROFILE
+#include <vreteno/eth_vreteno.h>
+
+struct eth_vreteno_prof eth_vreteno_prof;
+#define PROF_NOW() k_cycle_get_32()
+#define PROF_ADD(field, since) \
+	(eth_vreteno_prof.field += k_cycle_get_32() - (since))
+#define PROF_COUNT(field) (eth_vreteno_prof.field++)
+#else
+#define PROF_NOW() 0u
+#define PROF_ADD(field, since) ((void)(since))
+#define PROF_COUNT(field) ((void)0)
+#endif
+
 #define VRETENO_ETH_RX_SLOT       ETHSLOTS_RX_SLOT
 #define VRETENO_ETH_RX_LENGTH     ETHSLOTS_RX_LENGTH
 #define VRETENO_ETH_RX_EV_PENDING ETHSLOTS_RX_EV_PENDING
@@ -120,6 +134,7 @@ static int eth_vreteno_send(const struct device *dev, struct net_pkt *pkt)
 	const struct eth_vreteno_config *cfg = dev->config;
 	uint16_t len = net_pkt_get_len(pkt);
 	int tries = 0;
+	uint32_t t0 = PROF_NOW();
 
 	if (len > VRETENO_ETH_SLOT_SIZE) {
 		LOG_ERR("frame of %u bytes is larger than a slot", len);
@@ -132,6 +147,8 @@ static int eth_vreteno_send(const struct device *dev, struct net_pkt *pkt)
 	 * up: a frame padded to a word is a frame with bytes in it that
 	 * nobody sent.
 	 */
+	uint32_t tc = PROF_NOW();
+
 	if (net_pkt_read(pkt, cfg->tx_buf[data->tx_slot], len) < 0) {
 		LOG_ERR("could not read the frame out of its fragments");
 		return -EIO;
@@ -182,6 +199,7 @@ static int eth_vreteno_send(const struct device *dev, struct net_pkt *pkt)
 			&cfg->tx_buf[data->tx_slot][len - 1];
 		(void)*last;
 	}
+	PROF_ADD(tx_copy_cycles, tc);
 
 	while ((eth_vreteno_read(dev, VRETENO_ETH_TX_READY) &
 		VRETENO_ETH_EVENT) == 0) {
@@ -189,6 +207,7 @@ static int eth_vreteno_send(const struct device *dev, struct net_pkt *pkt)
 			LOG_ERR("the transmitter never became ready");
 			return -ETIMEDOUT;
 		}
+		PROF_COUNT(tx_waits);
 		k_sleep(K_MSEC(1));
 	}
 
@@ -197,6 +216,8 @@ static int eth_vreteno_send(const struct device *dev, struct net_pkt *pkt)
 	eth_vreteno_write(dev, VRETENO_ETH_TX_START, 1);
 
 	data->tx_slot = (data->tx_slot + 1) % VRETENO_ETH_SLOTS;
+	PROF_COUNT(tx_frames);
+	PROF_ADD(tx_cycles, t0);
 
 	return 0;
 }
@@ -213,6 +234,8 @@ static void eth_vreteno_receive(const struct device *dev)
 		LOG_DBG("a frame while the interface is down, dropped");
 		return;
 	}
+
+	uint32_t t0 = PROF_NOW();
 
 	len = eth_vreteno_read(dev, VRETENO_ETH_RX_LENGTH);
 	slot = eth_vreteno_read(dev, VRETENO_ETH_RX_SLOT) %
@@ -231,16 +254,21 @@ static void eth_vreteno_receive(const struct device *dev)
 		return;
 	}
 
+	uint32_t tc = PROF_NOW();
+
 	if (net_pkt_write(pkt, cfg->rx_buf[slot], len) < 0) {
 		LOG_ERR("could not write the frame into its fragments");
 		net_pkt_unref(pkt);
 		return;
 	}
+	PROF_ADD(rx_copy_cycles, tc);
 
 	if (net_recv_data(data->iface, pkt) < 0) {
 		LOG_ERR("the stack would not take the frame");
 		net_pkt_unref(pkt);
 	}
+	PROF_COUNT(rx_frames);
+	PROF_ADD(rx_cycles, t0);
 }
 
 static void eth_vreteno_isr(const struct device *dev)
