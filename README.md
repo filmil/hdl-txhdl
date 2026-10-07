@@ -13,6 +13,9 @@ The authors used a large language model, Claude, as an assistant in
 exploring the concepts and in writing and constructing the documents and
 the programs; every commit says so and carries its prompts verbatim.
 
+TxHDL's pages on hdlfactory.com are at <https://www.hdlfactory.com/txhdl/>.
+The articles about it are listed at <https://www.hdlfactory.com/tags/txhdl/>.
+
 The language is the library, `//lib`, and the documents under `//docs`
 describe it; `//docs:cover` names every one and says which to read for
 what.
