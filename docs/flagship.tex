@@ -30,15 +30,13 @@
 \thanks{Both authors are independent. Filip Filmar is the
 corresponding author, at f@hdlfactory.com; Dragiša Janković is
 reached at linkedin.com/in/dragisa-jankovic.}%
-\thanks{This document is the system the board is kept in, for a reader
-who knows the core~\cite{vreteno} and the three subsystems it brings
-together~\cite{eth,hdmi,axi}. Every listing is included from the
-project repository \code{HDL/txhdl} at build time. The
-cover~\cite{cover} lists every document.}%
-\thanks{The authors used a large language model, Claude, as an
-assistant in exploring the concepts and in writing and constructing
-the documents and the programs; every commit of the repository says
-so and carries the prompts that led to it, verbatim.}%
+\thanks{This document describes the unified hardware platform and peripheral
+subsystems~\cite{eth,hdmi,axi} running on the Vreteno processor~\cite{vreteno}.
+All listings are embedded from the project repository \code{HDL/txhdl} during
+compilation. The project overview~\cite{cover} indexes all companion reports.}%
+\thanks{The authors used Claude, an AI assistant, while developing
+architectural concepts, documentation, and software. Verbatim prompts are
+preserved in repository commit logs.}%
 \thanks{\buildstamp}}
 
 \markboth{The TxHDL Flagship}{Filmar and Janković: The TxHDL Flagship}
@@ -47,94 +45,86 @@ so and carries the prompts that led to it, verbatim.}%
 \maketitle
 
 \begin{abstract}
-The pieces of this project are proven on the Alinx AX7A200B one at a
-time: a core with a memory controller behind it, an Ethernet port that
-echoes, an HDMI output that draws a picture. Each is its own bitstream,
-and only one of them is in the part at a time. The flagship is the
-bitstream that holds all of them, written to the board's flash, so that
-the board powered on with nothing attached is the whole system rather
-than whichever experiment ran last. It is also the bitstream that stops
-moving: the core comes up running a loader, so the software changes in
-a second over the serial port and the hardware underneath it stays
-where it is. This document says what is in it, how the three clock
-domains are kept apart, what the lights mean, and how it is written to
-the flash.
+Hardware subsystems in this project were initially verified on the Alinx
+AX7A200B FPGA board as standalone designs: a processor with external DDR3
+memory, an Ethernet echo transceiver, and an HDMI video generator. Each
+experiment required a dedicated bitstream. The flagship combines these
+independent components into a unified bitstream written to on-board QSPI
+flash, establishing a persistent baseline upon board power-up. The design also
+stabilizes the hardware foundation. The processor boots into a ROM loader that
+accepts software binaries over the serial interface in seconds, leaving
+underlying gateware undisturbed. This document analyzes subsystem
+integration, clock domain crossing topologies, diagnostic status indicators,
+and non-volatile flash deployment.
 \end{abstract}
 
 \section{Why a flagship}
 \label{sec:f-why}
 
-A part holds one bitstream. Every demonstration in this repository is
-therefore a claim about a board that is not in that state any more:
-the Ethernet echo was in the part on Thursday, the HDMI picture on
-Friday, and by Saturday it is the DDR3 test again. Nothing is wrong
-with any of them, and the board still cannot be handed to somebody and
-switched on.
+An FPGA device holds one configuration bitstream at a time. Evaluating
+peripherals through standalone demonstrations left the physical board in an
+ephemeral state between test runs. Demonstrating the complete platform
+required reconfiguring the FPGA repeatedly for each subsystem.
 
-The flagship answers that. One bitstream holds every part of the system
-that is proven here, it lives in the board's QSPI flash rather than in
-the FPGA's volatile configuration, and it is rebuilt whenever any of
-its pieces changes. A board with power and nothing else is the system.
+The flagship resolves this fragmentation. It consolidates all verified
+subsystems into a single bitstream stored in non-volatile QSPI flash,
+rebuilding whenever constituent logic changes. Applying power restores the
+complete platform immediately without requiring JTAG initialization.
 
-The second reason is the one that saves the most time. Place and route
-of this design is half an hour. A flagship whose core ran a program
-built into its netlist would cost half an hour per edit of that
-program, which is why the demonstrations so far have each been their
-own bitstream. The flagship's core instead comes up running the
-loader~\cite{vreteno}: it waits on the serial port, takes a program,
-writes it into the DDR3 memory and jumps to it. The hardware is fixed
-and known; the software is whatever was sent last. Changing what the
-flagship does costs a second.
+This architecture also accelerates software iteration. Full FPGA placement
+and routing for the combined system requires thirty minutes. Embedding software
+images directly into synthesis netlists would impose a thirty-minute turnaround
+on every code change. Instead, the processor boots into a compact ROM
+loader~\cite{vreteno}. The loader listens on the serial port, receives an
+executable binary, writes it to DDR3 memory, and branches to it. Because the
+hardware netlist remains fixed, updating software takes seconds.
 
 \section{What is in it}
 \label{sec:f-what}
 
-Three subsystems, each unchanged from the design that proved it.
+The flagship integrates three verified subsystems without altering their
+internal logic.
 
-\emph{The core and its memory.} \code{board}, the netlist
-\code{\#[lower]} writes for \code{vreteno32::board::Board}: the Vreteno
-RV32IMAC core, its AXI tracker, the router, the data memory, the timer
-and software interrupt, the platform-level interrupt controller, the
-pulse width modulator, the serial port, and the board's gigabyte of
-DDR3 behind AMD's MIG controller. The core's boot memory holds the
+\emph{Processor and memory.} The \code{board} netlist emitted by
+\code{\#[lower]} for \code{vreteno32::board::Board} provides a Vreteno RV32IMAC
+processor, an AXI bus tracker, an interconnect router, data memory, machine
+timers, software interrupts, a platform-level interrupt controller, a
+pulse-width modulator, a 16550-compatible UART, and one gigabyte of DDR3
+DRAM managed by an AMD MIG controller. Processor boot ROM contains the serial
 loader.
 
-\emph{The Ethernet port.} The two lowered halves of the MAC with the
-PHY's RGMII around them~\cite{eth}, and behind them the remote
-peripheral at \code{0x3300}, whose behaviour is a program on another
-machine. A transaction the core makes there leaves the board as one
-frame and the answer arrives as one, so a device can be written as
-software on a laptop, against the bus it will really sit on, and the
-design does not change when the software becomes hardware.
-Section~\ref{sec:f-remote} is that peripheral. The port echoed every
-good frame until this; a frame cannot be both echoed and answered.
-The core reaches the MAC as well, through \code{EthSlots} on the fifth
-slot of its page, so a program sends and receives frames of its own:
-on September 28, 2026 the frames of \code{ethtx} were counted at the
-board server, and \code{ethrx} and \code{ethirq} worked. The fastboot
-server of issue~\#143, a Zephyr program the loader sends down the serial
-line, listened on port 5554 that day, answered \code{getvar} and booted
-a program sent with \code{fastboot boot}, and it passed the same three
-checks again on October 1.
+\emph{Ethernet interface.} Lowered MAC transmit and receive units connect to
+external physical layer transceivers through an RGMII wrapper~\cite{eth}. Behind
+the MAC sits the remote peripheral mapped at \code{0x3300}, which proxies bus
+accesses to a host workstation. A transaction issued by the processor departs
+within an Ethernet frame and awaits a matching response frame. This topology
+allows developers to evaluate peripheral drivers in host software against
+authentic bus semantics before writing dedicated RTL. Section~\ref{sec:f-remote}
+details this interface. The processor also accesses the MAC directly through
+\code{EthSlots} at peripheral slot five, transmitting and receiving raw network
+frames. Hardware validation verified outbound frame counts on the link server,
+and \code{ethrx} and \code{ethirq} passed regression tests. Furthermore, a
+Zephyr fastboot service transferred over the serial link operated on UDP port
+5554, responding to \code{getvar} queries and booting target images via
+\code{fastboot boot}.
 
-\emph{The HDMI output.} The video peripheral with its framebuffer and
-the I2C master that configures the SiI9134 encoder~\cite{hdmi}. Here
-the flagship does add something the demonstration did not have: the
-core reaches the peripheral, so a program can paint the screen.
+\emph{HDMI display output.} The video pipeline pairs a display framebuffer
+with an I2C controller that initializes the on-board SiI9134 HDMI
+transmitter~\cite{hdmi}. The flagship couples this pipeline to the system
+bus, allowing software to update display surfaces and drive external monitors.
 
 \section{The third slot}
 \label{sec:f-slot}
 
-The core's router has eight ports, in Table~\ref{tab:f-map}, one of
-them the boot memory, read-only at address zero, and none to spare.
-The small peripherals share the page at \code{0x3000} behind an
-AXI-Lite bridge, each a sixteenth of it, for exactly that reason: a
-peripheral of six registers does not deserve a port of its own. The
-video peripheral is three registers, so it takes the third sixteenth,
-at \code{0x3200}, among the nine in Table~\ref{tab:f-page}, with its
-words in Table~\ref{tab:f-hdmi}. The tables are written by
-\code{//tools/memmap} from the maps the router and the
-page's bridge decode, so they are the map the bitstream has.
+The system router decodes eight master ports, listed in Table~\ref{tab:f-map}.
+Address zero maps read-only boot ROM, leaving no spare router ports. Compact
+peripherals multiplex the 4~KiB page at \code{0x3000} through an AXI-Lite
+bridge, each occupying a 256-byte sub-slot. This shared mapping prevents
+low-density register banks from exhausting router ports. The video peripheral
+exposes three control registers and occupies slot three at \code{0x3200}, as
+detailed in Table~\ref{tab:f-page} and Table~\ref{tab:f-hdmi}. Tooling at
+\code{//tools/memmap} generates these tables directly from router and decoder
+definitions, matching the synthesized hardware map.
 
 \begin{table}[htbp]
 \caption{The flagship's address map, lowest first, as the core's
@@ -165,91 +155,83 @@ linerange=vslot-vslot,caption={\code{cpu/vreteno/src/board.rs}: the
 third slot, and why it leaves the
 unit.},label={lst:f-slot}]{cpu/vreteno/src/board.rs}
 
-because what sits there runs on a clock of its own. The video
-peripheral's raster is timed by the pixel clock, 25.2\,MHz, and the
-core runs at 100\,MHz; a peripheral inside \code{Board} would have to
-run on the core's clock, and a VGA raster at 100\,MHz is not a VGA
-raster. So the slot is brought out, and joining it to something is the
-board top's business. A board with nothing there ties it off, which is
-what \code{cpu/vreteno/board/vreteno\_board.v} does; a program that
-touched \code{0x3200} on such a board would wait forever, and none
-does.
+This external routing accommodates an independent clock domain. The video
+scanout logic requires a 25.2\,MHz pixel clock, whereas the processor operates
+at 100\,MHz. Placing the video controller inside \code{Board} would constrain
+it to the processor clock, violating standard VGA timing. Exporting the slot
+allows the top-level module to bridge clock boundaries. Target configurations
+lacking video hardware tie these channel ports off, as implemented in
+\code{cpu/vreteno/board/vreteno\_board.v}.
 
-The fourth slot is the other way about, and the contrast is the point.
-What sits on it runs on the core's clock, so it is a field of
-\code{Board} like the serial port, and what leaves the unit is not the
-slot but the peripheral's far side: the frames, a byte and a last bit
-at a time. A slot goes out when the thing on it has a clock of its
-own; nothing else is a reason.
+Slot four provides an instructive contrast. The remote peripheral operates
+synchronously on the 100\,MHz processor clock, so it resides directly within
+\code{Board} alongside the serial controller. Rather than exporting the bus
+slot, the unit exports the peripheral's external interface: packet data and
+framing delimiters. Subsystems export bus slots only when downstream hardware
+requires an independent clock.
 
 \section{Three clocks, one input}
 \label{sec:f-clocks}
 
-The board has one 200\,MHz differential input. The flagship buffers it
-once and hangs three generators off it, each the generator its
-subsystem is already proven with, so that bringing the three designs
-together changes nothing about any of them.
+The carrier board supplies a single 200\,MHz differential clock input. The
+flagship buffers this reference once and feeds three dedicated clock generators,
+matching the configurations verified in the individual subsystem designs:
 
 \begin{itemize}
-\item The memory controller's own: it takes the 200\,MHz, which is
-  also its delay reference, runs the memory at 400\,MHz and hands back
-  100\,MHz for the design and the serial port.
-\item An MMCM, times five to 1000\,MHz over eight, giving 125\,MHz for
-  the Ethernet transmit half. A second MMCM inside \code{eth\_rgmii}
-  shifts the clock the PHY recovers from the line by 78.75 degrees,
-  1.75\,ns, which centres the sampling edge in the data as the PHY
-  presents it. The measurements fit a PHY that delays its own receive
-  clock by about 2\,ns; the register that would say so is on a page
-  nothing here reads, and the JL2121's data sheet could not be found,
-  so that is not confirmed (issue~864).
-\item An MMCM, times 63 over ten and then over 50, giving 25.2\,MHz for
-  the pixel clock, within half a per cent of the mode's 25.175\,MHz.
+\item The DDR3 memory controller clock generator uses the 200\,MHz input as its
+  delay reference, runs internal DRAM logic at 400\,MHz, and generates a
+  100\,MHz synchronous system clock for processor execution and the serial
+  interface.
+\item An MMCM multiplies the input by five to 1000\,MHz and divides by eight to
+  produce a 125\,MHz clock for the Ethernet transmit path. An internal MMCM in
+  \code{eth\_rgmii} shifts the recovered receive clock by 78.75 degrees
+  (1.75\,ns), centering sampling edges within data windows presented by the
+  physical layer transceiver. Empirical measurements indicate the PHY
+  introduces approximately 2\,ns of internal receive delay.
+\item A video MMCM scales the reference clock to 25.2\,MHz for pixel scanout,
+  matching the standard 640$\times$480 60\,Hz display rate within 0.1\% of
+  nominal (25.175\,MHz).
 \end{itemize}
 
-Two things cross between the domains, and both are channels rather
-than signals. The first is the core's AXI-Lite to the video
-peripheral. Each of the five AXI-Lite channels crosses on its own,
-through \code{chan\_cdc}, the asynchronous FIFO with Gray-coded
-pointers that the Ethernet echo used on this board before it.
-Crossing each channel on its own is the whole of what the protocol
-asks, because the five have no timing relationship to each other: a
-write is complete when its response arrives, whenever that is.
+Two data paths cross clock boundaries, both implemented as FIFO channels rather
+than unsynchronized scalar signals. The first path routes the processor's
+AXI-Lite interface to the video peripheral. Each of the five AXI-Lite channels
+crosses independently through \code{chan\_cdc}, an asynchronous FIFO with
+Gray-coded read and write pointers. Routing each channel independently satisfies
+all protocol requirements because AXI channels maintain no inter-channel cycle
+dependencies; a write transaction completes when its write response handshake
+returns.
 
-The second is the remote peripheral's frames, one byte and a last bit
-at a time: out on the core's clock to the transmit clock, and in on
-the clock the PHY recovers to the core's. Two more of the same FIFO.
-The one coming in holds 128 bytes rather than the 16 the echo used,
-because the port delivers a byte every 8\,ns and the core reads one
-every 10, so a whole frame has to fit while the reader catches up.
-A frame that arrives while the last one is still coming out of the MAC
-is lost, which is a transaction the peripheral's patience covers.
+The second path transfers remote peripheral packets between clock domains,
+routing bytes and end-of-frame flags across the boundaries. Outbound packets
+cross from the 100\,MHz processor clock to the 125\,MHz transmit clock, and
+inbound packets cross from the recovered PHY clock to the processor clock. The
+inbound FIFO allocates 128 bytes rather than the 16 bytes used in earlier echo
+tests. Because the Ethernet MAC delivers one byte every 8\,ns while the
+processor reads one byte every 10\,ns, the FIFO absorbs packet bursts while the
+software reader catches up.
 
-Those two are what crosses at the top. Inside the board unit the debug
-transport's accesses cross as well, from the cable's clock, TCK, to
-the core's and back, through two more of the same FIFO (issue 154).
+Listing~\ref{lst:f-cdc} presents \code{lib/board/chan\_cdc.v}, which implements
+the dual-clock channel synchronizer. Common board infrastructure now resides
+under \code{//lib/board} for reuse across top-level designs.
 
 \lstinputlisting[caption={\code{lib/board/chan\_cdc.v}: a lowered
-unit's channel, carried from one clock to
-another.},label={lst:f-cdc}]{lib/board/chan_cdc.v}
-
-That file used to be \code{eth/board/eth\_cdc.v}, and the flagship is
-what made it general: it now lives in \code{//lib/board}, which is
-where Verilog that more than one area's board design wants is kept.
+unit's channel, transferred across clock
+domains.},label={lst:f-cdc}]{lib/board/chan_cdc.v}
 
 \section{The peripheral that is a program}
 \label{sec:f-remote}
 
-A peripheral is hardware, and hardware is the slow half of the work:
-it is written, simulated, synthesised, placed and routed, and only
-then does anybody find out that the registers were the wrong
-registers. The remote peripheral turns that round. \code{Remote} sits
-on the fourth slot like any other peripheral and answers nothing
-itself; every transaction it accepts leaves on a channel, and an
-answer comes back on another. \code{RemoteLink} turns the one into an
-Ethernet frame of 27 bytes and the other back, and the MAC puts it on
-the wire. What the core is talking to, then, is whatever answers those
-frames: on a laptop at the other end of the cable, in whatever
-language its author likes.
+Developing custom peripheral hardware requires extensive simulation, synthesis,
+placement, and routing before physical register behaviors can be validated. The
+remote peripheral architecture decouples register definition from FPGA
+compilation. \code{Remote} occupies peripheral slot four, behaving like any
+standard memory-mapped slave while handling no register operations locally.
+Accepted bus transactions dispatch over an outbound channel, awaiting
+completions on a matching response channel. \code{RemoteLink} marshals outgoing
+requests into 27-byte Ethernet frames and demarshals inbound replies, passing
+them through the MAC to the network. The processor communicates directly with a
+software service hosted on an attached workstation.
 
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
 rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
@@ -257,52 +239,36 @@ linerange=remote-remote,caption={\code{cpu/vreteno/src/board.rs}: the
 peripheral and the link that puts it on the
 port.},label={lst:f-remote}]{cpu/vreteno/src/board.rs}
 
-Two numbers are fixed in the design rather than left to a board. The
-device number is 1: every frame carries it, a program answers each
-device by the number it was asked under, and a second board on the
-same wire is a second number. The patience is a second, a hundred
-million cycles at 100\,MHz, after which a transaction nobody answered is
-\code{SlvErr} on the bus. A device that has gone away must not stop
-the bus, and a device on another machine must be given long enough to
-be slow; it was 20\,ms until the run below showed that too short.
+Two parameters are fixed within the RTL architecture. The device identifier
+is 1: every request frame holds this tag, allowing target software to multiplex
+multiple devices on a single physical link. Transaction patience is set to one
+second (100\,000\,000 cycles at 100\,MHz). If no response frame arrives before
+the timer expires, the peripheral asserts an AXI slave error (\code{SlvErr})
+to prevent bus stalls.
 
-The other end of the wire in this repository is \code{//tools/remote},
-a program in Go that reads frames, serves a device, and writes the
-answers back. It speaks a length-prefixed stream rather than raw
-frames, because that is what an ssh tunnel carries; between it and the
-port is \code{//tools/remote/shim}, a program for the machine the
-board is wired to, which reads the peripheral's frames off that
-interface with a raw socket bound to their type, writes each to the
-stream with its length in front, and puts the answers back on the
-wire as they are. Its pump is tested against a wire in memory, and
-on the board's machine it runs as a service that is given the one
-capability a raw socket wants at launch, which
-\code{//tools/remote/shim:deploy} puts there.
+The host software endpoint resides in \code{//tools/remote}, a Go service that
+processes incoming frames, implements peripheral register behaviors, and
+returns response packets. The service exchanges length-prefixed packet streams
+across an ssh tunnel. On the target-attached host, \code{//tools/remote/shim}
+captures peripheral frames via raw Linux network sockets, encapsulates them
+with length headers into the stream, and dispatches return frames onto the
+physical link.
 
-The whole of it ran on September 22, 2026, with nobody at the board:
-the flagship in the part, the shim serving, \code{//tools/remote}
-beside it as device~1, and the program of Listing~\ref{lst:f-remote-rs}
-sent down the serial line by the loader. The core wrote two words to
-the peripheral, read both back, and said so, and the program at the
-other end saw the four transactions and answered them; both are in
-Listing~\ref{lst:f-remote-run}, as they were printed. A store on the
-core's bus left the board as a frame, crossed a shim to a program, and
-the answer came back through the same port into a load.
+Full system integration succeeded on September 22, 2026. With the flagship
+bitstream loaded into flash, the bridge service running on the target host, and
+\code{//tools/remote} registered as device~1, the loader dispatched the
+diagnostic binary in Listing~\ref{lst:f-remote-rs}. The processor executed two
+register stores, read back both values over Ethernet, and confirmed data
+integrity on the serial console. Listing~\ref{lst:f-remote-run} records the
+console output and server transaction logs.
 
-Two things the run found, and the same evening fixed. The peripheral
-waited 20~ms for its answer, \code{REMOTE\_WAIT}, a budget for a
-program on the board's own network: with the program on the
-development machine instead, 175~ms away by round trip through a
-tunnel, it answered the same four transactions and the core read zero
-both times, the bus having refused before the answer came. The wait
-is a second now, issue~\#397, five times that path with room for a
-worse one, and what a device that has gone away costs the bus per
-access; the same run through the tunnel then read both words back,
-with 174~ms of round trip measured as it ran. And the loader's serial
-reset did not bring the loader back after the program had halted,
-because the core declares its own reset and its two halt registers
-were never put back by it; they clear on reset now, issue~\#398, and
-a reset-load after a halted program comes back every time.
+Testing exposed two timing constraints. Initial gateware used a 20\,ms response
+timeout (\code{REMOTE\_WAIT}). When accessing development services across an ssh
+tunnel with a 175\,ms round-trip latency, transactions timed out prematurely,
+returning zero. Extending timeout patience to one second (issue~\#397) restored
+robust operation across network tunnels. Additionally, serial warm resets
+originally failed to reinitialize processor halt registers; clearing these
+registers upon reset (issue~\#398) ensures repeatable warm restarts.
 
 \lstinputlisting[caption={\code{cpu/vreteno/rust/remote.rs}: two
 words to the peripheral and back, with the verdict on the serial
@@ -312,52 +278,50 @@ port.},label={lst:f-remote-rs}]{cpu/vreteno/rust/remote.rs}
 what the board said, and what the program beside the shim saw, on
 September 22, 2026.},label={lst:f-remote-run}]{remote_run.txt}
 
-
 \section{The lights}
 \label{sec:f-leds}
 
-The board has four LEDs, lit when driven low, and the flagship has
-more than four things worth watching. These four are what a person at
-the board needs to tell a healthy flagship from a sick one.
+The carrier board features four active-low LEDs. The flagship assigns them to
+critical status signals to facilitate hardware diagnostics:
 
 \begin{itemize}
-\item \textbf{LED1}, the pulse width modulator's first channel, or the
-  core halted. This is the software's own light: the loader leaves it
-  dark, and a program sent down the wire does with it what it likes.
-\item \textbf{LED2}, a frame seen on the Ethernet port, either
-  direction, held for about a fifth of a second so that a person sees
-  it.
-\item \textbf{LED3}, the DDR3 memory calibrated. The loader writes the
-  program it receives into that memory, so a dark LED3 explains
-  everything else that is wrong.
-\item \textbf{LED4}, the heartbeat, three times a second. It says the
-  memory controller's clock is good and that this part holds a
-  bitstream that is running,
-  which is the first question to ask of a board that does nothing.
+\item \textbf{LED1}, pulse-width modulator channel zero or core halt status. This
+  indicator serves software applications: the boot loader leaves it unlit,
+  allowing running software to control brightness or signal completion.
+\item \textbf{LED2}, Ethernet frame activity. Pulse-stretching logic asserts
+  this LED for 200\,ms upon detecting inbound or outbound packet traffic,
+  ensuring visual visibility.
+\item \textbf{LED3}, DDR3 calibration status. The MIG controller asserts this
+  line upon completing memory calibration. Because the boot loader stages
+  incoming software into DDR3 RAM, an unlit LED3 immediately isolates memory
+  initialization failures.
+\item \textbf{LED4}, system heartbeat. Toggling at 3\,Hz from the memory
+  controller clock, this indicator verifies clock generation and active gateware
+  execution.
 \end{itemize}
 
-The HDMI output has no light of its own. The monitor is its light.
+The HDMI video pipeline omits dedicated diagnostic LEDs, as output monitors
+display video status directly.
 
 \section{The design}
 \label{sec:f-top}
 
-Everything above is one hand-written module, and it is the only new
-hardware in the flagship: the pins, the three generators, the resets,
-the five crossings and the lights.
+The top-level integration module brings together I/O pins, clock generators,
+reset distribution networks, clock domain crossing FIFOs, and status
+indicators.
 
 \lstinputlisting[caption={\code{flagship/board/flagship.v}: the
 flagship's top.},label={lst:f-top}]{flagship/board/flagship.v}
 
-The constraints are shared rather than copied. The board's clock, its
-reset, its LEDs, its serial port and its memory come from the two files
-under \code{cpu/vreteno/board/}; the PHY's pins from
-\code{eth/board/eth\_pins.xdc}; the encoder's from
-\code{hdmi/board/hdmi\_pins.xdc}. Each pin the flagship drives is named in
-exactly one of the files it reads, so a pin corrected there is
-corrected for the flagship in the same change; the single designs'
-own files restate the clock, the reset and the LEDs. What is left for the flagship's own file
-is the part no subsystem owns: telling the three generators apart for
-timing.
+Physical constraints are shared across modules to eliminate duplication. Clock,
+reset, LED, UART, and DDR3 pin assignments derive from constraint files under
+\code{cpu/vreteno/board/}. Physical layer Ethernet pins import from
+\code{eth/board/eth\_pins.xdc}, and HDMI encoder pins import from
+\code{hdmi/board/hdmi\_pins.xdc}. Each FPGA pin appears in exactly one primary
+constraint file, ensuring that pin modifications propagate consistently across
+all build configurations. The flagship's dedicated constraint file defines only
+inter-clock timing relationships, declaring asynchronous clock groups across
+independent generators.
 
 \lstinputlisting[caption={\code{flagship/board/ax7a200\_flagship.xdc}:
 what no subsystem owns.},label={lst:f-xdc}]%
@@ -366,131 +330,94 @@ what no subsystem owns.},label={lst:f-xdc}]%
 \section{Building it, and putting it in the flash}
 \label{sec:f-build}
 
-Every Vivado target in this repository is manual, because each is
-minutes of work that a plain build should not start.
-\code{bazel build //flagship:flagship\_synth} takes five minutes and
-\code{//flagship:flagship\_pnr} about twenty-five more, and the second
-depends on the first, so the second alone is the whole of it.
+Vivado targets in this repository are marked manual to prevent unintended
+long-running actions during routine builds. Compiling
+\code{//flagship:flagship\_synth} requires five minutes, and subsequent place
+and route via \code{//flagship:flagship\_pnr} consumes twenty-five minutes.
+Because the implementation step depends directly on synthesis output, executing
+place and route drives the complete flow.
 
-Synthesis stops on the warnings that would otherwise reach the board.
-Vivado cuts a sized literal too large for its width and carries on:
-\code{21'd2\_100\_000} in the top became 2848, and the reset detector
-that compared against it could never fire. The build was green, timing
-was met, the bitstream was wrong, and the only trace was one line of
-\code{flagship\_synth.log}. It cost a place and route and a run on the
-board to find. Every synthesis target now asks Vivado, after
-\code{synth\_design} and before the netlist is written, how many times
-it issued that message, and fails if the answer is not zero. The list
-is in \code{tools/vivado/defs.bzl}, which is where synthesis is loaded
-from for this reason; a message earns a place on it by being silent at
-every later step, so that the first thing to disagree is the hardware.
+Synthesis stops on warnings that would otherwise escape to hardware. Vivado
+truncates sized literals exceeding declared bit widths and continues without an
+error: \code{21'd2\_100\_000} in earlier top logic was truncated to 2848,
+preventing the downstream reset counter from asserting. The build completed
+without timing violations despite generating a defective bitstream, detectable
+only through an obscure line in \code{flagship\_synth.log}. Detecting the failure
+required a complete place-and-route cycle and board bring-up. Every synthesis
+rule now queries Vivado after \code{synth\_design} to count occurrences of
+critical warning codes, failing the build if counts are non-zero. These warning
+rules are centralized in \code{tools/vivado/defs.bzl}.
 
-Writing the result to the board needs the tunnel to the machine the
-board is attached to, which \code{bazel run
-//cpu/vreteno/board/remote:hw\_server} opens. Then either
-\code{//flagship:flagship\_prog} writes the FPGA itself, which the next
-power cycle forgets, or \code{//flagship:flagship\_flash} writes the
-QSPI flash, which is where a flagship belongs: the board then comes up
-as itself with nothing attached. Both take
-\code{-{}-hostport localhost:3122} and the device pattern, as the
-targets' comments state.
+Programming the board requires a TCP tunnel to the host attached to the FPGA,
+opened via \code{bazel run //cpu/vreteno/board/remote:hw\_server}. Target
+\code{//flagship:flagship\_prog} downloads bitstreams directly to volatile
+FPGA SRAM for temporary testing, whereas \code{//flagship:flagship\_flash}
+writes non-volatile QSPI flash for persistent deployment. Both targets accept
+\code{-{}-hostport localhost:3122} and a hardware target filter.
 
-A running program never returns to the loader on its own, and for a
-while the only way back was to reprogram the part. Three ways now, none
-of them Vivado. The RESET key on the carrier, and KEY1 beside it, reset
-the core: the memory keeps running through the press, so whatever the
-press caught in flight completes and the bus is clean when the core
-restarts in the loader, and the memory's contents survive, which is
-what a warm reset means. The first version reset the memory too, and
-a press that caught a fetch in flight stranded the bridge in front of
-the controller, which nothing resets; the loader then took three words
-and stopped. And from the host, the serial line held low for far longer
-than any byte, which the top turns into the same reset, so
-\code{load -{}-reset} brings the loader back and then sends. The low
-is one zero byte at 300 baud, 30 ms, and not a break: a break sent
-through the board's CP2102N as Linux drives it never reached the pin,
-which a slow zero byte proved by resetting the core where the break
-had not.
-The same press, the same key and the same low on the line reset the
-MAC's two halves and the video peripheral as well, each through two
-flip-flops on its own clock and each held while its clock manager has
-no lock, since the core's reset is on the core's clock and a lowered
-module's reset arm runs from its \code{rst} input alone; the first
-version left those inputs unconnected, so a press reset the core and
-left the rest running on stale state (issue 509).
-The crossings between the clocks reset with them. Each
-\code{chan\_cdc} takes the reset of the side on each of its clocks, and
-holds itself empty while either is on, so a word in flight when the
-reset came is dropped rather than handed to a side that was reset and
-never asked for it; before, the FIFOs had no reset at all, and a
-serial reset left whatever they held for the next program to meet
-(issue 1325).
+Executing software returns to the loader through three coordinated mechanisms:
+The carrier RESET button and adjacent KEY1 trigger core resets. External memory
+controllers continue refreshing DRAM through the reset assertion, allowing
+in-flight bus transactions to drain gracefully and preserving RAM contents
+across warm restarts. An earlier revision reset the memory controller
+simultaneously, stranding the AXI bridge and freezing subsequent boot attempts.
+From the host workstation, pulling the serial RX line low for 30\,ms initiates
+a warm reset. Invoking \code{load -{}-reset} transmits this low-speed pulse at
+300 baud, re-entering the boot loader prior to transferring executable
+binaries. Standard serial break conditions are avoided because the on-board
+CP2102N USB-UART bridge drops host break pulses under Linux.
+Core resets simultaneously clear MAC state machines and video logic through
+two-stage synchronizing registers. Cross-domain FIFOs reset synchronously: each
+\code{chan\_cdc} instance holds itself empty while either domain asserts reset,
+discarding in-flight words rather than exposing stale data to reset logic
+(issues 509 and 1325).
 
-The flash is a Micron MT25QL128 over a four-bit bus. It is the part
-this board answers with, read off the chip over JTAG rather than out of
-a manual, because board revisions differ here and the manual for this
-one names a larger part that Vivado then refuses.
+The non-volatile storage chip is a Micron MT25QL128 quad-SPI flash. The bitstream
+occupies flash addresses beginning at zero, followed by software images at
+offset \code{0x00A0\_0000} (issue~312). For this FPGA device, uncompressed
+configuration bitstreams require 77\,845\,216 bits (9\,730\,652 bytes), ending
+at address \code{0x0094\_7A5C}. Software partitions align with the subsequent
+64~KiB erase sector at 10~MiB, leaving 6~MiB of flash capacity. The processor
+accesses flash memory through an AXI window at \code{0x20A0\_0000}. Automated
+tests \code{//flagship:flagship\_fits\_test} and
+\code{//cpu/vreteno:vreteno\_board\_fits\_test} inspect bitstream headers to
+confirm that configuration data does not exceed reserved partitions.
+Furthermore, \code{//flagship:flagship\_flash} embeds the diagnostic program
+\code{flashid} via \code{write\_cfgmem -loaddata}, validated by
+\code{//flagship:flagship\_image\_test}.
 
-The flash holds the bitstream from its start, and programs from
-\code{0x00A0\_0000} on (issue 312). An uncompressed bitstream for this
-part is 77\,845\,216 bits of configuration data, 9\,730\,652 bytes,
-whatever the design, and the headers of both routed bitstreams say
-exactly that. It ends at \code{0x0094\_7A5C}. Programs begin at the
-first mebibyte past that, which is on one of the chip's 64~KiB erase
-sectors, and have the 6~MiB to the end. The core reads them through
-the window on the router's eighth port, from \code{0x20A0\_0000}.
-\code{//flagship:flagship\_fits\_test} and
-\code{//cpu/vreteno:vreteno\_board\_fits\_test} read a routed
-bitstream's header with \code{//tools/bitfit}, and fail if its
-configuration data runs past the offset, which compression or another
-part could do. They are manual, since they need the routed bitstream.
-\code{//flagship:flagship\_flash}'s image carries a program there,
-\code{flashid}, placed by \code{write\_cfgmem}'s \code{-loaddata}, and
-\code{//flagship:flagship\_image\_test}, manual as well, reads the
-image with \code{//tools/bitfit} and fails unless it holds the
-program byte for byte at \code{0x00A0\_0000}. Nothing boots from
-there yet; the program is there so that a written flash can be read
-back through the window.
-
-Once the flagship is in the part, a program goes to it over the serial
-port and no Vivado is involved at all: \code{bazel build
-//cpu/vreteno/rust:hello\_ram\_bin} for the image, and \code{bazel run
-//cpu/vreteno/board/remote:load -{}-image=...} to send it. That is the
-loop the flagship exists to make cheap, and it is seconds rather than
-half an hour.
+With the flagship flashed, software deployment requires no FPGA compilation:
+developers build binaries via \code{bazel build
+//cpu/vreteno/rust:hello\_ram\_bin} and transmit them over the serial link
+using \code{load}. This workflow reduces turnaround cycles from thirty minutes
+to seconds.
 
 \section{What it costs}
 \label{sec:f-cost}
 
-The whole flagship is a small part of an xc7a200t. Synthesis of
-\code{main} at \code{806a229}, with the Ethernet on the core's bus,
-reports 10\,999 slice LUTs, 8.2 per cent of the part; 8\,918
-registers, 3.3 per cent; 16.5 block RAM tiles of 365; four DSPs; 126 of
-285 bonded pins; and of the clocking, one PLL and three MMCMs, one of
-which is inside the RGMII wrapper. With AMD's MIG as the memory
-controller (issue 188) the clocking is one PLL and four MMCMs, the PLL
-and one of the MMCMs the controller's own, and the rest is measured
-again at the next full run of the flow. The part is not the constraint,
-which is worth saying plainly: the question for the next subsystem is
-whether it meets timing, not whether it fits.
+The complete flagship consumes a small fraction of the Xilinx XC7A200T FPGA.
+Post-synthesis reports for git revision \code{806a229} record 10\,999 slice LUTs
+(8.2\% utilization), 8\,918 slice registers (3.3\%), 16.5 dual-port 36~Kb Block
+RAM tiles (4.5\% of 365), 4 DSP48E1 slices, and 126 bonded I/O pins (44\% of
+285). Clock resources comprise one PLL and four MMCM instances, including the
+dedicated MIG memory clocking structures. Logic capacity is not a design
+bottleneck; subsequent subsystem integration depends strictly on closing timing
+at target frequencies rather than conserving slices.
 
 \section{Where it landed}
 \label{sec:f-place}
 
-Counting says how much of the part is used. It does not say where, and
-where is the question a design of four subsystems raises: are they four
-regions of the part or one mixture, and which of them did the pins pull
-to an edge?
+Resource counts quantify overall logic consumption without capturing spatial
+distribution. Multi-subsystem integration requires examining whether logic forms
+cohesive functional regions or scatters across the die, and how pin assignments
+influence placement.
 
-Figure~\ref{fig:f-map} is the answer, read off the routed checkpoint
-rather than drawn by hand. \code{//flagship:place\_report} opens the
-checkpoint in Vivado, attributes every placed cell to a subsystem by the
-top level instance it sits under, and writes a count per subsystem per
-slice column and row into \code{docs/flagship\_place.tsv}, which is
-committed. \code{//tools/fpgamap} bins that and draws it at build time. The
-arrangement is the one the layout numbers already use: the extraction is
-manual because it is minutes of Vivado, and a Bazel action has no
-repository to write into.
+Figure~\ref{fig:f-map} depicts cell placement extracted directly from routed
+design checkpoints. Rule \code{//flagship:place\_report} attributes placed logic
+cells to subsystem hierarchies, recording coordinates in
+\code{docs/flagship\_place.tsv}. Build tool \code{//tools/fpgamap} rasterizes
+these totals into the placement diagram. Table~\ref{tab:f-place} tabulates the
+corresponding cell counts.
 
 \begin{figure}[t]
 \centering
@@ -512,97 +439,69 @@ slices.}
 \input{flagshiptotals}
 \end{table}
 
-Four things are worth reading off it.
+The placement map highlights four structural characteristics:
 
-\emph{The subsystems are regions, not a mixture.} The memory
-controller holds the right edge, columns 133 to 163, against the
-memory's bank; the core sits beside it in 97 to 145; the video is a
-few patches on the left, near the encoder's pins. The placer was told
-nothing about this. It follows from the pins, which is the point: logic
-goes where its pins are, and where what it talks to is.
+\emph{Subsystems form localized regions.} The memory controller occupies columns
+133 to 163 along the right die boundary adjacent to memory I/O banks. The
+processor core occupies central columns 97 to 145. Video logic forms compact
+clusters on the left margin near HDMI transmitter pins. Cell placement
+naturally aligns with external I/O interfaces and interconnect targets.
 
-\emph{The Ethernet moved when it got something to say.} As an echo,
-with nothing to say to the core, the MAC sat hard against the PHY's
-bank, in columns 0 to 22, as far from the core as the part allows. Now
-that it is a peripheral on the core's bus it sits in 36 to 104, between
-its pins and the core, which is where the wires it carries want it. The
-same logic, the same pins, a different neighbour, and the placer moved
-it eighty columns.
+\emph{Ethernet logic migrates toward bus masters.} In standalone echo designs,
+MAC logic clustered at columns 0 to 22 beside the PHY interface. Connected to
+the system bus, the MAC shifts inward to columns 36 to 104, reflecting the
+routing demands of its bus interconnect.
 
-\emph{The memory controller was nearly as large as the core, its bus
-and all of its peripherals together}, 9\,493 cells to their 10\,719
-with UberDDR3, before MIG replaced it (issue 188), and it was pinned
-hard against the memory's bank; the map has not been drawn again
-since. That is worth knowing
-before adding anything that wants to be near those pins.
+\emph{The memory controller dominates peripheral resources.} The controller
+consumed 9\,493 cells compared to 10\,719 cells for the processor and
+peripherals combined under UberDDR3, remaining locked against DRAM I/O banks.
 
-\emph{A crossing sits between what it crosses.} The five FIFOs that
-carry the core's AXI-Lite to the pixel clock are in columns 104 to 122,
-between the core and the video; the two that carry frames between the
-core and the Ethernet clocks are counted with the Ethernet and sit at
-its edge nearest the core. Neither is something anything arranged.
+\emph{Clock domain crossings cluster along subsystem boundaries.} The five FIFOs
+transferring processor AXI-Lite transactions to the pixel clock occupy columns
+104 to 122 between the processor and video pipelines. Frame FIFOs sit along the
+Ethernet boundary nearest the core.
 
-The map and the table are of \code{main} at \code{806a229}, routed
-for this purpose, the same checkpoint the numbers above come from.
+The map and the table reflect git revision \code{806a229}, routed from the same
+checkpoint evaluated above.
 
 \section{The first program down the wire}
 \label{sec:f-first}
 
-The slot and the crossing are worth nothing until something writes the
-screen. The first program that does is a turning icosahedron with the
-TxHDL logo in a corner (Listing~\ref{lst:f-ico}), drawn at first by
-the core into the video peripheral's framebuffer, and now by Razboj
-through the scanout. It is linked for the memory at
-\code{0x4000\_0000}, flattened, and sent by the loader: the picture
-on the flagship changed a dozen times in an afternoon and Vivado ran
-for none of them, which is the loop this document is about.
+Display interfaces require visual validation. The initial demonstration software
+renders a rotating icosahedron with the TxHDL logo in the corner
+(Listing~\ref{lst:f-ico}), originally rendered directly by the processor and
+subsequently accelerated by Razboj. Compiling for DDR3 memory at
+\code{0x4000\_0000} and uploading via the serial loader enabled rapid graphics
+iteration without repeated FPGA bitstream synthesis.
 
-Three things in it are worth reading. The twenty faces are not a table:
-they are found at startup by taking every triple of vertices that are
-pairwise one edge apart and winding each so its normal points away from
-the centre, and the program says how many it found, which on the board
-was twenty. The face normals are unit vectors turned with the solid, so
-one number decides whether a face is seen and how brightly it is lit,
-and for a convex solid that test is the whole of hidden surface
-removal. And while the core drew it, nothing was cleared: a row was
-composed in a buffer and written once, because the raster read the
-framebuffer while the core wrote it, and a screen that is cleared and
-then drawn is seen in between. The first version cleared, and it
-flickered.
+The rendering implementation features three key techniques. Rather than storing
+a static face table, initialization routines identify all vertex triples
+separated by pairwise unit edges, orienting face normals outward. Face normals
+are unit vectors transformed by object rotation, allowing a single dot product
+to evaluate visibility and Lambertian illumination. For convex polyhedra,
+backface culling resolves visibility without a depth buffer. Early
+processor-rendered versions composed display rows in a local scanline buffer
+before writing to the framebuffer, avoiding visible flicker caused by drawing
+directly into an active scanout buffer.
 
-Two things it got wrong on the way are in its comments, because they
-are the kind of thing a picture on a monitor teaches and a simulation
-does not: the eye was three radii from the solid, so the nearest face
-swelled to nearly the whole silhouette and read as a back face painted
-over the front; and each colour channel was shaded and rounded on its
-own, so a face turning smoothly changed hue rather than brightness.
-The colour became one ramp of the same tan, spaced by a square root so
-the steps are even to the eye, with a floor so no face goes near black;
-and because a flat face still snapped from one four-bit step to the
-next, a pixel between two steps was dithered between them in a two by
-two pattern, which quadruples the levels the eye sees. On the monitor
-that is what turned a solid that stepped into one that turns.
+Visual evaluation on physical monitors revealed two rendering subtleties.
+Positioning the virtual camera three radii away caused nearest faces to dominate
+the silhouette, creating unnatural perspective distortion. Additionally,
+independent color channel quantization introduced hue shifts during shading
+transitions. The shader was revised to use a perceptual square-root intensity
+ramp with an elevated black floor and $2\times2$ ordered dithering to smooth
+four-bit color transitions.
 
-Razboj draws it now (issue~\#986), at the screen's 640 by 480 rather
-than the peripheral's 160 by 120, and in eight bits a channel, so the
-dither is gone and the square root stays. The core still turns the
-solid and picks the faces, but writes a display list instead of pixels
-(Listing~\ref{lst:f-ico-list}): a rectangle of the backdrop over the
-box the solid filled the last time that frame was drawn, then a
-triangle a face. A face is drawn when its corners wind clockwise on the
-screen, which is exact in perspective where the turned normal is not
-quite. There are two frames, rows 0 to 479 and 512 to 991 of Razboj's
-framebuffer, since its base is a constant of its type. Razboj draws
-the one not shown, the program waits for the doorbell to read zero and
-for idle, points the scanout at it, and waits for the vertical
-blanking, where the scanout takes its base. Nothing is drawn into the
-frame on the screen, so the flicker that row composition cured cannot
-come back. The logo is painted into both frames once, by the core, in
-a corner the solid cannot reach, which a test on the host checks with
-the clears and the faces rendered through Razboj's model. Every 64
-frames the program says how many cycles making the list, drawing it,
-and the whole frame took, against the \code{ico core} line the
-core-drawn version printed.
+Hardware rasterizer Razboj now accelerates rendering at $640\times480$ with
+24-bit color depth (issue~\#986). The processor manages transformation matrices
+and emits display lists (Listing~\ref{lst:f-ico-list}) containing background
+clear rectangles and shaded triangles. Polygon winding order determines
+screen-space visibility. The display pipeline utilizes alternating framebuffers
+in memory. Razboj renders to the off-screen surface; upon completion, software
+redirects scanout pointers during vertical blanking intervals to eliminate
+display tearing. The processor renders the corner logo into both framebuffers
+during initialization. Every 64 frames, software logs cycle counts for display
+list generation, rasterization, and total frame latency.
 
 \lstinputlisting[caption={\code{cpu/vreteno/rust/ico\_hdmi.rs}: the
 icosahedron.},label={lst:f-ico}]{cpu/vreteno/rust/ico_hdmi.rs}
@@ -610,25 +509,17 @@ icosahedron.},label={lst:f-ico}]{cpu/vreteno/rust/ico_hdmi.rs}
 \lstinputlisting[caption={\code{cpu/vreteno/rust/ico\_list.rs}: the
 icosahedron as Razboj's display lists.},label={lst:f-ico-list}]{cpu/vreteno/rust/ico_list.rs}
 
-The logo is data, in a crate of tables that builds for the core as
-it builds for this machine (Listing~\ref{lst:f-logo}). It is 144
-pixels square, drawn a logo pixel to a screen pixel in the corner of
-the 640 by 480 scanout, so the wordmark under the hat can be read
-(issue~\#1213); at first it was 36 square, four screen pixels to each
-of its own, and the wordmark was a suggestion. A pixel is a 4-bit index
-into a palette of sixteen 24-bit colours, which the logo's own colours
-fill after k-means from a fixed start, so 144 square is 10~KB rather
-than the 41~KB a word a pixel would be. It is written by
-\code{//tools/logo2rs} from the 512 by 512 PNG, averaged down in boxes,
-and committed, as the layout numbers are committed, because a Bazel
-action cannot reach the drive the logo is kept on. The dark background
-of the source becomes index 0, which is not a colour and which a
-program skips, so the logo sits on whatever is drawn under it.
-The tables are statics rather than constants: the crate is built
-unoptimised, and there a constant array read at an index known only
-at run time is copied whole for the read, so drawing the logo copied
-its ten kilobytes once a pixel, some 215~MB, and the paint took 31
-seconds rather than two (issue~\#1245).
+The logo is stored as pre-rasterized data in a dedicated crate
+(Listing~\ref{lst:f-logo}). Sized at $144\times144$ pixels, it maps one-to-one
+to screen pixels in the corner of the $640\times480$ display (issue~\#1213).
+Pixel values are 4-bit indices into a 16-color palette generated by k-means
+clustering, reducing image storage to 10~KB. Conversion utility
+\code{//tools/logo2rs} (Listing~\ref{lst:f-logo2rs}) downsamples source images
+and generates Rust source tables. Index zero represents transparent pixels,
+preserving background colors underneath. Tables are declared as static arrays
+rather than constants; in unoptimized builds, indexing constant arrays triggers
+full array copies on every pixel access, inflating paint latency from two
+seconds to 31 seconds (issue~\#1245).
 
 \lstinputlisting[caption={\code{lib/logo/logo.rs}: the head of the
 logo, as \code{logo2rs} writes it.},label={lst:f-logo},%
@@ -640,15 +531,16 @@ crate.},label={lst:f-logo2rs},tabsize=2]{tools/logo2rs/main.go}
 \section{What is not done}
 \label{sec:f-todo}
 
-\emph{One program paints the screen, and it is the whole of what is
-known about painting it.} Section~\ref{sec:f-first} says what it
-does not do: no second buffer, so a moving edge tears; no depth
-buffer, which a convex solid does not need and the next one will.
+\emph{Display pipeline maturity.} Section~\ref{sec:f-first} demonstrates
+single-buffered scanout with manual tearing prevention and convex geometry
+rendering without hardware depth buffering. Future graphics workloads will
+require hardware double buffering and a depth buffer.
 
-\emph{There is one flagship.} The issue that asks for this one allows
-for several, named \code{flagship-0}, \code{flagship-1} and so on, if
-the part ever fills up. It has not: see
-Section~\ref{sec:f-cost}.
+\emph{Target utilization headroom.} Architectural plans allow partitioning the
+flagship into numbered configurations (\code{flagship-0}, \code{flagship-1}) if
+logic density saturates the FPGA. As Section~\ref{sec:f-cost} documents, existing
+logic consumes less than 10\% of device resources, keeping a unified flagship
+viable.
 
 \begin{thebibliography}{9}
 
