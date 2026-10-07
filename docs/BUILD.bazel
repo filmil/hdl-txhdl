@@ -1939,6 +1939,21 @@ waveform(
 # its inner channels registered and unregistered, both netlists
 # checked against the run.
 waveform(
+    name = "empty",
+    example = "//lib/examples:ex_empty",
+    lowered = [
+        ("empty_pair", "pair"),
+        ("empty_pair_u", "pairu"),
+    ],
+    signals = [
+        "//clocks/clk=>clk",
+        "//seen=>seen",
+        "//seen_u=>seen_u",
+    ],
+    until = 16,
+)
+
+waveform(
     name = "unreg",
     example = "//lib/examples:ex_unreg",
     lowered = [

@@ -507,6 +507,17 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# What an empty channel's head reads (issue 1324): zero, in the run and
+# in the netlist alike:
+#   bazel run //lib/examples:ex_empty
+rust_binary(
+    name = "ex_empty",
+    srcs = ["ex_empty.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # What #[unregistered] refuses (issue 1293): a ring of wires, at the
 # lowering, and a receiver joined before its sender, in the run.
 rust_test(
@@ -1412,6 +1423,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "stream_alu.rs",
         "ex_stream_alu.rs",
         "ex_compose.rs",
+        "ex_empty.rs",
         "ex_unreg.rs",
         "ex_twoclock.rs",
         "ex_slowfirst.rs",
