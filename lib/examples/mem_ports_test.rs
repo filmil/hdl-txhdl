@@ -240,6 +240,92 @@ fn a_register_says_whether_vivado_may_use_dsp_slices() {
     );
 }
 
+/// A register whose next value is a sum of products, as Razboj's
+/// blend is (issue 1343).
+#[derive(Trace, Default)]
+pub struct NoDspSum {
+    #[use_dsp("no")]
+    pub s: Reg<U<17>>,
+}
+
+#[lower]
+impl Unit for NoDspSum {
+    async fn run(
+        &mut self,
+        (a, b, c, d): (In<U<8>>, In<U<8>>, In<U<8>>, In<U<8>>),
+        out: Out<U<17>>,
+    ) {
+        loop {
+            DefaultClock::rising().await;
+            let (a, b) = (a.get().zext::<17>(), b.get().zext::<17>());
+            let (c, d) = (c.get().zext::<17>(), d.get().zext::<17>());
+            with!(self <= { s: a.mul::<17>(b) + c.mul::<17>(d) });
+            out.set(self.s.get());
+        }
+    }
+}
+
+/// Vivado applies `use_dsp` only to the arithmetic that drives the
+/// signal it is on, so a register's attribute did not reach the
+/// products under its add, and they took the memory read before them
+/// into a DSP (issue 1343). Each product is a wire of its own carrying
+/// the register's attribute.
+#[test]
+fn use_dsp_reaches_the_products_under_a_register() {
+    let l = NoDspSum::lowered("no_dsp_sum");
+    let v = l.verilog();
+    let marked = v
+        .lines()
+        .filter(|s| {
+            s.contains("(* use_dsp = \"no\" *) wire") && s.contains(" * ")
+        })
+        .count();
+    assert_eq!(marked, 2, "a wire for each product:\n{v}");
+    let h = l.vhdl();
+    let said = h
+        .lines()
+        .filter(|s| {
+            s.contains("attribute use_dsp of sl") && s.contains("\"no\"")
+        })
+        .count();
+    assert_eq!(said, 2, "an attribute on each product's signal:\n{h}");
+}
+
+/// The same with the product named by a `let`, as `ex_mul` has it: a
+/// wire of the unit's own, which carries the attribute (issue 1343).
+#[derive(Trace, Default)]
+pub struct NoDspLet {
+    #[use_dsp("no")]
+    pub acc: Reg<U<16>>,
+}
+
+#[lower]
+impl Unit for NoDspLet {
+    async fn run(&mut self, (a, b): (In<U<8>>, In<U<8>>), out: Out<U<16>>) {
+        loop {
+            DefaultClock::rising().await;
+            let product = a.get().zext::<16>().mul::<16>(b.get().zext::<16>());
+            with!(self <= { acc: self.acc.get() + product });
+            out.set(self.acc.get());
+        }
+    }
+}
+
+#[test]
+fn use_dsp_reaches_a_product_named_by_a_let() {
+    let l = NoDspLet::lowered("no_dsp_let");
+    let v = l.verilog();
+    assert!(
+        v.contains("(* use_dsp = \"no\" *) wire [15:0] product"),
+        "{v}"
+    );
+    let h = l.vhdl();
+    assert!(
+        h.contains("attribute use_dsp of product : signal is \"no\";"),
+        "{h}"
+    );
+}
+
 #[test]
 fn a_small_memory_is_lowered() {
     let _ = Small::lowered("small");
