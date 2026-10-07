@@ -892,6 +892,13 @@ pub struct Vreteno<const IW: usize> {
     /// not the next program counter (issue 1195).
     pub tp: Reg<Bit>,
     pub tp_vec: Reg<U<32>>,
+    /// A conditional branch was guessed wrong last cycle, and where it
+    /// really goes: a branch is guessed taken when it points back and
+    /// not taken when it points forward, from the instruction alone,
+    /// and its compare, registered, corrects a wrong guess a cycle
+    /// later, as an exception redirects (issue 1300).
+    pub bp_fix: Reg<Bit>,
+    pub bp_vec: Reg<U<32>>,
     pub imem: Mem<U<32>, IMEM_WORDS>,
     /// A fetch that is out on the bus, for a program above the boot
     /// memory: whether one is out, the word it asked for, the two
@@ -1884,9 +1891,17 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 ),
                 _ => link,
             });
+            // A conditional branch goes where it is guessed to: back is
+            // taken, forward is not, from the immediate's sign alone, so
+            // the compare is not on the way to the program counter; a
+            // wrong guess is corrected a cycle later (issue 1300).
+            let is_branch = Bit::from(opcode == 0x63);
+            let guess = ir.bit(31);
+            let wrong = run & is_branch & (taken ^ guess) & !exc;
+            let right_at = mux(taken, pc + imm_b, link);
             let jump = select!(opcode.raw() => {
                 0x6f | 0x67 => Bit::One,
-                0x63 => taken,
+                0x63 => guess,
                 0x73 => is_mret | is_sret | refetch,
                 0x0f => Bit::from(is_fencei),
                 _ => Bit::Zero,
@@ -2770,7 +2785,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     | resume_take
                     | st_take
                     | wb_fault
-                    | self.tp,
+                    | self.tp
+                    | self.bp_fix,
             );
             let redirect = self.redirect.get();
             let park = run & stop;
@@ -2779,6 +2795,9 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let width = mux(short, U::<32>::from(2u32), U::<32>::from(4u32));
             let advance = mux(hold, fetch_pc, fetch_pc + width);
             let go = mux(rst, zero, mux(park, link, advance));
+            // An interrupt's or a refused store's handler, or the
+            // instruction's own target.
+            let late = mux(int_take | st_take, vec_other, target);
             let jmp = mux(
                 rst,
                 zero,
@@ -2794,7 +2813,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                             mux(
                                 self.tp,
                                 self.tp_vec.get(),
-                                mux(int_take | st_take, vec_other, target),
+                                mux(self.bp_fix, self.bp_vec.get(), late),
                             ),
                         ),
                     ),
@@ -2830,6 +2849,8 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 sc_q: sc_hit,
                 sc_ready: self.valid & is_sc & stall & !stall_ld & !wb_fault,
                 tp: exc,
+                bp_fix: wrong,
+                bp_vec: right_at,
                 tp_vec: trap_vec,
             });
             case!(rst => {
@@ -2849,7 +2870,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                     self.ir_pc <= fetch_pc;
                     // The word behind an exception is squashed here,
                     // and the redirect follows (issue 1195).
-                    self.valid <= !redirect & !exc
+                    self.valid <= !redirect & !exc & !wrong
                 },
             });
             // end{fetch}
