@@ -37,8 +37,8 @@ and every number is from a run the build made. The companion
 documents~\cite{cover} hold the rest.}%
 \thanks{The authors used a large language model, Claude, as an
 assistant in exploring the concepts and in writing and constructing
-the documents and the programs; every commit of the repository says
-so and carries the prompts that led to it, verbatim.}%
+the documents and the programs; every commit of the repository records
+this attribution and includes the exact prompts that guided it.}%
 \thanks{\buildstamp}}
 
 \markboth{TxHDL}{Filmar and Janković: TxHDL}
@@ -175,8 +175,8 @@ executor polls every process once per tick and then commits the
 drives; a process that has crossed an edge at this tick cannot cross
 it again, so a second wait written after a first waits for the next
 edge. Fig.~\ref{fig:p-time} draws the rule. A process waits, then
-reads: a register, in an expression or through \code{get}, is what
-the last edge latched, a wire's \code{get} what it carries, a
+reads: a register, in an expression or through \code{get}, yields what
+the last edge latched, a wire's \code{get} returns its current driven value, a
 memory's \code{read} its
 asynchronous port. Drives are deferred: \code{set} takes effect at the
 end of the tick, so a read after a drive in the same iteration still
@@ -573,8 +573,8 @@ Errors, critical warnings & 0 \\
 \centering
 \input{paper_vreteno_out_timing.tex}
 \caption{A byte out on Vreteno's serial port, from the trace: the
-write reaches the port and the line carries the frame, a start bit,
-the byte low bit first and a stop bit, four cycles each; the later
+write reaches the port and the serial line transmits the frame, including a start bit,
+the data byte least-significant bit first, and a stop bit, for four cycles each; the later
 requests are the program's polls for the next byte.}
 \label{fig:p-uart}
 \end{figure}
@@ -594,14 +594,14 @@ A core that runs only what its own assembler emits is a core that has
 been tested, not one that can be programmed. Vreteno is RV32IMAC, so
 compilers target it, and two do: Rust through the ruleset's own
 toolchain, and C++ through the GNU bare-metal RISC-V toolchain, whose
-\code{rv32imc/ilp32} multilib runs on this machine as it is and carries
-\code{newlib} and a \code{libstdc++} built for it. Both are fetched
+\code{rv32imc/ilp32} multilib runs on this machine directly, bundling
+precompiled distributions of \code{newlib} and \code{libstdc++}. Both are fetched
 by the build against a checksum. Nothing is installed to compile for
 the core, as nothing is installed to simulate or to synthesise it.
 
-A program for the core is built for a different machine than the
-build runs on, so a rule with a platform transition carries it
-across, and \code{//tools/elf2vreteno} turns the linked ELF into the
+A program for the core targets a different architecture than the
+build host; a platform transition rule bridges cross-compilation,
+and \code{//tools/elf2vreteno} turns the linked ELF into the
 two images the core is loaded from. Both languages end at the same
 place: the same machine, the same terminal on the serial line, the
 same assertion that the line came out and that the core stopped
@@ -695,7 +695,7 @@ pushed on every change and never forced; it holds the same tree, the
 same history and the same releases, and is read-only. So the tree
 this paper is built from is public, and every listing in it can be
 read there; the way in for a contributor is the corresponding author,
-who opens an account on the instance. The whole of it is under the
+who opens an account on the instance. The entire codebase is distributed under the
 Apache License, version 2.0.
 
 \section{Conclusion}
