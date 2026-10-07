@@ -26,8 +26,8 @@ since a Bazel action has no repository to read, and
 \code{//tools/gantt} draws it at build time.}%
 \thanks{The authors used a large language model, Claude, as an
 assistant in exploring the concepts and in writing and constructing
-the documents and the programs; every commit of the repository says
-so and carries the prompts that led to it, verbatim.}%
+the documents and the programs; every commit of the repository records
+this attribution and includes the exact prompts that guided it.}%
 \thanks{\buildstamp}}
 
 \markboth{The Dynamics of a Project}{Filmar and Janković: Dynamics}
@@ -40,17 +40,16 @@ A hardware description language, its runtime, its lowering to two
 netlist languages, a RISC-V core that runs on an FPGA, an AXI bus
 with a router, a small GPU, two compiler toolchains for the core, and
 sixteen documents, the tree as it stood on September 16, 2026, were
-written in \ganttdays{} days of work spread over four months. This is the shape of those \ganttdays{} days. It is
-not a narrative of intentions: every bar in the chart is commits that
-touched particular files on particular days, measured from the
-repository's history. Three things are visible in it that a plan
-would not have predicted. The specification came four months before
-the first line of the runtime, and nothing in between. The
-implementation was not staged but simultaneous, because a standing
-rule of the project requires every concept to enter the runtime, an
-example and a document in the same change, so a feature is never a
-bar in one band. And the parts that look like foundations, the bus
-and the toolchains, are the youngest things in the tree.
+written in \ganttdays{} days of work spread over four months. This
+analysis reconstructs the chronology of those \ganttdays{} days
+directly from empirical repository history. Three structural patterns
+emerge that diverge from conventional waterfall schedules. The
+specification preceded the runtime by four months with no intervening
+commits. Implementation proceeded simultaneously across layers rather
+than in staged phases, because a project convention required every
+concept to enter the runtime, a compiled example, and a document in
+the same commit. Foundational infrastructure (including the system bus
+and compiler toolchains) arrived last rather than first.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -61,21 +60,21 @@ repository mining.
 \section{What Is Measured}
 \label{sec:d-what}
 
-A band of the chart is a set of paths, and a block is a day on which
-a commit touched one of them, shaded by how many did. Paths rather
-than commit messages, because a path is what a change actually moved
-and a message is what it said it moved. The axis is the days the
-project was worked on and not the calendar, for a reason
-Section~\ref{sec:d-gap} gives.
+Each band of the chart represents a set of directory paths, and each
+block marks a day on which commits touched those paths, with shading
+indicating commit density. File paths serve as the empirical metric
+because modified paths capture verifiable changes rather than
+speculative commit messages. The horizontal axis measures active working
+days rather than calendar time, for reasons detailed in
+Section~\ref{sec:d-gap}.
 
-What is not measured is the arrows. A repository records what changed
-and never why it could not have changed sooner, so the dependencies
-are stated in \code{//tools/timeline} by hand and are the one part of
-the picture that is a claim rather than a measurement. They are the
-claims the rest of the documents already make: that the lowering
-needed values and units first, that the core needed the lowering,
-that the board needed the core, that the router needed the link, and
-that the C++ toolchain reused what the Rust one had built.
+The directional dependency arrows are modeled rather than mined.
+Because git history records when changes occurred rather than explicit
+structural prerequisites, causal dependencies are declared in
+\code{//tools/timeline} based on documented architectural dependencies:
+the lowering required values and units first, the core required the
+lowering, the board required the core, the router required the link,
+and the C++ toolchain reused what the Rust toolchain established.
 
 \section{The Four Month Gap}
 \label{sec:d-gap}
@@ -120,79 +119,75 @@ length are found from the history rather than chosen.}
 \section{Everything At Once}
 \label{sec:d-together}
 
-The striking thing in Fig.~\ref{fig:d-gantt} is how little of it
-looks like a schedule. The runtime, the lowering, the examples and
-the documents are all active on the same four days. A plan would have
-staged them, and the plan would have been wrong.
+In Fig.~\ref{fig:d-gantt}, the activity pattern differs markedly from
+a staged waterfall schedule. The runtime, lowering logic, concept
+examples, and technical documentation were all active concurrently across
+the same four working days.
 
-The cause is a rule the project set itself before any of this was
-written, stated in \code{AGENTS.md} and quoted in the
-paper~\cite{paper}: a concept enters the runtime, a compiled example
-and the documents in the same change, or the change is not finished.
-The rule was adopted to stop documentation drifting from code. Its
-effect on the shape of the work is that a feature is never a bar in
-one band. Adding memories to the lowering, to take one day's work,
-moved \code{lib/macros}, \code{lib/examples} and \code{docs} in the
-same hour, and the chart can only show that as four bands lit at
-once.
+This concurrency reflects an explicit policy established at project
+inception, documented in \code{AGENTS.md} and cited in the
+paper~\cite{paper}: every concept must enter the runtime, a compiled
+example, and the documentation in the same commit before work is
+considered complete. This practice prevented documentation from
+drifting from code. Consequently, individual features never appear as
+isolated bars within a single band. For example, adding memory lowering
+touched \code{lib/macros}, \code{lib/examples}, and \code{docs} in the
+same hour, displaying timeline activity across four bands simultaneously.
 
-So the bands are not phases. They are layers, and the project moved
-through all of them on every feature. Whether that is a good way to
-work is not something a chart can answer; what the chart shows is
-that the rule was kept.
+The bands represent architectural layers rather than chronological
+phases, with features cutting vertically across the stack. The chart
+confirms that the synchronized development discipline was maintained.
 
-The documents band is the widest and the darkest, with
-\ganttdocs{} commits against \ganttcommits{} in the whole tree.
-Some of that is the rule above. The rest is that this project
-produces documents as its output and not as its paperwork: sixteen
-of them, built from the tree at every commit, with every listing
-included from a file and every figure drawn from a run.
+The documentation band remains the widest and densest, with
+\ganttdocs{} commits out of \ganttcommits{} across the tree. Beyond the
+multi-layer commit rule, this concentration highlights that technical
+documents represent primary deliverables rather than secondary
+reporting: sixteen documents build continuously from the tree, embedding
+source listings directly and generating figures from execution traces.
 
 \section{The Foundations Came Last}
 \label{sec:d-last}
 
-The bus, the router, the GPU and the two toolchains are all on the
-last working day, and each of them is the kind of thing a plan puts
-at the bottom.
+The bus, router, GPU, and compiler toolchains appear on the final
+working day, reversing the typical sequence where infrastructure is
+laid down first.
 
-That order is not an accident of enthusiasm. Each of them needed
-something the project did not have until late. The AXI link needed
-channels to be hardware, which is the \code{Buffer} part, which
-needed the lowering to handle a send under a condition. The router
-needed the link. The core moving onto AXI needed the router. The C++
-toolchain needed the image tool and the linker script that the Rust
-toolchain had made, and the second toolchain took a fraction of the
-first's effort because of it.
+This ordering was architectural rather than accidental. Each system
+relied on components that matured late in development. The AXI link
+depended on hardware channel support in \code{Buffer}, which required
+conditional send lowering. The router depended on the link; migrating the
+core to AXI required the router. Similarly, the C++ toolchain reused the
+binary image generator and linker script created for Rust, drastically
+reducing secondary bring-up effort.
 
-The pattern is worth naming because it is the opposite of the usual
-advice. The project did not build a bus and then a processor on it.
-It built a processor on a bus of its own, ran it on an FPGA, and only
-then wrote the standard bus, at which point the processor's own bus
-was deleted. The core was the thing that proved the language, and a
-standard bus is a convenience that a proof does not need.
+This progression diverges from conventional top-down design methodology.
+The project did not begin by architecting a generalized bus before
+implementing a processor. Instead, it built an initial processor around a
+minimal dedicated bus, validated it on physical FPGA hardware, and only
+subsequently developed the generalized standard bus (decommissioning the
+private interconnect thereafter). The processor core served as the
+critical vehicle proving language feasibility; standard interconnects
+represented a later consolidation step.
 
 \section{What A Repository Cannot Say}
 \label{sec:d-cannot}
 
-Three things are missing from the chart and no amount of mining would
-recover them.
+Three dimensions of effort remain unobservable through repository mining alone.
 
-The first is time not spent committing. A day with seventy-one
-commits and a day with two are two very different days, and the chart
-says so, but neither says how long anyone sat at it.
+First, commit counts do not measure wall-clock developer effort. A day
+with seventy-one commits reflects different activity than a day with
+two, yet neither metric indicates total elapsed problem-solving time.
 
-The second is the work that failed. The tree keeps its dead ends on
-purpose, as probes under
-\code{experiments/rust\_embedding/}, and those are in the chart as
-ordinary commits, indistinguishable from the work that succeeded. A
-probe whose answer was no cost as much to write as one whose answer
-was yes.
+Second, commit frequency does not distinguish successful paths from
+exploratory dead ends. The repository deliberately retains negative
+results under \code{experiments/rust\_embedding/}, which appear as standard
+commits alongside functional subsystems. Probes with negative outcomes
+demanded equivalent exploratory investment.
 
-The third is order within a day. Almost every commit here landed on a
-day with dozens of others, so the chart's smallest unit is far
-coarser than the work's. An hour-by-hour axis was tried and
-discarded: it is accurate and unreadable, which is the usual fate of
-a chart that refuses to summarise.
+Third, intra-day commit sequencing is collapsed. Because daily activity
+frequently comprised dozens of commits, a daily granularity represents
+an intentional abstraction. An hourly axis was evaluated and rejected as
+visually cluttered, confirming the necessity of day-level aggregation.
 
 \begin{thebibliography}{9}
 
