@@ -110,6 +110,31 @@ impl Unit for Marked {
     }
 }
 
+/// A memory that asks for a block RAM, as Razboj's colour bank does
+/// where Vivado would otherwise make it LUT RAM (issue 1371).
+#[derive(Trace, Default)]
+pub struct AsksBlock {
+    #[ram_style("block")]
+    pub m: Mem<U<32>, 1024>,
+    pub a: Reg<U<10>>,
+    pub b: Reg<U<10>>,
+}
+
+#[lower]
+impl Unit for AsksBlock {
+    async fn run(&mut self, _i: (), out: Out<U<32>>) {
+        loop {
+            DefaultClock::rising().await;
+            out.set(self.m.read(self.b.get()));
+            with!(self <= {
+                m.at(self.a.get()): self.m.read(self.a.get()) + 1,
+                a: self.a.get() + 1,
+                b: self.b.get() + 3,
+            });
+        }
+    }
+}
+
 /// Two reads beside a write in 4096 bits: small enough to be LUT RAM.
 #[derive(Trace, Default)]
 pub struct Small {
@@ -154,6 +179,28 @@ fn a_read_modify_write_beside_a_read_is_lowered() {
 #[test]
 fn a_memory_marked_distributed_is_lowered() {
     let _ = Marked::lowered("marked");
+}
+
+#[test]
+fn a_memory_says_what_vivado_should_make_it() {
+    let block = AsksBlock::lowered("asks_block");
+    let v = block.verilog();
+    assert!(
+        v.contains("(* ram_style = \"block\" *)\n  reg [31:0] m [0:1023];"),
+        "the attribute on the memory's declaration: {v}"
+    );
+    let h = block.vhdl();
+    assert!(h.contains("attribute ram_style : string;"), "{h}");
+    assert!(
+        h.contains("attribute ram_style of m : signal is \"block\";"),
+        "{h}"
+    );
+    // #[distributed] says the same as ram_style("distributed").
+    let v = Marked::lowered("marked").verilog();
+    assert!(v.contains("(* ram_style = \"distributed\" *)"), "{v}");
+    // A memory that says nothing is as before.
+    let v = Rmw::lowered("rmw").verilog();
+    assert!(!v.contains("ram_style"), "{v}");
 }
 
 #[test]

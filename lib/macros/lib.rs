@@ -259,6 +259,54 @@ fn field_renames(body: &Group) -> Vec<Option<(String, Span)>> {
     out
 }
 
+/// Each field's `#[ram_style("...")]`, in `field_idents` order: what a
+/// memory asks Vivado to make it (issue 1371), or `None`.
+fn field_ram_styles(body: &Group) -> Vec<Option<(String, Span)>> {
+    let toks: Vec<TokenTree> = body.stream().into_iter().collect();
+    let mut out = Vec::new();
+    let mut pending: Option<(String, Span)> = None;
+    let mut depth = 0i32;
+    let mut i = 0;
+    while i < toks.len() {
+        if let (TokenTree::Punct(h), Some(TokenTree::Group(g))) =
+            (&toks[i], toks.get(i + 1))
+        {
+            if h.as_char() == '#' && g.delimiter() == Delimiter::Bracket {
+                let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+                if let [TokenTree::Ident(k), TokenTree::Group(a)] =
+                    inner.as_slice()
+                {
+                    if k.to_string() == "ram_style" {
+                        let text = a.stream().to_string();
+                        let v = text.trim().trim_matches('"').to_string();
+                        pending = Some((v, k.span()));
+                    }
+                }
+                i += 2;
+                continue;
+            }
+        }
+        match &toks[i] {
+            TokenTree::Punct(p) if p.as_char() == '<' => depth += 1,
+            TokenTree::Punct(p) if p.as_char() == '>' => depth -= 1,
+            TokenTree::Ident(_) if depth == 0 => {
+                if let Some(TokenTree::Punct(p)) = toks.get(i + 1) {
+                    let path = matches!(
+                        toks.get(i + 2),
+                        Some(TokenTree::Punct(q)) if q.as_char() == ':'
+                    );
+                    if p.as_char() == ':' && !path {
+                        out.push(pending.take());
+                    }
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    out
+}
+
 /// The fields of a braced struct body as their name tokens, in order,
 /// so that a check can point at one.
 fn field_idents(body: &Group) -> Vec<Ident> {
@@ -488,7 +536,10 @@ pub fn derive_ports(input: TokenStream) -> TokenStream {
 
 /// `#[derive(Trace)]`: every field is registered under its own name,
 /// or under the name `#[rename("...")]` gives it in the netlist.
-#[proc_macro_derive(Trace, attributes(rename, async_reg, distributed))]
+#[proc_macro_derive(
+    Trace,
+    attributes(rename, async_reg, distributed, ram_style)
+)]
 pub fn derive_trace(input: TokenStream) -> TokenStream {
     let item = parse_item(input);
     let Some(body) = &item.body else {
@@ -498,6 +549,7 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
     let renames = field_renames(body);
     let asyncs = field_flags(body, "async_reg");
     let distributed = field_flags(body, "distributed");
+    let styles = field_ram_styles(body);
     // The name each field takes in the netlist and in the trace: its
     // own, or the one it was renamed to, escaped where either target
     // reserves it (issue 497). The trace takes the netlist's name, so
@@ -524,6 +576,45 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
                 span,
                 &format!("two fields are called `{n}` in the netlist"),
             ));
+        }
+    }
+    // What each memory asks Vivado to make it: its `#[ram_style]`, or
+    // distributed RAM for `#[distributed]`, which says the same (issue
+    // 1371). Vivado knows four.
+    let mut style_pairs: Vec<String> = Vec::new();
+    for (k, n) in names.iter().enumerate() {
+        let own = styles.get(k).cloned().flatten();
+        if let Some((v, span)) = &own {
+            if !["block", "distributed", "registers", "ultra"]
+                .contains(&v.as_str())
+            {
+                refused.extend(err(
+                    *span,
+                    &format!(
+                        "ram_style is block, distributed, registers or \
+                         ultra, not `{v}`"
+                    ),
+                ));
+                continue;
+            }
+            if distributed[k] && v != "distributed" {
+                refused.extend(err(
+                    *span,
+                    &format!(
+                        "`{n}` is #[distributed] and asks for `{v}`: \
+                         say one"
+                    ),
+                ));
+                continue;
+            }
+        }
+        let v = match own {
+            Some((v, _)) => Some(v),
+            None if distributed[k] => Some("distributed".to_string()),
+            None => None,
+        };
+        if let Some(v) = v {
+            style_pairs.push(format!("(\"{n}\", \"{v}\")"));
         }
     }
     let calls = rust
@@ -556,6 +647,8 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
          &[{pairs}];\n\
          const ASYNC_REGS: &'static [&'static str] = &[{asyncs}];\n\
          const DISTRIBUTED: &'static [&'static str] = &[{distributed}];\n\
+         const RAM_STYLES: &'static [(&'static str, &'static str)] = \
+         &[{styles}];\n\
          fn fields() -> Vec<(&'static str, \
          Option<::txhdl::comp::trace::Kind>, usize, usize)> {{ \
          let mut __v = Vec::new(); {fields} __v }}\n}}\n\
@@ -582,6 +675,7 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
             .map(|(n, _)| format!("\"{n}\""))
             .collect::<Vec<_>>()
             .join(", "),
+        styles = style_pairs.join(", "),
         pairs = rust
             .iter()
             .zip(&names)
@@ -6962,6 +7056,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          init_regs: ::txhdl::netlist::starts::<Self>(),\n\
          async_regs: <Self as ::txhdl::netlist::Fields>::ASYNC_REGS.to_vec(),\n\
          distributed: <Self as ::txhdl::netlist::Fields>::DISTRIBUTED.to_vec(),\n\
+         ram_styles: <Self as ::txhdl::netlist::Fields>::RAM_STYLES.to_vec(),\n\
          aliases: Vec::new(),\n\
          nets: {{ let mut n: Vec<(String, ::txhdl::comp::trace::Kind, \
          usize, &'static str)> = Vec::new(); {nets} n }},\n\

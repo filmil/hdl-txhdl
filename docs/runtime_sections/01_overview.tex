@@ -98,6 +98,20 @@ to mark the field \code{\#[distributed]} when LUT RAM is what is
 meant. A memory of 4096 bits or fewer, a register file or a small
 FIFO, is left alone.
 
+\textbf{A memory can say what Vivado should make it.}
+\code{\#[ram\_style("block")]} on a memory's field, or
+\code{"distributed"}, \code{"registers"} or \code{"ultra"}, puts
+the \code{ram\_style} attribute on the memory in both netlists:
+\code{(* ram\_style = "block" *)} before its declaration in Verilog,
+and the attribute on its signal in VHDL (issue 1371).
+\code{\#[distributed]} says \code{"distributed"}. Vivado chooses a
+memory's kind from its shape, and a memory whose read is registered
+can still come out as LUT RAM, as Razboj's colour bank, 4096 words of
+32 bits, does (issue 1343). The attribute is a request: what a block
+RAM cannot hold Vivado still refuses, and says so in its synthesis
+log as an infeasible \code{ram\_style}, which is where to look. A
+memory that says nothing is left to Vivado, as before.
+
 \textbf{A channel is an elastic buffer of two.} A send is an offer:
 \code{valid} and \code{data} high this step, the transaction in the
 buffer at the end of it; \code{ready} says whether there is room, as
