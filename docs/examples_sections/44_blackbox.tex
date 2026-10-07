@@ -18,9 +18,9 @@ which names the module, its ports by their own names in the order
 drives its clock pin. \code{Top} holds it beside a lowered register
 and joins the two as any unit of units does. The pins are a
 \code{Pad}: a port that nothing in the design reads or drives, passed
-from \code{Top}'s ports to the module's, so that the netlist has an
-\code{inout} running the whole way. The simulation carries nothing on
-it.
+from \code{Top}'s ports to the module's, so that the generated netlist
+preserves an \code{inout} connection across the hierarchy. The simulation
+transfers no data over this port.
 
 The netlist instantiates \code{blinker} with its parameter and writes
 no module for it. The build simulates that netlist together with the

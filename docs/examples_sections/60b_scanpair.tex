@@ -23,7 +23,7 @@ second.
 \code{LinePair}, on the pixel clock, holds two lines. The beam reads
 one while the other fills, and they change places at the start of
 each line. At that start it asks for the line after the one about to
-be shown, so a line has the whole of the line before it to arrive in.
+be shown, providing the full duration of the previous line for arrival.
 The address is a running sum, a stride a line, so nothing multiplies.
 The frame's base is a register taken at the vertical sync, so a host
 that draws in one buffer and shows another flips them with one write.
@@ -56,7 +56,7 @@ and four visible rows of six, on a pixel clock unrelated to the bus
 clock. The memory takes a \code{hold} that stalls its beats, standing
 in for a refresh. Two frames, with a short stall in every line, show
 every pixel as the word at its place in the frame, and the underflow
-bit stays clear. A later frame stalls the memory for the whole of one
+bit stays clear. A later frame stalls the memory for an entire
 line, so the next line cannot arrive in time: the bit sets and stays
 set until a write clears it. Both units are checked against the run
 under nvc and Verilator.

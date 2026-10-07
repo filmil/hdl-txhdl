@@ -55,9 +55,9 @@ preamble. \code{drive} holds a one for each bit the master drives: all
 of a write, and the first fourteen bits of a read. Then come two
 counted loops of 32 bits, the preamble and the frame, each bit a low
 half and a high half. The two registers shift together, so the line's
-level and whether it is driven both come from the top bit. Every bit of the frame
-as the line carries it shifts into \code{rx}, and after a read the last
-sixteen are the word.
+level and whether it is driven both come from the top bit. Incoming frame
+bits sampled from the data line shift into \code{rx}; at the conclusion of a
+read cycle, the final sixteen bits represent the returned register word.
 
 \subsection{What Checks It}
 

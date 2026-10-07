@@ -9,7 +9,7 @@ arbitrary moment in its life, including the moment it is changing.
 What comes out then is neither the old value nor the new one, and the
 design has read something that never existed.
 
-\code{ChanCdc} in \code{//lib/parts} carries words across that gap.
+\code{ChanCdc} in \code{//lib/parts} transfers words across that gap.
 It is one unit with two processes, one per clock, a memory written by
 the writing side and read by the reading side, and a pointer on each
 side saying how far it has got. What crosses is only the pointers.
@@ -65,7 +65,7 @@ beside a synchroniser invites the opposite conclusion, which is why
 this paragraph is here.
 
 What the design can do is say which flops those are, so that the
-tool that places them knows. The four synchroniser fields carry
+tool that places them knows. The four synchroniser fields declare
 \code{\#[async\_reg]}, and the netlist marks each of them
 \code{ASYNC\_REG}: in Verilog as \code{(* ASYNC\_REG = "TRUE" *)} on
 the register, in VHDL as an attribute of the signal. That is what

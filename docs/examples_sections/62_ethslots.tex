@@ -2,9 +2,9 @@
 \section{The Registers a Driver Talks To}
 \label{sec:x-ethslots}
 
-An interface is the expensive part and an implementation is the cheap
-one, so the interface worth having is the one somebody else is
-already paying to maintain.
+An interface represents the critical abstraction boundary; adopting an
+interface that upstream software ecosystems actively maintain minimizes
+maintenance overhead.
 
 Zephyr's tree contains \code{drivers/ethernet/eth\_litex\_liteeth.c},
 a maintained driver for a soft MAC on an FPGA whose slot size is
@@ -35,9 +35,9 @@ frame.
 
 So there are two slots each way, used in turn, each a flat buffer of
 2048 bytes. A ring buys queue depth rather than throughput, and if it
-is wanted later it is an addition: a descriptor carries the same
+is wanted later it is an addition: a descriptor holds the same
 three values \code{tx\_slot}, \code{tx\_length} and \code{tx\_start}
-already carry.
+already provide.
 
 \subsection{Where the buffers are}
 
@@ -72,7 +72,7 @@ it.
 \emph{The transmit side has no interrupt.} LiteEth's driver disables
 it and polls \code{tx\_ready}, because Zephyr's send may block. So
 the run reads \code{tx\_ready} as one while idle and as zero while a
-frame is going, which is the whole of the transmit handshake.
+frame is going, completing the transmit handshake.
 
 \emph{The receive interrupt follows the store, not the frame.}
 \code{LineStore} holds its \code{running} high until the write
@@ -92,7 +92,7 @@ interrupt it had not looked at, dropping the frame rather than
 reading it. Only a run that writes zero and finds the bit still set
 can tell those apart.
 
-Five signals say the whole of it: \code{tx\_go} while the transmit
+Five signals govern the transaction interface: \code{tx\_go} while the transmit
 request waits for the engine to take it, \code{queued}, the frames
 waiting for the driver, from each arrival to its acknowledgement,
 \code{irq} while any waits, and \code{rx\_full} while both slots

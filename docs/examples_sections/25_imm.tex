@@ -11,8 +11,8 @@ replication of the top bit in Verilog and \code{resize} in VHDL. The
 five immediates of RV32I are those operations as the manual draws
 them, and \code{select!} chooses the one the opcode calls for.
 
-\code{select!} is \code{match} on a value: the first pattern that
-matches chooses, a pattern may carry an \code{if} guard, and the last
+\code{select!} implements value-level pattern matching: the first pattern that
+matches chooses, a pattern may include an \code{if} guard, and the last
 arm is the default. The name says what the hardware is, a chain of
 multiplexers in priority order, which is what the lowering makes of
 it; \code{case!} is the same choice among drives, \code{select!} the

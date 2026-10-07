@@ -26,7 +26,7 @@ not an optimisation being declined but a rule being obeyed.
 A line of pixels is a whole number of words. A frame is not. An
 Ethernet frame is anything from 64 to 1518 bytes, so its last word
 usually holds one, two or three real bytes, and writing the other
-three puts whatever the channel happened to be carrying into memory
+three puts whatever the channel happened to hold into memory
 past the end of the frame.
 
 So \code{LineStore} is told a count of bytes, not of words. It asks

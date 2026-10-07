@@ -11,9 +11,9 @@ specification's transport on that chain (issue 154). It is what lets
 a stock OpenOCD, and gdb through it, reach the debug module the board
 already has, with nothing written for either of them.
 
-OpenOCD speaks to it through its BSCAN tunnel. It sets the device's
-instruction register to \code{USER4} and carries every scan the
-transport's own TAP would have had inside one data scan of that
+OpenOCD communicates with it through its BSCAN tunnel. It sets the device's
+instruction register to \code{USER4} and encapsulates every scan the
+transport's own TAP would have processed inside one data scan of that
 chain: a bit that says instruction or data, seven bits of width, the
 payload, and three clocks after it. The payload is one bit longer than
 the register, because what comes back is late by a clock. The

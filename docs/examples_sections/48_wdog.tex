@@ -15,7 +15,7 @@ When the count reaches zero it asks the system control block of Section~\ref{sec
 the watchdog as the cause, so a program that restarts can read why it
 did.
 
-\subsection{Why A Refresh Carries A Key}
+\subsection{Why A Refresh Requires A Key}
 
 A program that has lost its way is not a program that has stopped. It
 is a program writing whatever it finds over whatever it reaches, and
@@ -23,8 +23,8 @@ it will eventually reach the watchdog. A refresh that any write
 performs is a refresh such a program keeps doing by accident, and a
 watchdog it cannot fail is no watchdog.
 
-So a refresh carries a word, and a write of anything else is not
-ignored: it is a failure, and it asks for the reset at once. The
+A valid refresh must provide this explicit key word. Writing any other
+value triggers an immediate fault, asserting reset without delay. The
 example writes a zero and watches the status.
 
 \subsection{The Window, And What It Catches}

@@ -32,7 +32,7 @@ decides what they mean; the fourth is this block's own doing.
 
 \subsection{A Key, and Why}
 
-A write to \code{reset} restarts the system only if it carries
+A write to \code{reset} restarts the system only if it supplies
 \code{KEY}. A wild store from a program that has lost its way should
 not restart the machine, and the cheapest defence is to make the
 value improbable. The example writes a zero and checks that nothing
@@ -44,8 +44,8 @@ design saw and others did not.
 
 \subsection{What A Reset Does Not Touch}
 
-\code{scratch} and \code{cause} are the two registers a reset leaves
-alone, and that is what makes them worth having. A bootloader leaves a
+\code{scratch} and \code{cause} persist across system resets to
+preserve critical state across reboot cycles. A bootloader leaves a
 word in \code{scratch} and restarts into the program that reads it; a
 program reads \code{cause} to find out whether it is starting for the
 first time or picking up after a watchdog.

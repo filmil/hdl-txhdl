@@ -4,9 +4,9 @@
 
 A pipeline is an \code{async fn}. The operators in
 \code{txhdl::pipeline} each take a cycle, so the depth of \code{mac}
-follows from the two it awaits and nobody places a stage boundary. The
-plain \code{fn} beside it has no \code{.await} to write, so it cannot
-count cycles, and that is the whole of the rule that a combinational
-body is timeless.
+follows from the two operations it awaits without manual stage placement.
+The plain \code{fn} beside it cannot write \code{.await} and cannot
+measure cycles, directly enforcing the invariant that a combinational
+body remains timeless.
 
 \lstinputlisting[caption={\code{ex\_pipeline.rs}.},label={lst:x-pipeline}]{lib/examples/ex_pipeline.rs}

@@ -19,7 +19,7 @@ behind a real one.
 \begin{quote}
 A model that answered one beat per request would make a burst look
 like a word and the run would prove nothing about bursting, which is
-the whole of what is being measured here.
+the core metric under evaluation here.
 \end{quote}
 
 That was written to justify making the \emph{test model} stricter.
@@ -45,7 +45,7 @@ end.
 
 A bridge and a memory each rather than an arbiter between them: a
 host sharing one link is the board's business, and one set of
-Wishbone lines cannot carry two bridges.
+Wishbone lines cannot support two bridges.
 
 Both memories stall for ten cycles before they answer anything and
 answer after two thereafter, which is nearer a controller that
@@ -75,10 +75,10 @@ real bridges, chained through both engines, with a memory that
 calibrates and then answers after two cycles, take 435.
 
 Neither number is the other's competitor: the first measures an
-engine and the second measures a path. The figure worth carrying is
-that the path is where the cycles are, which is what a burst served
-a word at a time costs, and what issuing several requests before
-their acknowledgements would win back.
+engine and the second measures a path. The key metric to observe is
+that the path introduces the dominant latency, reflecting the overhead
+of serving bursts one word at a time, which issuing several pipelined
+requests before acknowledgements would reclaim.
 
 \lstinputlisting[style=ascii,caption={What \code{ex\_dmawb} printed
 when the build ran it.},%

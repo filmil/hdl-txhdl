@@ -7,8 +7,8 @@ remote peripheral, whose transport is one frame per transaction, and
 the port a Zephyr driver talks to through \code{EthSlots}
 (\S\ref{sec:x-ethslots}). Neither can have the wire to itself.
 
-Nothing new had to be invented to share it. Ethernet already carries
-several protocols on one wire and says which is which: bytes twelve
+Nothing new had to be invented to share it. Ethernet already multiplexes
+several protocols on one wire and identifies each: bytes twelve
 and thirteen of every frame are its EtherType. The remote peripheral
 sends \code{0x88b5}, which IEEE leaves for local use, and Zephyr's
 stack sends only the standard types, so the two cannot be confused.

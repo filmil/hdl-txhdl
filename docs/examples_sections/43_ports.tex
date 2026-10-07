@@ -21,7 +21,7 @@ and the form says what the port is called (issue 580): a side written
 \code{name: S} names its ports \code{name\_field}, so \code{out.diff}
 is the port \code{out\_diff}; a side taken apart names them by the
 field, so \code{minuend} is the port \code{minuend}, since there is
-no side name to carry. A generic struct is read with the side's
+no side-level prefix to prepend. A generic struct is read with the side's
 arguments, so \code{DiffIn<W>} has ports of \code{W} bits.
 
 \code{Top} holds a \code{Diff}. Its input side is \code{Sink}, a

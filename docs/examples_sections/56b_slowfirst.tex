@@ -5,8 +5,9 @@
 The ports file lists a netlist's clocks in the order the lowering meets
 them. \code{SlowFirst} holds the two counters of
 Section~\ref{sec:x-twoclock} with the slow one first, so its ports file
-names \code{slow} before \code{clk}. A port on another clock is marked
-with it, \code{@slow}, and a port on the default clock carries no mark.
+names \code{slow} before \code{clk}. A port associated with another
+clock domain includes an explicit annotation, \code{@slow}, while
+ports in the default clock domain remain unannotated.
 
 The testbench generator read an unmarked port as on the first clock the
 file lists. Here that put \code{go} and \code{a}, which are on
