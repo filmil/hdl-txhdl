@@ -47,7 +47,7 @@
 use core::ffi::c_void;
 use gles_capi::{
     gles_flush, gles_frame_len, gles_frame_tiled, gles_make_current,
-    gles_retarget,
+    gles_retarget, gles_texture_room, gles_texture_table,
 };
 use razboj_tile::{MAX_TILES, TILE_WORDS};
 
@@ -523,6 +523,11 @@ pub extern "C" fn eglMakeCurrent(
                 WINDOW_HEIGHT,
             )
         };
+        if let Some((room, bus)) = m.textures() {
+            // SAFETY: the machine's room is its own and static, as the
+            // list is.
+            unsafe { gles_texture_room(room.as_mut_ptr(), room.len(), bus) };
+        }
         target(m, s.back);
         s.current = true;
     }
@@ -582,7 +587,10 @@ pub extern "C" fn eglSwapBuffers(dpy: Handle, surface: Handle) -> EGLBoolean {
         let mut tiles = [[0u32; TILE_WORDS]; MAX_TILES];
         let room = m.scratch();
         match gles_flush(room, &mut tiles) {
-            Some(b) => m.draw_tiled(&tiles[..b.tiles], &room[..b.entries]),
+            Some(b) => {
+                m.texture_table(gles_texture_table());
+                m.draw_tiled(&tiles[..b.tiles], &room[..b.entries]);
+            }
             None => {
                 m.draw(gles_frame_len());
                 drawn = false;
