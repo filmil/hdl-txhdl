@@ -58,6 +58,7 @@ use txhdl::comp::{
     join2, mux, until, Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx, Unit,
     Wire,
 };
+use txhdl::funcs::{lt_signed, sra};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
 use txhdl_parts::bus::axi::{BurstKind, Done, Grant, Issue, R, W};
@@ -309,9 +310,72 @@ pub struct Raster<
     /// Whether the tile is loaded from the framebuffer before its
     /// entries, as one more entry after the scrub (issue 993).
     pub load: Reg<Bit>,
-    /// Whether the entry is textured, so that its two texture slots are
-    /// passed over (issue 997).
+    /// Whether the entry is textured, which gives it two texture slots
+    /// (issue 997), and whether it samples, which only a tile does.
     pub texd: Reg<Bit>,
+    pub tex_on: Reg<Bit>,
+    /// The planes `u q`, `v q` and `q`, each at this pixel, at the start
+    /// of this row, and its two steps, as a colour channel's are; and a
+    /// plane's low word, held while its high word lands.
+    pub tuc: Reg<U<64>>,
+    pub tur: Reg<U<64>>,
+    pub tudx: Reg<U<64>>,
+    pub tudy: Reg<U<64>>,
+    pub tvc: Reg<U<64>>,
+    pub tvr: Reg<U<64>>,
+    pub tvdx: Reg<U<64>>,
+    pub tvdy: Reg<U<64>>,
+    pub tqc: Reg<U<64>>,
+    pub tqr: Reg<U<64>>,
+    pub tqdx: Reg<U<64>>,
+    pub tqdy: Reg<U<64>>,
+    pub tlo: Reg<U<32>>,
+    /// The texture: its descriptor's address and environment, and from
+    /// the descriptor its base level's address and sides, its two wrap
+    /// modes and how its texels are read.
+    pub tdesc: Reg<U<32>>,
+    pub tenv: Reg<U<3>>,
+    pub tbase: Reg<U<32>>,
+    pub tlogw: Reg<U<4>>,
+    pub tlogh: Reg<U<4>>,
+    pub tcs: Reg<Bit>,
+    pub tct: Reg<Bit>,
+    pub tclass: Reg<U<3>>,
+    /// A textured pixel's turns, as `tex::texel_uv` has them: `q`'s
+    /// leading zeros and its top 32 bits from its leading one; the
+    /// reciprocal's first guess, its Newton step's error, and the
+    /// reciprocal; `u q` and `v q` times it; the texel coordinates, with
+    /// eight bits of fraction; the texel's address; and what the cache
+    /// holds for it.
+    pub tn: Reg<U<7>>,
+    pub tx: Reg<U<32>>,
+    pub tr0: Reg<U<17>>,
+    pub te: Reg<U<50>>,
+    pub trc: Reg<U<28>>,
+    pub tpu: Reg<U<96>>,
+    pub tpv: Reg<U<96>>,
+    pub tiu: Reg<U<32>>,
+    pub tiv: Reg<U<32>>,
+    pub taddr: Reg<U<32>>,
+    pub ttag: Reg<U<20>>,
+    pub tok: Reg<Bit>,
+    pub tdat: Reg<U<32>>,
+    /// The environment's four products, before their divide, and the
+    /// textured pixel's colour.
+    pub tma: Reg<U<17>>,
+    pub tmr: Reg<U<17>>,
+    pub tmg: Reg<U<17>>,
+    pub tmb: Reg<U<17>>,
+    pub tcol: Reg<U<32>>,
+    /// The texture cache: 64 lines, each a block of four by four texels,
+    /// one burst of 64 bytes, direct mapped by the block's address. The
+    /// words, a block RAM of one write, the refill's, and one read, the
+    /// pixel's; each line's tag, the address above the line's index; and
+    /// a bit a line saying it holds anything, all cleared when a list
+    /// starts, since a program may change its textures between lists.
+    pub cdata: Mem<U<32>, 1024>,
+    pub ctag: Mem<U<20>, 64>,
+    pub cvalid: Reg<U<64>>,
 }
 // end{state}
 
@@ -504,6 +568,97 @@ pub(crate) fn seed_fall(k: U<5>) -> U<12> {
     })
 }
 
+/// The leading zeros of `v`, which is not nought: how far `tex::normal`
+/// shifts `q` (issue 997), found a half at a time.
+#[lower]
+fn lz64(v: U<64>) -> U<7> {
+    let z5 = Bit::from(v.slice::<32, 32>() == 0);
+    let a = mux(z5, v << 32usize, v);
+    let z4 = Bit::from(a.slice::<48, 16>() == 0);
+    let b = mux(z4, a << 16usize, a);
+    let z3 = Bit::from(b.slice::<56, 8>() == 0);
+    let c = mux(z3, b << 8usize, b);
+    let z2 = Bit::from(c.slice::<60, 4>() == 0);
+    let d = mux(z2, c << 4usize, c);
+    let z1 = Bit::from(d.slice::<62, 2>() == 0);
+    let e = mux(z1, d << 2usize, d);
+    let z0 = !e.bit(63);
+    let none = U::<7>::from(0u8);
+    mux(z5, U::<7>::from(32u8), none)
+        + mux(z4, U::<7>::from(16u8), none)
+        + mux(z3, U::<7>::from(8u8), none)
+        + mux(z2, U::<7>::from(4u8), none)
+        + mux(z1, U::<7>::from(2u8), none)
+        + mux(z0, U::<7>::from(1u8), none)
+}
+
+/// `v`, which is not nought, shifted up until its top bit is one, as
+/// [`lz64`] counts the shift.
+#[lower]
+fn norm64(v: U<64>) -> U<64> {
+    let a = mux(Bit::from(v.slice::<32, 32>() == 0), v << 32usize, v);
+    let b = mux(Bit::from(a.slice::<48, 16>() == 0), a << 16usize, a);
+    let c = mux(Bit::from(b.slice::<56, 8>() == 0), b << 8usize, b);
+    let d = mux(Bit::from(c.slice::<60, 4>() == 0), c << 4usize, c);
+    let e = mux(Bit::from(d.slice::<62, 2>() == 0), d << 2usize, d);
+    mux(!e.bit(63), e << 1usize, e)
+}
+
+/// A texel coordinate in two's complement, kept within `2^30` either way
+/// and cut to its low 32 bits, as `tex::texel_uv` keeps it.
+#[lower]
+fn clamp30(v: U<96>) -> U<32> {
+    let hi = U::<96>::from(1u64 << 30);
+    let lo = U::<96>::from(0u8) - hi;
+    let low = lt_signed(v, lo);
+    let high = lt_signed(hi, v);
+    mux(low, lo, mux(high, hi, v)).slice::<0, 32>()
+}
+
+/// A texel's column or row `i`, in two's complement, onto a side of
+/// `2^log` texels: clamped to the edge, or repeated, as `tex::wrap` has
+/// it.
+#[lower]
+fn wrap(i: U<32>, log: U<4>, clamp: Bit) -> U<32> {
+    let side = U::<32>::from(1u8) << (log.raw() as usize);
+    let last = side - U::<32>::from(1u8);
+    let under = lt_signed(i, U::<32>::from(0u8));
+    let past = !lt_signed(i, side);
+    let held = mux(under, U::<32>::from(0u8), mux(past, last, i));
+    mux(clamp, held, i & last)
+}
+
+/// The byte offset of the texel `(i, j)` in a base level `2^log_w`
+/// texels wide, in its blocks of four by four, as
+/// `razboj_tile::tex::texel_offset` has it.
+#[lower]
+fn texel_at(i: U<32>, j: U<32>, log_w: U<4>) -> U<32> {
+    let two = U::<4>::from(2u8);
+    let across = mux(log_w < two, U::<4>::from(0u8), log_w - two);
+    let block = ((j >> 2usize) << (across.raw() as usize)) + (i >> 2usize);
+    let three = U::<32>::from(3u8);
+    let within = ((j & three) << 2usize) + (i & three);
+    (block << 6usize) + (within << 2usize)
+}
+
+/// A textured pixel's colour (issue 997): the fragment's `f` through the
+/// environment `env` with the texel `t`, whose class says which of its
+/// channels it has, as `tex::env` has it for `REPLACE`, and for every
+/// other environment as for `MODULATE`, whose products over 255 are `m`.
+/// `RGB` and `LUMINANCE` texels give no alpha and `ALPHA` texels no
+/// colour, so the fragment's goes through.
+#[lower]
+fn tex_env(f: U<32>, t: U<32>, m: U<32>, class: U<3>, env: U<3>) -> U<32> {
+    let modulate = Bit::from(env != 0);
+    let colour = Bit::from(class != 2);
+    let alpha =
+        Bit::from(class == 0) | Bit::from(class == 2) | Bit::from(class == 4);
+    let from = mux(modulate, m, t);
+    let rgb = mux(colour, from.slice::<0, 24>(), f.slice::<0, 24>());
+    let a = mux(alpha, from.slice::<24, 8>(), f.slice::<24, 8>());
+    a.concat::<24, 32>(rgb)
+}
+
 /// Whether a read's beat is taken this cycle: one is offered, the
 /// release has room for its identifier, and no write response is
 /// ahead of it.
@@ -646,6 +801,7 @@ impl<
                         insn: U::<16>::from(0u8),
                         finished:
                             mux(count == 0, self.finished.get(), Bit::Zero),
+                        cvalid: U::<64>::from(0u8),
                     });
                     DefaultClock::rising().await;
                     if self.left.get() != 0 {
@@ -752,6 +908,7 @@ impl<
                                     pa: U::<12>::from(0u8),
                                     zon: Bit::Zero,
                                     son: Bit::Zero,
+                                    tex_on: Bit::Zero,
                                 });
                             }
                             // A load fetches nothing either: its box is
@@ -770,6 +927,7 @@ impl<
                                     pa: U::<12>::from(0u8),
                                     zon: Bit::Zero,
                                     son: Bit::Zero,
+                                    tex_on: Bit::Zero,
                                 });
                             }
                             if !(self.scrub.get() | self.load.get()).to_bool() {
@@ -951,6 +1109,7 @@ impl<
                                               | v.bit(13)
                                               | v.bit(14),
                                           texd: v.bit(14),
+                                          tex_on: v.bit(14) & self.tiled.get(),
                                           zon: v.bit(8) & self.tiled.get(),
 
                                           son: v.bit(13) & self.tiled.get(),
@@ -1052,9 +1211,175 @@ impl<
                                           cmask: w4.slice::<16, 4>(),
                                       });
                                   }
-                                  // A textured entry's two slots more are
-                                  // passed over: this rasteriser draws it
-                                  // untextured (issue 997).
+                                  // A textured entry's two slots more
+                                  // (issue 997). In a tile, slot A's
+                                  // sixteen words, slot B's first six and
+                                  // the first two of the descriptor slot A
+                                  // names; a flat list passes them over and
+                                  // draws the entry untextured. A plane's
+                                  // low word lands first and is held for
+                                  // its high one.
+                                  if self.tex_on.get().to_bool() {
+                                      until(DefaultClock::rising, || {
+                                          issue.ready().to_bool()
+                                      })
+                                      .await;
+                                      issue.send(Issue {
+                                          read: Bit::One,
+                                          addr: U::<A>::from(DL as u32)
+                                              + U::<A>::from(ENTRIES_AT)
+                                              + ((self.insn.get() + 2)
+                                                  .resize::<A>()
+                                                  << SHIFT),
+                                          len: U::<8>::from(15u8),
+                                          size: U::<3>::from(2u8),
+                                          burst: BurstKind::Incr,
+                                          lock: Bit::Zero,
+                                          cache: U::<4>::from(0u8),
+                                          prot: U::<3>::from(0u8),
+                                          qos: U::<4>::from(0u8),
+                                          region: U::<4>::from(0u8),
+                                      });
+                                      self.word.set(U::<5>::from(0u8));
+                                      for _ in 0..16 {
+                                          until(DefaultClock::rising, || {
+                                              landing(
+                                                  rdata.peek().is_some(),
+                                                  release.ready(),
+                                                  done.peek().is_some(),
+                                              )
+                                              .to_bool()
+                                          })
+                                          .await;
+                                          let sa = rdata.head().data;
+                                          let sat = self.word.get();
+                                          let sa64 =
+                                              sa.concat::<32, 64>(self.tlo.get());
+                                          with!(self <= {
+                                              tlo: sa,
+                                              word: sat + 1,
+                                          });
+                                          if sat == 1 {
+                                              with!(self <= { tuc: sa64, tur: sa64 });
+                                          }
+                                          if sat == 3 {
+                                              self.tudx.set(sa64);
+                                          }
+                                          if sat == 5 {
+                                              self.tudy.set(sa64);
+                                          }
+                                          if sat == 7 {
+                                              with!(self <= { tvc: sa64, tvr: sa64 });
+                                          }
+                                          if sat == 9 {
+                                              self.tvdx.set(sa64);
+                                          }
+                                          if sat == 11 {
+                                              self.tvdy.set(sa64);
+                                          }
+                                          if sat == 13 {
+                                              self.tdesc.set(sa);
+                                          }
+                                          if sat == 14 {
+                                              self.tenv.set(sa.slice::<0, 3>());
+                                          }
+                                      }
+                                      until(DefaultClock::rising, || {
+                                          issue.ready().to_bool()
+                                      })
+                                      .await;
+                                      issue.send(Issue {
+                                          read: Bit::One,
+                                          addr: U::<A>::from(DL as u32)
+                                              + U::<A>::from(ENTRIES_AT)
+                                              + ((self.insn.get() + 3)
+                                                  .resize::<A>()
+                                                  << SHIFT),
+                                          len: U::<8>::from(5u8),
+                                          size: U::<3>::from(2u8),
+                                          burst: BurstKind::Incr,
+                                          lock: Bit::Zero,
+                                          cache: U::<4>::from(0u8),
+                                          prot: U::<3>::from(0u8),
+                                          qos: U::<4>::from(0u8),
+                                          region: U::<4>::from(0u8),
+                                      });
+                                      self.word.set(U::<5>::from(0u8));
+                                      for _ in 0..6 {
+                                          until(DefaultClock::rising, || {
+                                              landing(
+                                                  rdata.peek().is_some(),
+                                                  release.ready(),
+                                                  done.peek().is_some(),
+                                              )
+                                              .to_bool()
+                                          })
+                                          .await;
+                                          let sb = rdata.head().data;
+                                          let sbt = self.word.get();
+                                          let sb64 =
+                                              sb.concat::<32, 64>(self.tlo.get());
+                                          with!(self <= {
+                                              tlo: sb,
+                                              word: sbt + 1,
+                                          });
+                                          if sbt == 1 {
+                                              with!(self <= { tqc: sb64, tqr: sb64 });
+                                          }
+                                          if sbt == 3 {
+                                              self.tqdx.set(sb64);
+                                          }
+                                          if sbt == 5 {
+                                              self.tqdy.set(sb64);
+                                          }
+                                      }
+                                      // The descriptor's first two words: the
+                                      // sides, wrap modes and class, then the
+                                      // base level's address.
+                                      until(DefaultClock::rising, || {
+                                          issue.ready().to_bool()
+                                      })
+                                      .await;
+                                      issue.send(Issue {
+                                          read: Bit::One,
+                                          addr: self.tdesc.get().resize::<A>(),
+                                          len: U::<8>::from(1u8),
+                                          size: U::<3>::from(2u8),
+                                          burst: BurstKind::Incr,
+                                          lock: Bit::Zero,
+                                          cache: U::<4>::from(0u8),
+                                          prot: U::<3>::from(0u8),
+                                          qos: U::<4>::from(0u8),
+                                          region: U::<4>::from(0u8),
+                                      });
+                                      until(DefaultClock::rising, || {
+                                          landing(
+                                              rdata.peek().is_some(),
+                                              release.ready(),
+                                              done.peek().is_some(),
+                                          )
+                                          .to_bool()
+                                      })
+                                      .await;
+                                      let dw = rdata.head().data;
+                                      with!(self <= {
+                                          tlogw: dw.slice::<0, 4>(),
+                                          tlogh: dw.slice::<4, 4>(),
+                                          tcs: dw.bit(12),
+                                          tct: dw.bit(13),
+                                          tclass: dw.slice::<20, 3>(),
+                                      });
+                                      until(DefaultClock::rising, || {
+                                          landing(
+                                              rdata.peek().is_some(),
+                                              release.ready(),
+                                              done.peek().is_some(),
+                                          )
+                                          .to_bool()
+                                      })
+                                      .await;
+                                      self.tbase.set(rdata.head().data);
+                                  }
                                   self.insn.set(
                                       self.insn.get()
                                           + mux(
@@ -1204,6 +1529,216 @@ impl<
                                         .to_bool()
                                     })
                                     .await;
+                                    // A textured pixel (issue 997) takes
+                                    // its texel first, a turn for each
+                                    // step of `tex::texel_uv` and the
+                                    // nearest texel of the base level: q
+                                    // normalised; the reciprocal's first
+                                    // guess; its Newton step's error; the
+                                    // reciprocal; `u q` and `v q` times
+                                    // it; the shift back and the clamp;
+                                    // the wrap and the texel's address;
+                                    // the cache read, and a refill on a
+                                    // miss; and the environment, its
+                                    // products and then their divide.
+                                    if (self.tex_on.get() & self.hit.get())
+                                        .to_bool()
+                                    {
+                                        let tq = self.tqc.get();
+                                        let tq1 =
+                                            mux(tq == 0, U::<64>::from(1u8), tq);
+                                        with!(self <= {
+                                            tn: lz64(tq1),
+                                            tx: norm64(tq1).slice::<32, 32>(),
+                                        });
+                                        DefaultClock::rising().await;
+                                        let tk = self.tx.get().slice::<26, 5>();
+                                        let tt = self.tx.get().slice::<16, 10>();
+                                        let tf = seed_fall(tk)
+                                            .resize::<22>()
+                                            .mul::<22>(tt.resize::<22>());
+                                        self.tr0.set(
+                                            seed_start(tk)
+                                                - (tf >> 10usize).resize::<17>(),
+                                        );
+                                        DefaultClock::rising().await;
+                                        let tp = self
+                                            .tx
+                                            .get()
+                                            .resize::<50>()
+                                            .mul::<50>(self.tr0.get().resize::<50>());
+                                        self.te.set(U::<50>::from(1u64 << 49) - tp);
+                                        DefaultClock::rising().await;
+                                        let tre = self
+                                            .tr0
+                                            .get()
+                                            .resize::<68>()
+                                            .mul::<68>(self.te.get().resize::<68>());
+                                        self.trc.set((tre >> 40usize).resize::<28>());
+                                        DefaultClock::rising().await;
+                                        // A signed plane times the
+                                        // reciprocal: the product of its
+                                        // bits as unsigned, less the
+                                        // reciprocal where the sign bit
+                                        // stood for 2^64 rather than -2^64.
+                                        let r96 = self.trc.get().resize::<96>();
+                                        let none96 = U::<96>::from(0u8);
+                                        let tuv = self.tuc.get();
+                                        let tvv = self.tvc.get();
+                                        with!(self <= {
+                                            tpu: tuv.resize::<96>().mul::<96>(r96)
+                                                - mux(
+                                                    tuv.bit(63),
+                                                    r96 << 64usize,
+                                                    none96,
+                                                ),
+                                            tpv: tvv.resize::<96>().mul::<96>(r96)
+                                                - mux(
+                                                    tvv.bit(63),
+                                                    r96 << 64usize,
+                                                    none96,
+                                                ),
+                                        });
+                                        DefaultClock::rising().await;
+                                        let tsh = (U::<7>::from(64u8)
+                                            - self.tn.get())
+                                        .raw()
+                                            as usize;
+                                        with!(self <= {
+                                            tiu: clamp30(sra(self.tpu.get(), tsh)),
+                                            tiv: clamp30(sra(self.tpv.get(), tsh)),
+                                        });
+                                        DefaultClock::rising().await;
+                                        let ti = wrap(
+                                            sra(self.tiu.get(), 8),
+                                            self.tlogw.get(),
+                                            self.tcs.get(),
+                                        );
+                                        let tj = wrap(
+                                            sra(self.tiv.get(), 8),
+                                            self.tlogh.get(),
+                                            self.tct.get(),
+                                        );
+                                        self.taddr.set(
+                                            self.tbase.get()
+                                                + texel_at(ti, tj, self.tlogw.get()),
+                                        );
+                                        DefaultClock::rising().await;
+                                        let ta = self.taddr.get();
+                                        let tline = ta.slice::<6, 6>();
+                                        with!(self <= {
+                                            ttag: self.ctag.read(tline),
+                                            tok: (self.cvalid.get()
+                                                >> (tline.raw() as usize))
+                                                .bit(0),
+                                            tdat: self.cdata.read(
+                                                tline.concat::<4, 10>(
+                                                    ta.slice::<2, 4>(),
+                                                ),
+                                            ),
+                                        });
+                                        DefaultClock::rising().await;
+                                        // A miss reads the texel's block, one
+                                        // burst of sixteen beats, into its
+                                        // line, and keeps the texel's own
+                                        // word as it passes.
+                                        let thit = self.tok.get()
+                                            & Bit::from(
+                                                self.ttag.get()
+                                                    == self.taddr.get().slice::<12, 20>(),
+                                            );
+                                        if !thit.to_bool() {
+                                            until(DefaultClock::rising, || {
+                                                issue.ready().to_bool()
+                                            })
+                                            .await;
+                                            issue.send(Issue {
+                                                read: Bit::One,
+                                                addr: (self.taddr.get()
+                                                    & U::<32>::from(0xffff_ffc0u32))
+                                                .resize::<A>(),
+                                                len: U::<8>::from(15u8),
+                                                size: U::<3>::from(2u8),
+                                                burst: BurstKind::Incr,
+                                                lock: Bit::Zero,
+                                                cache: U::<4>::from(0u8),
+                                                prot: U::<3>::from(0u8),
+                                                qos: U::<4>::from(0u8),
+                                                region: U::<4>::from(0u8),
+                                            });
+                                            self.word.set(U::<5>::from(0u8));
+                                            for _ in 0..16 {
+                                                until(DefaultClock::rising, || {
+                                                    landing(
+                                                        rdata.peek().is_some(),
+                                                        release.ready(),
+                                                        done.peek().is_some(),
+                                                    )
+                                                    .to_bool()
+                                                })
+                                                .await;
+                                                let fd = rdata.head().data;
+                                                let fa = self.taddr.get();
+                                                let fl = fa.slice::<6, 6>();
+                                                let fw = self.word.get().slice::<0, 4>();
+                                                let mine = Bit::from(fw == fa.slice::<2, 4>());
+                                                let done16 = Bit::from(fw == 15);
+                                                let fill = Bit::One;
+                                                let valid = self.cvalid.get()
+                                                    | (U::<64>::from(1u8)
+                                                        << (fl.raw() as usize));
+                                                with!(self <= {
+                                                    word: self.word.get() + 1,
+                                                    mine ? tdat: fd,
+                                                    fill ? { cdata.at(fl.concat::<4, 10>(fw)): fd },
+                                                    done16 ? { ctag.at(fl): fa.slice::<12, 20>() },
+                                                    done16 ? cvalid: valid,
+                                                });
+                                            }
+                                        }
+                                        DefaultClock::rising().await;
+                                        let ef = self.rgb.get();
+                                        let et = self.tdat.get();
+                                        with!(self <= {
+                                            tma: blend_sum(
+                                                ef.slice::<24, 8>(),
+                                                U::<8>::from(0u8),
+                                                et.slice::<24, 8>(),
+                                                U::<8>::from(0u8),
+                                            ),
+                                            tmr: blend_sum(
+                                                ef.slice::<16, 8>(),
+                                                U::<8>::from(0u8),
+                                                et.slice::<16, 8>(),
+                                                U::<8>::from(0u8),
+                                            ),
+                                            tmg: blend_sum(
+                                                ef.slice::<8, 8>(),
+                                                U::<8>::from(0u8),
+                                                et.slice::<8, 8>(),
+                                                U::<8>::from(0u8),
+                                            ),
+                                            tmb: blend_sum(
+                                                ef.slice::<0, 8>(),
+                                                U::<8>::from(0u8),
+                                                et.slice::<0, 8>(),
+                                                U::<8>::from(0u8),
+                                            ),
+                                        });
+                                        DefaultClock::rising().await;
+                                        let em = over255(self.tma.get())
+                                            .concat::<8, 16>(over255(self.tmr.get()))
+                                            .concat::<8, 24>(over255(self.tmg.get()))
+                                            .concat::<8, 32>(over255(self.tmb.get()));
+                                        self.tcol.set(tex_env(
+                                            self.rgb.get(),
+                                            self.tdat.get(),
+                                            em,
+                                            self.tclass.get(),
+                                            self.tenv.get(),
+                                        ));
+                                        DefaultClock::rising().await;
+                                    }
                                     // A pixel of an entry that tests
                                     // depth, or has the pixel's state
                                     // (issue 993), reads the depth and
@@ -1226,7 +1761,11 @@ impl<
                                             dtag: self.zmark.read(pa),
                                             dcol: self.dbank.read(pa),
                                             zq: depth16(self.zc.get()),
-                                            srcq: self.rgb.get(),
+                                            srcq: mux(
+                                                self.tex_on.get(),
+                                                self.tcol.get(),
+                                                self.rgb.get(),
+                                            ),
                                         });
                                         DefaultClock::rising().await;
                                         let src = self.srcq.get();
@@ -1425,7 +1964,11 @@ impl<
                                         mux(
                                             son,
                                             self.bout.get(),
-                                            self.rgb.get(),
+                                            mux(
+                                                self.tex_on.get(),
+                                                self.tcol.get(),
+                                                self.rgb.get(),
+                                            ),
                                         ),
                                     );
                                     let (mkeep, zmkeep) =
@@ -1497,6 +2040,9 @@ impl<
                                         cg: self.cg.get() + self.cgx.get(),
                                         cb: self.cb.get() + self.cbx.get(),
                                         zc: self.zc.get() + self.zdx.get(),
+                                        tuc: self.tuc.get() + self.tudx.get(),
+                                        tvc: self.tvc.get() + self.tvdx.get(),
+                                        tqc: self.tqc.get() + self.tqdx.get(),
                                         pa: py.slice::<0, 6>().concat::<6, 12>(
                                             (px + 1).slice::<0, 6>(),
                                         ),
@@ -1513,10 +2059,16 @@ impl<
                                 let qg = self.lg.get() + self.cgy.get();
                                 let qb = self.lb.get() + self.cby.get();
                                 let qz = self.zr.get() + self.zdy.get();
+                                let qu = self.tur.get() + self.tudy.get();
+                                let qv = self.tvr.get() + self.tvdy.get();
+                                let qq = self.tqr.get() + self.tqdy.get();
                                 with!(self <= {
                                     x: self.xa.get(),
                                     y: self.y.get() + 1,
                                     zc: qz, zr: qz,
+                                    tuc: qu, tur: qu,
+                                    tvc: qv, tvr: qv,
+                                    tqc: qq, tqr: qq,
                                     pa: (self.y.get() + 1)
                                         .slice::<0, 6>()
                                         .concat::<6, 12>(
