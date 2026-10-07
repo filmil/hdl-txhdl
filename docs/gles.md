@@ -43,12 +43,12 @@ A later issue means the entry point is accepted from the start but does what tha
 | Shading and faces | `glShadeModel`, `glFrontFace`, `glCullFace` | Now |
 | Lighting | `glLightx`, `glLightxv`, `glLightModelx`, `glLightModelxv`, `glMaterialx`, `glMaterialxv` | Now |
 | Clip planes | `glClipPlanex` | Now, one plane at least |
-| Clearing | `glClearColorx`, `glClear`; `glClearDepthx` | Now; a clear of the depth alone, once depth has been tested in the frame, waits for #993's masks |
+| Clearing | `glClearColorx`, `glClear`; `glClearDepthx` | Now, under the colour and depth masks |
 | Scissor | `glScissor` | #990 |
 | Depth | `glDepthFunc`, `glDepthMask` | Now, from #1273, drawn in a tile table |
-| Blending and masks | `glBlendFunc`, `glAlphaFuncx`, `glColorMask` | #993 |
+| Blending and masks | `glBlendFunc`, `glAlphaFuncx`, `glColorMask` | Now, from #993, drawn in a tile table |
 | Points and lines | `glPointSizex`, `glLineWidthx`, and the point and line modes of the draw calls | Now, from issue 994 |
-| Switches | `glEnable`, `glDisable`, `glIsEnabled` for `GL_LIGHTING`, `GL_LIGHT0` to `GL_LIGHT7`, `GL_CULL_FACE`, `GL_NORMALIZE`, `GL_RESCALE_NORMAL`, `GL_COLOR_MATERIAL`, `GL_CLIP_PLANE0`, `GL_DEPTH_TEST`; and the rest as the issues above land | Now, and growing |
+| Switches | `glEnable`, `glDisable`, `glIsEnabled` for `GL_LIGHTING`, `GL_LIGHT0` to `GL_LIGHT7`, `GL_CULL_FACE`, `GL_NORMALIZE`, `GL_RESCALE_NORMAL`, `GL_COLOR_MATERIAL`, `GL_CLIP_PLANE0`, `GL_DEPTH_TEST`, `GL_BLEND`, `GL_ALPHA_TEST`; and the rest as the issues above land | Now, and growing |
 | Queries and errors | `glGetError`, `glGetIntegerv`, `glGetFixedv`, `glGetBooleanv`, `glGetString`, `glGetPointerv` | Now |
 | Completion | `glFlush`, `glFinish` | Now (section 7) |
 | Hints | `glHint` | Accepted and ignored, as the specification allows |
@@ -328,11 +328,16 @@ Each takes its depth plane's slot after it, which the emitter works out as Razbo
 Razboj tests depth only in a tile table, and a tile's depth starts at the farthest.
 So a frame that tests depth anywhere is binned at the swap and drawn as a tile table, and a clear of the depth to the farthest at the frame's start writes nothing.
 A clear of both the colour and the depth to another depth, or after depth has been tested, is one rectangle that writes both.
-A clear of the depth alone, after that, would write the depth and leave the colour, which waits for #993's masks; until then it is left undone.
+A clear of the depth alone is a rectangle that writes no channel, since issue 993 gave Razboj the colour mask.
 `//gles:depth_test` holds forty scenes of triangles crossing in depth, in perspective, to a reference in f64, pixel by pixel, through Razboj's model.
 The GL icosahedron hides its back faces by depth rather than culling them, binned into a tile table on the board, and its picture is the culled one but for pixels on the solid's outline.
 
-Blending and the scissor are added as issues 993 and 990 land, each with the entry points section 2 holds for it.
+Blending, the alpha test and the colour mask are issue 993's, on the same tile buffer.
+With any of them on, a primitive carries the pixel's state in its second slot, and the frame is binned into a tile table as one that tests depth is.
+`glClear` writes the channels the colour mask allows and the depth when the depth mask does, as GL says.
+`//gles:blend_test` holds a scene for each of the 72 pairs of factors GL ES 1.1 allows to a reference that blends in f64, pixel by pixel, through Razboj's model.
+
+The scissor is added as issue 990 lands, with the entry points section 2 holds for it.
 
 ## 11. What the user has to decide
 

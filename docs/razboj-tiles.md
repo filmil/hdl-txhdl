@@ -169,6 +169,9 @@ Each step is a pull request, and each is checked against the model before the ne
    The comparison has a cycle of its own so that the banks' write enables come from a register rather than from a comparison of the block RAM's output.
    A flat list has no depth and draws its depth entries without the test; EGL's swap bins a frame that tests depth anywhere into a tile table and rings that (issue 1273).
 4. **Blending and the masks, issue 993**, on the same port, reading the colour the depth test already reads beside it.
+   Done in issue 993: an entry with the blend, the alpha test or a colour mask takes the depth's second slot, its state in words 3 and 4, and a pixel of it takes five cycles: the read, the factors, the products and their sum, the divide and the mask, and the write, so that no turn holds more than one of them.
+   The colour already there is read from a copy of the bank, written with it and read only by the walk, since a second read of the bank itself would make it LUT RAM.
+   A tile whose entries read that colour before anything has covered it is loaded from the framebuffer first, a burst a row through the walk's one write, about a write-out's cost; the binning sets the load bit in the record, and a frame that starts with a clear loads nothing.
 
 ## 8. What this leaves to issues 992 and 993
 

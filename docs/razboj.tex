@@ -278,6 +278,32 @@ without full-memory clears, keeping block RAM single-ported. Linear display
 lists ignore depth attributes, while tiled lists execute depth comparisons
 matching architectural models bit for bit.
 
+Blending, the alpha test and the colour mask come next
+(issue~\#993). Bit 13 of word 15 says an entry has any of them, and
+gives it the same second slot, whose words 3 and 4 hold the blend's two
+factors, GL ES's eleven, the alpha test's comparison and reference, and
+the channels written. A pixel of such an entry takes five cycles. It
+reads the depth and the colour already there, the colour from a copy
+of the colour bank, written where the bank is and read only by the
+walk, so that each of the two keeps one write and one read and stays a
+block RAM. In the next three turns it is decided, as GL orders it:
+the alpha test and the depth test with the blend's eight factors; each
+channel's two products and their sum; and the sum over 255, without a
+divider, and the mask. A turn after that it is written. The blend had
+one turn at first, and missed the board's clock by 2.2\,ns, through
+twenty-two levels of logic; a pixel that tests only depth keeps its
+three cycles. A pixel the mask leaves no channel of writes no colour, which
+is how a clear of the depth alone is drawn. A blend over a pixel no
+entry of the tile drew needs what the framebuffer holds there. So the
+binning marks a tile whose entries read the colour before anything has
+covered the whole tile, and the rasteriser loads such a tile from the
+framebuffer first, as one more entry: a burst of the tile's width a
+row, which costs about what the tile's write-out does. A frame that
+begins with a clear loads nothing. Scenes under every factor are drawn
+in tiles as the model draws them, byte for byte, loaded and not, and
+\code{//docs:razboj\_blend} replays the netlist's load and blend under
+both simulators.
+
 \section{The Rasteriser}
 \label{sec:g-raster}
 
@@ -426,10 +452,11 @@ cycles across an eight-primitive scene.
 \label{sec:g-not}
 
 Razboj prioritizes minimal hardware complexity while establishing scalable
-architectural patterns. The baseline design renders one pixel per cycle (two
-cycles for depth-tested pixels), restricts depth testing to tiled modes,
-limits color interpolation to screen space without perspective correction,
-and records alpha values without hardware blending. The pipeline omits
+architectural patterns. The baseline design renders one pixel per cycle (three
+cycles for depth-tested pixels and five for blended ones), restricts depth
+testing and blending to tiled modes, limits color interpolation to screen
+space without perspective correction, and gives a shaded triangle the alpha
+of its first vertex. The pipeline omits
 geometric clipping outside bounding boxes and issues single bursts
 sequentially.
 
