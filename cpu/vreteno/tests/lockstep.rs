@@ -626,6 +626,9 @@ fn lockstep_with(
                         | Kind::Mret
                         | Kind::Sret
                         | Kind::Wfi
+                        // An illegal one under `TVM` traps in execute,
+                        // before the model steps it (issue 1347).
+                        | Kind::SfenceVma
                         | Kind::Illegal
                         | Kind::Sb
                         | Kind::Sh
@@ -1586,6 +1589,60 @@ fn user_and_supervisor_modes_trap_where_they_are_sent() {
     assert_eq!(m.x[11], 0, "nor the disabled counter");
     assert_eq!(m.prv, 3, "ending in machine mode");
     assert_eq!([m.x[13], m.x[14]], [0, 0], "mstatush holds nothing");
+}
+
+/// mstatus.TVM, TW and TSR (issue 1347): machine mode sets all three
+/// with MPP, reads mstatus back, reads satp itself, which TVM leaves
+/// legal in machine mode, and returns into supervisor mode. There a
+/// read of satp, sfence.vma, wfi and sret are each an illegal
+/// instruction, taken to machine mode, which counts it and steps past
+/// it; the supervisor's ecall ends the run.
+#[test]
+fn tvm_tw_and_tsr_trap_the_supervisor() {
+    use vreteno32::isa::*;
+    use vreteno32::program::Asm;
+    let mut a = Asm::default();
+    let (mh, s_code, done) = (a.label(), a.label(), a.label());
+    a.wide(addi(8, 0, 0)); // x8 counts the illegal instructions
+    a.abs(mh, |h| addi(31, 0, h as i32));
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    a.wide(lui(5, 0x700)); // TVM, TW and TSR
+    a.wide(addi(5, 5, 0x400));
+    a.wide(addi(5, 5, 0x400)); // and MPP = supervisor
+    a.wide(csrrw(0, CSR_MSTATUS, 5));
+    a.wide(csrrs(10, CSR_MSTATUS, 0)); // 0x0070_0800
+    a.wide(csrrs(11, CSR_SATP, 0)); // legal in machine mode
+    a.abs(s_code, |c| addi(31, 0, c as i32));
+    a.wide(csrrw(0, CSR_MEPC, 31));
+    a.wide(mret());
+    // Supervisor mode.
+    a.place(s_code);
+    a.wide(csrrs(12, CSR_SATP, 0)); // TVM
+    a.wide(sfence_vma(0, 0)); // TVM
+    a.wide(wfi()); // TW
+    a.wide(sret()); // TSR
+    a.wide(ecall());
+    a.wide(halt()); // never reached
+                    // Machine mode's handler: an illegal instruction is counted and
+                    // stepped past, back into supervisor mode; the ecall ends it.
+    a.align();
+    a.place(mh);
+    a.wide(csrrs(21, CSR_MCAUSE, 0));
+    a.wide(addi(22, 0, 2));
+    a.to(done, |o| bne(21, 22, o));
+    a.wide(addi(8, 8, 1));
+    a.wide(csrrs(24, CSR_MEPC, 0));
+    a.wide(addi(24, 24, 4));
+    a.wide(csrrw(0, CSR_MEPC, 24));
+    a.wide(mret());
+    a.place(done);
+    a.wide(halt());
+    let m = lockstep(&a.words(), &[], "tvm tw tsr", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[10], 0x0070_0800, "TVM, TW, TSR and MPP read back");
+    assert_eq!(m.x[8], 4, "satp, sfence.vma, wfi and sret trapped");
+    assert_eq!(m.x[21], 9, "and the supervisor's ecall ended it");
+    assert_eq!(m.x[12], 0, "the trapped read wrote nothing");
 }
 
 /// A delegated interrupt (issue 1012): machine mode delegates the

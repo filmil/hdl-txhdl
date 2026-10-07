@@ -333,7 +333,13 @@ const MXR: u32 = 1 << 19;
 /// Loads and stores in machine mode as the mode `MPP` names (issue
 /// 1105).
 const MPRV: u32 = 1 << 17;
-const MSTATUS_W: u32 = SIE | MIE | SPIE | MPIE | SPP | MPP | MPRV | SUM | MXR;
+/// The traps machine mode sets on supervisor mode's virtual memory,
+/// `wfi` and `sret` (issue 1347).
+const TVM: u32 = 1 << 20;
+const TW: u32 = 1 << 21;
+const TSR: u32 = 1 << 22;
+const MSTATUS_W: u32 =
+    SIE | MIE | SPIE | MPIE | SPP | MPP | MPRV | SUM | MXR | TVM | TW | TSR;
 const SSTATUS_W: u32 = SIE | SPIE | SPP | SUM | MXR;
 /// The exceptions machine mode may delegate: all but an environment
 /// call from machine mode and the reserved causes.
@@ -657,7 +663,17 @@ impl Model {
     /// address's bits 9 and 8 name the least privilege that may, and a
     /// counter below machine mode wants its bit in `mcounteren`, and in
     /// user mode in `scounteren` as well (issue 1012).
+    /// Whether supervisor mode is running with one of `mstatus`'s
+    /// `TVM`, `TW` and `TSR` set, which makes what it names illegal
+    /// there (issue 1347).
+    fn s_trapped(&self, bit: u32) -> bool {
+        self.prv == 1 && self.csr.mstatus & bit != 0
+    }
+
     fn csr_allowed(&self, addr: u32) -> bool {
+        if addr == CSR_SATP && self.s_trapped(TVM) {
+            return false;
+        }
         if self.prv < (addr >> 8 & 3) {
             return false;
         }
@@ -1309,14 +1325,14 @@ impl Model {
             // Not in user mode; there is nothing for the model to drop,
             // since it holds no translations (issue 1014).
             SfenceVma => {
-                if self.prv == 0 {
+                if self.prv == 0 || self.s_trapped(TVM) {
                     self.trap(CAUSE_ILLEGAL, w);
                     return;
                 }
                 self.tlb.borrow_mut().flush();
             }
             Wfi => {
-                if self.prv == 0 {
+                if self.prv == 0 || self.s_trapped(TW) {
                     self.trap(CAUSE_ILLEGAL, w);
                     return;
                 }
@@ -1339,7 +1355,7 @@ impl Model {
                 next = self.csr.mepc;
             }
             Sret => {
-                if self.prv == 0 {
+                if self.prv == 0 || self.s_trapped(TSR) {
                     self.trap(CAUSE_ILLEGAL, w);
                     return;
                 }

@@ -38,9 +38,9 @@ use txhdl_parts::bus::axi::{BurstKind, Done, Grant, Issue, Resp, R, W};
 use txhdl_parts::mmu::{DReq, IReq, Pte, Res};
 
 /// `mstatus`'s fields that user and supervisor mode bring (issue 1012),
-/// and `MPRV` (issue 1105): what of it is writable, and what `sstatus`
-/// shows of it.
-const MSTATUS_W: u32 = 0x000e_19aa;
+/// `MPRV` (issue 1105), and `TVM`, `TW` and `TSR` (issue 1347): what of
+/// it is writable, and what `sstatus` shows of it.
+const MSTATUS_W: u32 = 0x007e_19aa;
 const SSTATUS_W: u32 = 0x000c_0122;
 /// The exceptions machine mode may delegate, and the interrupts.
 const MEDELEG_W: u32 = 0xb3ff;
@@ -1714,8 +1714,17 @@ impl<const IW: usize, const DW: usize> Unit for Vreteno<IW, DW> {
                     & ((prv != 0)
                         | bit_of(cen.zext::<32>(), ctr_i.zext::<5>() + 3)));
             let priv_ok = (prv >= f12.slice::<8, 2>()) & ctr_ok;
-            let csr_bad =
-                (csr_ro(f12) & csr_writes) | (dbg_only & !in_debug) | !priv_ok;
+            // In supervisor mode, `mstatus.TVM` makes `satp` and
+            // `sfence.vma` illegal, `TW` `wfi`, and `TSR` `sret`, so that
+            // machine mode can take them over (issue 1347).
+            let s_mode = Bit::from(prv == 1);
+            let tvm = s_mode & mstatus.bit(20);
+            let tw = s_mode & mstatus.bit(21);
+            let tsr = s_mode & mstatus.bit(22);
+            let csr_bad = (csr_ro(f12) & csr_writes)
+                | (dbg_only & !in_debug)
+                | !priv_ok
+                | (Bit::from(f12 == isa::CSR_SATP) & tvm);
             let csr_src = mux(f3.bit(2), rs1.zext::<32>(), a);
             let csr_new = csr_value(f3, csr_old, csr_src);
             // A write to `mip` reads and modifies the software's SEIP and
@@ -1744,9 +1753,9 @@ impl<const IW: usize, const DW: usize> Unit for Vreteno<IW, DW> {
                     // `mret` only in machine mode, `sret` and `wfi` not in
                     // user mode (issue 1012).
                     | (is_mret & (prv == 3))
-                    | (is_sret & (prv != 0))
-                    | (is_wfi & (prv != 0))
-                    | (Bit::from(is_sfence) & (prv != 0)),
+                    | (is_sret & (prv != 0) & !tsr)
+                    | (is_wfi & (prv != 0) & !tw)
+                    | (Bit::from(is_sfence) & (prv != 0) & !tvm),
                 _ => Bit::Zero,
             });
             // A trap: ecall, a word the core does not know, or the
@@ -1923,7 +1932,7 @@ impl<const IW: usize, const DW: usize> Unit for Vreteno<IW, DW> {
                 | U::<32>::from(0x20u32)
                 | mux(mstatus.bit(5), U::<32>::from(0x2u32), zero32);
             let mret_ok = run & is_mret & (prv == 3);
-            let sret_ok = run & is_sret & (prv != 0);
+            let sret_ok = run & is_sret & (prv != 0) & !tsr;
             // Only an instruction that writes writes: a set or a clear
             // from `x0` or a zero immediate is a read, and wrote the
             // value it read back after the count, so `mcycle` and
@@ -1961,7 +1970,7 @@ impl<const IW: usize, const DW: usize> Unit for Vreteno<IW, DW> {
             // A flush: an `sfence.vma` that runs, or a write of `satp`.
             // Either is followed by a refetch of the next instruction,
             // under the translations as they now are (issue 1014).
-            let flush_go = (run & Bit::from(is_sfence) & (prv != 0))
+            let flush_go = (run & Bit::from(is_sfence) & (prv != 0) & !tvm)
                 | (csr_write & (f12 == isa::CSR_SATP));
             let refetch =
                 Bit::from(is_sfence) | (csr_op & (f12 == isa::CSR_SATP));
@@ -2745,7 +2754,7 @@ impl<const IW: usize, const DW: usize> Unit for Vreteno<IW, DW> {
                         | (csr_new.zext::<64>() << 32),
                 // Only a `wfi` that is legal waits: in user mode it traps
                 // instead (issue 1012).
-                run & is_wfi & (prv != 0) ? waiting: Bit::One,
+                run & is_wfi & (prv != 0) & !tw ? waiting: Bit::One,
                 wake ? waiting: Bit::Zero,
                 rst ? waiting: Bit::Zero,
                 // Debug mode. On entry the cause says why, in bits 8
