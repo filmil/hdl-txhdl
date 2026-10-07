@@ -268,6 +268,40 @@ pub struct Raster<
     pub dtag: Reg<U<8>>,
     pub zq: Reg<U<16>>,
     pub zpass: Reg<Bit>,
+    /// The pixel's state (issue 993), which only a tile has: whether the
+    /// entry has any, whether it blends and with which two factors,
+    /// whether it tests alpha, how and against what, and the channels it
+    /// writes, a bit a byte.
+    pub son: Reg<Bit>,
+    pub bon: Reg<Bit>,
+    pub sfac: Reg<U<4>>,
+    pub dfac: Reg<U<4>>,
+    pub aon: Reg<Bit>,
+    pub afunc: Reg<U<3>>,
+    pub aref: Reg<U<8>>,
+    pub cmask: Reg<U<4>>,
+    /// The tile's colour again, written where and as the bank is and
+    /// read only by the walk, for the colour already at a pixel, so that
+    /// each of the two is a block RAM of one write and one read; the
+    /// colour read there; the pixel's own, held a turn; and the colour
+    /// the pixel writes, blended and masked.
+    pub dbank: Mem<U<32>, 4096>,
+    pub dcol: Reg<U<32>>,
+    pub srcq: Reg<U<32>>,
+    pub bout: Reg<U<32>>,
+    /// The blend's three turns between the read and the write, so that
+    /// none holds more than one of them (issue 993): each channel's two
+    /// factors, a byte each, alpha highest; then each channel's sum of
+    /// its two products, before the divide.
+    pub fsq: Reg<U<32>>,
+    pub fdq: Reg<U<32>>,
+    pub sum_a: Reg<U<17>>,
+    pub sum_r: Reg<U<17>>,
+    pub sum_g: Reg<U<17>>,
+    pub sum_b: Reg<U<17>>,
+    /// Whether the tile is loaded from the framebuffer before its
+    /// entries, as one more entry after the scrub (issue 993).
+    pub load: Reg<Bit>,
 }
 // end{state}
 
@@ -325,6 +359,56 @@ fn depth_pass(func: U<3>, z: U<16>, d: U<16>) -> Bit {
         mux(func.bit(0), lt, Bit::Zero),
     );
     mux(func.bit(2), hi, lo)
+}
+
+/// One blend factor (issue 993), as `model::factor` has it: `f`, four
+/// bits from `GL_ZERO` to `GL_SRC_ALPHA_SATURATE`, of a channel whose
+/// source byte is `s` and destination byte `d`, the source's alpha being
+/// `sa` and the destination's `da`, and `alpha` saying the channel is
+/// alpha itself. The factors come in pairs, a value and 255 less it, so
+/// bits 3 to 1 pick the value and bit 0 says which of the pair. Codes
+/// past ten are not defined.
+#[lower]
+fn factor(f: U<4>, s: U<8>, d: U<8>, sa: U<8>, da: U<8>, alpha: Bit) -> U<8> {
+    let full = U::<8>::from(255u32);
+    let room = full - da;
+    let sat = mux(alpha, full, mux(sa < room, sa, room));
+    let low = mux(f.bit(1), s, U::<8>::from(0u8));
+    let mid = mux(f.bit(1), da, sa);
+    let high = mux(f.bit(1), sat, d);
+    let v = mux(f.bit(3), high, mux(f.bit(2), mid, low));
+    mux(f.bit(0), full - v, v)
+}
+
+/// One channel's blend before its divide (issue 993): `s Fs + d Fd`,
+/// seventeen bits.
+#[lower]
+fn blend_sum(s: U<8>, d: U<8>, fs: U<8>, fd: U<8>) -> U<17> {
+    s.resize::<17>().mul::<17>(fs.resize::<17>())
+        + d.resize::<17>().mul::<17>(fd.resize::<17>())
+}
+
+/// That sum over 255, rounded to the nearest without a divider, and at
+/// most 255, as `model::blend` does it.
+#[lower]
+fn over255(x: U<17>) -> U<8> {
+    let y = x + U::<17>::from(128u32);
+    let r = (y + (y >> 8usize)) >> 8usize;
+    mux(
+        r > U::<17>::from(255u32),
+        U::<8>::from(255u32),
+        r.slice::<0, 8>(),
+    )
+}
+
+/// The bytes of `new` that `mask` holds, a bit a byte, over `old`.
+#[lower]
+fn masked(new: U<32>, old: U<32>, mask: U<4>) -> U<32> {
+    let b = mux(mask.bit(0), new.slice::<0, 8>(), old.slice::<0, 8>());
+    let g = mux(mask.bit(1), new.slice::<8, 8>(), old.slice::<8, 8>());
+    let r = mux(mask.bit(2), new.slice::<16, 8>(), old.slice::<16, 8>());
+    let a = mux(mask.bit(3), new.slice::<24, 8>(), old.slice::<24, 8>());
+    a.concat::<8, 16>(r).concat::<8, 24>(g).concat::<8, 32>(b)
 }
 
 /// Whether a read's beat is taken this cycle: one is offered, the
@@ -537,11 +621,22 @@ impl<
                                 below,
                                 U::<16>::from(TILE),
                             );
+                            // A tile to be loaded from the framebuffer
+                            // first takes one more entry for it, after
+                            // the scrub (issue 993).
+                            let load = w1.bit(26);
                             with!(self <= {
                                 ox: w1.slice::<0, 10>().resize::<16>(),
                                 oy: oy,
                                 th: rows.resize::<8>(),
                                 tile: self.tile.get() + 1,
+                                load: load,
+                                n: self.n.get()
+                                    + mux(
+                                        load,
+                                        U::<16>::from(1u8),
+                                        U::<16>::from(0u8),
+                                    ),
                             });
                             DefaultClock::rising().await;
                         }
@@ -563,9 +658,28 @@ impl<
                                     yb: last,
                                     pa: U::<12>::from(0u8),
                                     zon: Bit::Zero,
+                                    son: Bit::Zero,
                                 });
                             }
-                            if !self.scrub.get().to_bool() {
+                            // A load fetches nothing either: its box is
+                            // the tile where it is on the screen, whose
+                            // rows it reads from the framebuffer.
+                            if (!self.scrub.get() & self.load.get()).to_bool()
+                            {
+                                let (tx, ty) = (self.ox.get(), self.oy.get());
+                                let th = self.th.get().resize::<16>();
+                                with!(self <= {
+                                    x: tx,
+                                    y: ty,
+                                    xa: tx,
+                                    xb: tx + U::<16>::from(TILE - 1),
+                                    yb: ty + th - U::<16>::from(1u8),
+                                    pa: U::<12>::from(0u8),
+                                    zon: Bit::Zero,
+                                    son: Bit::Zero,
+                                });
+                            }
+                            if !(self.scrub.get() | self.load.get()).to_bool() {
                               self.word.set(U::<5>::from(0u8));
                               // The instruction's sixteen words, as one
                               // read burst of sixteen beats, each latched
@@ -742,6 +856,8 @@ impl<
                                           alpha: v.slice::<0, 8>(),
                                           deep: v.bit(8) | v.bit(13),
                                           zon: v.bit(8) & self.tiled.get(),
+
+                                          son: v.bit(13) & self.tiled.get(),
                                           zfunc: v.slice::<9, 3>(),
                                           zwrite: v.bit(12),
                                       });
@@ -766,7 +882,7 @@ impl<
                                               + ((self.insn.get() + 1)
                                                   .resize::<A>()
                                                   << SHIFT),
-                                          len: U::<8>::from(2u8),
+                                          len: U::<8>::from(4u8),
                                           size: U::<3>::from(2u8),
                                           burst: BurstKind::Incr,
                                           lock: Bit::Zero,
@@ -806,6 +922,39 @@ impl<
                                       })
                                       .await;
                                       self.zdy.set(rdata.head().data);
+                                      // The pixel's state, in the slot's
+                                      // words 3 and 4 (issue 993).
+                                      until(DefaultClock::rising, || {
+                                          landing(
+                                              rdata.peek().is_some(),
+                                              release.ready(),
+                                              done.peek().is_some(),
+                                          )
+                                          .to_bool()
+                                      })
+                                      .await;
+                                      let w3 = rdata.head().data;
+                                      with!(self <= {
+                                          bon: w3.bit(0),
+                                          sfac: w3.slice::<4, 4>(),
+                                          dfac: w3.slice::<8, 4>(),
+                                      });
+                                      until(DefaultClock::rising, || {
+                                          landing(
+                                              rdata.peek().is_some(),
+                                              release.ready(),
+                                              done.peek().is_some(),
+                                          )
+                                          .to_bool()
+                                      })
+                                      .await;
+                                      let w4 = rdata.head().data;
+                                      with!(self <= {
+                                          aon: w4.bit(0),
+                                          afunc: w4.slice::<1, 3>(),
+                                          aref: w4.slice::<8, 8>(),
+                                          cmask: w4.slice::<16, 4>(),
+                                      });
                                   }
                                   self.insn.set(self.insn.get() + 1);
                               }
@@ -893,6 +1042,31 @@ impl<
                                 ..=self.yb.get().raw() as usize
                             {
                                 DefaultClock::rising().await;
+                                // A load reads the row from the
+                                // framebuffer, one burst of the tile's
+                                // width, and takes a beat a pixel.
+                                if self.load.get().to_bool() {
+                                    until(DefaultClock::rising, || {
+                                        issue.ready().to_bool()
+                                    })
+                                    .await;
+                                    let row = (self.y.get().resize::<A>()
+                                        << LOGW)
+                                        + self.xa.get().resize::<A>();
+                                    issue.send(Issue {
+                                        read: Bit::One,
+                                        addr: (row << WORD)
+                                            + U::<A>::from(BASE as u32),
+                                        len: U::<8>::from(TILE_LEN),
+                                        size: U::<3>::from(2u8),
+                                        burst: BurstKind::Incr,
+                                        lock: Bit::Zero,
+                                        cache: U::<4>::from(0u8),
+                                        prot: U::<3>::from(0u8),
+                                        qos: U::<4>::from(0u8),
+                                        region: U::<4>::from(0u8),
+                                    });
+                                }
                                 for _ in self.xa.get().raw() as usize
                                     ..=self.xb.get().raw() as usize
                                 {
@@ -901,38 +1075,56 @@ impl<
                                     // start one, room for the burst and
                                     // its first beat.
                                     // In a tile the pixel goes to the
-                                    // bank, which takes one a cycle.
+                                    // bank, which takes one a cycle; in
+                                    // a load, when its beat lands.
                                     until(DefaultClock::rising, || {
-                                        (self.tiled.get()
-                                            | (Bit::from(self.beats.get() != 0)
-                                                & wbeat.ready())
-                                            | (Bit::from(
-                                                self.beats.get() == 0,
-                                            ) & (!self.hit.get()
-                                                | (issue.ready()
-                                                    & wbeat.ready()))))
+                                        ((self.tiled.get() & !self.load.get())
+                                            | (self.load.get()
+                                                & landing(
+                                                    rdata.peek().is_some(),
+                                                    release.ready(),
+                                                    done.peek().is_some(),
+                                                ))
+                                            | (!self.tiled.get()
+                                                & ((Bit::from(
+                                                    self.beats.get() != 0,
+                                                ) & wbeat.ready())
+                                                    | (Bit::from(
+                                                        self.beats.get() == 0,
+                                                    ) & (!self.hit.get()
+                                                        | (issue.ready()
+                                                            & wbeat
+                                                                .ready()))))))
                                         .to_bool()
                                     })
                                     .await;
                                     // A pixel of an entry that tests
-                                    // depth reads the depth there first,
-                                    // is compared with it a turn later,
-                                    // and is written a turn after that
-                                    // at the same address, so that the
-                                    // depth bank has one port here and
-                                    // no write enable waits on a compare
+                                    // depth, or has the pixel's state
+                                    // (issue 993), reads the depth and
+                                    // the colour there first; is decided
+                                    // a turn later, with the depth test,
+                                    // the alpha test, the blend and the
+                                    // mask; and is written a turn after
+                                    // that at the same address. So the
+                                    // depth bank has one port here, the
+                                    // colour's copy one read, and no
+                                    // write enable waits on a compare
                                     // (issue 992).
-                                    if (self.zon.get() & self.hit.get())
-                                        .to_bool()
+                                    if ((self.zon.get() | self.son.get())
+                                        & self.hit.get())
+                                    .to_bool()
                                     {
                                         let pa = self.pa.get();
                                         with!(self <= {
                                             dread: self.zbank.read(pa),
                                             dtag: self.zmark.read(pa),
+                                            dcol: self.dbank.read(pa),
                                             zq: depth16(self.zc.get()),
+                                            srcq: self.rgb.get(),
                                         });
                                         DefaultClock::rising().await;
-                                        self.zpass.set(depth_pass(
+                                        let src = self.srcq.get();
+                                        let deep = depth_pass(
                                             self.zfunc.get(),
                                             self.zq.get(),
                                             mux(
@@ -941,8 +1133,122 @@ impl<
                                                 self.dread.get(),
                                                 U::<16>::from(0xffffu32),
                                             ),
-                                        ));
+                                        );
+                                        let alpha = depth_pass(
+                                            self.afunc.get(),
+                                            src.slice::<24, 8>().resize::<16>(),
+                                            self.aref.get().resize::<16>(),
+                                        );
+                                        let son = self.son.get();
+                                        // The blend's factors, a channel
+                                        // at a time, as `model::factor`
+                                        // has them: the first of the
+                                        // blend's three turns (issue 993).
+                                        let dst = self.dcol.get();
+                                        let (sf, df) =
+                                            (self.sfac.get(), self.dfac.get());
+                                        let sa = src.slice::<24, 8>();
+                                        let da = dst.slice::<24, 8>();
+                                        let (sr, dr) = (
+                                            src.slice::<16, 8>(),
+                                            dst.slice::<16, 8>(),
+                                        );
+                                        let (sg, dg) = (
+                                            src.slice::<8, 8>(),
+                                            dst.slice::<8, 8>(),
+                                        );
+                                        let (sb, db) = (
+                                            src.slice::<0, 8>(),
+                                            dst.slice::<0, 8>(),
+                                        );
+                                        let (no, yes) = (Bit::Zero, Bit::One);
+                                        let fs = factor(sf, sa, da, sa, da, yes)
+                                            .concat::<8, 16>(factor(
+                                                sf, sr, dr, sa, da, no,
+                                            ))
+                                            .concat::<8, 24>(factor(
+                                                sf, sg, dg, sa, da, no,
+                                            ))
+                                            .concat::<8, 32>(factor(
+                                                sf, sb, db, sa, da, no,
+                                            ));
+                                        let fd = factor(df, sa, da, sa, da, yes)
+                                            .concat::<8, 16>(factor(
+                                                df, sr, dr, sa, da, no,
+                                            ))
+                                            .concat::<8, 24>(factor(
+                                                df, sg, dg, sa, da, no,
+                                            ))
+                                            .concat::<8, 32>(factor(
+                                                df, sb, db, sa, da, no,
+                                            ));
+                                        with!(self <= {
+                                            zpass: (!self.zon.get() | deep)
+                                                & (!(son & self.aon.get())
+                                                    | alpha),
+                                            fsq: fs,
+                                            fdq: fd,
+                                        });
                                         DefaultClock::rising().await;
+                                        // The second: each channel's two
+                                        // products and their sum. The
+                                        // third: the sum over 255, and the
+                                        // mask. A pixel that only tests
+                                        // depth needs neither.
+                                        if son.to_bool() {
+                                            let s = self.srcq.get();
+                                            let d = self.dcol.get();
+                                            let f = self.fsq.get();
+                                            let g = self.fdq.get();
+                                            with!(self <= {
+                                                sum_a: blend_sum(
+                                                    s.slice::<24, 8>(),
+                                                    d.slice::<24, 8>(),
+                                                    f.slice::<24, 8>(),
+                                                    g.slice::<24, 8>(),
+                                                ),
+                                                sum_r: blend_sum(
+                                                    s.slice::<16, 8>(),
+                                                    d.slice::<16, 8>(),
+                                                    f.slice::<16, 8>(),
+                                                    g.slice::<16, 8>(),
+                                                ),
+                                                sum_g: blend_sum(
+                                                    s.slice::<8, 8>(),
+                                                    d.slice::<8, 8>(),
+                                                    f.slice::<8, 8>(),
+                                                    g.slice::<8, 8>(),
+                                                ),
+                                                sum_b: blend_sum(
+                                                    s.slice::<0, 8>(),
+                                                    d.slice::<0, 8>(),
+                                                    f.slice::<0, 8>(),
+                                                    g.slice::<0, 8>(),
+                                                ),
+                                            });
+                                            DefaultClock::rising().await;
+                                            let top = over255(self.sum_a.get());
+                                            let mixed = top
+                                                .concat::<8, 16>(over255(
+                                                    self.sum_r.get(),
+                                                ))
+                                                .concat::<8, 24>(over255(
+                                                    self.sum_g.get(),
+                                                ))
+                                                .concat::<8, 32>(over255(
+                                                    self.sum_b.get(),
+                                                ));
+                                            self.bout.set(masked(
+                                                mux(
+                                                    self.bon.get(),
+                                                    mixed,
+                                                    self.srcq.get(),
+                                                ),
+                                                self.dcol.get(),
+                                                self.cmask.get(),
+                                            ));
+                                            DefaultClock::rising().await;
+                                        }
                                     }
                                     let px = self.x.get();
                                     let py = self.y.get();
@@ -982,29 +1288,46 @@ impl<
                                     let at = py
                                         .slice::<0, 6>()
                                         .concat::<6, 12>(px.slice::<0, 6>());
-                                    // A pixel that tests depth is kept
-                                    // where it passed against the depth
-                                    // read, and writes its own if the
-                                    // entry says so. Each mark written
-                                    // takes the tile's serial, or nought
-                                    // in a scrub, which writes every mark
-                                    // and nothing else.
-                                    let zon = self.zon.get();
-                                    let pass = !zon | self.zpass.get();
+                                    // A pixel that tests depth or alpha is
+                                    // kept where it passed, and writes its
+                                    // depth if the entry says so, and its
+                                    // colour, blended and masked, unless
+                                    // the mask holds no channel. A load
+                                    // writes the framebuffer's pixel.
+                                    // Each mark written takes the tile's
+                                    // serial, or nought in a scrub, which
+                                    // writes every mark and nothing else.
+                                    let (zon, son) =
+                                        (self.zon.get(), self.son.get());
+                                    let pass = !(zon | son) | self.zpass.get();
                                     let scrub = self.scrub.get();
+                                    let load = self.load.get();
                                     let hit = self.tiled.get() & self.hit.get();
-                                    let keep = hit & pass & !scrub;
+                                    let keep = hit & pass & !scrub & !load;
+                                    let none = son
+                                        & Bit::from(self.cmask.get() == 0);
+                                    let ckeep = (keep & !none) | load;
                                     let zkeep = keep & zon & self.zwrite.get();
                                     let tag = mux(
                                         scrub,
                                         U::<8>::from(0u8),
                                         self.serial.get(),
                                     );
+                                    let word = mux(
+                                        load,
+                                        rdata.head().data,
+                                        mux(
+                                            son,
+                                            self.bout.get(),
+                                            self.rgb.get(),
+                                        ),
+                                    );
                                     let (mkeep, zmkeep) =
-                                        (keep | scrub, zkeep | scrub);
+                                        (ckeep | scrub, zkeep | scrub);
                                     let pa = self.pa.get();
                                     with!(self <= {
-                                        keep ? { bank.at(at): self.rgb.get() },
+                                        ckeep ? { bank.at(at): word },
+                                        ckeep ? { dbank.at(at): word },
                                         mkeep ? { mark.at(at): tag },
                                         zkeep ? { zbank.at(pa): self.zq.get() },
                                         zmkeep ? { zmark.at(pa): tag },
@@ -1103,11 +1426,13 @@ impl<
                             }
                             // A scrub was not an entry of the list, and
                             // leaves every mark nought, so the serial
-                            // starts again from one.
-                            let scrub = self.scrub.get();
+                            // starts again from one; a load comes after
+                            // it, and was not an entry of the list either.
+                            let (scrub, load) =
+                                (self.scrub.get(), self.load.get());
                             with!(self <= {
                                 insn: mux(
-                                    scrub,
+                                    scrub | load,
                                     self.insn.get(),
                                     self.insn.get() + 1,
                                 ),
@@ -1118,6 +1443,7 @@ impl<
                                 ),
                                 clean: self.clean.get() | scrub,
                                 scrub: Bit::Zero,
+                                load: load & scrub,
                             });
                         }
                         // A tile drawn goes out a row at a time, each one

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The traced run of a list drawn in tiles (issue 1255): a scene on a
-//! screen two tiles across and one and an eighth down, binned into a
+//! screen two tiles across and one down, binned into a
 //! tile table and drawn through the tile buffer, then written out a row
 //! at a time. It writes the trace and the rasteriser's netlist, so the
 //! build replays the netlist under nvc and Verilator against this run,
@@ -11,12 +11,15 @@ use razboj::op::{assemble, Op};
 use razboj::raster::Raster;
 use razboj::sim::{self, Work};
 
-/// Two tiles across, and a second row of tiles eight rows high: the
-/// scene is as small as shows both, since nvc elaborates the whole run
-/// within a heap of 16 MiB, and the scrub after reset is 4096 cycles.
+/// Two tiles across and one down: the scene is as small as shows a tile
+/// at an origin past nought, since nvc runs the whole testbench within
+/// a heap of 16 MiB, which `rules_nvc` gives no way to raise
+/// (filmil/bazel_rules_nvc#108), and the scrub after reset is 4096
+/// cycles. A tile cut short by the screen's edge is the Rust tests's
+/// (`sim.rs`), on screens of 640 by 480.
 const LOGW: usize = 7;
 const W: usize = 1 << LOGW;
-const H: usize = 72;
+const H: usize = 64;
 /// A link past sixteen bits, since the memory is 64 KiB.
 const A: usize = 20;
 /// Words of memory: the framebuffer, then the tile table and its
