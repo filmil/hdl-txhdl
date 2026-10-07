@@ -2,10 +2,11 @@
 \section{An SPI Master, and a Chip to Talk To}
 \label{sec:x-spi}
 
-SPI is four wires and no protocol. A select says which chip is
-listening, a clock says when a bit is worth looking at, and the two
-data wires carry a bit each way on every one of those clocks. What
-the bytes mean is between the two ends.
+The Serial Peripheral Interface (SPI) uses four physical lines
+without high-level framing. A chip-select line addresses the target
+device, a serial clock coordinates sampling, and two data lines
+transfer bits in each direction on each active clock edge. Payload
+byte semantics are defined entirely by the attached device.
 
 \code{Spi} is three registers. The first holds the divider, the two
 mode bits and the chip select; the second is written with the byte to
@@ -19,8 +20,8 @@ command byte, three of address, one that is thrown away, and then as
 many as are wanted. A master that dropped the select between bytes
 would start a new command each time and read nothing.
 
-The second register is the one that surprises people, and it is worth
-saying why it is one register and not two. SPI has no direction. The
+The second register combines transmit and receive data into a single
+bidirectional port. SPI has no distinct directional phases. The
 eight clocks that send a byte are the eight that receive one, so
 every transfer is a swap: a driver writes a byte it may not care about
 in order to clock in a byte it does. Reading this flash means sending
@@ -29,10 +30,10 @@ bytes back.
 
 \subsection{The Two Mode Bits, and the One Place They Are Not Symmetric}
 
-\code{cpol} is the level the clock idles at. \code{cpha} says which of
-a bit's two edges carries it: with \code{cpha} clear the master takes
-the bit on the leading edge and moves its own data on the trailing
-one, and with \code{cpha} set it does the reverse.
+\code{cpol} specifies the idle clock polarity. \code{cpha} selects the
+active sampling edge: when \code{cpha} is clear, the master samples
+incoming data on the leading edge and drives outgoing data on the trailing
+edge; when \code{cpha} is set, these roles invert.
 
 Written that way the two look symmetric, and the implementation is
 almost symmetric, but not quite. With \code{cpha} set the first bit

@@ -21,18 +21,17 @@ linerange=clock-clock,caption={\code{lib/examples/ex\_twoclock.rs}:
 the second clock, which is three ticks of the first to one of
 its.},label={lst:x-slowclock}]{lib/examples/ex_twoclock.rs}
 
-Until this the build could not check such a unit at all, which is
-issue 131, and the reason is worth stating because it is the kind of
-thing a test suite hides rather than shows. The generated testbench
+Previously, the build could not verify multi-clock units (issue 131)
+due to subtle testbench sampling assumptions. The generated testbench
 advanced in cycles of the first clock and compared every output one of
 those cycles after driving it. For a port on a clock three times
 slower that is a value its own edge has not produced yet, so the two
 agreed for part of every period and disagreed for the rest.
 
-The fix is that a port carries its clock. The clock is written in the
-type and nowhere else by the time the netlist exists, so \code{\#[lower]}
-takes it from there into the lowering, the ports file names it after
-the port's width, and the generator reads it and checks each port one
+The resolution encodes the clock domain directly in the port type. Because
+domain membership is captured in the type system, \code{\#[lower]}
+propagates it directly into netlist metadata, the ports file records it after
+the port's width, and the generator reads it to check each port one
 cycle of its own clock after driving it.
 
 That this works is not something the run can show by itself, since a
@@ -40,8 +39,8 @@ testbench that is wrong in the same direction as the design agrees
 with it. What shows it is breaking it on purpose: with the offset put
 back to the first clock's period, the slow port differs at 5000,
 11000, 17000 and every six thousand after, which is that clock's
-period, and the co-simulation fails. With it right, both simulators
-agree with the run for the whole of it.
+period, and the co-simulation fails. With correct clock association,
+both simulators match the execution trace across all simulated cycles.
 
 The slow counter's input tells a second story of the same kind, which
 is issue 405. The testbench applies every input before every tick of

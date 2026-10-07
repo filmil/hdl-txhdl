@@ -51,7 +51,7 @@ cycle.
 
 The run fetches sixty-four words through sixteen-beat bursts, across a
 real link with \code{AxiHost}, \code{AxiPer} and a memory on the far
-side. Four address phases carry what would otherwise take sixty-four.
+side. Four address phases transfer what would otherwise require sixty-four.
 
 It asserts rather than prints. Every word arrived. Each word is the
 one at its own address, because the memory holds its address in each
@@ -64,7 +64,7 @@ log is a number somebody has to read and believe; a bound a run must
 come in under is a claim the build checks every time.
 
 The memory model in the example answers bursts rather than words, and
-that is not incidental. A burst arrives as one request carrying
+that is not incidental. A burst arrives as one request specifying
 \code{len}, beats less one, and is owed \code{len + 1} beats with the
 last of them marked. A model that answered one beat per request would
 make a burst look like a word: the words would still all arrive, the

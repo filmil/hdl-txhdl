@@ -6,7 +6,7 @@ A reservation station gathers the operands of an operation that
 arrive out of order and on separate channels, and fires when all of
 them have. \code{Station2} to \code{Station10} in \code{txhdl\_parts}
 are the stations of two to ten inputs, each written out by
-\code{station!}. An input carries a tag and a value, a
+\code{station!}. An input presents a tag and a value via
 \code{Tagged<TB, T>}; the station has a line per tag value, one cell
 per input in each, and an input lands in its cell of the line its
 tag names. A line whose every cell holds is sent on the output as

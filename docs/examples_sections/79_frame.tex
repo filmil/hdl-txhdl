@@ -8,10 +8,9 @@ the one taken only sometimes: a wait under \code{if}. Its state is
 made like any other, and the state before the \code{if} gets a way
 around it. When the condition holds at that state's edge the
 register goes to the wait inside; when it fails, the register goes
-past the \code{if}, to whatever wait comes next. So the register's
-next value is a choice on the condition rather than a number, and
-that choice is the whole of the control flow the \code{if} asked
-for.
+past the \code{if}, to whatever wait comes next. The register's
+next value selects based on the condition rather than a static index,
+realizing the branch control flow that the \code{if} construct requires.
 
 The statements around the \code{if} keep their meaning by being
 placed where they happen. What sits in an arm before its wait

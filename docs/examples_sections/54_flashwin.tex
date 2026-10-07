@@ -28,9 +28,10 @@ The wires are mode 0, and only mode 0: the clock idles low, the chip
 takes a bit as the clock rises, and the master moves one as it falls.
 That is the mode every flash answers a fast read in, so the window
 needs neither the two mode bits the master has nor the register to
-hold them. The select is held low for the whole of a read and released
-after it, so each read is a command the chip sees whole, which is what
-a real chip requires and what the model checks.
+hold them. The select line remains asserted low throughout the read
+sequence and is deasserted afterward. Each read constitutes an
+uninterrupted command sequence, satisfying physical flash device
+requirements verified by the simulation model.
 
 A write is answered \code{SLVERR} rather than ignored. The window is
 read only, and saying so is what makes it safe to fetch from: nothing

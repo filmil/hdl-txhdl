@@ -7,8 +7,8 @@ names how many 128-bit limbs it takes: \code{U<256, 2>} is 256 bits
 in two. The unit is an accumulator at that width, cleared on request,
 which adds its input each cycle and puts out the sum and two bytes
 of it, taken with \code{slice}: the byte just above the low limb,
-where a carry lands, and the top byte. The run fills the low limb, adds
-one so the sum carries into the high limb, sets the top bit, and then
+where an overflow bit lands, and the top byte. The run fills the low limb, adds
+one so the sum overflows into the high limb, sets the top bit, and then
 adds all ones, which is minus one and takes one away. The netlists
 declare 256-bit vectors, and both are checked under nvc and Verilator
 against the trace, as Section~\ref{sec:x-checked} describes, so the
@@ -19,7 +19,7 @@ the full width.
 \centering
 \input{wide_timing.tex}
 \caption{The 256-bit accumulator, drawn as two bytes of its sum: the
-carry into the high limb, then the top bit. The full values are in
+overflow into the high limb, then the top bit. The full values are in
 the printout.}
 \label{fig:x-wide}
 \end{figure}

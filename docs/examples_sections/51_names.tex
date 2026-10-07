@@ -19,10 +19,9 @@ that part of the choice is a constant the compiler evaluates. A
 constant is evaluated for every type the unit is lowered at, which is
 why a generic unit needs no instantiation for the answer to be right.
 
-None of it is silent. The netlist carries a line per renamed
-\code{let} above the module, in the target's own comment syntax, so a
-reader who meets a wire called \code{count\_w} is told which
-\code{let} it came from:
+These mappings are fully documented. The generated netlist emits
+comment annotations above the module for each renamed \code{let} binding,
+indicating the original source identifier for wires such as \code{count\_w}:
 
 \begin{lstlisting}[style=ascii]
 // `let count` is the wire count_w.

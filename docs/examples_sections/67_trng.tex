@@ -55,7 +55,7 @@ module inside.
 What the words are not is independent. On the board the extractor's
 output passes the bias bound and measures about 0.99 bits of
 min-entropy per bit, but its bits are correlated with their neighbours
-in every capture, because the samples carry a dependence at a few lags
+in every capture, because the samples exhibit correlation at a few lags
 and von Neumann's extractor removes bias and not dependence. The lags
 move from one build of the same rings to the next: lag 19 on one,
 lags 5 and 22 on another (issue 780). So the words are not handed out
@@ -63,9 +63,9 @@ as they are. Zephyr's driver conditions them: every 32 bytes it gives
 are SHA-256, from Zephyr's Mbed TLS, over 32 of the extractor's words,
 four input bits to each output bit, and a health test that trips part
 way through refuses the whole block. SP 800-90B lets a vetted
-conditioner's output claim full entropy when its input carries 64 bits
+conditioner's output claim full entropy when its input provides 64 bits
 more than the output's length, and 1024 input bits do that if each
-carries half a bit. Half a bit is an engineering margin under the 0.99
+supplies half a bit. Half a bit is an engineering margin under the 0.99
 measured, chosen because the dependence moves; it is not an
 assessment.
 

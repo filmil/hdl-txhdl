@@ -3,7 +3,7 @@
 \label{sec:x-map}
 
 A unit over \code{N} peripherals decodes an address against \code{N}
-ranges, and stable Rust has no array const parameter to carry them:
+ranges, and stable Rust lacks array const parameters to pass them:
 an \code{[usize; N]} as a const parameter needs
 \code{adt\_const\_params}. Until now a router or a bridge took a
 \code{BASE} and a \code{MASK} const parameter per peripheral, which is
@@ -35,7 +35,7 @@ The decoder below takes an address a cycle and says, one bit per
 range, which range holds it, the first that matches, and whether
 none does. The run walks seven addresses in and out of the ranges;
 the netlist is checked against the run under nvc and Verilator, and
-its three compares carry the constants the map states.
+its three comparators instantiate the constants defined by the map.
 
 \begin{figure}[htbp]
 \centering

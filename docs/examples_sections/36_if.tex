@@ -34,7 +34,7 @@ every other, and the idle arm holds an \code{if} of its own.
 \begin{figure}[htbp]
 \centering
 \input{if_timing.tex}
-\caption{The pulser: a reset, a run of three, a run of two, a run of four cut by a reset, a run of one; \code{done} carries the count of runs.}
+\caption{Waveform trace of the pulser: reset sequence, pulse bursts of three, two, four (interrupted by reset), and one cycle; \code{done} outputs the completed run count.}
 \label{fig:x-if}
 \end{figure}
 

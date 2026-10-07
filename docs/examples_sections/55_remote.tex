@@ -21,16 +21,16 @@ really sit on, with the rest of the system running as it really runs.
 When the software is right, hardware replaces it and nothing else in
 the design changes.
 
-What the bus sees is a slow device. One transaction is outstanding at
-a time and the channel that carries it is held until the answer
-arrives, which is what AXI-Lite allows and what a program on the far
-side of a wire needs. A device that never answers must not be able to
+What the bus sees is a slow device. One transaction remains
+outstanding at a time, holding the transaction channel until the
+response arrives, which is what AXI-Lite allows and what a program on the
+far side of a wire needs. A device that never answers must not be able to
 stop the bus, so a transaction unanswered for \code{T} cycles is
-answered \code{SlvErr} by the peripheral itself. Each carries a tag
-and the answer repeats it, which is what makes that safe: an answer
-that arrives after the wait ran out carries a tag the peripheral has
-finished with, and is dropped rather than given to whatever
-transaction is outstanding by then.
+answered \code{SlvErr} by the peripheral itself. Each request includes
+a tag echoed in the response, ensuring safety: an answer arriving after
+the timeout counter expires holds a tag that has already retired, allowing
+the peripheral to discard it without misattributing it to subsequent
+transactions.
 
 The run does four things, in the order a person would try them. It
 writes a word and reads it back, so the program holds the state. It
@@ -49,8 +49,8 @@ is a parameter: a program in the same simulation answers in two
 cycles and one across a network takes thousands.
 
 The same protocol is spoken by \code{//tools/remote}, a program in Go
-that serves a device over a connection an ssh tunnel can carry. Its
-test asserts the same frame, byte for byte, that the hardware sends,
+that serves a device over TCP connections routed through SSH tunnels.
+Its test asserts the same frame, byte for byte, that the hardware sends,
 so the two implementations are held to one protocol rather than to
 each other.
 
@@ -60,11 +60,11 @@ this run under \code{nvc} and Verilator.
 \begin{figure}[htbp]
 \centering
 \input{remote_timing.tex}
-\caption{A transaction becoming a frame: \code{ask} carries it out of
-the peripheral, \code{at} counts the frame's twenty-seven bytes out
-on \code{byte}, and \code{tx\_en} goes high when the MAC has the
-whole frame and puts it on the wire. \code{busy} holds throughout,
-and for the six hundred cycles more that the answer takes.}
+\caption{A transaction becoming a frame: \code{ask} dispatches the
+request from the peripheral, \code{at} counts the twenty-seven frame
+bytes driven onto \code{byte}, and \code{tx\_en} asserts when the MAC
+transmits the completed frame. \code{busy} remains asserted throughout
+transmission and the subsequent round-trip response latency.}
 \label{fig:x-remote}
 \end{figure}
 

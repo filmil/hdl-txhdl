@@ -19,7 +19,7 @@ ports whose fields are its indices, so its ports are found the way a
 \code{LitePort}'s are. Inside the loop, and for a \code{let mut}, a
 \code{let} is a wire of its own on every turn, and assigning to a
 \code{let mut} makes the next one, which is how \code{found} and
-\code{pick} carry what the loop has seen from one input to the next.
+\code{pick} propagate state from one input to the next.
 Each turn's wires are written once, so the netlist grows with \code{N}
 and not with its square.
 
@@ -30,7 +30,8 @@ they come out lowest input first and none is lost, and the netlist of
 same source lowered at five has five input ports, which the run
 prints. The AXI arbiter, \code{Arbiter<N, ..>}, is written this
 way too: its hosts are three arrays of ports in and two out, and its
-grant is a loop that carries the first host it has found. A \code{for} under an \code{if} is refused: put the \code{if}
+grant logic executes a loop that selects the first requesting host. A
+\code{for} under an \code{if} is refused: put the \code{if}
 inside the \code{for}. The index is written \code{ins[i]} because that
 is what the lowering reads, so Clippy's wish for an iterator is
 allowed with the reason beside it.

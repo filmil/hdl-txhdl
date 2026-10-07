@@ -8,8 +8,9 @@ and the value on another. The request is the line a station of
 three inputs sends, its cells the operation and the two operands,
 so the next example puts a station in front of this unit. The four operations are four units of four
 depths. \code{not} takes one cycle, \code{and} two, \code{or} three
-and \code{add} four, a nibble per stage with the carry passed from
-one stage to the next. A result leaves as soon as its unit is done,
+and \code{add} four, a nibble per stage with intermediate addition
+overflow forwarded from one stage to the next. A result leaves as soon
+as its unit is done,
 so results come out in the order the units finish and not the order
 the requests came, and the tag says which request each one answers.
 

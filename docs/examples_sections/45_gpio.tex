@@ -10,12 +10,13 @@ are wire that goes nowhere.
 \code{Gpio<N>} is \code{N} of them behind AXI-Lite, in seven words: what
 to drive, what the pins read, which way each pin faces, and then the
 four that make an interrupt, an enable, a kind, a polarity and a
-status. The part drives no pin itself. It offers the three wires a pad
-wants, the value, the direction and the value read back, and a board's
-top level joins them to a tristate buffer. That is not a detour: a pad
-in this language carries nothing until there is a netlist, so a part
-written around one is a part no simulation can run, and a peripheral
-nobody can simulate is a peripheral nobody can check.
+status. The peripheral drives no physical pin directly. Instead, it exposes
+the three signals required by a bidirectional pad driver: output value,
+output enable, and sampled input value. The top-level board module
+connects these signals to physical I/O buffers. This separation is
+deliberate: simulated pads transfer no internal state prior to netlist
+elaboration. Defining components around abstract signal interfaces ensures
+they remain fully verifiable in software testbenches.
 
 An input arrives through two flip-flops before anything reads it.
 A pin is a wire to the outside and its edges fall where they like, so

@@ -3,7 +3,7 @@
 \label{sec:x-scanout}
 
 \S\ref{sec:x-dma} reads memory in bursts and \S\ref{sec:x-cdc}
-carries words from one clock to another. A video scanout is both at
+transfers words between clock domains. A video scanout is both at
 once, and this is the two of them joined with a third part at the far
 end:
 
@@ -16,7 +16,7 @@ end:
 \end{center}
 
 \code{LineFetch} reads a line from memory on the bus clock,
-\code{ChanCdc} carries the words to the pixel clock, and
+\code{ChanCdc} transfers words to the pixel clock domain, and
 \code{LineBuf} holds them for the raster to read a column at a time.
 All three are parts in \code{//lib/parts} and all three are lowered.
 The wiring in the example is the only thing here that is not

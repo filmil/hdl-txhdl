@@ -22,7 +22,7 @@ is what makes the check worth running: the bytes that come back have
 been framed, padded, checked and stripped, so the two units are
 tested against the thing they will actually be joined to.
 
-\subsection{Why the length is carried rather than counted}
+\subsection{Why the length is signaled rather than counted}
 
 A word says nothing about how many of its bytes are real. On the way
 out the count is \code{tx\_length}, which the driver wrote. On the
