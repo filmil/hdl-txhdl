@@ -55,6 +55,12 @@
 //! library of `//gles` (issue 995), and the cycles line says `ico gl
 //! list` where this one says `ico razboj list`. Everything else is the
 //! same program, so the two lines measure what the library costs.
+//!
+//! Through GL the back faces are hidden by the depth test rather than
+//! culled (#1273): every face is drawn, and each pixel keeps the
+//! nearest. Razboj tests depth only in a tile table, so the frame is
+//! binned into one at the list and rung as one, and the draw line then
+//! counts the binning and the tile buffer's write-out too.
 #![no_std]
 #![no_main]
 
@@ -66,7 +72,9 @@ mod ico_gl;
 mod ico_list;
 
 use core::ptr::{read_volatile, write_volatile};
-use ico_list::{rect, Box, Solid, BACKDROP, MOST, SECOND, WORDS};
+#[cfg(not(gl))]
+use ico_list::MOST;
+use ico_list::{rect, Box, Solid, BACKDROP, SECOND, WORDS};
 use vreteno_hal::{entry, trap, Razboj, Scan, Uart, Video};
 
 entry!(main);
@@ -113,6 +121,49 @@ fn draw(list: &[[u32; WORDS]], n: usize) {
     }
     let _ = unsafe { read_volatile(base.add(n * WORDS - 1)) };
     Razboj::ring(n as u32);
+    while Razboj::count() != 0 || !Razboj::idle() {}
+}
+
+/// The slots of entries a binned frame may take at the list, past its
+/// tile table: a megabyte of the list's four.
+#[cfg(gl)]
+const ROOM: usize = 16384;
+
+/// The first `n` slots of `list`, a frame that tests depth on a screen
+/// `sh` rows high, binned into a tile table where the rasteriser reads
+/// one (#1273): the entries straight to `ENTRIES_AT` past the list, the
+/// records at it, then the count with the bit that says it is a tile
+/// table. Razboj tests depth only in a tile table.
+#[cfg(gl)]
+fn draw_tiled(list: &[[u32; WORDS]], n: usize, sh: u32) {
+    use razboj_tile::{bin, ENTRIES_AT, MAX_TILES, TILED, TILE_WORDS};
+    while Razboj::count() != 0 {}
+    let at = Razboj::LIST as usize + ENTRIES_AT;
+    // SAFETY: the list's memory is Razboj's, and it reads none of it
+    // until it is rung.
+    let room = unsafe {
+        core::slice::from_raw_parts_mut(at as *mut [u32; WORDS], ROOM)
+    };
+    let mut tiles = [[0u32; TILE_WORDS]; MAX_TILES];
+    let Ok(b) = bin(&list[..n], ico_list::W as u32, sh, room, &mut tiles)
+    else {
+        Uart::say(b"ico bin refused\n");
+        return;
+    };
+    let base = Razboj::LIST as *mut u32;
+    let mut t = 0;
+    while t < b.tiles {
+        let mut w = 0;
+        while w < TILE_WORDS {
+            let v = tiles[t][w];
+            unsafe { write_volatile(base.add(t * TILE_WORDS + w), v) };
+            w += 1;
+        }
+        t += 1;
+    }
+    let last = (at + b.entries * WORDS * 4 - 4) as *const u32;
+    let _ = unsafe { read_volatile(last) };
+    Razboj::ring(b.tiles as u32 | TILED);
     while Razboj::count() != 0 || !Razboj::idle() {}
 }
 
@@ -174,7 +225,10 @@ fn main() -> ! {
         y1: 0,
     };
     let mut last = [CORNER, CORNER];
+    #[cfg(not(gl))]
     let mut list = [[0u32; WORDS]; MOST];
+    #[cfg(gl)]
+    let mut list = [[0u32; WORDS]; ico_gl::MOST];
     #[cfg(gl)]
     let model = ico_gl::Model::new(&solid);
     let (mut ay, mut ax) = (0i32, 0i32);
@@ -188,10 +242,13 @@ fn main() -> ! {
             ico_list::frame(&solid, ay, ax, dy, last[which], &mut list);
         #[cfg(gl)]
         let (n, filled) =
-            ico_gl::frame(&model, ay, ax, dy, last[which], &mut list);
+            ico_gl::frame(&model, ay, ax, dy, last[which], true, &mut list);
         last[which] = filled;
         let listed = mcycle();
+        #[cfg(not(gl))]
         draw(&list, n);
+        #[cfg(gl)]
+        draw_tiled(&list, n, (ico_list::H + dy) as u32);
         let drawn = mcycle();
         Scan::base(Razboj::FRAME + (dy as u32) * Scan::STRIDE);
         wait_blanking();

@@ -12,8 +12,8 @@ mod ico_gl;
 mod ico_list;
 
 use ico_gl::Model;
-use ico_list::{Box, Solid, H, MOST, SECOND, W, WORDS};
-use razboj::dl::decode;
+use ico_list::{Box, Solid, H, SECOND, W, WORDS};
+use razboj::dl::decode_list;
 use razboj::model::render;
 use razboj::op::Insn;
 
@@ -22,7 +22,7 @@ const FW: usize = 1024;
 const FH: usize = 1024;
 
 fn insns(list: &[[u32; WORDS]]) -> Vec<Insn> {
-    list.iter().map(|w| decode(w)).collect()
+    decode_list(list)
 }
 
 /// A colour's three channels.
@@ -56,11 +56,11 @@ fn lists(
     ax: i32,
     dy: i32,
 ) -> (Vec<Insn>, Vec<Insn>) {
-    let mut out = [[0u32; WORDS]; MOST];
+    let mut out = [[0u32; WORDS]; ico_list::MOST];
     let (n, _) = ico_list::frame(s, ay, ax, dy, Box::SCREEN, &mut out);
     let hand = insns(&out[..n]);
-    let mut out = [[0u32; WORDS]; MOST];
-    let (n, _) = ico_gl::frame(m, ay, ax, dy, Box::SCREEN, &mut out);
+    let mut out = [[0u32; WORDS]; ico_gl::MOST];
+    let (n, _) = ico_gl::frame(m, ay, ax, dy, Box::SCREEN, false, &mut out);
     (hand, insns(&out[..n]))
 }
 
@@ -110,17 +110,62 @@ fn the_gl_icosahedron_draws_the_same_picture() {
     println!("worst channel {worst}, {edges} edge pixels differ");
 }
 
-/// The GL frame's box covers what it draws, so that clearing it next
-/// time clears every pixel of the solid, as `ico_list`'s does.
+/// With the depth test instead of culling (#1273), the picture is the
+/// culled one: every face is drawn, and each pixel is the nearest
+/// face's. The list tests depth, so it is a tile table's to draw, and
+/// the model draws it as one draws it. A pixel may differ only on the
+/// solid's outline, where a back face meets a front one at one depth
+/// and rounding decides which is nearer.
+#[test]
+fn the_depth_test_draws_the_culled_picture() {
+    let s = Solid::new();
+    let m = Model::new(&s);
+    let mut outline = 0usize;
+    for step in 0..64 {
+        let (ay, ax) = ((step * 4) & 255, (step * 7) & 255);
+        for dy in [0, SECOND] {
+            let draw = |depth: bool| {
+                let mut out = [[0u32; WORDS]; ico_gl::MOST];
+                let (n, _) =
+                    ico_gl::frame(&m, ay, ax, dy, Box::SCREEN, depth, &mut out);
+                let deep = out[..n].iter().any(|w| (w[15] >> 8) & 1 == 1);
+                assert_eq!(deep, depth, "depth tested only when asked");
+                render(&insns(&out[..n]), FW, FH)
+            };
+            let (culled, deep) = (draw(false), draw(true));
+            for y in dy as usize..(dy + H) as usize {
+                for x in 0..W as usize {
+                    let (a, b) = (culled[y * FW + x], deep[y * FW + x]);
+                    if a == b {
+                        continue;
+                    }
+                    outline += 1;
+                    assert!(
+                        on_edge(&culled, x, y) && on_edge(&deep, x, y),
+                        "pixel {x},{y} at {ay},{ax}: culled {a:06x} depth {b:06x}"
+                    );
+                }
+            }
+        }
+    }
+    println!("{outline} pixels on the outline differ");
+}
+
+/// The GL frame's box covers what it draws, culled or with depth, so
+/// that clearing it next time clears every pixel of the solid, as
+/// `ico_list`'s does.
 #[test]
 fn the_gl_frame_box_covers_its_faces() {
     let s = Solid::new();
     let m = Model::new(&s);
     for step in 0..64 {
         let (ay, ax) = ((step * 4) & 255, (step * 7) & 255);
-        for dy in [0, SECOND] {
-            let mut out = [[0u32; WORDS]; MOST];
-            let (n, b) = ico_gl::frame(&m, ay, ax, dy, Box::SCREEN, &mut out);
+        for (dy, depth) in
+            [(0, false), (SECOND, false), (0, true), (SECOND, true)]
+        {
+            let mut out = [[0u32; WORDS]; ico_gl::MOST];
+            let (n, b) =
+                ico_gl::frame(&m, ay, ax, dy, Box::SCREEN, depth, &mut out);
             let drawn = render(&insns(&out[1..n]), FW, FH);
             for y in 0..FH {
                 for x in 0..FW {

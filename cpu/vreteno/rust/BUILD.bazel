@@ -789,6 +789,7 @@ rust_binary(
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
         "//gles",
+        "//gpu/razboj:tile",
         "//lib/logo:txhdl_logo",
     ],
 )

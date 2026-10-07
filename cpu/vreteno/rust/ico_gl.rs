@@ -30,7 +30,10 @@
 //!   0.004 of the square root over every `l`, under one step of a
 //!   channel.
 //! * **Hidden faces.** `glCullFace`, the back faces, as `ico_list` drops
-//!   a face wound the wrong way on the screen. Flat shading.
+//!   a face wound the wrong way on the screen; or, with `depth`, the
+//!   depth test instead (#1273), every face drawn and each pixel the
+//!   nearest face's, which for a convex solid is the same picture. A
+//!   list that tests depth is a tile table's to draw. Flat shading.
 //!
 //! ## Two frames in one framebuffer
 //!
@@ -42,9 +45,7 @@
 //! `ico_list`'s own, since a GL clear is the whole screen and would
 //! take the other frame and the logo with it.
 
-use crate::ico_list::{
-    rect, Box, Solid, BACKDROP, BODY, FACES, H, MOST, W, WORDS,
-};
+use crate::ico_list::{rect, Box, Solid, BACKDROP, BODY, FACES, H, W, WORDS};
 use gles::fixed::{Fx, ONE};
 use gles::{gl, Gl};
 
@@ -66,6 +67,10 @@ const SHININESS: Fx = 57114;
 
 /// Vertices drawn: three a face.
 pub const VERTS: usize = 3 * FACES;
+
+/// The most a frame's list holds: the backdrop's rectangle, and every
+/// face with its depth plane's slot when the depth test is on.
+pub const MOST: usize = 1 + 2 * FACES;
 
 /// The solid as GL takes it: each face's three corners, each with the
 /// face's normal, and the indices that draw them.
@@ -117,14 +122,16 @@ fn degrees(a: i32) -> Fx {
 
 /// One frame's list, as `ico_list::frame` writes it: into `out`, for the
 /// frame `dy` rows down, the solid turned by `ay` and `ax`, the backdrop
-/// first over `clear`. Returns the entries written and the box the
-/// faces fill now.
+/// first over `clear`, the back faces culled or, with `depth`, hidden by
+/// the depth test. Returns the slots written and the box the faces fill
+/// now.
 pub fn frame(
     model: &Model,
     ay: i32,
     ax: i32,
     dy: i32,
     clear: Box,
+    depth: bool,
     out: &mut [[u32; WORDS]; MOST],
 ) -> (usize, Box) {
     out[0] = rect(BACKDROP, clear, dy);
@@ -153,7 +160,11 @@ pub fn frame(
     g.material(gl::FRONT_AND_BACK, gl::SHININESS, &[SHININESS]);
     g.enable(gl::LIGHTING);
     g.enable(gl::LIGHT0);
-    g.enable(gl::CULL_FACE);
+    if depth {
+        g.enable(gl::DEPTH_TEST);
+    } else {
+        g.enable(gl::CULL_FACE);
+    }
     g.shade_model(gl::FLAT);
 
     // `ico_list` turns about y and then about x.
@@ -169,7 +180,8 @@ pub fn frame(
     );
 
     // The box the faces fill: each triangle's box, as Razboj walks it,
-    // back in the frame's own rows.
+    // back in the frame's own rows. A triangle that tests depth, bit 8
+    // of its word 15, has its depth plane's slot after it.
     let drawn = g.frame();
     let mut b = Box {
         x0: W,
@@ -177,11 +189,14 @@ pub fn frame(
         x1: -1,
         y1: -1,
     };
-    for w in drawn {
+    let mut k = 0;
+    while k < drawn.len() {
+        let w = &drawn[k];
         b.x0 = b.x0.min((w[1] & 0xffff) as i32);
         b.y0 = b.y0.min((w[1] >> 16) as i32 - dy);
         b.x1 = b.x1.max((w[2] & 0xffff) as i32);
         b.y1 = b.y1.max((w[2] >> 16) as i32 - dy);
+        k += 1 + ((w[15] >> 8) & 1) as usize;
     }
     (1 + drawn.len(), b)
 }
