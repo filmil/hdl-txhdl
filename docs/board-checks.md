@@ -530,6 +530,37 @@ An `mtval` of `00003900` means the doorbell refused a read it should answer; any
 Which of the three runs trapped says whether what ran before matters.
 Put the three logs on #1214.
 
+### A program that stops answering after a serial reset, #1317
+
+On main 41e5b497's flagship, `shadeprobe` once stopped after `shade rung`, with no `shade stuck` line, while the screen showed the scanout's magenta for 23 s until the next `load --reset`.
+One serial reset in about twenty did it, and it has not happened since, so it is caught when it happens rather than run on purpose.
+
+If a program falls silent and the screen is solid magenta, or a load prints nothing it should have, **load nothing else and reset nothing**: the state that says why is lost with the next reset.
+Stop the serial watcher by its pid on the server, then stop `hw_server` as in section 4, step 3, and read the machine with OpenOCD in this order:
+
+```sh
+ssh $TXHDL_BOARD_SERVER "pkill -f 'bin/[h]w_server -stcp'"
+scp tools/openocd/ax7a200.cfg $TXHDL_BOARD_SERVER:/tmp/txhdl-ax7a200.cfg
+ssh $TXHDL_BOARD_SERVER openocd -f /tmp/txhdl-ax7a200.cfg -c "'\
+  init; halt 2000; \
+  echo \"state [xc7.cpu curstate]\"; echo [capture {reg pc}]; \
+  echo [capture {reg mepc}]; echo [capture {reg mcause}]; \
+  riscv set_mem_access sysbus; \
+  echo \"scan status [capture {mdw 0x3288}]\"; \
+  echo \"scan stuck_at [capture {mdw 0x3290}]\"; \
+  echo \"razboj count [capture {mdw 0x3900}]\"; \
+  echo \"razboj status [capture {mdw 0x3904}]\"; \
+  shutdown'" 2>&1 | tee board-1317-wedge.log
+```
+
+1. **Halt, and the program counter.** A halt that times out says the core is waiting on a bus access that never came back, which is the finding. A `pc` says where it stopped, and the instruction there names the load, its base register the address.
+2. **The scanout's status and `stuck_at`**, `0x3288` and `0x3290` (`ScanCtl`'s words 2 and 4 at the slot's `0x3280`): bit 1 of the status set and an address in `stuck_at` say which line's fetch never came back.
+3. **Razboj's count and status**, `0x3900` and `0x3904`: a count left non-zero with the idle bit clear says Razboj had a list in flight.
+4. If the system bus reads in steps 2 and 3 time out as well, the bus itself is stuck, not one host.
+
+Capture: `board-1317-wedge.log` and the program's serial log, posted on #1317, with the time it began so srv's recording can be matched to it.
+Then reset and go on with the session.
+
 ### Gouraud shading on the board, #989
 
 The flagship from any `main` that holds #985 (PR 1160), programmed over JTAG, with a monitor on the HDMI connector, as for Razboj above.

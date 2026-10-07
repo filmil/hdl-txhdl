@@ -8,9 +8,10 @@
 //! reaches as frames on the Ethernet port with a program in this file
 //! answering them. And its netlist, which holds the memory controller
 //! as a foreign module.
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use txhdl::comp::{
-    chan, join2, pad, signal, DefaultClock, In, Out, Running, Rx, Tx, Unit,
+    chan, join2, pad, set_reset, signal, DefaultClock, In, Out, Running, Rx,
+    Tx, Unit,
 };
 use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
@@ -76,6 +77,8 @@ struct Ran {
     scan: ScanLog,
     /// What each burst of the debugger's plan met, in order.
     bursts: Vec<BurstSeen>,
+    /// The cycle a reset asked for began, when it did.
+    reset_from: Option<u64>,
 }
 
 /// Run `text` with `data` in the data memory, on the board's design,
@@ -458,6 +461,12 @@ struct Net<'a> {
     /// Whether the run ends once the debugger's plan is done, rather
     /// than when the core halts or the limit is reached.
     until_planned: bool,
+    /// A reset in the middle of the run, from the first cycle for the
+    /// second, as the serial line held low gives the flagship (issue
+    /// 1317): the design's reset and its registers', while the DDR3
+    /// model, whose state is the controller's and not a register, keeps
+    /// what it was doing, as MIG does, which that reset does not reach.
+    reset_at: Option<(u64, u64)>,
 }
 
 /// A scanout's pixel side on the board's `scan_req` and `scan_words`:
@@ -515,6 +524,7 @@ fn run_all(
         scan,
         video,
         until_planned,
+        reset_at,
     } = net;
     // The scanout's two channels to the board, each tapped here so the
     // run sees what was asked for and what came back.
@@ -818,8 +828,27 @@ fn run_all(
     }
     let mut words: HashMap<u32, u32> = HashMap::new();
     let mut sent: Vec<Vec<u8>> = Vec::new();
+    // The crossing's FIFOs, for a run with a reset in it.
+    let mut req_cdc: VecDeque<U<32>> = VecDeque::new();
+    let mut words_cdc: VecDeque<U<32>> = VecDeque::new();
     let mut master = Master::default();
+    // When the reset began: the first cycle from the one asked for at
+    // which a scanout's words are in the crossing, so that it lands
+    // with a line on its way, as it can on the board.
+    let mut reset_from: Option<u64> = None;
     for cycle in 0..limit {
+        if let Some((from, cycles)) = reset_at {
+            let words = scan.is_none() || words_cdc.len() >= 64;
+            if reset_from.is_none() && cycle >= from && words {
+                reset_from = Some(cycle);
+                set_reset(true);
+                rst_o.set(Bit::One);
+            }
+            if reset_from.map(|f| f + cycles) == Some(cycle) {
+                set_reset(false);
+                rst_o.set(Bit::Zero);
+            }
+        }
         master.drive(plan, &jtag);
         device(
             &net_out_rx,
@@ -904,19 +933,67 @@ fn run_all(
             if stuck.get().to_bool() && scan_log.stuck.is_none() {
                 scan_log.stuck = Some((cycle, stuck_at.get().raw() as u32));
             }
-            if cycle == s.show_at {
+            // The base and the bit that shows it are the video
+            // peripheral's registers, which a reset clears and a program
+            // writes again, a frame after the reset here (issue 1317).
+            let shown_again = reset_from
+                .zip(reset_at)
+                .map(|(f, (_, n))| f + n + 6 * SCAN_LINE);
+            if cycle == s.show_at || Some(cycle) == shown_again {
                 base_o.set(U::<32>::from(s.base));
                 show_o.set(Bit::One);
             }
+            if reset_from == Some(cycle) {
+                base_o.set(U::<32>::from(0u32));
+                show_o.set(Bit::Zero);
+            }
             // The pair's requests to the board, and the board's words
-            // to the pair, a cycle each way through the taps.
-            if pair_req_rx.peek().is_some() && scan_req_tx.ready().to_bool() {
+            // to the pair, a cycle each way through the taps. A run with
+            // a reset in it puts the flagship's crossing between them as
+            // well: `chan_cdc`'s FIFOs, of 4 requests and 1024 words,
+            // which nothing resets (issue 1317).
+            if reset_at.is_some() {
+                if req_cdc.len() < 4 {
+                    if let Some(at) = pair_req_rx.recv_if(true) {
+                        req_cdc.push_back(at);
+                    }
+                }
+                if words_cdc.len() < 1024 {
+                    if let Some(w) = scan_words_rx.recv_if(true) {
+                        words_cdc.push_back(w);
+                    }
+                }
+            }
+            let req_ready = scan_req_tx.ready().to_bool();
+            if reset_at.is_some() {
+                if req_ready {
+                    if let Some(at) = req_cdc.pop_front() {
+                        scan_req_tx.send(at);
+                        scan_log.lines.push((at.raw() as u32, cycle, None));
+                    }
+                }
+            } else if pair_req_rx.peek().is_some() && req_ready {
                 let at = pair_req_rx.recv_if(true).unwrap();
                 scan_req_tx.send(at);
                 scan_log.lines.push((at.raw() as u32, cycle, None));
             }
-            if scan_words_rx.peek().is_some() && pair_inp_tx.ready().to_bool() {
-                pair_inp_tx.send(scan_words_rx.recv_if(true).unwrap());
+            // The pixel side takes a word a pixel, one in four of the
+            // board's cycles, so the words' FIFO fills under a burst.
+            let word = if reset_at.is_some() {
+                if cycle % 4 == 0 && pair_inp_tx.ready().to_bool() {
+                    words_cdc.pop_front()
+                } else {
+                    None
+                }
+            } else if scan_words_rx.peek().is_some()
+                && pair_inp_tx.ready().to_bool()
+            {
+                scan_words_rx.recv_if(true)
+            } else {
+                None
+            };
+            if let Some(w) = word {
+                pair_inp_tx.send(w);
                 scan_words_in += 1;
                 if scan_words_in.is_multiple_of(640) {
                     if let Some(l) = scan_log.lines.get_mut(scan_got) {
@@ -935,6 +1012,8 @@ fn run_all(
             break;
         }
     }
+    set_reset(false);
+    rst_o.set(Bit::Zero);
     // The port is still sending what its queue holds when the core
     // halts (issue 1011): up to eight bytes and the one going out, each
     // a frame of ten bits of four cycles, and a cycle between frames;
@@ -953,6 +1032,7 @@ fn run_all(
         got: master.got,
         steps: master.at,
         bursts: master.bursts,
+        reset_from,
         flash: chip.commands.clone(),
         flash_short: chip.partial,
         phy_frames: phy.frames.clone(),
@@ -2645,6 +2725,77 @@ fn the_scanout_keeps_up_with_the_boards_load() {
         assert!(
             2 * max < SCAN_LINE,
             "{what}: the longest line took {max} of {SCAN_LINE} cycles"
+        );
+    }
+}
+
+/// The serial line's reset, in the flagship's cycles: a pulse of
+/// 100 000, from the count of 2 000 000 to 2 100 000 in
+/// `flagship/board/flagship.v`.
+const BRK_PULSE: u64 = 100_000;
+
+/// The serial line's reset in the middle of the board's load, as
+/// `load --reset` gives the flagship (issue 1317): the core copying in
+/// the DDR3, the Ethernet port sending, Razboj drawing, and the scanout
+/// reading its lines, when the design and the scanout are reset and the
+/// DDR3 controller, which that reset does not reach, is not. Once the
+/// reset ends, the scanout must have its lines again: on the board, one
+/// such reset in some twenty left no line arriving at all.
+///
+/// The reset lands at a different cycle in each run, so that across
+/// them it meets the bus in different states.
+#[test]
+fn the_bus_answers_after_a_reset_in_the_middle_of_its_load() {
+    let starts: Vec<u64> = std::env::var("BRK_STARTS")
+        .ok()
+        .map(|s| s.split(',').map(|v| v.parse().unwrap()).collect())
+        .unwrap_or_else(|| vec![9 * SCAN_LINE]);
+    for from in starts {
+        let net = Net {
+            scan: Some(Scan {
+                base: 0x4200_0000,
+                show_at: 6 * SCAN_LINE,
+            }),
+            reset_at: Some((from, BRK_PULSE)),
+            ..Net::default()
+        };
+        let ran = run_all(
+            &load_program(true),
+            hello_program::DATA,
+            b"",
+            &[],
+            from + BRK_PULSE + 6 * 6 * SCAN_LINE,
+            net,
+            &[],
+        );
+        let back = ran.reset_from.expect("the reset began") + BRK_PULSE;
+        // The lines asked for once the reset has been over for a frame.
+        let after: Vec<_> = ran
+            .scan
+            .lines
+            .iter()
+            .filter(|(_, asked, _)| {
+                *asked > back + 12 * SCAN_LINE
+                    && *asked + 3 * SCAN_LINE < ran.ran_for
+            })
+            .collect();
+        let came = after.iter().filter(|(_, _, got)| got.is_some()).count();
+        eprintln!(
+            "reset at {from}: {} lines asked after it, {came} came, \
+             stuck {:?}, frames sent {}",
+            after.len(),
+            ran.scan.stuck,
+            ran.sent.len()
+        );
+        assert!(
+            after.len() >= 10,
+            "reset at {from}: only {} asked",
+            after.len()
+        );
+        assert!(
+            came + 1 >= after.len(),
+            "reset at {from}: {came} of {} lines came",
+            after.len()
         );
     }
 }
