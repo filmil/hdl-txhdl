@@ -30,6 +30,7 @@ pub mod clint;
 pub mod eth;
 pub mod memory;
 pub mod plic;
+pub mod trng;
 pub mod uart;
 
 use crate::board::{BoardMap, SlotMap};
@@ -64,6 +65,7 @@ pub struct Map {
     pub plic: (u32, u32),
     pub uart: (u32, u32),
     pub eth: (u32, u32),
+    pub trng: (u32, u32),
     /// Where the Ethernet port's slots are in the DDR3.
     pub eth_bufs: u32,
 }
@@ -77,6 +79,7 @@ impl Map {
             plic: range::<8, BoardMap>("interrupt controller"),
             uart: range::<10, SlotMap>("serial"),
             eth: range::<10, SlotMap>("Ethernet port's registers"),
+            trng: range::<10, SlotMap>("entropy source"),
             eth_bufs: crate::isa::ETH_BUF_BASE,
         }
     }
@@ -96,6 +99,7 @@ pub struct Devices {
     pub plic: plic::Plic,
     pub uart: uart::Uart,
     pub eth: eth::Eth,
+    pub trng: trng::Trng,
     /// The lines the PLIC drives, as last worked out, and whether they
     /// have to be worked out again: they change only when a program
     /// reaches the PLIC or the serial port, or when a byte arrives, so
@@ -130,6 +134,9 @@ impl Bus for Board {
         }
         if let Some(off) = inside(map.eth, addr) {
             return Some(d.eth.load(off));
+        }
+        if let Some(off) = inside(map.trng, addr) {
+            return Some(d.trng.load(off));
         }
         None
     }
@@ -169,6 +176,10 @@ impl Bus for Board {
             }
             return true;
         }
+        if let Some(off) = inside(map.trng, addr) {
+            d.trng.store(off, v);
+            return true;
+        }
         false
     }
 }
@@ -190,6 +201,7 @@ impl Machine {
             plic: plic::Plic::new(PLIC_SOURCES),
             uart: uart::Uart::default(),
             eth: eth::Eth::default(),
+            trng: trng::Trng::default(),
             meip: false,
             seip: false,
             stale: true,
