@@ -611,6 +611,33 @@ Pass:
 A program that draws a tile table on the board is not in this check; `//cpu/vreteno:board_test`'s `razboj_draws_a_list_in_tiles` draws one through the board's model.
 Put the three logs on #1255.
 
+### Depth on the board, #992 and #1273
+
+A flagship with Razboj's depth test, from #992's pull request or a `main` that holds it, programmed over JTAG, with a monitor on the HDMI connector.
+Nothing is written to flash.
+
+`ico_gl_hdmi` now hides the icosahedron's back faces with the depth test rather than culling them, and draws each frame as a tile table, the first program to draw one on the board.
+`ico_hdmi`, the hand-written list, still culls, and draws flat:
+
+```sh
+bazel build //cpu/vreteno/rust:ico_gl_hdmi_bin //cpu/vreteno/rust:ico_hdmi_bin
+bazel run //flagship:flagship_prog -- "${PROG[@]}"
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/cpu/vreteno/rust/ico_gl_hdmi_bin.bin --seconds=30 \
+    2>&1 | tee board-1273-depth.log
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/cpu/vreteno/rust/ico_hdmi_bin.bin --seconds=30 \
+    2>&1 | tee board-1273-hand.log
+```
+
+Pass:
+* Each run says `ico 20 faces`, then its cycles lines, and no `trap` and no `ico bin refused`.
+* Through GL the icosahedron turns with no back face showing through a front one, and looks as the hand-written one does; `//cpu/vreteno/rust:ico_gl_test` finds the two pictures differ only on the outline.
+* The logo stays in its corner, since a tile's write-out leaves the pixels no entry wrote.
+
+The `draw` count of `ico gl list` now includes the tile buffer's write-out; set it beside `ico razboj list`'s.
+Put both logs on #1273.
+
 ### Ethernet throughput, #1038
 
 The Ethernet half of #151: the port's throughput through the slots and the DMA engines, against the core's own copy of each frame.

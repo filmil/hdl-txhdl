@@ -167,7 +167,7 @@ Each step is a pull request, and each is checked against the model before the ne
    So the write-out does not reset the depths: each depth written has a mark beside the bank, the tile's serial as with the colour, and a depth without this tile's serial reads as the farthest.
    A depth pixel takes three cycles, the read, the comparison, and the write at the same address, rather than a pipeline, so that no forwarding is needed between entries.
    The comparison has a cycle of its own so that the banks' write enables come from a register rather than from a comparison of the block RAM's output.
-   A flat list has no depth and draws its depth entries without the test; the GL library rings a tile table whenever `GL_DEPTH_TEST` is on (issue 1273).
+   A flat list has no depth and draws its depth entries without the test; EGL's swap bins a frame that tests depth anywhere into a tile table and rings that (issue 1273).
 4. **Blending and the masks, issue 993**, on the same port, reading the colour the depth test already reads beside it.
 
 ## 8. What this leaves to issues 992 and 993

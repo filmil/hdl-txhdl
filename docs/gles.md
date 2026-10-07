@@ -35,7 +35,7 @@ A later issue means the entry point is accepted from the start but does what tha
 
 | Group | Entry points | When |
 |---|---|---|
-| Viewport | `glViewport`, `glDepthRangex` | Now; depth range matters from #992 |
+| Viewport | `glViewport`, `glDepthRangex` | Now; the depth range places a vertex's window depth, from #1273 |
 | Matrices | `glMatrixMode`, `glLoadIdentity`, `glLoadMatrixx`, `glMultMatrixx`, `glPushMatrix`, `glPopMatrix`, `glTranslatex`, `glRotatex`, `glScalex`, `glFrustumx`, `glOrthox` | Now |
 | Vertex arrays | `glVertexPointer`, `glColorPointer`, `glNormalPointer`, `glEnableClientState`, `glDisableClientState`, `glDrawArrays`, `glDrawElements` | Now, for points, lines, line strips and loops, triangles, strips and fans |
 | Buffer objects | `glGenBuffers`, `glBindBuffer`, `glBufferData`, `glBufferSubData`, `glDeleteBuffers` | Now; they are core in 1.1, and here they are memory the library owns |
@@ -43,12 +43,12 @@ A later issue means the entry point is accepted from the start but does what tha
 | Shading and faces | `glShadeModel`, `glFrontFace`, `glCullFace` | Now |
 | Lighting | `glLightx`, `glLightxv`, `glLightModelx`, `glLightModelxv`, `glMaterialx`, `glMaterialxv` | Now |
 | Clip planes | `glClipPlanex` | Now, one plane at least |
-| Clearing | `glClearColorx`, `glClear`; `glClearDepthx` | Colour now; depth from #992 |
+| Clearing | `glClearColorx`, `glClear`; `glClearDepthx` | Now; a clear of the depth alone, once depth has been tested in the frame, waits for #993's masks |
 | Scissor | `glScissor` | #990 |
-| Depth | `glDepthFunc`, `glDepthMask` | #992 |
+| Depth | `glDepthFunc`, `glDepthMask` | Now, from #1273, drawn in a tile table |
 | Blending and masks | `glBlendFunc`, `glAlphaFuncx`, `glColorMask` | #993 |
 | Points and lines | `glPointSizex`, `glLineWidthx`, and the point and line modes of the draw calls | Now, from issue 994 |
-| Switches | `glEnable`, `glDisable`, `glIsEnabled` for `GL_LIGHTING`, `GL_LIGHT0` to `GL_LIGHT7`, `GL_CULL_FACE`, `GL_NORMALIZE`, `GL_RESCALE_NORMAL`, `GL_COLOR_MATERIAL`, `GL_CLIP_PLANE0`; and the rest as the issues above land | Now, and growing |
+| Switches | `glEnable`, `glDisable`, `glIsEnabled` for `GL_LIGHTING`, `GL_LIGHT0` to `GL_LIGHT7`, `GL_CULL_FACE`, `GL_NORMALIZE`, `GL_RESCALE_NORMAL`, `GL_COLOR_MATERIAL`, `GL_CLIP_PLANE0`, `GL_DEPTH_TEST`; and the rest as the issues above land | Now, and growing |
 | Queries and errors | `glGetError`, `glGetIntegerv`, `glGetFixedv`, `glGetBooleanv`, `glGetString`, `glGetPointerv` | Now |
 | Completion | `glFlush`, `glFinish` | Now (section 7) |
 | Hints | `glHint` | Accepted and ignored, as the specification allows |
@@ -107,7 +107,7 @@ Every number has one format at each step, and every narrowing says how it rounds
 | Clip space | x, y, z, w | 16.16 | |
 | Divide | 1/w | 2.30 of the reciprocal, then multiplied | One division per vertex rather than three (section 5) |
 | Window space | x, y | Sixteenths of a pixel, 16 bits signed | `Op::TriQ4`'s and `Op::Gouraud`'s vertices (`gpu/razboj/src/op.rs` on pull request 1064); rounded to nearest |
-| Window space | z | 16 bits, 0 to 65535 | For #992's depth plane; unused before it |
+| Window space | z | 16 bits, 0 to 65535 | z over w through the depth range, times 65535, rounded to nearest; #992's depth plane, with 12 bits of fraction |
 | Colour, out | Each channel | 8 bits | `round(c * 255)`, so 1.0 is 255 and 0.5 is 128 |
 | Planes | Value and two steps per channel | 16 bits of fraction in 32 | Exactly what `op.rs`'s `plane` writes on pull request 1066 |
 
@@ -211,6 +211,7 @@ In GL the same picture is:
   The face's colour between the program's dark and light colours becomes the material's ambient and diffuse.
 * **Hidden faces.**
   `glEnable(GL_CULL_FACE)`, since the solid is convex, as the program's own comment says, and no depth test is needed.
+  Since issue 1273 the board program uses `glEnable(GL_DEPTH_TEST)` instead, to show depth on the board, and the picture is the same but on the outline (section 10).
 * **Flat shading.**
   `glShadeModel(GL_FLAT)`, so each face is one colour, as now.
 
@@ -320,7 +321,18 @@ With the top-left rule, every column of such a line between its ends, or row whe
 It also checks points of sizes 1 to 8 at sub-pixel positions against GL's square, and the segments each mode makes.
 GL's own rule for a line one pixel wide, the diamond exit, differs from this at the ends and on ties; it is left for the conformance tests, issue 999, to ask for.
 
-Depth, blending and the scissor are added as issues 992, 993 and 990 land, each with the entry points section 2 holds for it.
+Depth is issue 1273's, on #992's depth test in Razboj's tile buffer.
+A vertex's window depth is its z over its w carried into the depth range, as sixteen bits.
+With `GL_DEPTH_TEST` on, every triangle, line and point the library emits tests depth under `glDepthFunc` and writes it as `glDepthMask` says.
+Each takes its depth plane's slot after it, which the emitter works out as Razboj's assembler does, bit for bit.
+Razboj tests depth only in a tile table, and a tile's depth starts at the farthest.
+So a frame that tests depth anywhere is binned at the swap and drawn as a tile table, and a clear of the depth to the farthest at the frame's start writes nothing.
+A clear of both the colour and the depth to another depth, or after depth has been tested, is one rectangle that writes both.
+A clear of the depth alone, after that, would write the depth and leave the colour, which waits for #993's masks; until then it is left undone.
+`//gles:depth_test` holds forty scenes of triangles crossing in depth, in perspective, to a reference in f64, pixel by pixel, through Razboj's model.
+The GL icosahedron hides its back faces by depth rather than culling them, binned into a tile table on the board, and its picture is the culled one but for pixels on the solid's outline.
+
+Blending and the scissor are added as issues 993 and 990 land, each with the entry points section 2 holds for it.
 
 ## 11. What the user has to decide
 
