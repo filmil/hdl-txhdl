@@ -1044,6 +1044,97 @@ mod tests {
         assert!(flat >= 6, "{flat} flat rounds");
     }
 
+    /// What a textured pixel costs (issue 997), and what its refills ask
+    /// of the link: one tile of 64 by 64 textured whole, against the same
+    /// tile untextured, the difference shared among its pixels. Once with
+    /// every pixel on one texel, so that the cache misses once, and once
+    /// with a pixel sixteen texels across from the last on a texture 1024
+    /// wide, so that a row's 64 blocks share 16 lines and nearly every
+    /// pixel misses and refills a line. A refill is one burst of sixteen beats.
+    #[test]
+    fn what_a_textured_pixel_costs() {
+        use crate::op::{Op, TexMode};
+        use razboj_tile::tex::{encode, Desc, NEAREST};
+        const A: usize = 20;
+        const LOGW: usize = 6;
+        const W: usize = 1 << LOGW;
+        const H: usize = 64;
+        const N: usize = 16384;
+        const DL: usize = 0xa000;
+        const CTRL: usize = 0xfffc;
+        const DESC: u32 = 0x4000;
+        const BASE: u32 = 0x4040;
+        let d = Desc {
+            base: BASE,
+            log_w: 10,
+            log_h: 0,
+            levels: 1,
+            min: NEAREST,
+            mag: NEAREST,
+            ..Desc::default()
+        };
+        let more: Vec<(usize, u32)> = encode(&d)
+            .iter()
+            .enumerate()
+            .map(|(k, w)| (DESC as usize + 4 * k, *w))
+            .collect();
+        // A square of two triangles with `u` growing by `step` texels a
+        // pixel across, and `q` one throughout.
+        let square = |textured: bool, step: i64| {
+            let q = 1u64 << 48;
+            let u = |x: i64| (x * step) << 32;
+            let s = 64 * 16;
+            let mut ops = vec![
+                Op::Clear { colour: 0 },
+                Op::Texture(textured.then_some(TexMode {
+                    desc: DESC,
+                    env: 0,
+                    env_colour: 0,
+                })),
+            ];
+            for (a, b, c) in
+                [((0, 0), (s, 0), (s, s)), ((0, 0), (s, s), (0, s))]
+            {
+                let at = |p: (i32, i32)| (u(p.0 as i64 / 16), 0, q);
+                ops.push(Op::TexTri {
+                    a,
+                    b,
+                    c,
+                    colours: [0xff80_8080; 3],
+                    shaded: false,
+                    z: [0; 3],
+                    uvq: [at(a), at(b), at(c)],
+                });
+            }
+            let list = assemble(&ops, W, H);
+            Work {
+                more: more.clone(),
+                ..Work::tiled(&list, W, H)
+            }
+        };
+        let cost = |step: i64| {
+            let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
+                &[square(false, step), square(true, step)],
+                false,
+                false,
+            );
+            let px = (W * H) as u64;
+            let cycles = runs[1].cycles - 2 * runs[0].cycles;
+            let beats = runs[1].reads.1 - 2 * runs[0].reads.1;
+            (cycles as f64 / px as f64, beats as f64 / px as f64)
+        };
+        let (hit, hit_beats) = cost(0);
+        let (miss, miss_beats) = cost(16);
+        println!(
+            "a textured pixel: {hit:.1} cycles on a hit, {miss:.1} on a \
+             miss, whose refill is {miss_beats:.1} beats ({hit_beats:.3} \
+             a pixel on hits)"
+        );
+        assert!(hit < 16.0, "{hit:.1} cycles a hit");
+        assert!(miss_beats > 12.0 && miss_beats <= 16.0, "{miss_beats}");
+        assert!(miss < hit + 40.0, "{miss:.1} cycles a miss");
+    }
+
     /// What a load costs (issue 993): the same tile table drawn with its
     /// tiles loaded and with the load bits cleared, the difference in
     /// cycles shared among the tiles loaded. A load reads a burst of the
