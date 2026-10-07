@@ -116,6 +116,18 @@ rust_binary(
     ],
 )
 
+# The traced run of the depth test (issue 992), with the rasteriser's
+# netlist, so the build replays the depth bank and the test.
+rust_binary(
+    name = "trace_depth",
+    srcs = ["src/trace_depth.rs"],
+    edition = "2021",
+    deps = [
+        ":razboj",
+        "//lib:txhdl",
+    ],
+)
+
 rust_test(
     name = "razboj_test",
     crate = ":razboj",

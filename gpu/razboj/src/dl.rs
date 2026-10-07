@@ -23,13 +23,22 @@
 //!   word 6  r0      word 7  rdx     word 8  rdy
 //!   word 9  g0      word 10 gdx     word 11 gdy
 //!   word 12 b0      word 13 bdx     word 14 bdy
-//!   word 15  [7:0] alpha
+//!   word 15  [7:0] alpha  [8] depth  [11:9] the comparison  [12] write
 //! ```
 //!
 //! Words 6 to 14 are a shaded triangle's three planes, each the
 //! channel's value at the box's first pixel and its two steps, with
 //! sixteen bits of fraction; the other kinds leave them zero. Word 15
 //! is every entry's alpha, which the pixel takes in its top byte.
+//!
+//! An entry with the depth bit set tests depth (issue 992) and takes a
+//! second slot of [`WORDS`] words, right after it: its depth plane in
+//! the first three, the value at the box's first pixel and the steps a
+//! pixel right and a row down, with `op::ZFRAC` bits of fraction. The
+//! count says entries, not slots. Depth lives only in Razboj's tile
+//! buffer, so only a tiled list tests it; in a flat list such an entry
+//! draws as if depth were off, and a program that wants depth rings a
+//! tile table.
 //!
 //! Beside the list is one more word, the count: how many instructions
 //! the list holds, in its low sixteen bits. The rasteriser reads it
@@ -40,7 +49,7 @@
 //! two out leaves the list room for the longest it will hold: a list
 //! of `n` instructions reaches `base + (n << BYTE_SHIFT)`, and the
 //! count has to be at or past that.
-use txhdl::types::U;
+use txhdl::types::{Bit, U};
 
 use crate::op::{Insn, Kind};
 
@@ -72,8 +81,26 @@ pub fn encode(i: &Insn) -> [u32; WORDS] {
     for (k, p) in planes.iter().enumerate() {
         w[6 + k] = lo(p.raw());
     }
-    w[15] = lo(i.alpha.raw());
+    w[15] = lo(i.alpha.raw())
+        | ((i.depth.to_bool() as u32) << 8)
+        | (lo(i.zfunc.raw()) << 9)
+        | ((i.zwrite.to_bool() as u32) << 12);
     w
+}
+
+/// The second slot of an entry that tests depth (issue 992): its depth
+/// plane, the value at the box's first pixel and the two steps, in its
+/// first three words. `None` for an entry that does not, which takes
+/// one slot.
+pub fn encode_ext(i: &Insn) -> Option<[u32; WORDS]> {
+    if !i.depth.to_bool() {
+        return None;
+    }
+    let mut w = [0u32; WORDS];
+    w[0] = i.z0.raw() as u32;
+    w[1] = i.zdx.raw() as u32;
+    w[2] = i.zdy.raw() as u32;
+    Some(w)
 }
 // end{format}
 
@@ -111,15 +138,41 @@ pub fn decode(w: &[u32]) -> Insn {
         b0: U::from(w[12]),
         bdx: U::from(w[13]),
         bdy: U::from(w[14]),
+        depth: Bit::from((w[15] >> 8) & 1 == 1),
+        zfunc: U::from((w[15] >> 9) & 7),
+        zwrite: Bit::from((w[15] >> 12) & 1 == 1),
+        ..Insn::default()
     }
+}
+
+/// A list's words read back as its instructions, an entry that tests
+/// depth taking its second slot with it.
+pub fn decode_list(words: &[[u32; WORDS]]) -> Vec<Insn> {
+    let mut out = Vec::new();
+    let mut k = 0;
+    while k < words.len() {
+        let mut i = decode(&words[k]);
+        if i.depth.to_bool() {
+            let e = &words[k + 1];
+            (i.z0, i.zdx, i.zdy) =
+                (U::from(e[0]), U::from(e[1]), U::from(e[2]));
+            k += 1;
+        }
+        out.push(i);
+        k += 1;
+    }
+    out
 }
 
 /// A whole display list as the words a program writes, the
 /// instructions one after another at [`WORDS`] words each.
 pub fn image(list: &[Insn]) -> Vec<u32> {
-    let mut out = vec![0u32; list.len() * WORDS];
-    for (i, ins) in list.iter().enumerate() {
-        out[i * WORDS..i * WORDS + WORDS].copy_from_slice(&encode(ins));
+    let mut out = Vec::with_capacity(list.len() * WORDS);
+    for ins in list {
+        out.extend_from_slice(&encode(ins));
+        if let Some(e) = encode_ext(ins) {
+            out.extend_from_slice(&e);
+        }
     }
     out
 }

@@ -288,8 +288,13 @@ words, with a mark for each pixel written. Then it writes the tile out
 a row at a time, each row one write burst of 64 beats. A beat's
 strobes are on where a pixel was written and off where none was, so a
 pixel no entry covered keeps what memory had, as it does from a flat
-list, and the marks are cleared as they are read, which leaves the
-bank empty for the next tile. The bank's reads land in a register a
+list. A pixel's mark is the serial of the tile that wrote it, and a
+pixel was written in this tile when its mark is this tile's serial, so
+no mark is cleared: a memory written in two places would be flip-flops
+rather than a block RAM, and its read too slow for the board's clock.
+The serial runs from 1 to 255, and the walk writes every mark nought,
+as a scrub of 4096 cycles, after a reset and each time the serial runs
+out, so an old mark never equals it. The bank's reads land in a register a
 cycle ahead of the beat, which is what makes it a block RAM. A flat
 list, with the bit clear, is drawn as before, straight into memory, so
 every program that rings a flat list draws what it drew.
@@ -310,6 +315,27 @@ draws a tile and then writes it out, where flat it writes as it draws.
 A second bank, so that a tile is drawn while the last goes out, and
 the depth test, which a tile buffer answers without a read of DDR3,
 are what the tiles are for (\code{docs/razboj-tiles.md}, section 7).
+
+The depth test is the first of them (issue~\#992). An entry can test
+depth: word 15 says whether it does, which of GL's eight comparisons it
+makes and whether it writes its depth, and such an entry takes a second
+slot right after it for its depth plane, a value and two steps with
+twelve bits of fraction, so that sixteen bits of depth fit. Every other
+entry takes one slot, so no list that does not test depth changes. In a
+tile the rasteriser reads the plane's slot and steps it with the walk;
+a pixel of such an entry reads the depth bank at its place, is compared
+with what was there a cycle later, and a cycle after that, at the same
+address, is kept if it passed, and writes its own depth if the entry
+says so. Each depth
+written has a mark like a colour's, and a depth without this tile's
+serial reads as the farthest, so each tile starts far while the depth bank is
+read and written at one address only, which keeps it a block RAM. Depth lives only in the tile buffer, so a flat list has none: its
+depth entries draw as if depth were off, and a program that wants depth
+rings a tile table. Under every comparison, scenes of overlapping
+triangles are drawn in tiles as the model draws them, byte for byte,
+\code{//docs:razboj\_depth} replays the netlist's depth test under both
+simulators, and on the board's model two triangles that cross in depth
+are each seen where they are nearer.
 
 \section{The Rasteriser}
 \label{sec:g-raster}
@@ -533,8 +559,9 @@ cent.
 \label{sec:g-not}
 
 It is minimal, and the ways in which it is minimal are worth naming.
-There is one pixel per cycle and no more; no depth buffer, so
-primitives are drawn in the order the display list gives them; no
+There is one pixel per cycle and no more, two for a pixel that tests
+depth; depth only in a tiled list, so a flat one draws its primitives
+in the order the display list gives them; no
 interpolation but of colour, and that in the screen's plane, without
 the correction for perspective a texture would need; an alpha
 written and never read, so nothing is blended; no texture; no

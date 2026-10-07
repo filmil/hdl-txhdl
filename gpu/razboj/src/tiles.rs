@@ -7,7 +7,7 @@
 //! library so that a Vreteno program can use it. This module only
 //! gives it room and reads the instructions back, so the tests here
 //! check the same code a program runs.
-use crate::dl::{decode, encode, WORDS};
+use crate::dl::{decode_list, WORDS};
 use crate::op::Insn;
 use razboj_tile::{bin, Binned, ENTRIES_AT, MAX_TILES, TILED, TILE_WORDS};
 
@@ -20,9 +20,13 @@ pub struct Tiled {
 
 /// `list`, on a screen of `sw` by `sh` pixels, binned into tiles.
 pub fn tiled(list: &[Insn], sw: usize, sh: usize) -> Tiled {
-    let words: Vec<[u32; WORDS]> = list.iter().map(encode).collect();
-    // The most an entry can take is a record in every tile.
-    let mut entries = vec![[0u32; WORDS]; list.len() * MAX_TILES];
+    // The list's slots, an entry that tests depth taking two.
+    let words: Vec<[u32; WORDS]> = crate::dl::image(list)
+        .chunks(WORDS)
+        .map(|c| c.try_into().expect("whole slots"))
+        .collect();
+    // The most an entry can take is its slots in every tile.
+    let mut entries = vec![[0u32; WORDS]; words.len() * MAX_TILES];
     let mut tiles = vec![[0u32; TILE_WORDS]; MAX_TILES];
     let Binned {
         tiles: t,
@@ -31,7 +35,7 @@ pub fn tiled(list: &[Insn], sw: usize, sh: usize) -> Tiled {
         .expect("room for every entry in every tile");
     Tiled {
         tiles: tiles[..t].to_vec(),
-        entries: entries[..n].iter().map(|w| decode(w)).collect(),
+        entries: decode_list(&entries[..n]),
     }
 }
 
@@ -41,14 +45,12 @@ pub fn tiled(list: &[Insn], sw: usize, sh: usize) -> Tiled {
 /// word, the number of tiles with the bit that says they are tiles.
 pub fn image(list: &[Insn], sw: usize, sh: usize) -> (Vec<u32>, u32) {
     let t = tiled(list, sw, sh);
-    let mut words = vec![0u32; ENTRIES_AT / 4 + t.entries.len() * WORDS];
+    let mut words = vec![0u32; ENTRIES_AT / 4];
     for (i, rec) in t.tiles.iter().enumerate() {
         words[i * TILE_WORDS..(i + 1) * TILE_WORDS].copy_from_slice(rec);
     }
-    for (i, e) in t.entries.iter().enumerate() {
-        let at = ENTRIES_AT / 4 + i * WORDS;
-        words[at..at + WORDS].copy_from_slice(&encode(e));
-    }
+    // The entries' slots, a depth plane after its entry.
+    words.extend(crate::dl::image(&t.entries));
     (words, t.tiles.len() as u32 | TILED)
 }
 

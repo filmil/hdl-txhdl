@@ -156,7 +156,8 @@ pub fn clip_entry(
 }
 // end{entry}
 
-/// What a binning wrote: how many tile records, and how many entries.
+/// What a binning wrote: how many tile records, and how many slots of
+/// entries, an entry that tests depth taking two.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Binned {
     pub tiles: usize,
@@ -174,15 +175,35 @@ pub enum Refused {
 }
 
 // begin{bin}
+/// Whether an entry tests depth, which makes it two slots: its own and
+/// its depth plane's after it (issue 992).
+pub fn has_depth(e: &[u32; WORDS]) -> bool {
+    (e[15] >> 8) & 1 == 1
+}
+
+/// A depth plane's slot for an entry clipped `i` pixels right and `j`
+/// rows down of where its box began: its start stepped there, as a
+/// shaded triangle's planes are.
+pub fn step_depth(ext: &[u32; WORDS], i: u32, j: u32) -> [u32; WORDS] {
+    let mut out = *ext;
+    out[0] = ext[0]
+        .wrapping_add(ext[1].wrapping_mul(i))
+        .wrapping_add(ext[2].wrapping_mul(j));
+    out
+}
+
 /// A display list of a screen `sw` by `sh` binned into tiles: each
 /// tile's entries, in the list's order, one tile after another, into
 /// `entries`, and the tiles' records into `tiles`, in the order of
 /// [`record`]. Each entry goes into every tile its box touches, clipped
-/// to the tile by [`clip_entry`].
+/// to the tile by [`clip_entry`]; an entry that tests depth takes its
+/// depth plane's slot with it, stepped to the clipped box, and a record
+/// counts entries, its first a slot.
 ///
 /// Two passes over the list, and no allocation: the first counts each
-/// tile's entries, so each tile's place is known, and the second writes
-/// them there. Nothing is written when the room is too small.
+/// tile's entries and slots, so each tile's place is known, and the
+/// second writes them there. Nothing is written when the room is too
+/// small.
 pub fn bin(
     list: &[[u32; WORDS]],
     sw: u32,
@@ -204,27 +225,33 @@ pub fn bin(
             y1 >> TILE_SHIFT,
         )
     };
-    // How many entries each tile takes.
+    // How many entries and slots each tile takes.
     let mut count = [0u32; MAX_TILES];
-    for e in list {
+    let mut slots = [0u32; MAX_TILES];
+    let mut s = 0;
+    while s < list.len() {
+        let e = &list[s];
+        let n = 1 + has_depth(e) as u32;
         let (i0, j0, i1, j1) = span(e);
         for j in j0..=j1 {
             for i in i0..=i1 {
                 count[j as usize * cols + i as usize] += 1;
+                slots[j as usize * cols + i as usize] += n;
             }
         }
+        s += n as usize;
     }
     // Whether it all fits: the room given, and the sixteen bits of a
-    // record's first entry and count.
+    // record's first slot and count.
     let used = count.iter().filter(|&&c| c > 0).count();
-    let total: u32 = count.iter().sum();
+    let total: u32 = slots.iter().sum();
     if used > tiles.len() {
         return Err(Refused::Tiles);
     }
     if total as usize > entries.len() || total > 0xffff {
         return Err(Refused::Entries);
     }
-    // Where each tile's entries start, and the records.
+    // Where each tile's slots start, and the records.
     let mut at = [0u32; MAX_TILES];
     let (mut n, mut t) = (0u32, 0usize);
     for (k, &c) in count.iter().enumerate() {
@@ -234,11 +261,16 @@ pub fn bin(
         let (i, j) = ((k % cols) as u32, (k / cols) as u32);
         tiles[t] = record(n, c, i << TILE_SHIFT, j << TILE_SHIFT);
         at[k] = n;
-        n += c;
+        n += slots[k];
         t += 1;
     }
-    // The entries, each clipped into every tile it touches.
-    for e in list {
+    // The entries, each clipped into every tile it touches, a depth
+    // plane's slot after its entry.
+    let mut s = 0;
+    while s < list.len() {
+        let e = &list[s];
+        let deep = has_depth(e);
+        let (x0, y0, _, _) = walked(e, sw, sh);
         let (i0, j0, i1, j1) = span(e);
         for j in j0..=j1 {
             for i in i0..=i1 {
@@ -249,8 +281,16 @@ pub fn bin(
                 );
                 entries[at[k] as usize] = clipped;
                 at[k] += 1;
+                if deep {
+                    let (cx0, cy0) =
+                        (clipped[1] & 0x3ff, (clipped[1] >> 16) & 0x3ff);
+                    entries[at[k] as usize] =
+                        step_depth(&list[s + 1], cx0 - x0, cy0 - y0);
+                    at[k] += 1;
+                }
             }
         }
+        s += 1 + deep as usize;
     }
     Ok(Binned {
         tiles: t,

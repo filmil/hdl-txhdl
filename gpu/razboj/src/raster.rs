@@ -217,10 +217,20 @@ pub struct Raster<
     pub n: Reg<U<16>>,
     pub ox: Reg<U<16>>,
     pub oy: Reg<U<16>>,
-    /// The tile buffer: a tile's colour, and a mark for each pixel
-    /// written, at `{y, x}`, the low six bits of each coordinate.
+    /// The tile buffer: a tile's colour, and a mark for each pixel, at
+    /// `{y, x}`, the low six bits of each coordinate. A pixel's mark is
+    /// the serial of the tile that last wrote it, so a pixel was
+    /// written in this tile when its mark is this tile's serial, and no
+    /// mark is ever cleared one at a time: that would be a second write,
+    /// and a memory written in two places is flip-flops, not a block RAM.
+    /// The serial runs from one to 255. A scrub, the walk over the whole
+    /// tile writing every mark nought, comes first after a reset and
+    /// again each time the serial runs out, so no old mark can equal it.
     pub bank: Mem<U<32>, 4096>,
-    pub mark: Mem<U<1>, 4096>,
+    pub mark: Mem<U<8>, 4096>,
+    pub serial: Reg<U<8>>,
+    pub clean: Reg<Bit>,
+    pub scrub: Reg<Bit>,
     /// The write-out: the tile's rows on the screen, the row and the
     /// column going out, and the word and the mark read a cycle ahead
     /// for the next beat, so that the bank's read lands in a register,
@@ -229,7 +239,35 @@ pub struct Raster<
     pub wr: Reg<U<6>>,
     pub wc: Reg<U<7>>,
     pub rd: Reg<U<32>>,
-    pub rm: Reg<U<1>>,
+    pub rm: Reg<U<8>>,
+    /// Depth (issue 992): whether the entry tests it, which only a tile
+    /// does; the comparison; whether a pixel that passes writes its
+    /// depth; the plane at this pixel and at the start of this row, and
+    /// its two steps; and the address of the pixel under the walk in the
+    /// tile, which the depth bank is read and written at.
+    pub zon: Reg<Bit>,
+    pub deep: Reg<Bit>,
+    pub zfunc: Reg<U<3>>,
+    pub zwrite: Reg<Bit>,
+    pub zc: Reg<U<32>>,
+    pub zr: Reg<U<32>>,
+    pub zdx: Reg<U<32>>,
+    pub zdy: Reg<U<32>>,
+    pub pa: Reg<U<12>>,
+    /// The depth bank, a tile's depths, read and written at one address
+    /// only, so that it is a block RAM of one port; a mark for each
+    /// depth, the serial of the tile that wrote it as with the colour,
+    /// so that a depth not written in this tile reads as the farthest;
+    /// the depth and its mark read for the pixel under the walk, and the
+    /// pixel's own depth; and whether the pixel passed, decided a turn
+    /// after the read so that the banks' write enables come from a
+    /// register.
+    pub zbank: Mem<U<16>, 4096>,
+    pub zmark: Mem<U<8>, 4096>,
+    pub dread: Reg<U<16>>,
+    pub dtag: Reg<U<8>>,
+    pub zq: Reg<U<16>>,
+    pub zpass: Reg<Bit>,
 }
 // end{state}
 
@@ -255,6 +293,38 @@ fn channel(v: U<32>) -> U<8> {
     let over = Bit::from(v.slice::<24, 8>() != 0);
     let top = mux(over, U::<8>::from(255u8), v.slice::<16, 8>());
     mux(v.bit(31), U::<8>::from(0u8), top)
+}
+
+/// A pixel's depth from its plane (issue 992): the sixteen bits above
+/// the plane's twelve of fraction, nought when the value is below nought
+/// and the farthest, `0xffff`, when it is past it, as `model::depth` has
+/// it.
+#[lower]
+fn depth16(v: U<32>) -> U<16> {
+    let over = Bit::from(v.slice::<28, 3>() != 0);
+    let top = mux(over, U::<16>::from(0xffffu32), v.slice::<12, 16>());
+    mux(v.bit(31), U::<16>::from(0u8), top)
+}
+
+/// Whether a pixel at depth `z` passes `func`, GL's comparisons from
+/// `GL_NEVER` to `GL_ALWAYS` in GL's order, against the depth `d` there,
+/// as `model::passes` has it.
+#[lower]
+fn depth_pass(func: U<3>, z: U<16>, d: U<16>) -> Bit {
+    let lt = Bit::from(z < d);
+    let eq = Bit::from(z == d);
+    let gt = Bit::from(z > d);
+    let hi = mux(
+        func.bit(1),
+        mux(func.bit(0), Bit::One, gt | eq),
+        mux(func.bit(0), !eq, gt),
+    );
+    let lo = mux(
+        func.bit(1),
+        mux(func.bit(0), lt | eq, eq),
+        mux(func.bit(0), lt, Bit::Zero),
+    );
+    mux(func.bit(2), hi, lo)
 }
 
 /// Whether a read's beat is taken this cycle: one is offered, the
@@ -435,9 +505,18 @@ impl<
                             })
                             .await;
                             let w0 = rdata.head().data;
+                            // A scrub, when one is due, goes first, as
+                            // one more entry.
+                            let due = !self.clean.get();
                             with!(self <= {
                                 insn: w0.slice::<0, 16>(),
-                                n: w0.slice::<16, 16>(),
+                                n: w0.slice::<16, 16>()
+                                    + mux(
+                                        due,
+                                        U::<16>::from(1u8),
+                                        U::<16>::from(0u8),
+                                    ),
+                                scrub: due,
                             });
                             until(DefaultClock::rising, || {
                                 landing(
@@ -471,170 +550,263 @@ impl<
                             // read back, and for the sequence to
                             // begin a turn with.
                             DefaultClock::rising().await;
-                            self.word.set(U::<5>::from(0u8));
-                            // The instruction's sixteen words, as one
-                            // read burst of sixteen beats, each latched
-                            // as it lands. An entry is sixteen words from
-                            // an address a multiple of sixty-four, so the
-                            // burst never crosses anything a burst may
-                            // not.
-                            until(DefaultClock::rising, || {
-                                issue.ready().to_bool()
-                            })
-                            .await;
-                            issue.send(Issue {
-                                read: Bit::One,
-                                addr: U::<A>::from(DL as u32)
-                                    + mux(
-                                        self.tiled.get(),
-                                        U::<A>::from(ENTRIES_AT),
-                                        U::<A>::from(0u32),
-                                    )
-                                    + (self.insn.get().resize::<A>() << SHIFT),
-                                len: U::<8>::from(15u8),
-                                size: U::<3>::from(2u8),
-                                burst: BurstKind::Incr,
-                                lock: Bit::Zero,
-                                cache: U::<4>::from(0u8),
-                                prot: U::<3>::from(0u8),
-                                qos: U::<4>::from(0u8),
-                                region: U::<4>::from(0u8),
-                            });
-                            for _ in 0..16 {
-                                until(DefaultClock::rising, || {
-                                    landing(
-                                        rdata.peek().is_some(),
-                                        release.ready(),
-                                        done.peek().is_some(),
-                                    )
-                                    .to_bool()
-                                })
-                                .await;
-                                let rh = rdata.head();
-                                self.word.set(self.word.get() + 1);
-                                let word0 = rh.data.slice::<0, 2>();
-                                // The box. A clear says only its
-                                // colour, so its box is the screen,
-                                // which the rasteriser knows from its
-                                // own type; a rectangle and a triangle
-                                // carry theirs.
-                                let clearing = self.skind.get() == Kind::Clear;
+                            // A scrub fetches nothing: its box is the
+                            // tile, and it tests no depth.
+                            if self.scrub.get().to_bool() {
                                 let zero16 = U::<16>::from(0u8);
-                                let last_x = U::<16>::from(
-                                    ((1usize << LOGW) - 1) as u32,
-                                );
-                                let last_y = U::<16>::from((H - 1) as u32);
-                                let wx = mux(
-                                    clearing,
-                                    zero16,
-                                    self.sx0.get().resize::<16>(),
-                                );
-                                let wy = mux(
-                                    clearing,
-                                    zero16,
-                                    self.sy0.get().resize::<16>(),
-                                );
-                                let bx1 = mux(
-                                    clearing,
-                                    last_x,
-                                    self.sx1.get().resize::<16>(),
-                                );
-                                let by1 = mux(
-                                    clearing,
-                                    last_y,
-                                    self.sy1.get().resize::<16>(),
-                                );
-                                // The kind, from the word's low two
-                                // bits: a clear, a rectangle, or a
-                                // triangle, flat or shaded.
-                                let tri_kind =
-                                    mux(word0 == 2, Kind::Tri, Kind::Shaded);
-                                let rect_or_tri =
-                                    mux(word0 == 1, Kind::Rect, tri_kind);
-                                if self.word.get() == 0 {
-                                    with!(self <= {
-                                        skind: mux(
-                                            word0 == 0,
-                                            Kind::Clear,
-                                            rect_or_tri,
-                                        ),
-                                        scol: rh.data.slice::<2, 24>(),
-                                    });
-                                }
-                                if self.word.get() == 1 {
-                                    with!(self <= {
-                                        sx0: rh.data.slice::<0, 10>(),
-                                        sy0: rh.data.slice::<16, 10>(),
-                                    });
-                                }
-                                if self.word.get() == 2 {
-                                    with!(self <= {
-                                        sx1: rh.data.slice::<0, 10>(),
-                                        sy1: rh.data.slice::<16, 10>(),
-                                    });
-                                }
-                                if self.word.get() == 3 {
-                                    with!(self <= {
-                                        sax: rh.data.slice::<0, 16>(),
-                                        say: rh.data.slice::<16, 16>(),
-                                    });
-                                }
-                                if self.word.get() == 4 {
-                                    with!(self <= {
-                                        sbx: rh.data.slice::<0, 16>(),
-                                        sby: rh.data.slice::<16, 16>(),
-                                    });
-                                }
-                                if self.word.get() == 5 {
-                                    with!(self <= {
-                                        kind: self.skind.get(),
-                                        colour: self.scol.get(),
-                                        x: wx,
-                                        y: wy,
-                                        xa: wx,
-                                        xb: bx1,
-                                        yb: by1,
-                                        scx: rh.data.slice::<0, 16>(),
-                                        scy: rh.data.slice::<16, 16>(),
-                                    });
-                                }
-                                // A shaded triangle's planes, each its
-                                // value at the box's first pixel and its
-                                // two steps, which the host worked out,
-                                // so they go straight to the walk. The
-                                // other entries carry zeros here.
-                                let v = rh.data;
-                                if self.word.get() == 6 {
-                                    with!(self <= { cr: v, lr: v });
-                                }
-                                if self.word.get() == 7 {
-                                    self.crx.set(v);
-                                }
-                                if self.word.get() == 8 {
-                                    self.cry.set(v);
-                                }
-                                if self.word.get() == 9 {
-                                    with!(self <= { cg: v, lg: v });
-                                }
-                                if self.word.get() == 10 {
-                                    self.cgx.set(v);
-                                }
-                                if self.word.get() == 11 {
-                                    self.cgy.set(v);
-                                }
-                                if self.word.get() == 12 {
-                                    with!(self <= { cb: v, lb: v });
-                                }
-                                if self.word.get() == 13 {
-                                    self.cbx.set(v);
-                                }
-                                if self.word.get() == 14 {
-                                    self.cby.set(v);
-                                }
-                                // Every entry's alpha, last.
-                                if self.word.get() == 15 {
-                                    self.alpha.set(v.slice::<0, 8>());
-                                }
+                                let last = U::<16>::from(TILE - 1);
+                                with!(self <= {
+                                    x: zero16,
+                                    y: zero16,
+                                    xa: zero16,
+                                    xb: last,
+                                    yb: last,
+                                    pa: U::<12>::from(0u8),
+                                    zon: Bit::Zero,
+                                });
+                            }
+                            if !self.scrub.get().to_bool() {
+                              self.word.set(U::<5>::from(0u8));
+                              // The instruction's sixteen words, as one
+                              // read burst of sixteen beats, each latched
+                              // as it lands. An entry is sixteen words from
+                              // an address a multiple of sixty-four, so the
+                              // burst never crosses anything a burst may
+                              // not.
+                              until(DefaultClock::rising, || {
+                                  issue.ready().to_bool()
+                              })
+                              .await;
+                              issue.send(Issue {
+                                  read: Bit::One,
+                                  addr: U::<A>::from(DL as u32)
+                                      + mux(
+                                          self.tiled.get(),
+                                          U::<A>::from(ENTRIES_AT),
+                                          U::<A>::from(0u32),
+                                      )
+                                      + (self.insn.get().resize::<A>()
+                                          << SHIFT),
+                                  len: U::<8>::from(15u8),
+                                  size: U::<3>::from(2u8),
+                                  burst: BurstKind::Incr,
+                                  lock: Bit::Zero,
+                                  cache: U::<4>::from(0u8),
+                                  prot: U::<3>::from(0u8),
+                                  qos: U::<4>::from(0u8),
+                                  region: U::<4>::from(0u8),
+                              });
+                              for _ in 0..16 {
+                                  until(DefaultClock::rising, || {
+                                      landing(
+                                          rdata.peek().is_some(),
+                                          release.ready(),
+                                          done.peek().is_some(),
+                                      )
+                                      .to_bool()
+                                  })
+                                  .await;
+                                  let rh = rdata.head();
+                                  self.word.set(self.word.get() + 1);
+                                  let word0 = rh.data.slice::<0, 2>();
+                                  // The box. A clear says only its
+                                  // colour, so its box is the screen,
+                                  // which the rasteriser knows from its
+                                  // own type; a rectangle and a triangle
+                                  // carry theirs.
+                                  let clearing =
+                                      self.skind.get() == Kind::Clear;
+                                  let zero16 = U::<16>::from(0u8);
+                                  let last_x = U::<16>::from(
+                                      ((1usize << LOGW) - 1) as u32,
+                                  );
+                                  let last_y = U::<16>::from((H - 1) as u32);
+                                  let wx = mux(
+                                      clearing,
+                                      zero16,
+                                      self.sx0.get().resize::<16>(),
+                                  );
+                                  let wy = mux(
+                                      clearing,
+                                      zero16,
+                                      self.sy0.get().resize::<16>(),
+                                  );
+                                  let bx1 = mux(
+                                      clearing,
+                                      last_x,
+                                      self.sx1.get().resize::<16>(),
+                                  );
+                                  let by1 = mux(
+                                      clearing,
+                                      last_y,
+                                      self.sy1.get().resize::<16>(),
+                                  );
+                                  // The kind, from the word's low two
+                                  // bits: a clear, a rectangle, or a
+                                  // triangle, flat or shaded.
+                                  let tri_kind =
+                                      mux(word0 == 2, Kind::Tri, Kind::Shaded);
+                                  let rect_or_tri =
+                                      mux(word0 == 1, Kind::Rect, tri_kind);
+                                  if self.word.get() == 0 {
+                                      with!(self <= {
+                                          skind: mux(
+                                              word0 == 0,
+                                              Kind::Clear,
+                                              rect_or_tri,
+                                          ),
+                                          scol: rh.data.slice::<2, 24>(),
+                                      });
+                                  }
+                                  if self.word.get() == 1 {
+                                      with!(self <= {
+                                          sx0: rh.data.slice::<0, 10>(),
+                                          sy0: rh.data.slice::<16, 10>(),
+                                      });
+                                  }
+                                  if self.word.get() == 2 {
+                                      with!(self <= {
+                                          sx1: rh.data.slice::<0, 10>(),
+                                          sy1: rh.data.slice::<16, 10>(),
+                                      });
+                                  }
+                                  if self.word.get() == 3 {
+                                      with!(self <= {
+                                          sax: rh.data.slice::<0, 16>(),
+                                          say: rh.data.slice::<16, 16>(),
+                                      });
+                                  }
+                                  if self.word.get() == 4 {
+                                      with!(self <= {
+                                          sbx: rh.data.slice::<0, 16>(),
+                                          sby: rh.data.slice::<16, 16>(),
+                                      });
+                                  }
+                                  if self.word.get() == 5 {
+                                      with!(self <= {
+                                          kind: self.skind.get(),
+                                          colour: self.scol.get(),
+                                          x: wx,
+                                          y: wy,
+                                          xa: wx,
+                                          pa: wy
+                                              .slice::<0, 6>()
+                                              .concat::<6, 12>(
+                                                  wx.slice::<0, 6>(),
+                                              ),
+                                          xb: bx1,
+                                          yb: by1,
+                                          scx: rh.data.slice::<0, 16>(),
+                                          scy: rh.data.slice::<16, 16>(),
+                                      });
+                                  }
+                                  // A shaded triangle's planes, each its
+                                  // value at the box's first pixel and its
+                                  // two steps, which the host worked out,
+                                  // so they go straight to the walk. The
+                                  // other entries carry zeros here.
+                                  let v = rh.data;
+                                  if self.word.get() == 6 {
+                                      with!(self <= { cr: v, lr: v });
+                                  }
+                                  if self.word.get() == 7 {
+                                      self.crx.set(v);
+                                  }
+                                  if self.word.get() == 8 {
+                                      self.cry.set(v);
+                                  }
+                                  if self.word.get() == 9 {
+                                      with!(self <= { cg: v, lg: v });
+                                  }
+                                  if self.word.get() == 10 {
+                                      self.cgx.set(v);
+                                  }
+                                  if self.word.get() == 11 {
+                                      self.cgy.set(v);
+                                  }
+                                  if self.word.get() == 12 {
+                                      with!(self <= { cb: v, lb: v });
+                                  }
+                                  if self.word.get() == 13 {
+                                      self.cbx.set(v);
+                                  }
+                                  if self.word.get() == 14 {
+                                      self.cby.set(v);
+                                  }
+                                  // Every entry's alpha, last.
+                                  // Every entry's alpha, and its depth bits.
+                                  if self.word.get() == 15 {
+                                      with!(self <= {
+                                          alpha: v.slice::<0, 8>(),
+                                          deep: v.bit(8),
+                                          zon: v.bit(8) & self.tiled.get(),
+                                          zfunc: v.slice::<9, 3>(),
+                                          zwrite: v.bit(12),
+                                      });
+                                  }
+                              }
+                              // An entry that tests depth is followed by
+                              // its depth plane's slot (issue 992), read in
+                              // a tile and passed over in a flat list, which
+                              // has no depth.
+                              // An edge first, for word 15's bits to be read.
+                              DefaultClock::rising().await;
+                              if self.deep.get().to_bool() {
+                                  if self.tiled.get().to_bool() {
+                                      until(DefaultClock::rising, || {
+                                          issue.ready().to_bool()
+                                      })
+                                      .await;
+                                      issue.send(Issue {
+                                          read: Bit::One,
+                                          addr: U::<A>::from(DL as u32)
+                                              + U::<A>::from(ENTRIES_AT)
+                                              + ((self.insn.get() + 1)
+                                                  .resize::<A>()
+                                                  << SHIFT),
+                                          len: U::<8>::from(2u8),
+                                          size: U::<3>::from(2u8),
+                                          burst: BurstKind::Incr,
+                                          lock: Bit::Zero,
+                                          cache: U::<4>::from(0u8),
+                                          prot: U::<3>::from(0u8),
+                                          qos: U::<4>::from(0u8),
+                                          region: U::<4>::from(0u8),
+                                      });
+                                      until(DefaultClock::rising, || {
+                                          landing(
+                                              rdata.peek().is_some(),
+                                              release.ready(),
+                                              done.peek().is_some(),
+                                          )
+                                          .to_bool()
+                                      })
+                                      .await;
+                                      let z0 = rdata.head().data;
+                                      with!(self <= { zc: z0, zr: z0 });
+                                      until(DefaultClock::rising, || {
+                                          landing(
+                                              rdata.peek().is_some(),
+                                              release.ready(),
+                                              done.peek().is_some(),
+                                          )
+                                          .to_bool()
+                                      })
+                                      .await;
+                                      self.zdx.set(rdata.head().data);
+                                      until(DefaultClock::rising, || {
+                                          landing(
+                                              rdata.peek().is_some(),
+                                              release.ready(),
+                                              done.peek().is_some(),
+                                          )
+                                          .to_bool()
+                                      })
+                                      .await;
+                                      self.zdy.set(rdata.head().data);
+                                  }
+                                  self.insn.set(self.insn.get() + 1);
+                              }
                             }
                             // The setup the walk asks for: per edge, the
                             // two steps and the value at the box's first
@@ -740,6 +912,36 @@ impl<
                                         .to_bool()
                                     })
                                     .await;
+                                    // A pixel of an entry that tests
+                                    // depth reads the depth there first,
+                                    // is compared with it a turn later,
+                                    // and is written a turn after that
+                                    // at the same address, so that the
+                                    // depth bank has one port here and
+                                    // no write enable waits on a compare
+                                    // (issue 992).
+                                    if (self.zon.get() & self.hit.get())
+                                        .to_bool()
+                                    {
+                                        let pa = self.pa.get();
+                                        with!(self <= {
+                                            dread: self.zbank.read(pa),
+                                            dtag: self.zmark.read(pa),
+                                            zq: depth16(self.zc.get()),
+                                        });
+                                        DefaultClock::rising().await;
+                                        self.zpass.set(depth_pass(
+                                            self.zfunc.get(),
+                                            self.zq.get(),
+                                            mux(
+                                                self.dtag.get()
+                                                    == self.serial.get(),
+                                                self.dread.get(),
+                                                U::<16>::from(0xffffu32),
+                                            ),
+                                        ));
+                                        DefaultClock::rising().await;
+                                    }
                                     let px = self.x.get();
                                     let py = self.y.get();
                                     // The pixel's word. The address is
@@ -778,12 +980,32 @@ impl<
                                     let at = py
                                         .slice::<0, 6>()
                                         .concat::<6, 12>(px.slice::<0, 6>());
-                                    let keep = self.tiled.get() & self.hit.get();
+                                    // A pixel that tests depth is kept
+                                    // where it passed against the depth
+                                    // read, and writes its own if the
+                                    // entry says so. Each mark written
+                                    // takes the tile's serial, or nought
+                                    // in a scrub, which writes every mark
+                                    // and nothing else.
+                                    let zon = self.zon.get();
+                                    let pass = !zon | self.zpass.get();
+                                    let scrub = self.scrub.get();
+                                    let hit = self.tiled.get() & self.hit.get();
+                                    let keep = hit & pass & !scrub;
+                                    let zkeep = keep & zon & self.zwrite.get();
+                                    let tag = mux(
+                                        scrub,
+                                        U::<8>::from(0u8),
+                                        self.serial.get(),
+                                    );
+                                    let (mkeep, zmkeep) =
+                                        (keep | scrub, zkeep | scrub);
+                                    let pa = self.pa.get();
                                     with!(self <= {
-                                        keep ? {
-                                            bank.at(at): self.rgb.get(),
-                                            mark.at(at): U::<1>::from(1u8),
-                                        },
+                                        keep ? { bank.at(at): self.rgb.get() },
+                                        mkeep ? { mark.at(at): tag },
+                                        zkeep ? { zbank.at(pa): self.zq.get() },
+                                        zmkeep ? { zmark.at(pa): tag },
                                     });
                                     let rest =
                                         (self.xb.get() - px).resize::<32>();
@@ -843,6 +1065,10 @@ impl<
                                         cr: self.cr.get() + self.crx.get(),
                                         cg: self.cg.get() + self.cgx.get(),
                                         cb: self.cb.get() + self.cbx.get(),
+                                        zc: self.zc.get() + self.zdx.get(),
+                                        pa: py.slice::<0, 6>().concat::<6, 12>(
+                                            (px + 1).slice::<0, 6>(),
+                                        ),
                                     });
                                 }
                                 // The next row: the column goes back to
@@ -855,9 +1081,16 @@ impl<
                                 let qr = self.lr.get() + self.cry.get();
                                 let qg = self.lg.get() + self.cgy.get();
                                 let qb = self.lb.get() + self.cby.get();
+                                let qz = self.zr.get() + self.zdy.get();
                                 with!(self <= {
                                     x: self.xa.get(),
                                     y: self.y.get() + 1,
+                                    zc: qz, zr: qz,
+                                    pa: (self.y.get() + 1)
+                                        .slice::<0, 6>()
+                                        .concat::<6, 12>(
+                                            self.xa.get().slice::<0, 6>(),
+                                        ),
                                     e0: q0, r0: q0,
                                     e1: q1, r1: q1,
                                     e2: q2, r2: q2,
@@ -866,30 +1099,45 @@ impl<
                                     cb: qb, lb: qb,
                                 });
                             }
-                            self.insn.set(self.insn.get() + 1);
+                            // A scrub was not an entry of the list, and
+                            // leaves every mark nought, so the serial
+                            // starts again from one.
+                            let scrub = self.scrub.get();
+                            with!(self <= {
+                                insn: mux(
+                                    scrub,
+                                    self.insn.get(),
+                                    self.insn.get() + 1,
+                                ),
+                                serial: mux(
+                                    scrub,
+                                    U::<8>::from(1u8),
+                                    self.serial.get(),
+                                ),
+                                clean: self.clean.get() | scrub,
+                                scrub: Bit::Zero,
+                            });
                         }
                         // A tile drawn goes out a row at a time, each one
                         // burst of 64 beats, its strobes on where a pixel
                         // was written and off where none was, so a pixel
                         // the tile's entries did not cover keeps what
-                        // memory had, as it does from a flat list. Each
-                        // mark is cleared as it is read, which leaves the
-                        // bank empty for the next tile.
+                        // memory had, as it does from a flat list. A
+                        // pixel was written when its mark is the tile's
+                        // serial, so the next tile, with the next serial,
+                        // finds the bank empty without a mark cleared.
                         if self.tiled.get().to_bool() {
                             self.wr.set(U::<6>::from(0u8));
                             for _ in 0..self.th.get().raw() as usize {
                                 DefaultClock::rising().await;
                                 self.wc.set(U::<7>::from(0u8));
                                 // Sixty-five turns a row. Each reads the
-                                // word and the mark at one column, and
-                                // clears that mark, at the same address,
-                                // which a block RAM's port does in one
-                                // cycle, reading first. The first turn
-                                // sends the burst and the rest each send
-                                // the word read the turn before, so the
-                                // read lands in a register, and each
-                                // memory has one port here and the walk's
-                                // write as its other.
+                                // word and the mark at one column. The
+                                // first turn sends the burst and the rest
+                                // each send the word read the turn before,
+                                // so the read lands in a register, and
+                                // each memory has one read here and the
+                                // walk's write as its other port.
                                 for _ in 0..=TILE as usize {
                                     until(DefaultClock::rising, || {
                                         ((Bit::from(self.wc.get() == 0)
@@ -929,7 +1177,8 @@ impl<
                                         wbeat.send(W {
                                             data: self.rd.get(),
                                             strb: mux(
-                                                self.rm.get() == 1,
+                                                self.rm.get()
+                                                    == self.serial.get(),
                                                 U::<4>::from(15u8),
                                                 U::<4>::from(0u8),
                                             ),
@@ -942,11 +1191,17 @@ impl<
                                         rd: self.bank.read(at),
                                         rm: self.mark.read(at),
                                         wc: c + 1,
-                                        mark.at(at): U::<1>::from(0u8),
                                     });
                                 }
                                 self.wr.set(self.wr.get() + 1);
                             }
+                            // The next tile's serial. Past 255 the marks
+                            // are scrubbed before it draws.
+                            let s = self.serial.get();
+                            with!(self <= {
+                                serial: s + 1,
+                                clean: self.clean.get() & Bit::from(s != 255),
+                            });
                         }
                       }
                         // The list is drawn. Once every write it made
