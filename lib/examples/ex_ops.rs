@@ -35,6 +35,9 @@ pub struct Ops {
     pub mid: Reg<U<4>>,
     pub nib: Reg<U<4>>,
     pub carry: Reg<Bit>,
+    pub packed: Reg<U<9>>,
+    pub spack: Reg<U<9>>,
+    pub same_low: Reg<Bit>,
 }
 
 #[lower]
@@ -95,6 +98,19 @@ impl Unit for Ops {
                     mid: a.mul::<8>(b).slice::<2, 4>(),
                     nib: (a + b).slice::<4, 4>(),
                     carry: (a + b).bit(7),
+                },
+            });
+            // A value narrowed inside a wider expression: a resize and
+            // a sign extension to fewer bits keep the low bits, in a
+            // concatenation, where a value not narrowed would push the
+            // bit above it out, and in a comparison, where it would be
+            // compared whole (issue 1387).
+            let w = a.concat::<8, 16>(b);
+            with!(self <= {
+                en ? {
+                    packed: U::<1>::from(1u8).concat::<8, 9>(w.resize::<8>()),
+                    spack: U::<1>::from(1u8).concat::<8, 9>(w.sext::<8>()),
+                    same_low: w.resize::<8>() == b,
                 },
             });
             same.set(eq);
