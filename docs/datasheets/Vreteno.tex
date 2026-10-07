@@ -16,10 +16,12 @@ execute stage decodes that word, computes, and issues
 loads and stores on the bus. The writeback stage extends a loaded
 word, writes the register file and retires the instruction.
 
-The core holds two memories: the register file, 32 words, and the
-instruction memory, \code{IMEM\_WORDS} or 1024 words.
-\code{Vreteno::with} loads a program into the instruction memory. The
-data memory and every device are on the bus, outside the core. Above
+The core holds three memories: the register file, 32 words; the
+instruction memory, \code{IMEM\_WORDS} or 1024 words; and a data RAM
+of 64~KiB at \code{DRAM\_BASE}, \code{0x1\_0000}, the window a program
+keeps its stack in (issue 1275). \code{Vreteno::with} loads a program
+into the instruction memory. The data memory and every device are on
+the bus, outside the core. Above
 the instruction memory the fetch reads from the bus, into a buffer of
 two words, and the words of the data memory and of DDR3 through an
 instruction cache (issue 1021): sixteen kilobytes, 1024 lines of
@@ -29,6 +31,15 @@ tagged by the physical address (issue 1290), in \code{ic\_data} and
 holds the next one, and the buffer shifts its second word into the
 first at the clock edge, as the program counter moves into it
 (issues 1187 and 1279).
+
+The data RAM is on the core's own port and not on the bus: four lanes
+of a byte, \code{dl0} to \code{dl3}, each written at one address and
+read at another, as a block RAM is. A load in its window reads the
+lanes into \code{dl\_word} at the edge and takes the word from there in
+writeback, the cycle after it ran; a store writes the lanes under its
+strobes in the cycle it runs. Whether an access is in the window comes
+from the upper half of \code{rs1} and the carry out of the lower
+halves' sum, without the full add.
 
 The bus side is an AXI host written as hardware. The core issues a
 burst on \code{issue}, sends a store's beat on \code{wbeat}, and hands
@@ -76,6 +87,10 @@ Parameter & Meaning \\
 \code{IW} & The width of the AXI identifier on \code{rdata}, \code{done},
 \code{grant} and \code{release}, in bits. The tables use 2, as the
 board and the runs do. \\
+\code{DW} & The data RAM's words a lane, a power of two, 16384 by
+default, which is 64~KiB. The netlist the documents simulate and the
+layout maps uses 4, where the window's addresses wrap, since the cell
+library has no RAM. The tables use the default. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -158,8 +173,15 @@ instead.
 \item A taken branch, \code{jal}, \code{jalr}, a trap and \code{mret}
 redirect the fetch. The word fetched in that cycle is squashed, which
 costs one bubble.
-\item A load or store whose address has any bit set above bit 11 goes
-on the bus as a burst of one beat, size 2, \code{INCR}. A store's beat
+\item A load or store in the data RAM's window does not go to the bus.
+A load's word comes from \code{dl\_word} the cycle after it ran, and
+never sets \code{dev\_wait}; a store writes the lanes in the cycle it
+runs and is not counted in \code{stores\_out}; \code{lr.w} and
+\code{sc.w} act there as on the bus, and an AMO takes its word into
+\code{wb\_dev} in its first cycle in writeback and stores to the lanes.
+A load there clears \code{wb\_err}, since nothing refuses it.
+\item Any other load or store whose address has any bit set above bit
+11 goes on the bus as a burst of one beat, size 2, \code{INCR}. A store's beat
 has the lanes it covers as its strobe.
 \item A load or store waits for room on both \code{issue} and
 \code{wbeat}, whatever its address.
@@ -216,7 +238,10 @@ halt the data memory, the timer's compare and the serial port's bytes
 must agree. Its tests are \code{demo\_program},
 \code{a\_multiply\_right\_after\_a\_load},
 \code{compressed\_instructions}, \code{an\_unaligned\_access\_traps},
-and \code{random\_programs}, which
+\code{the\_data\_ram\_on\_the\_cores\_own\_port}, a store and a load of
+one word at once, a load through a pointer just loaded, bytes and
+halves, both arms of the window's compare, \code{lr}/\code{sc} and an
+AMO there, and \code{random\_programs}, which
 runs 64 seeds of 200 instructions each with both lengths mixed and
 counts that the mix is there.
 \item \code{//cpu/vreteno:isa\_test} compares the core's expander with
@@ -277,7 +302,10 @@ boot memory runs from wherever it was loaded, the DDR3 memory on the
 board.
 
 Every load and store goes to the bus, the boot memory included, which
-answers reads and refuses writes (issue 268).
+answers reads and refuses writes (issue 268), except those in the data
+RAM's window. Nothing but the core reaches the data RAM: not the debug
+module's system bus access, Razboj or a DMA engine, so a debugger
+reads it through the core. A fetch from the window is refused.
 
 A trap handler must start at a whole word: \code{mtvec} keeps no
 bits 1 and 0. The core has machine mode only and the fourteen control
