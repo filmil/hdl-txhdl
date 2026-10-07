@@ -1,0 +1,33 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{An Empty Channel's Head}
+\label{sec:x-empty}
+
+\code{Rx::head} is what the channel offers, and a unit may read it in
+a cycle when nothing is offered.
+It then reads zero, the type's default, in the run and in both
+netlists alike.
+The netlists' channels drive their data to zero while their
+\code{valid} is low, so a design that reads an empty head does in
+hardware what it did in Rust (issue 1324).
+
+\code{ex\_empty} sends a count every fourth cycle to a unit that puts
+the channel's head on its output every cycle and takes whatever is
+offered.
+\code{Pair} joins the two by a registered channel and \code{PairU} by
+an unregistered one, so the count arrives a cycle later in the first.
+In every other cycle the output is zero.
+Both netlists are checked against this run under both simulators,
+the empty cycles included.
+
+\begin{figure}[htbp]
+\centering
+\input{empty_timing.tex}
+\caption{Each pair's output: a count for one cycle in four, a cycle
+later through the registered channel, and zero while the channel is
+empty.}
+\label{fig:x-empty}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_empty.rs}. Run with \code{bazel run //lib/examples:ex\_empty}.},label={lst:x-empty}]{lib/examples/ex_empty.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_empty} printed when the build ran it: each pair's output per cycle, and how many of those were counts.},label={lst:x-empty-out}]{out_empty.txt}

@@ -3302,7 +3302,7 @@ module txhdl_chan #(parameter W = 1)(
       tail <= tv1 ? tail : tx_data;
     end
   end
-  assign rx_data = head;
+  assign rx_data = head_v ? head : {W{1'b0}};
   assign rx_valid = head_v;
   assign tx_ready = ~tail_v;
 endmodule
@@ -3345,7 +3345,7 @@ module txhdl_chan_u #(parameter W = 1)(
       tail <= tv1 ? tail : tx_data;
     end
   end
-  assign rx_data = head_v ? head : tx_data;
+  assign rx_data = head_v ? head : tx_valid ? tx_data : {W{1'b0}};
   assign rx_valid = head_v | tx_valid;
   assign tx_ready = ~tail_v;
 endmodule
@@ -3400,7 +3400,8 @@ begin
       end if;
     end if;
   end process;
-  rx_data <= head when head_v = '1' else tx_data;
+  rx_data <= head when head_v = '1' else
+    tx_data when tx_valid = '1' else (others => '0');
   rx_valid <= head_v or tx_valid;
   tx_ready <= not tail_v;
 end architecture;
@@ -3456,7 +3457,7 @@ begin
       end if;
     end if;
   end process;
-  rx_data <= head;
+  rx_data <= head when head_v = '1' else (others => '0');
   rx_valid <= head_v;
   tx_ready <= not tail_v;
 end architecture;
