@@ -6,7 +6,28 @@
  * Ethernet buffers, in the port's own `reserved-memory` under `soc`.
  */
 / {
+	/*
+	 * The server's RAM, its network buffers, stacks and heap among it,
+	 * is the core's own data memory (issue 1230): the 64 KiB at
+	 * 0x1_0000 on the core's port (#1275), which a load reaches in a
+	 * cycle or two where the DDR3 takes tens. Code stays in the DDR3,
+	 * since a fetch from the core's memory faults, and the DMA slots
+	 * and the staging area stay there too, since the engines cannot
+	 * reach the core's memory. Linked as execute-in-place: the image
+	 * is code in the DDR3, and its data is copied to the core's memory
+	 * as it starts.
+	 */
+	chosen {
+		zephyr,sram = &lram;
+		zephyr,flash = &ddr;
+	};
+
 	soc {
+		lram: memory@10000 {
+			compatible = "mmio-sram";
+			reg = <0x00010000 DT_SIZE_K(64)>;
+		};
+
 		reserved-memory {
 			fastboot_stage: memory@48000000 {
 				reg = <0x48000000 0x01000000>;
