@@ -2751,3 +2751,55 @@ fn the_board_machine_draws_shows_and_waits_for_the_blanking() {
     assert!(ran.halted_at.is_some(), "and halted: {}", ran.said);
     assert_eq!(ran.said, "inside ff005aa5\nbase 42200000\negl board ok\n");
 }
+
+/// The instruction cache timed by the core (issue 1320): the board
+/// program that gives the board's figures, run here on the simulated
+/// board, so that it is known to say four lines, and what they are in
+/// simulation.
+///
+/// Each run retires the same 3004 instructions: the loop's 3000, its
+/// count, the `fence.i` or the nop in its place, and a counter read. A
+/// cold run takes the 1024 cycles the tags take to clear, and its
+/// misses, more than the warm run after it: 8077 against 7036 from the
+/// data memory, 8149 against 7084 from the DDR3. Warm, the loop runs at
+/// 2.34 cycles an instruction from either memory, below `icache_test`'s
+/// figure, since the routine starts its loop at the start of a line and
+/// `icache_test`'s loop starts a word in.
+#[test]
+fn the_cache_loop_is_timed_by_the_core() {
+    let ran = run(cpi_program::TEXT, cpi_program::DATA, b"", 200_000);
+    assert!(ran.halted_at.is_some(), "and halted: {}", ran.said);
+    let of = |what: &str| -> (u32, u32) {
+        let line = ran
+            .said
+            .lines()
+            .find_map(|l| l.strip_prefix(&format!("cpi {what} ")))
+            .unwrap_or_else(|| panic!("no line for {what}: {}", ran.said));
+        let mut n = line.split(' ').map(|n| n.parse().expect("a number"));
+        (n.next().expect("cycles"), n.next().expect("instret"))
+    };
+    let (dc, dw, rc, rw) =
+        (of("dmem cold"), of("dmem warm"), of("ddr3 cold"), of("ddr3 warm"));
+    for (what, (_, i)) in [
+        ("dmem cold", dc),
+        ("dmem warm", dw),
+        ("ddr3 cold", rc),
+        ("ddr3 warm", rw),
+    ] {
+        assert_eq!(i, 3004, "{what}: the instructions retired");
+    }
+    for (what, cold, warm) in [("dmem", dc, dw), ("ddr3", rc, rw)] {
+        assert!(
+            cold.0 >= warm.0 + 1024,
+            "{what}: cold {} takes the tags' clear over warm {}",
+            cold.0,
+            warm.0
+        );
+        assert!(
+            warm.0 < 3 * warm.1,
+            "{what}: warm, {} cycles for {} instructions",
+            warm.0,
+            warm.1
+        );
+    }
+}
