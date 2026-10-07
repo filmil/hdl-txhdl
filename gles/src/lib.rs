@@ -108,6 +108,18 @@ pub struct Gl<'a> {
     normalize: bool,
     rescale: bool,
     colour_material: bool,
+    /// Depth (#1273): the test's switch; its comparison, Razboj's, from
+    /// nought for `GL_NEVER`; whether a pixel that passes writes its
+    /// depth; the clear's depth; and the depth range, both in 16.16
+    /// from nought to one.
+    depth_test: bool,
+    depth_func: u32,
+    depth_mask: bool,
+    clear_depth: Fx,
+    depth_range: (Fx, Fx),
+    /// Whether the frame holds an entry that tests depth, which Razboj
+    /// draws only from a tile table.
+    deep: bool,
     error: u32,
 }
 
@@ -146,6 +158,12 @@ impl<'a> Gl<'a> {
             normalize: false,
             rescale: false,
             colour_material: false,
+            depth_test: false,
+            depth_func: gl::LESS - gl::NEVER,
+            depth_mask: true,
+            clear_depth: ONE,
+            depth_range: (0, ONE),
+            deep: false,
             error: gl::NO_ERROR,
         }
     }
@@ -294,6 +312,7 @@ impl<'a> Gl<'a> {
             gl::NORMALIZE => self.normalize = on,
             gl::RESCALE_NORMAL => self.rescale = on,
             gl::COLOR_MATERIAL => self.colour_material = on,
+            gl::DEPTH_TEST => self.depth_test = on,
             l if (gl::LIGHT0..gl::LIGHT0 + gl::MAX_LIGHTS as u32)
                 .contains(&l) =>
             {
@@ -311,6 +330,7 @@ impl<'a> Gl<'a> {
             gl::NORMALIZE => self.normalize,
             gl::RESCALE_NORMAL => self.rescale,
             gl::COLOR_MATERIAL => self.colour_material,
+            gl::DEPTH_TEST => self.depth_test,
             l if (gl::LIGHT0..gl::LIGHT0 + gl::MAX_LIGHTS as u32)
                 .contains(&l) =>
             {
@@ -485,23 +505,69 @@ impl<'a> Gl<'a> {
         self.clear_colour = [r, g, b, a];
     }
 
-    /// `glClear` of the colour buffer: a clear at this point of the
-    /// frame. The other buffers wait for their issues.
+    /// `glDepthFunc`: the comparison a pixel's depth makes with the
+    /// depth already there, `GL_NEVER` to `GL_ALWAYS`.
+    pub fn depth_func(&mut self, func: u32) {
+        match func {
+            gl::NEVER..=gl::ALWAYS => self.depth_func = func - gl::NEVER,
+            _ => self.fail(gl::INVALID_ENUM),
+        }
+    }
+
+    /// `glDepthMask`: whether a pixel that passes writes its depth.
+    pub fn depth_mask(&mut self, flag: bool) {
+        self.depth_mask = flag;
+    }
+
+    /// `glClearDepthx`: the depth a clear writes, kept between nought
+    /// and one.
+    pub fn clear_depth(&mut self, depth: Fx) {
+        self.clear_depth = depth.clamp(0, ONE);
+    }
+
+    /// `glDepthRangex`: where the near and the far planes fall in the
+    /// depth's range, each kept between nought and one.
+    pub fn depth_range(&mut self, near: Fx, far: Fx) {
+        self.depth_range = (near.clamp(0, ONE), far.clamp(0, ONE));
+    }
+
+    /// `glClear` of the colour buffer, the depth buffer, or both, at
+    /// this point of the frame.
+    ///
+    /// A clear of both is the clear's rectangle writing its colour and,
+    /// over any depth, its depth. A tile's depth starts at the farthest
+    /// (#992), so a clear of the depth to the farthest before anything
+    /// in the frame has tested depth has nothing to do. A clear of the
+    /// depth alone otherwise writes the depth and leaves the colour,
+    /// which Razboj does not do until it has #993's masks: that clear is
+    /// left undone, and `docs/gles.md` says so.
     pub fn clear(&mut self, mask: u32) {
-        if mask & !gl::COLOR_BUFFER_BIT != 0 {
+        let both = gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT;
+        if mask & !both != 0 {
             return self.fail(gl::INVALID_VALUE);
         }
-        if mask & gl::COLOR_BUFFER_BIT != 0 {
-            let colour = colour_word(&self.clear_colour);
-            // Razboj's clear is of its own screen, the rows from zero; a
-            // window lower down is cleared as a rectangle of itself, so
-            // that the half of a double buffer being shown is left alone.
-            let w = if self.window_top == 0 {
-                emit::clear(colour)
-            } else {
-                let (sw, sh) = self.screen;
-                emit::rect(colour, (0, self.window_top, sw - 1, sh - 1))
-            };
+        let z = depth_units(self.clear_depth);
+        let depth =
+            mask & gl::DEPTH_BUFFER_BIT != 0 && (self.deep || z != emit::FAR);
+        if mask & gl::COLOR_BUFFER_BIT == 0 {
+            return;
+        }
+        let colour = colour_word(&self.clear_colour);
+        // Razboj's clear is of its own screen, the rows from zero; a
+        // window lower down is cleared as a rectangle of itself, so that
+        // the half of a double buffer being shown is left alone. A clear
+        // of depth is a rectangle too, since only a tile table tests
+        // depth and a tile table makes every clear one.
+        let mut w = if self.window_top == 0 && !depth {
+            emit::clear(colour)
+        } else {
+            let (sw, sh) = self.screen;
+            emit::rect(colour, (0, self.window_top, sw - 1, sh - 1))
+        };
+        if depth {
+            emit::depth(&mut w, gl::ALWAYS - gl::NEVER, true);
+            self.push_pair(w, emit::flat_depth(z));
+        } else {
             self.push(w);
         }
     }
@@ -512,6 +578,31 @@ impl<'a> Gl<'a> {
         }
         self.frame[self.used] = w;
         self.used += 1;
+    }
+
+    /// An entry that tests depth and its depth plane's slot, which go
+    /// into the frame together or not at all.
+    fn push_pair(&mut self, w: [u32; WORDS], slot: [u32; WORDS]) {
+        if self.frame.len() - self.used < 2 {
+            return self.fail(gl::OUT_OF_MEMORY);
+        }
+        self.frame[self.used] = w;
+        self.frame[self.used + 1] = slot;
+        self.used += 2;
+        self.deep = true;
+    }
+
+    /// An entry as drawing makes it: testing depth as the context says
+    /// when the depth test is on and its plane's slot `slot` is there,
+    /// and as it is otherwise.
+    fn push_drawn(&mut self, mut w: [u32; WORDS], slot: Option<[u32; WORDS]>) {
+        match slot {
+            Some(p) if self.depth_test => {
+                emit::depth(&mut w, self.depth_func, self.depth_mask);
+                self.push_pair(w, p);
+            }
+            _ => self.push(w),
+        }
     }
 
     /// Draws from here on into `frame`, empty, as a window of `width`
@@ -529,13 +620,22 @@ impl<'a> Gl<'a> {
     ) {
         self.frame = frame;
         self.used = 0;
+        self.deep = false;
         self.screen = (width, top + height);
         self.window_top = top;
     }
 
-    /// The frame so far, as the instructions an untiled Razboj reads.
+    /// The frame so far, as the instructions an untiled Razboj reads,
+    /// an entry that tests depth followed by its depth plane's slot.
     pub fn frame(&self) -> &[[u32; WORDS]] {
         &self.frame[..self.used]
+    }
+
+    /// Whether the frame tests depth anywhere, so that Razboj has to
+    /// draw it from a tile table, [`Gl::flush`]'s: a flat list draws an
+    /// entry that tests depth as if it did not (#992).
+    pub fn tiled(&self) -> bool {
+        self.deep
     }
 
     /// `glFlush`: the frame binned into tiles, into the room given, and
@@ -549,6 +649,7 @@ impl<'a> Gl<'a> {
         let (sw, sh) = self.screen;
         let r = bin(&self.frame[..self.used], sw, sh, entries, tiles)?;
         self.used = 0;
+        self.deep = false;
         Ok(r)
     }
 
@@ -755,6 +856,22 @@ impl<'a> Gl<'a> {
         Some((wx, wy))
     }
 
+    /// A clipped vertex's window depth, of sixteen bits: its z over its
+    /// w, from minus one to one, carried into the depth range, then
+    /// times 65535 and rounded to the nearest. Called only where
+    /// [`Gl::window`] found the vertex in front of the eye.
+    fn window_z(&self, v: &Vert) -> u32 {
+        let (z, w) = (v.clip[2] as i128, v.clip[3] as i128);
+        let (n, f) = (self.depth_range.0 as i128, self.depth_range.1 as i128);
+        // n + (f - n) (z / w + 1) / 2, in 16.16, is
+        // (2 n w + (f - n) (z + w)) / (2 w).
+        let num = (2 * n * w + (f - n) * (z + w)) * emit::FAR as i128;
+        let den = 2 * w * ONE as i128;
+        (2 * num + den)
+            .div_euclid(2 * den)
+            .clamp(0, emit::FAR as i128) as u32
+    }
+
     /// A point, as GL draws one that is not antialiased: kept only when
     /// its vertex is inside the clip volume and the user plane, then the
     /// square of its size in whole pixels, centred on the pixel the
@@ -786,7 +903,8 @@ impl<'a> Gl<'a> {
         let (x1, y0, y1) = (x0 + s - 1, sh - gy0 - s, sh - 1 - gy0);
         let c = |v: i64| v.clamp(-(1 << 20), 1 << 20) as i32;
         if let Some(b) = clip(c(x0), c(y0), c(x1), c(y1), self.bounds()) {
-            self.push(emit::rect(colour_word(&v.col), b));
+            let slot = emit::flat_depth(self.window_z(&v));
+            self.push_drawn(emit::rect(colour_word(&v.col), b), Some(slot));
         }
     }
 
@@ -837,15 +955,22 @@ impl<'a> Gl<'a> {
         };
         let quad = [at(p, -1), at(q, -1), at(q, 1), at(p, 1)];
         let (cp, cq) = (colour_word(&a.col), colour_word(&b.col));
+        // Each corner's depth is its end's, as its colour is.
+        let (zp, zq) = (self.window_z(&a), self.window_z(&b));
+        let zs = self.depth_test.then_some(());
         let screen = self.bounds();
-        for (i, j, k, s) in [(0, 1, 2, [cp, cq, cq]), (0, 2, 3, [cp, cq, cp])] {
+        for (i, j, k, s, z) in [
+            (0, 1, 2, [cp, cq, cq], [zp, zq, zq]),
+            (0, 2, 3, [cp, cq, cp], [zp, zq, zp]),
+        ] {
+            let (q, z) = ((quad[i], quad[j], quad[k]), zs.map(|_| z));
             let w = if self.smooth {
-                emit::triangle(s[0], quad[i], quad[j], quad[k], Some(s), screen)
+                emit::triangle(s[0], q.0, q.1, q.2, Some(s), z, screen)
             } else {
-                emit::triangle(flat, quad[i], quad[j], quad[k], None, screen)
+                emit::triangle(flat, q.0, q.1, q.2, None, z, screen)
             };
-            if let Some(w) = w {
-                self.push(w);
+            if let Some((w, slot)) = w {
+                self.push_drawn(w, slot);
             }
         }
     }
@@ -955,20 +1080,35 @@ impl<'a> Gl<'a> {
             }
         };
         let flat = colour_word(&face(&tri[2]));
+        // Each vertex's window depth, when the depth test wants it.
+        let mut zw = [0u32; MAXV];
+        if self.depth_test {
+            for (k, v) in poly[..n].iter().enumerate() {
+                zw[k] = self.window_z(v);
+            }
+        }
         for k in 1..n - 1 {
             let (a, b, c) = (at(0), at(k), at(k + 1));
+            let z = self.depth_test.then_some([zw[0], zw[k], zw[k + 1]]);
             let w = if self.smooth {
                 let s = [face(&poly[0]), face(&poly[k]), face(&poly[k + 1])]
                     .map(|c| colour_word(&c));
-                emit::triangle(s[0], a, b, c, Some(s), screen)
+                emit::triangle(s[0], a, b, c, Some(s), z, screen)
             } else {
-                emit::triangle(flat, a, b, c, None, screen)
+                emit::triangle(flat, a, b, c, None, z, screen)
             };
-            if let Some(w) = w {
-                self.push(w);
+            if let Some((w, slot)) = w {
+                self.push_drawn(w, slot);
             }
         }
     }
+}
+
+/// A depth from nought to one in 16.16 as sixteen bits, times 65535 and
+/// rounded to the nearest, as a vertex's window depth is.
+fn depth_units(d: Fx) -> u32 {
+    let n = d.clamp(0, ONE) as i64 * emit::FAR as i64;
+    ((n + (1 << 15)) >> 16) as u32
 }
 
 /// A point size or a line width in whole pixels: rounded to the

@@ -34,15 +34,19 @@ pub fn area2(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> i64 {
 
 /// One channel's plane over a triangle wound as the rasteriser wants,
 /// with values `v` at its vertices: its value at `first`, and its two
-/// steps, each with sixteen bits of fraction, rounded to the nearest,
-/// the start a half unit up so that the byte the rasteriser takes is
-/// the nearest one. The same numbers `op.rs`'s `plane` gets in 128 bits.
+/// steps, each with `frac` bits of fraction, sixteen for a colour and
+/// [`ZFRAC`] for a depth, rounded to the nearest, the start a half unit
+/// up so that the value the rasteriser takes above the fraction is the
+/// nearest one. The same numbers `op.rs`'s `plane` gets in 128 bits; a
+/// depth's, under 2^16 at a vertex, fits 64 bits as a channel's does,
+/// since it has four bits fewer of fraction for its eight more of value.
 fn plane(
     a: (i32, i32),
     b: (i32, i32),
     c: (i32, i32),
     v: [i64; 3],
     first: (i32, i32),
+    frac: u32,
 ) -> (u32, u32, u32) {
     let d =
         |p: (i32, i32), q: (i32, i32)| ((q.0 - p.0) as i64, (q.1 - p.1) as i64);
@@ -51,7 +55,7 @@ fn plane(
     let (db, dc) = (v[1] - v[0], v[2] - v[0]);
     let nx = db * vy - dc * uy;
     let ny = dc * ux - db * vx;
-    let one = 1i64 << 16;
+    let one = 1i64 << frac;
     let round = |n: i64| (n + area / 2).div_euclid(area);
     let (px, py) = d(a, first);
     let start = v[0] * one + one / 2 + round((nx * px + ny * py) * one);
@@ -63,24 +67,52 @@ fn plane(
     )
 }
 
+/// Bits of fraction in a depth plane, `razboj::op::ZFRAC`: sixteen bits
+/// of depth and the sign in thirty-two.
+pub const ZFRAC: u32 = 12;
+
+/// The farthest depth, where every tile's depth starts (#992).
+pub const FAR: u32 = 0xffff;
+
+/// An instruction's word 15 told to test depth with `func`, Razboj's
+/// comparison from nought for `GL_NEVER` to seven for `GL_ALWAYS`, and
+/// to write its depth where it passes if `write`: the instruction then
+/// takes its depth plane's slot after it.
+pub fn depth(w: &mut [u32; WORDS], func: u32, write: bool) {
+    w[15] = (w[15] & 0xff) | 1 << 8 | (func & 7) << 9 | (write as u32) << 12;
+}
+
+/// A depth plane's slot for a depth `z` everywhere, of sixteen bits:
+/// the plane of a clear, a rectangle or a point, half a unit up as a
+/// triangle's start is.
+pub fn flat_depth(z: u32) -> [u32; WORDS] {
+    let mut w = [0u32; WORDS];
+    w[0] = ((z & 0xffff) << ZFRAC) + (1 << (ZFRAC - 1));
+    w
+}
+
 /// A triangle on a screen `within`, its vertices in sixteenths, flat in
 /// `colour` or, with `shades`, a colour at each vertex blended across
 /// it; a colour is `0xAARRGGBB`, and a shaded triangle's alpha is its
-/// first vertex's. `None` when there is nothing to draw: no area, a
-/// vertex out of Razboj's range, or a box off the screen. The winding
-/// is the rasteriser's, two vertices swapped with their colours when
-/// the area says the other way.
+/// first vertex's. With `zs`, a depth of sixteen bits at each vertex,
+/// the triangle's depth plane's slot comes with it, for [`depth`] to
+/// make the instruction test. `None` when there is nothing to draw: no
+/// area, a vertex out of Razboj's range, or a box off the screen. The
+/// winding is the rasteriser's, two vertices swapped with their colours
+/// and depths when the area says the other way.
 pub fn triangle(
     colour: u32,
     a: (i32, i32),
     b: (i32, i32),
     c: (i32, i32),
     shades: Option<[u32; 3]>,
+    zs: Option<[u32; 3]>,
     within: Bounds,
-) -> Option<[u32; WORDS]> {
+) -> Option<([u32; WORDS], Option<[u32; WORDS]>)> {
     let swap = area2(a, b, c) < 0;
     let (b, c) = if swap { (c, b) } else { (b, c) };
-    let shades = shades.map(|s| if swap { [s[0], s[2], s[1]] } else { s });
+    let turn = |s: [u32; 3]| if swap { [s[0], s[2], s[1]] } else { s };
+    let (shades, zs) = (shades.map(turn), zs.map(turn));
     if area2(a, b, c) == 0 {
         return None;
     }
@@ -105,19 +137,26 @@ pub fn triangle(
     w[4] = pair(b);
     w[5] = pair(c);
     w[15] = colour >> 24;
+    let first = (x0 as i32 * 16 + 8, y0 as i32 * 16 + 8);
     if let Some(s) = shades {
         w[0] = 3 | ((colour & 0xff_ffff) << 2);
-        let first = (x0 as i32 * 16 + 8, y0 as i32 * 16 + 8);
         for (k, at) in [16u32, 8, 0].iter().enumerate() {
             let ch = |v: u32| ((v >> at) & 0xff) as i64;
             let (s0, dx, dy) =
-                plane(a, b, c, [ch(s[0]), ch(s[1]), ch(s[2])], first);
+                plane(a, b, c, [ch(s[0]), ch(s[1]), ch(s[2])], first, 16);
             w[6 + 3 * k] = s0;
             w[7 + 3 * k] = dx;
             w[8 + 3 * k] = dy;
         }
     }
-    Some(w)
+    let slot = zs.map(|z| {
+        let v = z.map(|z| (z & 0xffff) as i64);
+        let (z0, dx, dy) = plane(a, b, c, v, first, ZFRAC);
+        let mut p = [0u32; WORDS];
+        (p[0], p[1], p[2]) = (z0, dx, dy);
+        p
+    });
+    Some((w, slot))
 }
 
 /// A clear of the whole screen in `colour`, `0xAARRGGBB`.

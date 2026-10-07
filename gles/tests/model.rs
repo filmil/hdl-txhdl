@@ -13,9 +13,9 @@ use gles::fixed::{Fx, ONE};
 use gles::gl;
 use gles::matrix::Mat;
 use gles::{colour_word, Gl};
-use razboj::dl::{decode, encode};
+use razboj::dl::{decode, encode, encode_ext};
 use razboj::model::render;
-use razboj::op::{assemble, Insn, Op};
+use razboj::op::{assemble, DepthMode, Insn, Op};
 use razboj_tile::{TILE_WORDS, WORDS};
 
 const W: u32 = 640;
@@ -57,7 +57,7 @@ impl Rng {
 fn the_words_are_razbojs_encoders() {
     let mut r = Rng(0x1234_5678);
     let screen = (0, 0, W - 1, H - 1);
-    let (mut drawn, mut shaded) = (0, 0);
+    let (mut drawn, mut shaded, mut deep) = (0, 0, 0);
     for _ in 0..4000 {
         let v = |r: &mut Rng| (r.range(-16384, 16383), r.range(-16384, 16383));
         let near = |r: &mut Rng| (r.range(-800, 11000), r.range(-800, 8500));
@@ -69,32 +69,63 @@ fn the_words_are_razbojs_encoders() {
         };
         let colours = [r.next(), r.next(), r.next()];
         let smooth = r.next() & 1 == 1;
+        // A third of them test depth, under a comparison and a mask of
+        // their own, with a depth at each vertex across the range.
+        let z = [r.next() & 0xffff, r.next() & 0xffff, r.next() & 0xffff];
+        let mode = r.next().is_multiple_of(3).then(|| DepthMode {
+            func: r.next() & 7,
+            write: r.next() & 1 == 1,
+        });
         let ours = gles::emit::triangle(
             colours[0],
             a,
             b,
             c,
             smooth.then_some(colours),
+            mode.map(|_| z),
             screen,
-        );
-        let op = if smooth {
-            Op::Gouraud { a, b, c, colours }
-        } else {
-            Op::TriQ4 {
+        )
+        .map(|(mut w, slot)| {
+            if let Some(m) = mode {
+                gles::emit::depth(&mut w, m.func, m.write);
+            }
+            (w, slot)
+        });
+        let op = match (smooth, mode.is_some()) {
+            (true, false) => Op::Gouraud { a, b, c, colours },
+            (false, false) => Op::TriQ4 {
                 colour: colours[0],
                 a,
                 b,
                 c,
-            }
+            },
+            (true, true) => Op::GouraudZ {
+                a,
+                b,
+                c,
+                colours,
+                z,
+            },
+            (false, true) => Op::TriZ {
+                colour: colours[0],
+                a,
+                b,
+                c,
+                z,
+            },
         };
-        let theirs = op.encode(W as usize, H as usize).map(|i| encode(&i));
+        let (sw, sh) = (W as usize, H as usize);
+        let theirs = op
+            .encode_with(screen, mode, sw, sh)
+            .map(|i| (encode(&i), encode_ext(&i)));
         assert_eq!(ours, theirs, "{op:?}");
         drawn += ours.is_some() as u32;
         shaded += (ours.is_some() && smooth) as u32;
+        deep += (ours.is_some() && mode.is_some()) as u32;
     }
     assert!(
-        drawn > 1500 && shaded > 700,
-        "{drawn} drawn, {shaded} shaded"
+        drawn > 1500 && shaded > 700 && deep > 400,
+        "{drawn} drawn, {shaded} shaded, {deep} with depth"
     );
 }
 

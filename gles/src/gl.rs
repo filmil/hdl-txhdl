@@ -35,6 +35,19 @@ pub const FLAT: u32 = 0x1D00;
 pub const SMOOTH: u32 = 0x1D01;
 
 pub const COLOR_BUFFER_BIT: u32 = 0x0000_4000;
+pub const DEPTH_BUFFER_BIT: u32 = 0x0000_0100;
+
+/// Depth (#1273): the test's switch, and its comparisons, whose order
+/// from `NEVER` is Razboj's (#992).
+pub const DEPTH_TEST: u32 = 0x0B71;
+pub const NEVER: u32 = 0x0200;
+pub const LESS: u32 = 0x0201;
+pub const EQUAL: u32 = 0x0202;
+pub const LEQUAL: u32 = 0x0203;
+pub const GREATER: u32 = 0x0204;
+pub const NOTEQUAL: u32 = 0x0205;
+pub const GEQUAL: u32 = 0x0206;
+pub const ALWAYS: u32 = 0x0207;
 
 /// The modelview stack's depth, the specification's minimum.
 pub const MAX_MODELVIEW_STACK_DEPTH: usize = 16;
