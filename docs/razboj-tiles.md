@@ -172,10 +172,11 @@ Each step is a pull request, and each is checked against the model before the ne
    Done in issue 993: an entry with the blend, the alpha test or a colour mask takes the depth's second slot, its state in words 3 and 4, and a pixel of it takes five cycles: the read, the factors, the products and their sum, the divide and the mask, and the write, so that no turn holds more than one of them.
    The colour already there is read from a copy of the bank, written with it and read only by the walk, since a second read of the bank itself would make it LUT RAM.
    A tile whose entries read that colour before anything has covered it is loaded from the framebuffer first, a burst a row through the walk's one write, about a write-out's cost; the binning sets the load bit in the record, and a frame that starts with a clear loads nothing.
-5. **Textures, issue 997**, so far in the format, the binning and the model.
-   A textured entry takes the second slot and two more, bit 14 of word 15 saying so: the planes of `u q`, `v q` and `q` in 64 bits, the texture's index and environment, and the numerators of the level of detail.
+5. **Textures, issue 997**, in the format, the binning, the model, and in the rasteriser at the nearest texel of the base level.
+   A textured entry takes the second slot and two more, bit 14 of word 15 saying so: the planes of `u q`, `v q` and `q` in 64 bits, the texture's descriptor by its byte address, the environment, and the numerators of the level of detail.
    The binning steps all of them to each tile's corner, as it steps a colour's plane, so an entry in a tile is drawn as the same entry flat.
-   The rasteriser reads past the two slots and draws the entry untextured until it samples, which is the issue's second step.
+   In a tile the rasteriser reads the two slots and the descriptor, works out each textured pixel's texel as the model does, and reads it through a cache of 64 lines of 64 bytes, a block RAM of 1024 words; a miss refills its line with one burst of sixteen beats.
+   A flat list draws the entry untextured, as it has no depth.
 
 ## 8. What this leaves to issues 992 and 993
 
