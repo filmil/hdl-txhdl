@@ -45,13 +45,13 @@ pub const SLOT: usize = 2048;
 // `//tools/regmap` writes, and follows. The writer is LiteEth's name for
 // the receive side and the reader for the transmit side.
 regmap! { regs (regs_read, regs_we), 4: [
-    (0, rx_slot, ro, "which slot the last frame is in", [
+    (0, rx_slot, ro, "which slot the oldest unacknowledged frame is in", [
         (slot, 0, 1, ro, 0, "the slot"),
     ]),
     (1, rx_length, ro, "its length in bytes", [
         (length, 0, 16, ro, 0, "the length"),
     ]),
-    (2, rx_errors, ro, "frames dropped; none are, so zero", [
+    (2, rx_errors, ro, "frames dropped because both slots were pending", [
         (errors, 0, 32, ro, 0, "the count"),
     ]),
     (3, rx_ev_status, ro, "a frame has arrived and is not acknowledged", [
@@ -105,12 +105,20 @@ regmap! { regs (regs_read, regs_we), 4: [
 /// look like a bug here.
 #[derive(Trace, Default)]
 pub struct EthSlots<const BASE: usize> {
-    /// Which slot the last received frame is in.
-    pub rx_slot: Reg<U<1>>,
+    /// The oldest frame received and not yet acknowledged: its slot.
+    /// The frames wait in order, at most one a slot (issue 1313).
+    /// `rx_slot` and `rx_length` read the oldest, and acknowledging it
+    /// takes it off, so a frame that lands while the driver is busy
+    /// with another waits its turn rather than replacing it.
+    pub q0_slot: Reg<U<1>>,
+    /// The oldest frame's length in bytes.
+    pub q0_len: Reg<U<16>>,
+    /// The frame behind it, if one is: its slot.
+    pub q1_slot: Reg<U<1>>,
     /// Its length in bytes.
-    pub rx_length: Reg<U<16>>,
-    /// A frame has arrived and not been acknowledged.
-    pub rx_pending: Reg<Bit>,
+    pub q1_len: Reg<U<16>>,
+    /// How many of the two are held.
+    pub queued: Reg<U<2>>,
     /// Whether an arrival raises the interrupt line.
     pub rx_enable: Reg<Bit>,
     /// Which slot the next transmit reads from.
@@ -140,20 +148,24 @@ impl<const BASE: usize> Unit for EthSlots<BASE> {
             rx_busy,
             rx_len,
             rx_which,
+            rx_drops,
             tx_base,
             tx_bytes,
             tx_start,
             rx_base,
             irq,
+            rx_full,
         ): (
             In<Bit>,
             In<Bit>,
             In<U<16>>,
             In<U<1>>,
+            In<U<32>>,
             Out<U<32>>,
             Out<U<16>>,
             Out<Bit>,
             Out<U<32>>,
+            Out<Bit>,
             Out<Bit>,
         ),
     ) {
@@ -219,26 +231,49 @@ impl<const BASE: usize> Unit for EthSlots<BASE> {
             // begins; which slot that is comes from the far side, so
             // that a frame lands somewhere the driver is not reading.
             rx_base.set(base + (rx_which.get().resize::<32>() << 11u32));
-            irq.set(self.rx_pending.get() & self.rx_enable.get());
 
-            // The acknowledgements come FIRST, and the arrival after
-            // them, because `with!` applies its entries in order and
-            // the last drive of a field wins. A driver acknowledging
-            // one frame in the same cycle the next one lands would
-            // otherwise clear the pending bit that arrival had just
-            // set: the frame would sit in memory, announced to
-            // nobody, and the link would stall until another arrived.
-            // Written the other way round it reads more naturally and
-            // loses a frame under exactly the load that makes the two
-            // coincide.
+            // The frames waiting for the driver, a slot each (issue
+            // 1313). The pending bit is held while any waits, so a
+            // driver that acknowledges one frame an interrupt, as
+            // Zephyr's and Linux's do, is interrupted again for the
+            // next. The receiving side is told the slots are full while
+            // both hold a frame, or while one does and the frame just
+            // stored is about to be counted, and then drops the frame
+            // it is offered and counts it, rather than land it on a
+            // slot the driver has not released.
+            let q = self.queued.get();
+            let none = Bit::from(q == 0);
+            let one = Bit::from(q == 1);
+            let two = Bit::from(q == 2);
+            let held = !none;
+            irq.set(held & self.rx_enable.get());
+            rx_full.set(two | (one & self.rx_was.get()));
+
+            // An acknowledgement takes the oldest frame off, and an
+            // arrival puts the new one behind whatever is left, so the
+            // two in the same cycle move the second frame to the front
+            // and put the new one behind it. Before issue 1313 an
+            // arrival replaced the frame the driver had been told of,
+            // and its acknowledgement cleared the arrival's pending bit.
+            let pop = rx_ack & held;
+            let new_slot = rx_which.get();
+            let new_len = rx_len.get();
             with!(self <= {
-                rx_ack ? rx_pending: Bit::Zero,
-                tx_ack ? tx_pending: Bit::Zero,
-                arrived ? {
-                    rx_slot: rx_which.get(),
-                    rx_length: rx_len.get(),
-                    rx_pending: Bit::One,
+                pop & two ? {
+                    q0_slot: self.q1_slot.get(),
+                    q0_len: self.q1_len.get(),
                 },
+                arrived & (none | (one & pop)) ? {
+                    q0_slot: new_slot,
+                    q0_len: new_len,
+                },
+                arrived & ((one & !pop) | (two & pop)) ? {
+                    q1_slot: new_slot,
+                    q1_len: new_len,
+                },
+                arrived & !pop & !two ? queued: q + 1,
+                pop & !arrived ? queued: q - 1,
+                tx_ack ? tx_pending: Bit::Zero,
                 rx_was: now_busy,
                 taken ? tx_go: Bit::Zero,
                 we.bit(5) ? rx_enable: regs_rx_ev_enable_enable(data),
@@ -257,11 +292,11 @@ impl<const BASE: usize> Unit for EthSlots<BASE> {
                 let zero = U::<32>::from(0u8);
                 let word = regs_read(
                     rsel,
-                    regs_rx_slot_pack(self.rx_slot.get().bit(0)),
-                    regs_rx_length_pack(self.rx_length.get()),
-                    zero,
-                    regs_rx_ev_status_pack(self.rx_pending.get()),
-                    regs_rx_ev_pending_pack(self.rx_pending.get()),
+                    regs_rx_slot_pack(self.q0_slot.get().bit(0)),
+                    regs_rx_length_pack(self.q0_len.get()),
+                    regs_rx_errors_pack(rx_drops.get()),
+                    regs_rx_ev_status_pack(held),
+                    regs_rx_ev_pending_pack(held),
                     regs_rx_ev_enable_pack(self.rx_enable.get()),
                     zero,
                     regs_tx_ready_pack(ready),
@@ -347,11 +382,13 @@ mod tests {
         let (_rx_busy_o, rx_busy) = signal::<Bit, DefaultClock>();
         let (_rx_len_o, rx_len) = signal::<U<16>, DefaultClock>();
         let (_rx_which_o, rx_which) = signal::<U<1>, DefaultClock>();
+        let (_rx_drops_o, rx_drops) = signal::<U<32>, DefaultClock>();
         let (tx_base, _) = signal::<U<32>, DefaultClock>();
         let (tx_bytes, _) = signal::<U<16>, DefaultClock>();
         let (tx_start, _) = signal::<Bit, DefaultClock>();
         let (rx_base, _) = signal::<U<32>, DefaultClock>();
         let (irq, _) = signal::<Bit, DefaultClock>();
+        let (rx_full, _) = signal::<Bit, DefaultClock>();
         let seen: Rc<RefCell<Vec<(u32, u32)>>> = Rc::default();
         let log = seen.clone();
         let client = async move {
@@ -367,8 +404,8 @@ mod tests {
             slots.run(
                 bus,
                 (
-                    tx_busy, rx_busy, rx_len, rx_which, tx_base, tx_bytes,
-                    tx_start, rx_base, irq,
+                    tx_busy, rx_busy, rx_len, rx_which, rx_drops, tx_base,
+                    tx_bytes, tx_start, rx_base, irq, rx_full,
                 ),
             ),
             client,

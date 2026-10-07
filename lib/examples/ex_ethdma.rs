@@ -43,7 +43,15 @@ use txhdl_parts::ethdma::{FrameIn, FrameOut};
 /// the frame stay in the transmitter, which has seen no last byte
 /// for them, and they go out in front of the NEXT frame. Only a
 /// second frame can see them.
-const BYTES: [usize; 2] = [101, 67];
+///
+/// A third, of 77 bytes, comes while `FrameIn` is told that no slot is
+/// free, as the register block tells it while the driver holds both
+/// (issue 1313): its bytes are taken and none of them land, and it is
+/// counted as dropped.
+const BYTES: [usize; 3] = [101, 67, 77];
+
+/// The frames that land; the ones after are dropped.
+const KEPT: usize = 2;
 
 /// The words a frame of `n` bytes takes, its last one partial.
 const fn words_of(n: usize) -> usize {
@@ -116,6 +124,8 @@ fn main() {
     let (which_o, which) = signal::<U<1>, DefaultClock>();
     // No store engine here, so nothing holds the next frame off.
     let (_hold_o, hold) = signal::<Bit, DefaultClock>();
+    let (noslot_o, no_slot) = signal::<Bit, DefaultClock>();
+    let (drops_o, drops) = signal::<U<32>, DefaultClock>();
 
     let mut fout = FrameOut::default();
     let mut fin = FrameIn::default();
@@ -144,6 +154,8 @@ fn main() {
         w.add("store", &in_go);
         w.add("which", &which);
         w.add("hold", &hold);
+        w.add("no_slot", &no_slot);
+        w.add("drops", &drops);
         w.add("frame_out", &fout);
         w.add("frame_in", &fin);
         w.start();
@@ -167,8 +179,8 @@ fn main() {
             mac_rx.run(EthRxLines { rxd, rx_dv, rx_er }, (rx_tx, rxlen_o)),
             join2(
                 fin.run(
-                    (rx_rx, rx_len, hold),
-                    (back_tx, inbytes_o, ingo_o, which_o),
+                    (rx_rx, rx_len, hold, no_slot),
+                    (back_tx, inbytes_o, ingo_o, which_o, drops_o),
                 ),
                 sink.run(back_rx, ()),
             ),
@@ -203,6 +215,8 @@ fn main() {
             next = 0;
             bytes_o.set(U::<16>::from(BYTES[frame] as u32));
             go_o.set(Bit::One);
+            // No slot is free for the frames after the kept ones.
+            noslot_o.set(Bit::from_bool(frame >= KEPT));
         }
         // The wire, a cycle late: what the transmitter drove is what
         // the receiver sees.
@@ -212,7 +226,8 @@ fn main() {
         er_o.set(Bit::Zero);
     }
 
-    let total: usize = BYTES.iter().map(|n| words_of(*n)).sum();
+    let sent: usize = BYTES.iter().map(|n| words_of(*n)).sum();
+    let total: usize = BYTES[..KEPT].iter().map(|n| words_of(*n)).sum();
     println!(
         "{offered} words offered as {} frames of {:?} bytes",
         BYTES.len(),
@@ -228,7 +243,7 @@ fn main() {
     // Every word of every frame, read back from where it landed.
     let mut wrong = 0;
     let mut base = 0usize;
-    for (f, n) in BYTES.iter().enumerate() {
+    for (f, n) in BYTES[..KEPT].iter().enumerate() {
         let w = words_of(*n);
         for i in 0..w {
             let got = landed.read(U::<8>::from((base + i) as u32)).raw() as u32;
@@ -249,37 +264,43 @@ fn main() {
         }
         base += w;
     }
-    assert_eq!(offered, total, "every word of both frames was offered");
+    assert_eq!(offered, sent, "every word of every frame was offered");
     assert_eq!(wrong, 0, "{wrong} of {total} words came back wrong");
 
-    // Both frames arrived, and neither was dropped. A frame that
+    // Every frame arrived, and the receiver dropped none. A frame that
     // carried bytes read past the one before it would fail the word
     // check above rather than this, but a frame that never arrived
     // at all would fail only here.
     assert_eq!(
         frames.get().raw() as usize,
         BYTES.len(),
-        "both frames arrived"
+        "every frame arrived"
     );
-    assert_eq!(dropped.get().raw(), 0, "and neither was dropped");
+    assert_eq!(dropped.get().raw(), 0, "and the receiver dropped none");
+    // The last was taken with no slot free: counted, and not stored.
+    assert_eq!(drops.get().raw(), 1, "the frame with no slot is counted");
     assert_eq!(
         in_bytes.get().raw() as usize,
         BYTES[BYTES.len() - 1],
         "the length the receiver reported for the last frame"
     );
     // The slot alternates: the first frame takes slot one, the second
-    // slot zero, so a driver reading one is never read into.
+    // slot zero, so a driver reading one is never read into. The
+    // dropped frame takes none.
     assert_eq!(
         which.get().raw(),
         0,
-        "the second frame takes the other slot"
+        "the second frame takes the other slot, and the third none"
     );
-    // Nothing past the two frames may be written.
+    // Nothing past the kept frames may be written.
     for i in total..total + 4 {
         let v = landed.read(U::<8>::from(i as u32)).raw();
-        assert_eq!(v, 0, "word {i} is past both frames and untouched");
+        assert_eq!(v, 0, "word {i} is past the kept frames and untouched");
     }
-    println!("{total} words came back in order, and nothing past them");
+    println!(
+        "{total} words came back in order, and nothing past them; {} dropped",
+        drops.get().raw()
+    );
 
     stop();
     let out_net = FrameOut::lowered("frame_out");

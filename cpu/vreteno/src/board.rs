@@ -909,6 +909,10 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (eth_rx_busy_o, eth_rx_busy_i) = signal::<Bit, DefaultClock>();
         let (eth_rx_len_o, eth_rx_len_i) = signal::<U<16>, DefaultClock>();
         let (eth_rx_which_o, eth_rx_which_i) = signal::<U<1>, DefaultClock>();
+        // Both receive slots hold a frame the driver has not released,
+        // and the frames dropped for it (issue 1313).
+        let (eth_rx_full_o, eth_rx_full_i) = signal::<Bit, DefaultClock>();
+        let (eth_rx_drops_o, eth_rx_drops_i) = signal::<U<32>, DefaultClock>();
         let (eth_tx_base_o, eth_tx_base_i) = signal::<U<32>, DefaultClock>();
         let (eth_tx_bytes_o, eth_tx_bytes_i) = signal::<U<16>, DefaultClock>();
         let (eth_tx_start_o, eth_tx_start_i) = signal::<Bit, DefaultClock>();
@@ -1043,8 +1047,19 @@ impl<const DIV: u32> Unit for Board<DIV> {
                         self.flen.run(toeth_rx, (lenbyte_tx, flen_len_o)),
                     ),
                     self.fin.run(
-                        (lenbyte_rx, flen_len_i, eth_rx_busy_hold),
-                        (sword_tx, eth_rx_len_o, store_go_o, eth_rx_which_o),
+                        (
+                            lenbyte_rx,
+                            flen_len_i,
+                            eth_rx_busy_hold,
+                            eth_rx_full_i,
+                        ),
+                        (
+                            sword_tx,
+                            eth_rx_len_o,
+                            store_go_o,
+                            eth_rx_which_o,
+                            eth_rx_drops_o,
+                        ),
                     ),
                 ),
                 join2(
@@ -1163,11 +1178,13 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                             eth_rx_busy_i,
                                             eth_rx_len_i,
                                             eth_rx_which_i,
+                                            eth_rx_drops_i,
                                             eth_tx_base_o,
                                             eth_tx_bytes_o,
                                             eth_tx_start_o,
                                             eth_rx_base_o,
                                             eth_irq_o,
+                                            eth_rx_full_o,
                                         ),
                                     ),
                                 ),
