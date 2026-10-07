@@ -182,7 +182,10 @@ transmit slot and \code{FrameOut} turns the words into bytes, and on
 the way in \code{FrameLen} finds the frame's length again,
 \code{FrameIn} packs its bytes into words and the store engine writes
 them into a receive slot. The slots are in the DDR3 memory from
-\code{0x4100\_0000}. \code{NoBeats} and \code{NoReads} hold the
+\code{0x4100\_0000}. Frames the driver has not acknowledged wait in
+order, at most one a slot, and while both slots hold one \code{eth}
+tells \code{fin}, which drops the next frame and counts it for
+\code{rx\_errors} (issue 1313). \code{NoBeats} and \code{NoReads} hold the
 direction of each engine's host that the engine never uses.
 \item \textbf{The wire is shared by EtherType.} \code{share}, an
 \code{EthShare<0x88b5>}, sends the remote peripheral's frames to its
@@ -194,7 +197,11 @@ slot and length they drive in the same step; and the store engine and
 the sending side after it, because they read what it drives. With the
 receive side after the block, the block read last step's slot, and
 the board test caught it as a frame of the right length whose every
-byte read back zero.
+byte read back zero. \code{fin} reads the block's \code{rx\_full} a
+step late in the Rust run for the same reason; that can only drop a
+frame that starts in the cycle after an acknowledgement freed a slot,
+which the netlist would store, and never lands one on a slot still
+held.
 \item \textbf{The scanout fetches its own lines.} \code{scan}, a
 \code{ScanFetch<32, 16, 640>}, takes each line request that arrives on
 \code{scan\_req} from the pixel clock and starts \code{vfetch}, a

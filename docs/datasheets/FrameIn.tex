@@ -18,10 +18,12 @@ because the store engine is told how many bytes to write when it
 starts. \code{EthRx} offers exactly that, since it takes and checks a
 whole frame before offering any of it, and so does \code{FrameLen}.
 
-It also says three things to the register block: \code{count}, the
+It also says four things to the register block: \code{count}, the
 length of the frame taken; \code{store}, high while a frame is being
-taken, which starts the store engine; and \code{which}, the slot the
-frame lands in, which alternates.
+taken and stored, which starts the store engine; \code{which}, the
+slot the frame lands in, which alternates; and \code{drops}, the
+frames it dropped because no slot was free (issue 1313). The register
+block tells it so on \code{no\_slot}.
 
 \subsection*{Parameters}
 
@@ -36,6 +38,13 @@ slots.
 \item A frame starts when a byte is offered, \code{len} is not zero,
 and \code{hold} is low. The length is latched there, and the slot
 moves to the other one.
+\item \textbf{A frame that starts while \code{no\_slot} is high is
+dropped and counted (issue 1313).} Its bytes are taken, so the stream
+behind it moves on, and none is stored: \code{store} stays low, no
+word is offered, the slot does not move, and \code{drops} counts it.
+The register block raises \code{no\_slot} while both slots hold a
+frame the driver has not acknowledged, so a frame no longer lands on
+one being read.
 \item Bytes are packed from the top of the word down, so after four
 the first is in the low lane.
 \item The last word of a frame is usually partial, and it is sent with
@@ -62,6 +71,9 @@ go through it, and every word that lands is checked, the partial last
 words included. The run also checks that four words past the second
 frame are untouched, that the receiver's length for the last frame
 arrived, and that the second frame took the other slot.
+\item A third frame, of 77 bytes, goes through with \code{no\_slot}
+high: none of its words lands, \code{drops} counts one, and the slot
+stays where the second frame left it.
 \item The netlist is checked against that run under nvc and
 Verilator: \code{//docs:ethdma\_sim\_frame\_in\_frame\_in\_tb\_test}
 and \code{//docs:ethdma\_vsim\_frame\_in\_test}.
@@ -77,8 +89,9 @@ has the core read it back from its slot.
 
 \code{Board}, as \code{fin}, behind \code{FrameLen} and in front of the
 store engine \code{store}. \code{hold} is the store engine's
-\code{running}, and \code{count} and \code{which} go to
-\code{EthSlots} as \code{rx\_len} and \code{rx\_which}. The examples
+\code{running}, \code{count}, \code{which} and \code{drops} go to
+\code{EthSlots} as \code{rx\_len}, \code{rx\_which} and
+\code{rx\_drops}, and \code{no\_slot} is its \code{rx\_full}. The examples
 \code{ex\_ethdma} and \code{ex\_framelen}.
 
 \subsection*{Limits}
