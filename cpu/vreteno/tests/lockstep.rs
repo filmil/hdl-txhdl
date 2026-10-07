@@ -147,6 +147,9 @@ fn lockstep_with(
     let (prv, counteren) = (cpu.prv, cpu.counteren);
     let (mideleg_r, mip_sw_r) = (cpu.mideleg, cpu.mip_sw);
     let (mip, mie, mstatus) = (cpu.mip, cpu.mie, cpu.mstatus);
+    // The core's interrupt decision, made a cycle before the take
+    // (issue 1331).
+    let int_q = cpu.int_q;
 
     let mut timer = Timer::<IW>::default();
     let mut uart = Uart::<4>::default();
@@ -358,6 +361,10 @@ fn lockstep_with(
     // retires, so the line it saw is two cycles behind the model's step,
     // where the model reads its own `mip` (issue 1295).
     let (mut s_before, mut s_before2) = (false, false);
+    // The pending and enabled set as the core chose from it a cycle
+    // ago: it acts on that decision now, unless something since has
+    // changed what may be taken, which its `int_q` says (issue 1331).
+    let mut set_before = 0u32;
     let mut answer;
     // The terminal on the port's lines: it answers the demonstration's
     // line with three bytes, which the program echoes; a random program
@@ -465,8 +472,15 @@ fn lockstep_with(
         let s_on = p == 0 || (p == 1 && st & 2 != 0);
         let s_set = if s_on { pend & dl } else { 0 };
         let set = if m_set != 0 { m_set } else { s_set };
+        let decided = int_q.get().to_bool();
+        assert!(
+            !decided || set_before != 0,
+            "the core decided on an interrupt with none pending and enabled"
+        );
         let taken_now = if st_err.get().to_bool() {
             Some(CAUSE_STORE_ACCESS)
+        } else if !decided {
+            None
         } else {
             [
                 (MEXT, CAUSE_MEXT),
@@ -477,7 +491,7 @@ fn lockstep_with(
                 (STIMER, CAUSE_STIMER),
             ]
             .into_iter()
-            .find(|&(bit, _)| set & bit != 0)
+            .find(|&(bit, _)| set_before & bit != 0)
             .map(|(_, cause)| cause)
         };
         sim.cycle();
@@ -500,6 +514,27 @@ fn lockstep_with(
             model.tirq = line_before;
             model.msip = soft_before;
             model.sline(s_before2);
+            // An interrupt the core takes must be one the architecture
+            // allows at this boundary, as the model's state stands after
+            // everything before it: the core decides a cycle early, and
+            // drops the decision after anything that changes the enables
+            // (issue 1331); this is what says it dropped it when it had to.
+            if let Some(cause) = taken_before.filter(|c| c & 0x8000_0000 != 0) {
+                let bit = 1u32 << (cause & 31);
+                let (p, st) = (model.prv, model.csr.mstatus);
+                let allowed = model.csr.mie & bit != 0
+                    && if model.csr.mideleg & bit != 0 {
+                        p == 0 || (p == 1 && st & 2 != 0)
+                    } else {
+                        p != 3 || st & 8 != 0
+                    };
+                assert!(
+                    allowed,
+                    "{what}, cycle {cycle}: interrupt {cause:#x} taken with \
+                     prv {p}, mstatus {st:#x}, mie {:#x}, mideleg {:#x}",
+                    model.csr.mie, model.csr.mideleg
+                );
+            }
             model.step(program, taken_before);
             retired += 1;
             quiet = 0;
@@ -508,6 +543,7 @@ fn lockstep_with(
             longest_quiet = longest_quiet.max(quiet);
         }
         taken_before = taken;
+        set_before = set;
         line_before = line;
         soft_before = soft;
         s_before2 = s_before;
@@ -2165,4 +2201,72 @@ fn branches_guessed_wrong_under_single_steps() {
     for (i, &e) in entries.iter().enumerate().skip(1) {
         assert_eq!(cause(e), 4, "entry {i} is a step: {e:#x}");
     }
+}
+
+/// Where the supervisor's line rises in
+/// `an_interrupt_is_not_taken_after_mie_is_cleared`.
+static RISE: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// The line high for three cycles from [`RISE`].
+fn three_from_rise(c: u64) -> bool {
+    let r = RISE.load(std::sync::atomic::Ordering::Relaxed);
+    (r..r + 3).contains(&c)
+}
+
+/// The core decides whether to take an interrupt a cycle before it
+/// takes it (issue 1331). An instruction that clears `MIE` as the line
+/// rises must not be followed by the interrupt it was decided on: the
+/// decision is dropped after a write of the enables. The program sets
+/// and clears `MIE` over and over while the line, the supervisor's
+/// external one kept in machine mode, rises for three cycles at each
+/// point in turn; every interrupt the core takes must be one `MIE`
+/// allows where it is taken, which the run checks against the model.
+#[test]
+fn an_interrupt_is_not_taken_after_mie_is_cleared() {
+    use vreteno32::isa::*;
+    use vreteno32::program::Asm;
+    let mut a = Asm::default();
+    let (mh, wait) = (a.label(), a.label());
+    a.wide(addi(8, 0, 0));
+    a.abs(mh, |h| addi(31, 0, h as i32));
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    a.wide(addi(5, 0, SEXT as i32));
+    a.wide(csrrw(0, CSR_MIE, 5));
+    for _ in 0..48 {
+        a.wide(csrrsi(0, CSR_MSTATUS, 8));
+        a.wide(csrrci(0, CSR_MSTATUS, 8));
+        // Not a CSR access: one would stall a cycle on entry and
+        // hide what this looks for.
+        a.wide(addi(9, 9, 1));
+        a.wide(addi(9, 9, 1));
+    }
+    a.wide(halt());
+    // The handler counts, waits for the line to fall, and returns with
+    // `MIE` as it was.
+    a.align();
+    a.place(mh);
+    a.wide(addi(8, 8, 1));
+    a.place(wait);
+    a.wide(csrrs(6, CSR_MIP, 0));
+    a.wide(andi(6, 6, SEXT as i32));
+    a.to(wait, |o| bne(6, 0, o));
+    a.wide(mret());
+    let words = a.words();
+    let mut taken = 0;
+    for rise in 30..70 {
+        RISE.store(rise, std::sync::atomic::Ordering::Relaxed);
+        let m = lockstep_with(
+            &words,
+            &[],
+            &format!("mie cleared, line at {rise}"),
+            None,
+            None,
+            None,
+            Some(three_from_rise),
+        );
+        assert_eq!(m.halted, Some(Halt::Break));
+        taken += m.x[8];
+    }
+    assert!(taken > 0, "the line was never taken at all");
 }
