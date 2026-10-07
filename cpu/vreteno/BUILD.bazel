@@ -892,3 +892,22 @@ rust_test(
     edition = "2021",
     deps = [":vreteno32"],
 )
+
+# The machine model's timing mode (issue 1392) against the board's own
+# programs: cpi.rs's warm loop and ethperf.rs's copies, run with
+# `--timing`, give the cycles the calibrated costs give, which are
+# within about one per cent of what the board measured.
+sh_test(
+    name = "timing_test",
+    srcs = ["timing_test.sh"],
+    args = [
+        "$(rootpath :machine)",
+        "$(rootpath //cpu/vreteno/rust:cpi_ram_bin)",
+        "$(rootpath //cpu/vreteno/rust:ethperf_ram_bin)",
+    ],
+    data = [
+        ":machine",
+        "//cpu/vreteno/rust:cpi_ram_bin",
+        "//cpu/vreteno/rust:ethperf_ram_bin",
+    ],
+)
