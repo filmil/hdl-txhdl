@@ -12,6 +12,16 @@
 // late, which only delays a word; neither loses one. `AW` is the
 // address width, so the FIFO holds `1 << AW` words.
 //
+// Each side has a reset on its own clock, active high and already
+// synchronised to that clock. Each side also sees the other's reset,
+// through two flip-flops of its own clock, and holds itself while
+// either is on: its pointer and its view of the other's at zero, and
+// neither ready nor valid. So a reset of either side empties the FIFO,
+// and nothing moves until both sides are out of it, whichever releases
+// first; a word in flight when the reset came is dropped rather than
+// handed to a reader that was reset and never asked for it (issue
+// 1325).
+//
 // The hand-written board designs that have two clocks and a channel
 // between them read this file: //eth's echo crosses the PHY's receive
 // clock to the transmit clock with it, and //flagship crosses the
@@ -25,11 +35,13 @@ module chan_cdc #(
 ) (
   // The writing side.
   input wr_clk,
+  input wr_rst,
   input [W-1:0] wr_data,
   input wr_valid,
   output wr_ready,
   // The reading side.
   input rd_clk,
+  input rd_rst,
   output [W-1:0] rd_data,
   output rd_valid,
   input rd_ready
@@ -43,33 +55,55 @@ module chan_cdc #(
   // Each side's view of the other's Gray pointer, through two flops.
   (* ASYNC_REG = "TRUE" *) reg [AW:0] rgray_w1 = 0, rgray_w2 = 0;
   (* ASYNC_REG = "TRUE" *) reg [AW:0] wgray_r1 = 0, wgray_r2 = 0;
+  // Each side's view of the other's reset, through two flops, starting
+  // held so that neither side moves before it has seen the other.
+  (* ASYNC_REG = "TRUE" *) reg [1:0] rrst_w = 2'b11;
+  (* ASYNC_REG = "TRUE" *) reg [1:0] wrst_r = 2'b11;
+  wire wr_hold = wr_rst | rrst_w[1];
+  wire rd_hold = rd_rst | wrst_r[1];
 
   wire full = wgray == {~rgray_w2[AW:AW-1], rgray_w2[AW-2:0]};
   wire empty = rgray == wgray_r2;
-  assign wr_ready = !full;
-  assign rd_valid = !empty;
+  assign wr_ready = !full && !wr_hold;
+  assign rd_valid = !empty && !rd_hold;
   assign rd_data = mem[rbin[AW-1:0]];
 
-  wire push = wr_valid && !full;
+  wire push = wr_valid && wr_ready;
   wire [AW:0] wbin_next = wbin + 1;
   always @(posedge wr_clk) begin
-    if (push) begin
-      mem[wbin[AW-1:0]] <= wr_data;
-      wbin <= wbin_next;
-      wgray <= wbin_next ^ (wbin_next >> 1);
+    rrst_w <= {rrst_w[0], rd_rst};
+    if (wr_hold) begin
+      wbin <= 0;
+      wgray <= 0;
+      rgray_w1 <= 0;
+      rgray_w2 <= 0;
+    end else begin
+      if (push) begin
+        mem[wbin[AW-1:0]] <= wr_data;
+        wbin <= wbin_next;
+        wgray <= wbin_next ^ (wbin_next >> 1);
+      end
+      rgray_w1 <= rgray;
+      rgray_w2 <= rgray_w1;
     end
-    rgray_w1 <= rgray;
-    rgray_w2 <= rgray_w1;
   end
 
-  wire pop = rd_ready && !empty;
+  wire pop = rd_ready && rd_valid;
   wire [AW:0] rbin_next = rbin + 1;
   always @(posedge rd_clk) begin
-    if (pop) begin
-      rbin <= rbin_next;
-      rgray <= rbin_next ^ (rbin_next >> 1);
+    wrst_r <= {wrst_r[0], wr_rst};
+    if (rd_hold) begin
+      rbin <= 0;
+      rgray <= 0;
+      wgray_r1 <= 0;
+      wgray_r2 <= 0;
+    end else begin
+      if (pop) begin
+        rbin <= rbin_next;
+        rgray <= rbin_next ^ (rbin_next >> 1);
+      end
+      wgray_r1 <= wgray;
+      wgray_r2 <= wgray_r1;
     end
-    wgray_r1 <= wgray;
-    wgray_r2 <= wgray_r1;
   end
 endmodule
