@@ -19,13 +19,13 @@ each host \textit{i} and gives the peripheral side one \code{aw}, one
 Two things follow from AXI4 rather than from any choice made here.
 
 An answer must reach the host that asked, and the peripheral does not
-know there is more than one. The only thing it carries back is the
+know there is more than one. The peripheral returns only the
 identifier from the address phase, so the arbiter writes the host's
 port number above the host's own identifier on the way out and takes
 it off again on the way back. The peripheral side's identifier is
 therefore wider than a host's.
 
-The write data channel carries no identifier at all: a beat belongs
+The write data channel contains no identifier at all: a beat belongs
 to the oldest write address phase that has not finished. So the
 arbiter holds that channel for the host whose write address phase it
 granted until that burst's last beat, and a second host's address
@@ -61,7 +61,7 @@ priority. \\
 
 \subsection*{The identifier}
 
-A host's address phase goes out carrying
+A host's address phase goes out encoding
 \code{(port << I) | id}, where \code{id} is the identifier that host's
 own tracker allocated. An answer's identifier is read the other way:
 \code{id >> I} names the host, and its low \code{I} bits are given
@@ -70,7 +70,7 @@ back to that host unchanged.
 So a host's identifiers stay its own, and what the peripheral sees is
 a wider space with the hosts side by side in it. The tables below are
 generated for \code{Arbiter2<16, 32, 4, 2, 5, 0>}, the example's, whose
-hosts carry two bits and whose peripheral side carries five.
+hosts provide two bits and whose peripheral side provides five.
 
 \dstables{Arbiter}
 
@@ -80,7 +80,7 @@ hosts carry two bits and whose peripheral side carries five.
 \item \textbf{Read address.} Each cycle the hosts offering on
 \code{ar} are considered, and one is granted if the peripheral side
 has room. Several reads may be outstanding at once, from different
-hosts, since each carries its identifier.
+hosts, since each contains its identifier.
 \item \textbf{Write address.} The same, except that no host is granted
 while \code{wbusy} is set. Taking a phase sets \code{wbusy} and
 records the host in \code{wsel}, a bit each.
@@ -138,7 +138,7 @@ time, so neither takes a turn from the other.
 The turn is three bits, which is what eight hosts need and no more,
 and nothing checks that \code{N} is at most eight.
 \code{J} is not checked against \code{I} and the count. There is no
-arbitration on quality of service, though the address phase carries
+arbitration on quality of service, though the address phase provides
 the field. A host that stops taking its answers stops the peripheral
 side for every host, since the arbiter holds the beat rather than
 dropping it.

@@ -1,30 +1,29 @@
 % SPDX-License-Identifier: Apache-2.0
 % covers: Remote, Ask, Answer
-\datasheet{Remote}{A peripheral whose behaviour is a program somewhere else: every transaction leaves on a channel and the answer comes back on another.}
+\datasheet{Remote}{A memory-mapped bridge forwarding bus transactions over channels to an external software endpoint.}
 
 \dsfacts{\code{lib/parts/src/remote.rs}}{\code{txhdl\_parts::remote::Remote}}%
 {\code{//docs:examples}}
 
 \subsection*{Function}
 
-\code{Remote} sits on AXI-Lite like any other peripheral and answers
-nothing itself. Every transaction it accepts leaves on \code{out} as
-an \code{Ask}, and the answer comes back on \code{back} as an
-\code{Answer}. What is at the other end is not the peripheral's
-business: in a simulation it is a model in the same program, and on a
-board it is a frame on a wire and a program on another machine.
+\code{Remote} connects to an AXI-Lite interconnect as a memory-mapped target
+without decoding register state internally. Every transaction accepted by the
+core is forwarded on \code{out} as an \code{Ask} message, and the corresponding
+response returns on \code{back} as an \code{Answer}. The remote endpoint is
+decoupled from the peripheral logic: in simulation, it connects to a software
+model within the test process; on physical hardware, it connects via packet
+frames to software running on a remote host.
 
-That is what it is for. A peripheral being designed can be written as
-software first, against the bus it will really sit on and with the
-rest of the system running as it really runs; when the software is
-right the hardware replaces it and nothing else changes. Issue 297
-says what that is worth.
+This architecture enables hardware-software co-development. A target peripheral
+can be developed and verified as software against the actual system bus. Once
+the software implementation is proven, a dedicated hardware module replaces it
+without modifying host bus transactions. Issue 297 documents this workflow.
 
-What the bus sees is a slow device, and the part is honest about it
-rather than hiding it: one transaction is outstanding at a time, and
-the channel carrying it is held until the answer arrives, which is
-what AXI-Lite allows and what a program at the far end of a wire
-needs.
+The bus interface presents a multi-cycle peripheral latency: exactly one
+transaction remains outstanding at a time, and the transaction channel is held
+until the response arrives. This adheres to AXI-Lite protocol semantics and
+accommodates network transit times.
 
 \subsection*{Parameters}
 
@@ -33,83 +32,76 @@ needs.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{T} & How many cycles a transaction may go unanswered before the
-peripheral answers the bus \code{SLVERR} itself. A device that never
-answers must not be able to stop the bus. The tables use 40.
-\code{ex\_remote} uses 1000, since a frame each way through two MACs
-is about seven hundred cycles, and \code{Board} uses a hundred
-million, one second at 100~MHz, which is a round trip to another
-machine with room to spare. \\
+\code{T} & The timeout limit in clock cycles before the peripheral responds
+with \code{SLVERR}. This prevents an unresponsive remote endpoint from
+permanently hanging the system bus. The datasheet tables use 40.
+\code{ex\_remote} uses 1000 cycles, covering round-trip latency through two MACs.
+\code{Board} sets this to 100,000,000 cycles (one second at 100~MHz), providing
+sufficient margin for network round trips to a host workstation. \\
 \bottomrule
 \end{tabular}
 \end{center}
 
 \subsection*{Register map}
 
-None. Every address in the peripheral's range is the program's to
-decide, and the address is carried out whole in the \code{Ask}.
+None. Every address within the peripheral's allocated aperture is interpreted
+by the target program, and the target address is forwarded verbatim in the
+\code{Ask} payload.
 
 \dstables{Remote}
 
 \subsection*{Behaviour}
 
 \begin{itemize}
-\item One transaction is outstanding at a time, which \code{busy}
-holds, and \code{writing} says which kind it is.
-\item A write is taken before a read. Both are offered on channels of
-their own, so a stream of reads could otherwise leave a write waiting
-for ever.
-\item Each transaction carries a \code{tag}, which counts up as each
-leaves. An answer is taken from \code{back} whenever it is offered,
-and counts only when its tag is the outstanding transaction's.
-\item That is what makes the timeout safe. A transaction unanswered
-for \code{T} cycles is answered \code{SLVERR} to the bus and finished
-with; if its answer then arrives, its tag is no longer the one
-outstanding and it is dropped rather than taken for the answer to
-whatever came next.
-\item The tag moves on when a transaction is finished with, not when
-it leaves, so the late answer above is told apart from the next
-transaction's.
-\item A read is answered on \code{bus\_r} with the word the answer
-brought, and a write on \code{bus\_b}; either carries \code{SLVERR}
-when the answer said the transaction failed or the wait ran out.
+\item Exactly one transaction is outstanding at a time; \code{busy} indicates
+active transfer, while \code{writing} indicates transaction direction.
+\item Write transactions take priority over read transactions. Because writes
+and reads arrive on separate channels, prioritizing writes prevents read streams
+from starving pending store operations.
+\item Each transaction includes a \code{tag} that increments with each dispatched
+request. Responses arriving on \code{back} are accepted only when their tag matches
+the currently outstanding transaction.
+\item Tag validation guarantees safe timeout handling. When a transaction times
+out after \code{T} cycles, the peripheral returns \code{SLVERR} to the bus and
+retires the transaction. If a delayed response arrives later, its tag no longer
+matches the active transaction, and the core discards it rather than misattributing
+it to subsequent bus traffic.
+\item The transaction tag advances when a transaction completes rather than when
+it is issued, cleanly separating late responses from the subsequent request.
+\item Read transactions complete on \code{bus\_r} with the returned data word,
+and write transactions complete on \code{bus\_b}; either response returns
+\code{SLVERR} if the remote target indicates failure or if the cycle timer expires.
 \end{itemize}
 
 \subsection*{Verification}
 
 \begin{itemize}
-\item Four tests in \code{lib/parts/src/remote.rs}, in
-\code{//lib/parts:parts\_test}.
-\code{a\_word\_written\_to\_the\_program\_is\_read\_back\_from\_it} is
-the plain case.
-\code{the\_program\_says\_which\_transactions\_fail} is an answer that
-reports a failure.
-\code{a\_slow\_program\_is\_waited\_for} holds the answer back and
-finds the bus still served.
-\code{a\_program\_that\_never\_answers\_does\_not\_stop\_the\_bus} is
-the timeout, which is the test the part exists to pass.
-\item \code{//lib/examples:ex\_remote} runs the whole chain, a
-\code{RemoteLink} and two MACs with a wire between them, and the build
-simulates this netlist against that run under nvc and Verilator:
+\item Four unit tests in \code{lib/parts/src/remote.rs} (\code{//lib/parts:parts\_test}):
+\code{a\_word\_written\_to\_the\_program\_is\_read\_back\_from\_it} verifies standard loopback;
+\code{the\_program\_says\_which\_transactions\_fail} validates remote error signaling;
+\code{a\_slow\_program\_is\_waited\_for} tests latency tolerance; and
+\code{a\_program\_that\_never\_answers\_does\_not\_stop\_the\_bus} confirms timeout recovery.
+\item \code{//lib/examples:ex\_remote} executes the complete pipeline comprising
+\code{RemoteLink} and dual Ethernet MACs. Netlists synthesized from this design
+are simulated under both nvc and Verilator via
 \code{//docs:remote\_sim\_remote\_remote\_tb\_test} and
 \code{//docs:remote\_vsim\_remote\_test}.
-\item \code{//cpu/vreteno:board\_test} runs the core against it on the
-board's design: a program writes a word to \code{0x3300} and reads it
-back, with a program in the test answering the frames.
+\item \code{//cpu/vreteno:board\_test} executes the RISC-V core against the board
+design: software writes a data word to \code{0x3300} and reads it back, with the
+testbench harness serving response frames.
 \end{itemize}
 
 \subsection*{Used by}
 
-\code{ex\_remote}, and \code{Board} at \code{0x3300}, where a
-\code{RemoteLink<1>} carries it to the flagship's Ethernet port.
-Issue 297 is what it is for: a peripheral and its software
-co-developed, with the far end across a wire.
+\code{ex\_remote}, and \code{Board} at address \code{0x3300}, where a
+\code{RemoteLink<1>} connects it to the board's Ethernet MAC for hardware-software
+co-development over the network.
 
 \subsection*{Limits}
 
-AXI-Lite only, and one transaction outstanding, so the bus waits for
-the far end at the speed the far end answers. It carries no transport
-of its own: what moves an \code{Ask} to a program on another machine
-is \code{RemoteLink} and a MAC, or anything else that speaks those two
-channels. The timeout is counted in cycles rather than in time, so a
-design that slows its clock waits proportionally longer.
+The block supports AXI-Lite only with a single outstanding transaction, causing
+bus accesses to block for the full remote round-trip latency. It implements no
+transport layer directly: transmitting \code{Ask} requests to an external machine
+requires \code{RemoteLink} and an Ethernet MAC, or equivalent channel adapters.
+The timeout counter measures clock cycles rather than absolute wall-clock time;
+operating at lower clock frequencies increases the elapsed timeout duration proportionally.

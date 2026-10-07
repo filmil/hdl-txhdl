@@ -44,10 +44,9 @@ register access, \code{dbg\_regno}, \code{dbg\_wdata} and
 \code{Writeback} of \code{done}, \code{rd} and \code{val}, \code{dbg},
 debug mode, and \code{dbg\_rdata}, the register the module asked for.
 
-Two more inputs carry the machine timer's count, \code{time}, which
-\code{rdtime} reads, and \code{seirq}, the interrupt controller's
-supervisor line, which the core registers beside MEIP as
-\code{mip.SEIP} (issue 1094).
+Two additional inputs supply the machine timer count, \code{time}
+(accessed by \code{rdtime}), and \code{seirq}, the supervisor external
+interrupt line registered alongside MEIP as \code{mip.SEIP} (issue 1094).
 
 Eleven ports join the core to its memory management unit, an
 \code{Mmu8}, inside a \code{Hart} (issue 1014). The core tells the
@@ -96,11 +95,11 @@ with \code{0x88}. \\
 timer enable. \\
 \code{0x305} & \code{mtvec} & The handler's address; a write clears
 bits 1 and 0. \\
-\code{0x340} & \code{mscratch} & The whole word. \\
+\code{0x340} & \code{mscratch} & Entire 32-bit register. \\
 \code{0x341} & \code{mepc} & The trap's address; a write clears
 bit 0. \\
-\code{0x342} & \code{mcause} & The whole word. \\
-\code{0x343} & \code{mtval} & The whole word. \\
+\code{0x342} & \code{mcause} & Entire 32-bit register. \\
+\code{0x343} & \code{mtval} & Entire 32-bit register. \\
 \code{0x344} & \code{mip} & Bit 11 is stored: \code{irq} sets it and
 a write keeps only that bit. Bit 7 reads as \code{tirq}. \\
 \code{0x7c0} & \code{mhalt} & Nothing: it reads as zero. A write of an

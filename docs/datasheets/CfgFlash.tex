@@ -71,7 +71,7 @@ primitive as well, so the chip sees the master's lines a cycle late
 and its clock two. A master must run at a half bit of at least four
 cycles, \code{DIV} of three, for the chip's answer to be on \code{miso}
 when it takes it. The chip's \code{miso} goes to both parts directly.
-\item Only mode 0 is carried: the clock idles low.
+\item Only mode 0 is supported: the clock idles low.
 \item The unit runs the pins before the primitive, and the primitive
 drives \code{eos} a step ahead, since the two drive each other through
 wires and a wire promises nothing about which process ran first.

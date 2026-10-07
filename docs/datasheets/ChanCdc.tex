@@ -11,7 +11,7 @@ coded pointers and two flops each way.}
 Two clocks that are not the same clock have no fixed relation, so a
 register written by one and read by the other is read at an arbitrary
 moment in its life, including while it is changing. \code{ChanCdc}
-carries words across that gap: a channel in on the writing clock, a
+transfers words across that clock boundary: a channel in on the writing clock, a
 channel out on the reading clock, and a memory between them written
 by one side and read by the other.
 
@@ -26,7 +26,7 @@ the clock that reads it.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{T} & What it carries: a \code{Transaction} and \code{Value} type. \\
+\code{T} & The payload data type: a \code{Transaction} and \code{Value} type. \\
 \code{AW} & The width of the address, in bits. \\
 \code{D} & How many words it holds, which must be \code{1 << AW}. \\
 \code{PW} & The width of the pointers, which must be \code{AW + 1}. \\

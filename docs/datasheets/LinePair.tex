@@ -14,8 +14,8 @@ memory pixel by pixel: the beam does not stop. \code{LinePair} sits on
 the pixel clock beside the raster and holds two lines. The beam reads
 one while the other fills, and they change places at the start of each
 line. At that start it asks for the line after the one about to be
-shown, so each line has the whole of the line before it to arrive in.
-It asks for nothing until \code{show} is high, and then it asks for a
+shown, so each line has the entire duration of the preceding line to
+arrive. It asks for nothing until \code{show} is high, and then it asks for a
 frame's first line, from the base, before any other. Out of a reset
 the next line's address is zero, and the line there is the boot
 memory's, whose one-beat answer to a burst hung the fetch for good on

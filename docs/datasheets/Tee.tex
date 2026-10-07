@@ -7,15 +7,17 @@
 
 \subsection*{Function}
 
-A machine that must not be quietly wrong runs two of itself and
-compares. The comparison is worth something only if both copies see
-exactly the same words in the same cycles, and \code{Tee<T>} is what
-makes that true of a channel: it takes one word from its input and
-offers it to both sides, and it takes the next only once both have had
-it.
+Fault-tolerant lockstep systems execute redundant processor instances
+and compare outputs to detect silent computational divergence. This
+comparison remains valid only if both execution paths receive identical
+inputs on identical clock cycles. \code{Tee<T>} enforces this lockstep
+invariance on a streaming channel: it accepts incoming data words from its
+single input port, duplicates them across both output ports, and accepts the
+next word only after both receivers acknowledge receipt.
 
-That is the whole of the part. It does not compare, drop or reorder
-anything; \code{Check} is the other half.
+The block performs replication and synchronization without altering payload
+order or performing comparisons; error verification occurs downstream in
+\code{Check}.
 
 \subsection*{Parameters}
 

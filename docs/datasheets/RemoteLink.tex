@@ -7,17 +7,18 @@
 
 \subsection*{Function}
 
-\code{RemoteLink} sits between a \code{Remote}'s two channels and a
-MAC's. An \code{Ask} taken on \code{ask} becomes one frame of 27 bytes
-on \code{tx}; a frame arriving on \code{rx} that answers it becomes an
-\code{Answer} on \code{back}. The MAC of \code{//docs:eth} is what
-puts those bytes on a wire and takes them off, and neither end of the
-peripheral knows the wire is there.
+\code{RemoteLink} interfaces between the two channels of \code{Remote}
+and the Ethernet MAC. An \code{Ask} transaction accepted on \code{ask}
+is converted into a 27-byte frame transmitted on \code{tx}. An incoming
+response frame received on \code{rx} is decoded into an \code{Answer}
+returned on \code{back}. The Ethernet MAC described in \code{//docs:eth}
+transmits and receives these frames over the physical link, keeping the
+underlying network transparent to both host and peripheral.
 
-Nothing else on the wire is looked at, and nothing else has to be. A
-frame is this peripheral's when it carries this protocol's type, the
-answer kind, and this peripheral's device number, and any byte that
-says otherwise ends the matter for that frame.
+The module ignores all other traffic on the wire. A frame belongs to
+this peripheral when it specifies this protocol's EtherType, the
+response message code, and the matched device number. Any mismatch in
+these fields terminates processing for that frame.
 
 \subsection*{Parameters}
 
@@ -118,16 +119,17 @@ implementation, so the two spellings of the protocol are held apart.
 \subsection*{Used by}
 
 \code{ex\_remote}, and \code{Board}, where a \code{RemoteLink<1>}
-carries the remote peripheral at \code{0x3300} out to the flagship's
-Ethernet port.
+connects the remote peripheral at \code{0x3300} to the board's
+Ethernet interface.
 
 \subsection*{Limits}
 
-One frame out at a time and one transaction in flight, since that is
-all a \code{Remote} asks for. The frame is fixed at 27 bytes and
-carries one word, so a burst is as many frames as it has beats. There
-is no retry and no sequence number beyond the tag: a frame the wire
-loses is a transaction that goes unanswered, and what covers it is
-the peripheral's timeout. Nothing authenticates a frame, so anything
-on the wire that speaks this protocol and knows the device number can
-write the peripheral's address space.
+The link transmits one frame at a time with a single transaction in
+flight, matching the issue rate of \code{Remote}. The frame length is
+fixed at 27 bytes and holds one data word; bursts therefore generate
+as many frames as beats. The protocol provides no retransmission and
+no sequence numbers beyond the transaction tag. If the physical link
+drops a frame, the transaction remains unanswered until terminated by
+the peripheral timeout counter. Frames lack cryptographic authentication,
+allowing any station on the local network that transmits the protocol
+with the matching device identifier to access the peripheral address space.

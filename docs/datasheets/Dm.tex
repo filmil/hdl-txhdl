@@ -8,8 +8,8 @@
 \subsection*{Function}
 
 The RISC-V debug specification puts a debugger's reach into a core
-behind a debug module, a small address space of 32-bit registers a
-transport carries from the cable. \code{Dm} is that module as far as
+behind a debug module, a small address space of 32-bit registers
+bridged from the cable transport. \code{Dm} is that module as far as
 a debugger on the bus needs it, with the address space on the bus:
 an AXI-Lite peripheral whose registers are the specification's, at
 their numbers, each a word at four times its number. Through it the

@@ -113,11 +113,11 @@ That test asserts the COUNT of beats and not only their values: a
 bridge that answered one beat would return the right word in it, so
 checking the words alone passes on the fault.
 
-\subsection*{What the single-beat bridge cost, until issue 471}
+\subsection*{Impact of the single-beat bridge (prior to issue 471)}
 
-Worth stating on the sheet, because it is what a reader risks by
-joining a burst-issuing client to a peripheral that answers fewer
-beats than were asked for, and neither engine can detect it.
+This behavior is documented here because joining a burst-issuing client
+to a peripheral that returns fewer beats than requested risks protocol
+failure that neither engine can detect.
 
 \code{LineFetch} decides a burst is finished by its own beat counter
 and never reads the returned beat's \code{last}. Against a bridge

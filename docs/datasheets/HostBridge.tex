@@ -169,7 +169,7 @@ burst, a controller that opens a row for one, sees the beats and not
 the burst. One burst is split at a time, so a second long write waits
 for the first's answer. The address moves by the link's width and
 not by \code{size}, which nothing in this tree acts on. A wrapping
-burst is refused with \code{SLVERR} rather than carried. The map has
+burst is refused with \code{SLVERR} rather than executed. The map has
 three ranges. The last one takes every address the others miss. So no
 address is unknown to the network, and neither bridge has to answer for
 one.

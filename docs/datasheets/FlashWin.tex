@@ -112,7 +112,7 @@ beside a resynthesis. There is no cache in front of it and no burst:
 every word is a command of its own, and a read of several beats is not
 served. Only mode 0, and only the fast read command, so a chip that
 wants another command for another purpose wants the master instead.
-The address is 24 bits, which is the three the command carries, so the
+The address is 24 bits, matching the three address bytes the command specifies, so the
 window reaches 16\,MiB. Nothing is refused by address: every address
 in the range is asked of the chip, and a chip that has nothing there
 answers what it answers.

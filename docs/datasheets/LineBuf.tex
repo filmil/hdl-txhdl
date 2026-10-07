@@ -9,7 +9,7 @@ filled from a channel and read by column.}
 \subsection*{Function}
 
 The far end of a scanout. \code{LineFetch} reads a line from memory
-on the bus clock and \code{ChanCdc} carries the words to the pixel
+on the bus clock and \code{ChanCdc} transfers the words to the pixel
 clock; this is what they arrive in. A word taken lands at the next
 place in the line, and the raster asks for a column and gets what is
 there.
@@ -81,6 +81,6 @@ in time shows the previous line's pixel at that column, which is a
 visible artefact rather than a hang.
 
 One word a pixel, which is what a framebuffer holds and what the
-crossing carries. It does not pack several pixels to a word.
+CDC channel transports. It does not pack several pixels to a word.
 
 \code{LEN} and \code{AW} are not checked against each other.

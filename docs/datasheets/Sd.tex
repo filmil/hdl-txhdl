@@ -8,37 +8,36 @@ at most one block at a time, the block through a buffer of 128 words.}
 
 \subsection*{Function}
 
-A card in SPI mode gives a few hundred kilobytes a second on one data
-line, which is what \code{Spi} gives. The native mode is the card's
-own protocol: a command line, \code{CMD}, that carries 48-bit commands
-out and 48- or 136-bit responses back, and one or four data lines,
-\code{DAT}, that carry blocks of 512 bytes either way, each line with
-a CRC-16 of its own. Every command carries a CRC-7, and so does every
-response except the one to \code{ACMD41}, whose CRC field is all
-ones.
+Operating an SD card in SPI mode limits throughput to several hundred
+kilobytes per second over a single data line. In contrast, SD native
+mode uses a bidirectional protocol over dedicated physical lines: a command
+line, \code{CMD}, conveys 48-bit commands and returns 48-bit or 136-bit
+responses. Data transfers use one or four data lines (\code{DAT}) to
+transfer 512-byte blocks, protected by per-line CRC-16 checksums. Outgoing
+commands include a CRC-7 checksum, as do all responses with the exception
+of \code{ACMD41}, whose CRC field is defined as all ones.
 
-\code{Sd} is that host behind one AXI-Lite port, \code{bus}. A program
-writes the argument and then the command word, and the command word
-says what follows: no response, a short one or a long one; a block to
-read or a block to write; whether to wait for the card's busy line
-afterwards; and whether to check the response's CRC. The host sends
-the command, takes the response, moves the block through its buffer,
-which the program reads or fills a word at a time through
-\code{data}, and says in \code{status} how it went.
+\code{Sd} implements this native host controller behind an AXI-Lite port,
+\code{bus}. Software configures the command argument and writes the command
+control word. The command word selects the transfer parameters: response
+type (none, short, or long), data transfer direction (read block or write
+block), busy line monitoring, and CRC checking. The controller dispatches
+the command, samples the response, transfers block data through its internal
+buffer via the \code{data} register, and updates execution state in \code{status}.
 
-A multi-block transfer is one command, \code{CMD18} or \code{CMD25},
-then one data-only transfer for each further block, then
-\code{CMD12}. A card streams a read back to back, and keeping up with
-that at 25~MHz through a register is what the host's way to memory is
-for (issue 912). Two engines of issue 151 sit beside the host, a
-\code{LineStore} for a read and a \code{LineFetch} for a write, and a
-command given a count in \code{blocks} runs that many blocks on its
-own: the buffer becomes a ring between the lines and an engine, a
-read's words go to the store engine as the card sends them, a write's
-come from the fetch engine and each block is sent once all of it is
-in, and the command is done only once its engine has finished too. A
-command is a read or a write and never both, and none starts until the
-last has finished, so the two engines never run at once.
+Multi-block transfers issue an initial command (\code{CMD18} or \code{CMD25}),
+stream data blocks across subsequent cycles, and terminate with \code{CMD12}.
+Because streaming reads at 25~MHz overloads register polling loops, the host
+integrates dedicated DMA paths to system memory (issue 912). Two DMA engines
+from issue 151 interface with the controller: a \code{LineStore} instance
+for reads and a \code{LineFetch} instance for writes. Setting a non-zero count
+in \code{blocks} initiates automated multi-block DMA: the internal buffer
+acts as a ring buffer between physical SD lines and the DMA engine. Read data
+streams to the store engine as the card presents bytes; write data streams
+from the fetch engine, dispatching each block once fully buffered. The transfer
+completes only after the DMA engine retires. Commands perform either reads or
+writes, never both simultaneously, ensuring mutual exclusion between the DMA
+engines.
 
 The card's side is eight wires: \code{sclk}, the command line in, out
 and its output enable, the four data lines in, out and their output

@@ -14,21 +14,22 @@ When it stops saying so, \code{Wdog} asks the system control block of
 \code{Syscon} for a reset, which records the watchdog as the cause, so
 a program that restarts can read why it did.
 
-Three things make it a watchdog rather than a timer, and each is there
-because a hung program can do more than stop.
+Three architectural features distinguish this watchdog from a general-purpose timer:
 
-A refresh carries \code{KEY}. A program that has lost its way is
-writing whatever it finds over whatever it reaches, and a watchdog it
-can refresh by accident is a watchdog it cannot fail. A wrong key is
-not ignored: it is a failure.
+First, a watchdog refresh must supply the parameter \code{KEY}. Errant
+software frequently performs arbitrary memory writes; requiring an explicit key
+prevents accidental watchdog resets from masking program corruption. Writing an
+incorrect key is treated as an immediate fault rather than being ignored.
 
-In window mode a refresh while the count is still above \code{sill} is
-too early, and too early is also a failure. A program looping tightly
-on its own refresh is as stuck as one that has stopped, and a plain
-countdown cannot tell them apart.
+Second, windowed mode enforces a lower bound on refresh timing: writing to
+\code{feed} while the counter remains above \code{sill} triggers a fault. A
+software loop stuck in an infinite polling loop is dysfunctional even though it
+periodically executes instructions; windowed timing detects early refreshes that
+standard countdown timers miss.
 
-The lock sets and does not clear. After it is set, \code{ctrl},
-\code{load} and \code{sill} are read only until the next reset.
+Third, the configuration lock bit is write-once. Once asserted, \code{ctrl},
+\code{load}, and \code{sill} become read-only until hardware reset, protecting
+critical timing thresholds from corruption.
 
 \subsection*{Parameters}
 
@@ -37,8 +38,8 @@ The lock sets and does not clear. After it is set, \code{ctrl},
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{KEY} & The word a refresh carries. A write of anything else to
-\code{feed} is a failure rather than a refresh. \\
+\code{KEY} & The validation word required for a refresh. Writing any other
+value to \code{feed} triggers an immediate reset fault. \\
 \bottomrule
 \end{tabular}
 \end{center}
