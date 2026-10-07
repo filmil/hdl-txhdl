@@ -1956,6 +1956,18 @@ impl Lowered {
                 // product extended was `(x * y)[15]`, which Verilator
                 // refuses (issue 1369). An operand whose top bit cannot
                 // be selected where it stands is a wire of its own.
+                // An extension to fewer bits than its operand has is a
+                // truncation, as the runtime has it: the low bits, so a
+                // slice and so perhaps a wire. The emitters wrote the
+                // operand whole in Verilog, which pushed what stood
+                // above it in a concatenation out of the word, and VHDL
+                // resized a signed value keeping its sign bit (issue
+                // 1387).
+                Expr::Sext(a, m) | Expr::Zext(a, m)
+                    if l.ewidth(a) > *m && *m > 0 =>
+                {
+                    go(&Expr::Slice(a.clone(), 0, *m), l, t)
+                }
                 Expr::Sext(a, m) => {
                     let a = go(a, l, t);
                     let w = l.ewidth(&a);
