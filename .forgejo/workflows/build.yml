@@ -1,17 +1,76 @@
 # SPDX-License-Identifier: Apache-2.0
-# Build and test on every pull request and on every push to a mainline branch.
+# Build and test on every pull request, and the mainline branches at most
+# once an hour.
 #
 # Building everything is most of the test: every document target renders a PDF,
 # and a document that does not render fails the build.
+#
+# A push to dev or main no longer starts a run of its own: merges come in
+# bursts, and a run for each of them queued behind the others on the
+# runners. Instead the hourly run below builds each mainline branch whose
+# tip moved in the hour before it, once, at its newest commit; an hour with
+# no push builds nothing. A run by hand (workflow_dispatch) builds both
+# branches whatever their age.
 name: build
 
 on:
   pull_request:
-  push:
-    branches: [dev, main]
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
 
 jobs:
+  # Which of dev and main to build this hour, as a JSON list for the
+  # matrix below: a branch is listed when its tip's commit is under an
+  # hour old (a merge commit is dated when it is made), or always when the
+  # run was started by hand. Not run for pull requests.
+  pushed:
+    if: github.event_name != 'pull_request'
+    runs-on: docker
+    outputs:
+      branches: ${{ steps.which.outputs.branches }}
+    steps:
+      - name: Which mainline branches moved in the last hour
+        id: which
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          command -v git >/dev/null 2>&1 || {
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y --no-install-recommends ca-certificates git
+          }
+          url="https://ci:${GITHUB_TOKEN}@git.hdlfactory.com/${GITHUB_REPOSITORY}.git"
+          now=$(date +%s)
+          list=""
+          for b in dev main; do
+            d=$(mktemp -d)
+            git -C "$d" init -q
+            if git -C "$d" fetch -q --depth=1 "$url" "refs/heads/$b" 2>/dev/null; then
+              t=$(git -C "$d" log -1 --format=%ct FETCH_HEAD)
+              age=$((now - t))
+              echo "$b: tip $(git -C "$d" rev-parse --short FETCH_HEAD), ${age} s old"
+              # 3660 rather than 3600, so a cron run that starts a little
+              # late still covers the whole hour since the last one.
+              if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || [ "$age" -lt 3660 ]; then
+                list="${list:+$list,}\"$b\""
+              fi
+            fi
+          done
+          echo "branches=[$list]" >> "$GITHUB_OUTPUT"
+          echo "building: [$list]"
+
   build:
+    needs: pushed
+    # Runs for a pull request (where `pushed` is skipped), and on the
+    # hourly or hand-started run when a branch is listed.
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || (needs.pushed.result == 'success' && needs.pushed.outputs.branches != '[]')) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The empty ref checks out what the pull request names.
+        branch: ${{ fromJSON(github.event_name == 'pull_request' && '[""]' || needs.pushed.outputs.branches) }}
     runs-on: docker
     steps:
       # Every run records how long its steps took and how much Bazel ran
@@ -23,9 +82,19 @@ jobs:
 
       - name: Checkout
         uses: https://code.forgejo.org/actions/checkout@v4
+        with:
+          ref: ${{ matrix.branch }}
 
+      # On the hourly run GITHUB_SHA and GITHUB_REF_NAME name the default
+      # branch, not the one checked out, so the log and the record below
+      # name what was built from these.
       - name: Mark the checkout
-        run: echo "checkout $(date +%s)" >> /tmp/ci-times
+        run: |
+          if [ -n "${{ matrix.branch }}" ]; then
+            echo "BUILD_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+            echo "BUILD_REF=${{ matrix.branch }}" >> "$GITHUB_ENV"
+          fi
+          echo "checkout $(date +%s)" >> /tmp/ci-times
 
       # Nothing else is installed here. Every other tool this build needs
       # comes from MODULE.bazel, TeX and the C and C++ toolchain among
@@ -131,7 +200,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           {
-            echo "=== run ${GITHUB_RUN_NUMBER} on ${GITHUB_SHA} (${GITHUB_EVENT_NAME}) ==="
+            echo "=== run ${GITHUB_RUN_NUMBER} on ${BUILD_SHA:-$GITHUB_SHA} (${GITHUB_EVENT_NAME}) ==="
             echo "=== df -h ==="; df -h / /data/cache/bazel 2>/dev/null | sort -u
             echo "=== free -m ==="; free -m
             echo "=== bazel log tail ==="
@@ -147,10 +216,10 @@ jobs:
             git -C "$d" remote add origin "$url"
           fi
           cp /tmp/ci-tail.log \
-            "$d/run-${GITHUB_RUN_NUMBER}-$(date -u +%Y%m%dT%H%M%S)-${GITHUB_SHA:0:8}.log"
+            "$d/run-${GITHUB_RUN_NUMBER}-$(date -u +%Y%m%dT%H%M%S)-$(echo "${BUILD_SHA:-$GITHUB_SHA}" | cut -c1-8).log"
           git -C "$d" add -A
           git -C "$d" -c user.name=ci -c user.email=ci@invalid \
-            commit -qm "ci log for run ${GITHUB_RUN_NUMBER} (${GITHUB_SHA})"
+            commit -qm "ci log for run ${GITHUB_RUN_NUMBER} (${BUILD_SHA:-$GITHUB_SHA})"
           git -C "$d" push -q origin ci-logs
 
       # Every run, passing or not, leaves a short record on `ci-stats`
@@ -169,7 +238,7 @@ jobs:
         run: |
           echo "log_export $(date +%s)" >> /tmp/ci-times
           {
-            echo "run ${GITHUB_RUN_NUMBER} on ${GITHUB_SHA} (${GITHUB_EVENT_NAME}, ${GITHUB_REF_NAME}): ${{ job.status }}"
+            echo "run ${GITHUB_RUN_NUMBER} on ${BUILD_SHA:-$GITHUB_SHA} (${GITHUB_EVENT_NAME}, ${BUILD_REF:-$GITHUB_REF_NAME}): ${{ job.status }}"
             # Which runner took the run, and whether it gave the job the
             # shared Bazel caches, so a record says which machine its numbers
             # are of (#940). Forgejo fills neither the runner context nor
@@ -196,8 +265,8 @@ jobs:
             git -C "$d" remote add origin "$url"
           fi
           cp /tmp/ci-record.txt \
-            "$d/run-${GITHUB_RUN_NUMBER}-$(date -u +%Y%m%dT%H%M%S)-${GITHUB_SHA:0:8}.txt"
+            "$d/run-${GITHUB_RUN_NUMBER}-$(date -u +%Y%m%dT%H%M%S)-$(echo "${BUILD_SHA:-$GITHUB_SHA}" | cut -c1-8).txt"
           git -C "$d" add -A
           git -C "$d" -c user.name=ci -c user.email=ci@invalid \
-            commit -qm "ci record for run ${GITHUB_RUN_NUMBER} (${GITHUB_SHA})"
+            commit -qm "ci record for run ${GITHUB_RUN_NUMBER} (${BUILD_SHA:-$GITHUB_SHA})"
           git -C "$d" push -q origin ci-stats
