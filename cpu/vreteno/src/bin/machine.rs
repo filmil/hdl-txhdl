@@ -121,9 +121,10 @@ fn main() {
     if peer {
         let d = m.board.0.borrow();
         eprintln!(
-            "eth: {} frames sent, {} received",
+            "eth: {} frames sent, {} received, {} dropped",
             d.eth.sent.len(),
-            d.eth.received
+            d.eth.received,
+            d.eth.dropped
         );
     }
 }
