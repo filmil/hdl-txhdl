@@ -2,8 +2,9 @@
 //! The data memory as an AXI peripheral: `W` words, 1024 at
 //! `DATA_BASE` on the board, in four memories of a byte, one per lane,
 //! so that a store of a byte or a half writes its lanes and reads
-//! nothing. The board's stack memory is the same unit with 16384 words
-//! (issue 1278).
+//! nothing. The board's stack memory was the same unit with 16384 words
+//! (issue 1278), until it moved into the core, on its own port (issue
+//! 1275).
 //!
 //! A read goes into the memory's own register at the edge, the
 //! synchronous read a block RAM has, and is answered the cycle after.
