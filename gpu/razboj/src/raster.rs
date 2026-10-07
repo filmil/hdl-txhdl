@@ -361,10 +361,17 @@ pub struct Raster<
     pub tok: Reg<Bit>,
     pub tdat: Reg<U<32>>,
     /// The environment's four products, before their divide, and the
-    /// textured pixel's colour.
+    /// textured pixel's colour. The products are made in logic and not
+    /// in DSP slices: a slice would take the cache's read register into
+    /// its input pipeline, which leaves the read without one, and the
+    /// words could not be a block RAM (#1343).
+    #[use_dsp("no")]
     pub tma: Reg<U<17>>,
+    #[use_dsp("no")]
     pub tmr: Reg<U<17>>,
+    #[use_dsp("no")]
     pub tmg: Reg<U<17>>,
+    #[use_dsp("no")]
     pub tmb: Reg<U<17>>,
     pub tcol: Reg<U<32>>,
     /// The texture cache: 64 lines, each a block of four by four texels,
@@ -373,6 +380,7 @@ pub struct Raster<
     /// pixel's; each line's tag, the address above the line's index; and
     /// a bit a line saying it holds anything, all cleared when a list
     /// starts, since a program may change its textures between lists.
+    #[ram_style("block")]
     pub cdata: Mem<U<32>, 1024>,
     pub ctag: Mem<U<20>, 64>,
     pub cvalid: Reg<U<64>>,
@@ -1344,8 +1352,6 @@ impl<
                                           issue.ready().to_bool()
                                       })
                                       .await;
-                                      // A slice, not a resize, which the
-                                      // Verilog does not narrow (#1387).
                                       let tdv = self.tdesc.get();
                                       let tdq = tdv.slice::<0, A>();
                                       issue.send(Issue {
@@ -1648,7 +1654,6 @@ impl<
                                                 issue.ready().to_bool()
                                             })
                                             .await;
-                                            // A slice, not a resize (#1387).
                                             let tad6 = self.taddr.get();
                                             let tb6 = tad6 >> 6usize;
                                             let tb0 = tb6 << 6usize;
