@@ -102,7 +102,7 @@ fn lockstep_with(
     reset_at: Option<u64>,
     seip: Option<fn(u64) -> bool>,
 ) -> Model {
-    let mut hart = Hart::with(program);
+    let mut hart = Hart::<2>::with(program);
     let cpu = &hart.core;
     let (pc, ir_pc, valid, regs, halted) =
         (cpu.pc, cpu.ir_pc, cpu.valid, cpu.regs.clone(), cpu.halted);
@@ -843,6 +843,64 @@ fn a_multiply_right_after_a_load() {
     assert_eq!(m.halted, Some(Halt::Break));
     assert_eq!(m.x[11], 255 * 1234, "mul of the loaded word");
     assert_eq!(m.x[13], 123, "div of the loaded word");
+}
+
+/// The data RAM on the core's own port (issue 1275), at 0x1_0000, in
+/// lockstep with the model, which keeps the window as memory of its own.
+/// A store and a load of the same word at once; a load whose address is
+/// the word a load before it gave, which the two steps of the
+/// simulation must agree on; bytes and halves under the strobes; the
+/// window's compare on both its arms, an offset below 0x2_0000 and one
+/// that carries in from below 0x1_0000; and lr/sc and an AMO there.
+#[test]
+fn the_data_ram_on_the_cores_own_port() {
+    use vreteno32::isa::{
+        addi, amoadd_w, halt, lb, lhu, lr_w, lui, lw, sb, sc_w, sh, sw,
+    };
+    let p = vec![
+        lui(6, 0x10), // x6 = 0x1_0000, the window
+        addi(5, 0, 0x123),
+        sw(5, 6, 0),
+        lw(10, 6, 0), // the word stored the cycle before
+        sw(6, 6, 4),  // a pointer to 0x1_0000, at 0x1_0004
+        lw(12, 6, 4),
+        lw(13, 12, 0), // through the pointer just loaded
+        addi(7, 0, -1),
+        sw(0, 6, 8),
+        sb(7, 6, 8),
+        sh(7, 6, 10),
+        lw(14, 6, 8),   // 0xffff_00ff
+        lb(15, 6, 8),   // -1
+        lhu(16, 6, 10), // 0xffff
+        lui(8, 0x20),   // x8 = 0x2_0000, past the window
+        addi(5, 0, 77),
+        sw(5, 8, -4), // 0x1_fffc: a negative offset into it
+        lw(17, 8, -4),
+        lui(9, 0x10),
+        addi(9, 9, -4), // x9 = 0xfffc, below it
+        lw(18, 9, 8),   // 0x1_0004: a carry into it, the pointer
+        lr_w(19, 6),    // 0x123
+        sc_w(20, 6, 5), // 0, stored
+        lw(21, 6, 0),   // 77
+        addi(5, 0, 5),
+        amoadd_w(22, 6, 5), // 77, and 82 stored
+        lw(23, 6, 0),       // 82
+        halt(),
+    ];
+    let m = lockstep(&p, &[], "the data RAM", Some(1), None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[10], 0x123, "the word stored the cycle before");
+    assert_eq!(m.x[13], 0x123, "through the pointer just loaded");
+    assert_eq!(m.x[14], 0xffff_00ff, "a byte and a half under strobes");
+    assert_eq!(m.x[15], u32::MAX, "a byte, signed");
+    assert_eq!(m.x[16], 0xffff, "a half, unsigned");
+    assert_eq!(m.x[17], 77, "a negative offset into the window");
+    assert_eq!(m.x[18], 0x1_0000, "a carry into the window");
+    assert_eq!(m.x[19], 0x123, "lr");
+    assert_eq!(m.x[20], 0, "sc stored");
+    assert_eq!(m.x[21], 77, "what sc stored");
+    assert_eq!(m.x[22], 77, "the AMO's old word");
+    assert_eq!(m.x[23], 82, "the AMO's new word");
 }
 
 #[test]
