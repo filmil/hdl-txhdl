@@ -1086,6 +1086,45 @@ fn the_scanout_shows_a_base_given_after_the_reset() {
     assert_eq!(ran.scan.stuck, None, "a scanout that keeps going");
 }
 
+/// The base and the show given together after a reset, at every point
+/// of a frame (issue 1317): the first line asked for is the base's, and
+/// nothing below it is asked for. On the board, a show written after a
+/// frame's vertical sync but before its last row began asked the first
+/// line from the base the pair had taken at the sync, which a reset
+/// leaves at zero, and the fetch stuck at row 3 of zero, `0x3000`.
+#[test]
+fn the_first_line_is_the_bases_wherever_in_the_frame_it_is_shown() {
+    let frame = 6 * SCAN_LINE;
+    // Every other half line of a frame: the board's failure was at
+    // eight, between the sync and the last row.
+    for k in (0..12).step_by(2) {
+        let show_at = 3 * frame + k * SCAN_LINE / 2;
+        let net = Net {
+            scan: Some(Scan {
+                base: 0x4100_1000,
+                show_at,
+            }),
+            ..Net::default()
+        };
+        let ran = run_all(
+            hello_program::TEXT,
+            hello_program::DATA,
+            b"",
+            &[],
+            show_at + 2 * frame,
+            net,
+            &[],
+        );
+        let lines = &ran.scan.lines;
+        assert!(
+            lines.iter().all(|(at, _, _)| *at >= 0x4100_1000),
+            "shown at {show_at} ({k} half lines into a frame): asked for {:x?}",
+            lines.iter().take(8).collect::<Vec<_>>()
+        );
+        assert_eq!(ran.scan.stuck, None, "shown at {show_at}");
+    }
+}
+
 /// The configuration flash on the board (issue 312): the core reads the
 /// chip's identity over the master, sends write enable, which the pins
 /// refuse, so the chip's latch reads clear, and finds the bitstream's
@@ -3049,8 +3088,12 @@ fn the_cache_loop_is_timed_by_the_core() {
         let mut n = line.split(' ').map(|n| n.parse().expect("a number"));
         (n.next().expect("cycles"), n.next().expect("instret"))
     };
-    let (dc, dw, rc, rw) =
-        (of("dmem cold"), of("dmem warm"), of("ddr3 cold"), of("ddr3 warm"));
+    let (dc, dw, rc, rw) = (
+        of("dmem cold"),
+        of("dmem warm"),
+        of("ddr3 cold"),
+        of("ddr3 warm"),
+    );
     for (what, (_, i)) in [
         ("dmem cold", dc),
         ("dmem warm", dw),
