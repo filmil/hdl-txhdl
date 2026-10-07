@@ -167,10 +167,13 @@ fn main() {
         match (c.began, c.ended) {
             (Some(b), Some(e)) => {
                 eprintln!(
-                    "fastboot: {} bytes in {} steps, {:.1} a byte; {} \
+                    "fastboot: {} bytes in {} {}, {:.1} a byte; {} \
                      segments, {} retransmits; the port dropped {} frames",
                     c.image.len(),
                     e - b,
+                    // The client's clock: steps, or in the timing mode
+                    // cycles (issue 1392).
+                    if timing { "cycles" } else { "steps" },
                     (e - b) as f64 / c.image.len() as f64,
                     c.segments,
                     c.retransmits,

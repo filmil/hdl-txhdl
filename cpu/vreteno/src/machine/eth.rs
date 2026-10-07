@@ -133,8 +133,15 @@ impl Eth {
     /// the part drops it (issue 1313); the next comes a frame's bytes
     /// later.
     pub fn arrival(&mut self) -> Option<(u32, Vec<u8>)> {
+        self.arrival_after(1)
+    }
+
+    /// The same after `elapsed` cycles of the line rather than one: the
+    /// machine's step in its timing mode, which is charged more than one
+    /// cycle (issue 1392), so that frames keep the line's pace in time.
+    pub fn arrival_after(&mut self, elapsed: u32) -> Option<(u32, Vec<u8>)> {
         if self.gap > 0 {
-            self.gap -= 1;
+            self.gap = self.gap.saturating_sub(elapsed);
             return None;
         }
         let f = self.inbox.pop_front()?;

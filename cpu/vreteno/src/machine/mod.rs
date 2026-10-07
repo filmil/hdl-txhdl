@@ -115,8 +115,12 @@ pub struct Devices {
     pub seip: bool,
     pub stale: bool,
     pub rx_seen: usize,
-    /// Steps taken: the clock of what is on the far end of the cable.
+    /// Steps taken, or in the timing mode cycles: the clock of what is
+    /// on the far end of the cable.
     pub steps: u64,
+    /// What the last step took: one, or in the timing mode the cycles it
+    /// was charged (issue 1392).
+    pub elapsed: u64,
 }
 
 /// The bus the model reaches the devices through.
@@ -225,6 +229,7 @@ impl Machine {
             stale: true,
             rx_seen: 0,
             steps: 0,
+            elapsed: 1,
         })));
         let model = Model {
             bus: Some(board.clone() as Rc<dyn Bus>),
@@ -257,11 +262,13 @@ impl Machine {
     pub fn step(&mut self) {
         {
             let mut d = self.board.0.borrow_mut();
-            d.steps += 1;
+            let before = d.steps;
+            d.steps += d.elapsed;
             // The fastboot client on the cable, every microsecond of the
             // core's: its stack moves on and what it sent goes onto the
-            // wire towards the port (issue 1390).
-            if d.steps.is_multiple_of(100) {
+            // wire towards the port (issue 1390). In the timing mode a
+            // microsecond is a hundred cycles, not steps (issue 1392).
+            if d.steps / 100 != before / 100 {
                 let now = d.steps;
                 if let Some(mut c) = d.eth.client.take() {
                     c.poll(now);
@@ -273,7 +280,8 @@ impl Machine {
             // A frame on the wire goes into a slot when the receive
             // side has room, as the store engine writes it.
             if !d.eth.inbox.is_empty() {
-                if let Some((slot, f)) = d.eth.arrival() {
+                let elapsed = d.elapsed as u32;
+                if let Some((slot, f)) = d.eth.arrival_after(elapsed) {
                     let at = d.map.eth_bufs + slot * eth::SLOT;
                     d.ddr.put(at, &f);
                     d.stale = true;
@@ -311,7 +319,9 @@ impl Machine {
         } else {
             1
         };
-        self.board.0.borrow_mut().clint.tick(n);
+        let mut d = self.board.0.borrow_mut();
+        d.clint.tick(n);
+        d.elapsed = n;
     }
 
     /// Steps until the hart halts or `limit` instructions have run, and
