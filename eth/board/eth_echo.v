@@ -105,6 +105,7 @@ module eth_echo (
   wire [8:0] tx_data;
   wire tx_valid, tx_ready;
   chan_cdc #(.W(9), .AW(4)) crossing (
+    .wr_rst(rx_rst), .rd_rst(tx_rst),
     .wr_clk(rx_clk), .wr_data(rx_data), .wr_valid(rx_valid),
     .wr_ready(rx_ready),
     .rd_clk(clk125), .rd_data(tx_data), .rd_valid(tx_valid),

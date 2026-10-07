@@ -2,6 +2,10 @@
 # Verilog a board design of any area wants: the pieces that are not
 # lowered from Rust because they are about clocks and pads rather than
 # about what the design computes, and that more than one area needs.
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_verilator//verilator:defs.bzl", "verilator_cc_library")
+load("@rules_verilog//verilog:defs.bzl", "verilog_library")
+
 package(default_visibility = ["//visibility:public"])
 
 # A lowered unit's channel, carried from one clock to another.
@@ -24,3 +28,31 @@ filegroup(
 )
 
 exports_files(["bscan_user4.xdc"])
+
+# chan_cdc's resets, released in either order and alone (issue 1325),
+# under the hermetic Verilator, as //tools/vlcheck runs a testbench.
+verilog_library(
+    name = "chan_cdc_tb_v",
+    srcs = [
+        "chan_cdc.v",
+        "chan_cdc_tb.v",
+    ],
+    top_module = "chan_cdc_tb",
+)
+
+verilator_cc_library(
+    name = "chan_cdc_tb_verilated",
+    module = ":chan_cdc_tb_v",
+    copts = ["-Wno-sign-compare"],
+    timing = True,
+    vopts = [
+        "--main",
+        "-Wno-fatal",
+    ],
+)
+
+cc_test(
+    name = "chan_cdc_test",
+    srcs = ["//tools/vlcheck:main.cc"],
+    deps = [":chan_cdc_tb_verilated"],
+)

@@ -408,6 +408,7 @@ module flagship (
   wire [8:0] net_rx_data;
   wire net_rx_valid, net_rx_ready;
   chan_cdc #(.W(9), .AW(7)) rx_crossing (
+    .wr_rst(rx_rst), .rd_rst(rst),
     .wr_clk(rx_clk), .wr_data(rx_data), .wr_valid(rx_valid),
     .wr_ready(rx_ready),
     .rd_clk(clk), .rd_data(net_rx_data), .rd_valid(net_rx_valid),
@@ -422,6 +423,7 @@ module flagship (
   wire [8:0] tx_data;
   wire tx_valid, tx_ready;
   chan_cdc #(.W(9), .AW(4)) tx_crossing (
+    .wr_rst(rst), .rd_rst(tx_rst),
     .wr_clk(clk), .wr_data(net_tx_data), .wr_valid(net_tx_valid),
     .wr_ready(net_tx_ready),
     .rd_clk(clk125), .rd_data(tx_data), .rd_valid(tx_valid),
@@ -488,30 +490,35 @@ module flagship (
   // The three channels that carry a request, from the core's clock to
   // the pixel clock, and the two that carry an answer, back.
   chan_cdc #(.W(35), .AW(3)) vaw_cdc (
+    .wr_rst(rst), .rd_rst(pix_rst),
     .wr_clk(clk), .wr_data(vaw_data), .wr_valid(vaw_valid),
     .wr_ready(vaw_ready),
     .rd_clk(pixclk), .rd_data(qaw_data), .rd_valid(qaw_valid),
     .rd_ready(qaw_ready)
   );
   chan_cdc #(.W(35), .AW(3)) var_cdc (
+    .wr_rst(rst), .rd_rst(pix_rst),
     .wr_clk(clk), .wr_data(var_data), .wr_valid(var_valid),
     .wr_ready(var_ready),
     .rd_clk(pixclk), .rd_data(qar_data), .rd_valid(qar_valid),
     .rd_ready(qar_ready)
   );
   chan_cdc #(.W(36), .AW(3)) vw_cdc (
+    .wr_rst(rst), .rd_rst(pix_rst),
     .wr_clk(clk), .wr_data(vw_data), .wr_valid(vw_valid),
     .wr_ready(vw_ready),
     .rd_clk(pixclk), .rd_data(qw_data), .rd_valid(qw_valid),
     .rd_ready(qw_ready)
   );
   chan_cdc #(.W(2), .AW(3)) vb_cdc (
+    .wr_rst(pix_rst), .rd_rst(rst),
     .wr_clk(pixclk), .wr_data(qb_data), .wr_valid(qb_valid),
     .wr_ready(qb_ready),
     .rd_clk(clk), .rd_data(vb_data), .rd_valid(vb_valid),
     .rd_ready(vb_ready)
   );
   chan_cdc #(.W(34), .AW(3)) vr_cdc (
+    .wr_rst(pix_rst), .rd_rst(rst),
     .wr_clk(pixclk), .wr_data(qr_data), .wr_valid(qr_valid),
     .wr_ready(qr_ready),
     .rd_clk(clk), .rd_data(vr_data), .rd_valid(vr_valid),
@@ -524,12 +531,14 @@ module flagship (
   // line pair asks one line ahead and takes a word a pixel, a quarter
   // of the rate a burst arrives at.
   chan_cdc #(.W(32), .AW(10)) swords_cdc (
+    .wr_rst(rst), .rd_rst(pix_rst),
     .wr_clk(clk), .wr_data(swords_data), .wr_valid(swords_valid),
     .wr_ready(swords_ready),
     .rd_clk(pixclk), .rd_data(pwords_data), .rd_valid(pwords_valid),
     .rd_ready(pwords_ready)
   );
   chan_cdc #(.W(32), .AW(2)) sreq_cdc (
+    .wr_rst(pix_rst), .rd_rst(rst),
     .wr_clk(pixclk), .wr_data(preq_data), .wr_valid(preq_valid),
     .wr_ready(preq_ready),
     .rd_clk(clk), .rd_data(sreq_data), .rd_valid(sreq_valid),
