@@ -34,7 +34,7 @@ the example. The cover~\cite{cover} lists every document.}%
 \thanks{The authors used a large language model, Claude, as an
 assistant in exploring the concepts and in writing and constructing
 the documents and the programs; every commit of the repository says
-so and carries the prompts that led to it, verbatim.}%
+so and preserves the prompts that led to it, verbatim.}%
 \thanks{\buildstamp}}
 
 \markboth{Ethernet in TxHDL}{Filmar and Janković: Ethernet in TxHDL}
@@ -43,42 +43,45 @@ so and carries the prompts that led to it, verbatim.}%
 \maketitle
 
 \begin{abstract}
-An Ethernet MAC turns frames into bytes on a wire and back. This one
-is two units, a transmitter and a receiver, of about eighty lines each
-of the lowered subset. Each speaks GMII, a byte a cycle,
-and each runs on one clock, so on a board each can run on the clock of
-its own side of the PHY. Both store a whole frame before acting on it,
-so the channels to their client can be slow and can cross from one
-clock to another. In front of them is an AXI-Lite peripheral of three
-words, which a core or any AXI host reaches through the AXI-Lite
-bridge. The build runs the three against a loop of wire with one frame
-corrupted, and simulates the three netlists against that run under
-\code{nvc} and under Verilator. For the Alinx AX7A200B there is a
-hand-written echo design: the PHY's RGMII, the clocks, and a crossing
-between the receive clock and the transmit clock, around the two
-halves of the MAC. It goes through Vivado's synthesis, place and route
-to a bitstream, and it has run on the board, sending back the frames a
-host sent it.
+An Ethernet media access controller (MAC) serializes frames into byte
+streams on a physical wire and reconstructs frames from incoming streams.
+The TxHDL implementation comprises two core units: a transmitter and a
+receiver, each expressed in roughly eighty lines within the lowered
+subset. Both units communicate across Gigabit Media Independent Interface
+(GMII) links at one byte per clock cycle. Because each unit operates
+within a single clock domain, a board implementation clocks each half
+directly from its respective physical-layer (PHY) interface. Each unit
+buffers a complete frame before transmission or forwarding, decoupling
+client channel throughput and facilitating clock-domain crossing. An
+accompanying three-word AXI-Lite peripheral bridges transactions from a
+processor core or bus host. The build suite tests all three units across a
+simulated loopback wire with injected frame corruption, verifying generated
+netlists under both \code{nvc} and Verilator. For the Alinx AX7A200B
+development board, a companion design integrates the PHY Reduced GMII
+(RGMII) interface, clock generation, and clock-domain crossing around the
+two MAC halves. Vivado synthesizes, places, and routes this design to a
+verified bitstream that successfully echoes traffic on physical hardware.
 \end{abstract}
 
 \section{What Is Here}
 \label{sec:e-what}
 
-The part is \code{eth} in \code{txhdl\_parts}, and it has three units.
+The \code{eth} module in \code{txhdl\_parts} provides three primary units.
 
-\code{EthTx} takes a frame's bytes from a channel and sends the frame
-on GMII: \code{txd}, a byte, and \code{tx\_en}, high while a frame is
-on the wire. \code{EthRx} takes a frame off GMII, \code{rxd},
-\code{rx\_dv} and \code{rx\_er}, and offers its bytes on a channel.
-\code{EthLite} is the peripheral: it takes bytes from AXI-Lite writes
-and gives them to the transmitter, and it answers AXI-Lite reads with
-the bytes the receiver offers.
+\code{EthTx} receives frame bytes across an input channel and transmits them
+over GMII using byte bus \code{txd} and transmit enable \code{tx\_en}.
+\code{EthRx} samples incoming GMII signals (\code{rxd}, \code{rx\_dv}, and
+\code{rx\_er}) and presents validated bytes on an output channel.
+\code{EthLite} serves as the register interface: it forwards bytes from
+AXI-Lite writes to the transmitter and services AXI-Lite reads with bytes
+supplied by the receiver.
 
-A byte on either channel is an \code{EthByte}, the byte and whether it
-is its frame's last. A frame there is what a client means by a frame:
-the destination address, the source address, the type and the
-payload. The preamble, the padding and the check sequence are the
-MAC's business and never reach the client.
+Every transaction on either channel conveys an \code{EthByte}, packaging
+the data octet alongside an end-of-frame delimiter flag. At this interface,
+a frame contains client-visible fields: destination address, source
+address, EtherType, and payload data. Physical framing details, including
+preamble octets, minimum-length padding, and cyclic redundancy checks,
+remain internal to the MAC.
 
 \ethpart{byte}{A byte of a frame, between the MAC and its
 client.}{lst:e-byte}
@@ -86,37 +89,38 @@ client.}{lst:e-byte}
 \section{The Frame on the Wire}
 \label{sec:e-frame}
 
-A frame on the wire is seven bytes of \code{0x55}, the start of frame
-delimiter \code{0xd5}, the frame, and four bytes of check sequence. A
-frame shorter than sixty bytes is padded with zeros to sixty before
-its check sequence is worked out. Twelve idle bytes follow before the
-next frame may begin.
+On the physical wire, an Ethernet frame consists of seven preamble octets
+(\code{0x55}), a start-of-frame delimiter (\code{0xd5}), the MAC frame,
+and a four-byte frame check sequence (FCS). Frames shorter than sixty octets
+are zero-padded to sixty octets before CRC calculation. An interpacket gap
+of twelve idle cycles separates consecutive frames.
 
-The check sequence is a CRC-32. The register starts with every bit
-set, takes each byte least significant bit first, and is complemented
-at the end; the four bytes go out least significant first. A receiver
-that runs the frame and its check sequence through the same register
-finds \code{0xdebb20e3} in it when nothing was corrupted, so it needs
-no second register to compare.
+The check sequence employs standard CRC-32 arithmetic. The shift register
+initializes to \code{0xffffffff}, ingests data least-significant bit first,
+and inverts its final state before transmitting the four octets in
+little-endian order. When a receiver processes an uncorrupted frame together
+with its trailing check sequence, the register converges to the fixed
+residue \code{0xdebb20e3}, removing any need for separate comparison
+hardware.
 
-A step of the register is a shift right with the polynomial
-\code{0xedb88320} added when the bit that leaves is set, and a byte is
-the byte added to the register and eight such steps.
-Listing~\ref{lst:e-crc} says exactly that: a function of one step, and
-a function that calls it eight times.
+Each step right-shifts the register and applies the reversed polynomial
+\code{0xedb88320} whenever the expelled bit is set. Processing a full octet
+entails XORing the byte into the register and executing eight sequential
+steps. Listing~\ref{lst:e-crc} expresses this structure directly through a
+single-step primitive iterated eight times.
 
-It was not always able to say so. The lowering used to inline a
-function by pasting each argument's text wherever the body read it, and one
-step reads its argument twice, so the eighth call held the register's
-expression $2^8 = 256$ times and the crate took minutes to compile.
-The byte was written as the 32 sums the eight steps work out to
-instead, each bit of the new register the exclusive or of at most
-fourteen bits of the old one and of the byte, which is correct and
-says nothing about what it is. A value an inlined body reads more than
-once is a wire of the netlist now, issue 126, so the steps are steps
-again and the netlist holds sixteen more wires. A test checks the
-function against the register stepped a bit at a time in plain Rust,
-on every byte from four registers.
+Earlier compiler passes lacked this concise representation. Lowering
+originally inlined function calls by textual expansion at each reference
+site. Because each bit step reads its argument twice, the eighth iterated
+call replicated the initial register expression $2^8 = 256$ times, causing
+multi-minute compile delays. Hardware designers previously worked around
+this expansion by computing parallel 32-bit linear parity equations
+directly, obscuring the underlying shift algorithm. With common
+subexpression elimination now allocating intermediate wires for
+multiply-referenced expressions (issue~126), the code retains its iterative
+form while adding only sixteen internal wires to the netlist. A reference
+test verifies this logic against bitwise software evaluation across four
+register patterns.
 
 \ethpart{crc}{A byte into the CRC-32 register: one step, and eight of
 them.}{lst:e-crc}
@@ -124,30 +128,35 @@ them.}{lst:e-crc}
 \section{The Transmitter}
 \label{sec:e-tx}
 
-A frame on the wire cannot pause, so the transmitter stores the whole
-frame before it sends any of it. While it is idle and holds no whole
-frame, it takes a byte from \code{tx} whenever one is offered and puts
-it in \code{frame}, a memory of 2048 bytes. The byte marked last makes
-the frame \code{whole}. A whole frame starts the sender: the preamble,
-the frame with the register running over it, zeros up to sixty bytes
-with the register still running, the check sequence, and the gap. At
-the end of the gap the sender says the frame is \code{sent}, the store
-forgets it, and the next is taken.
+Because physical Ethernet transmission cannot pause mid-frame, the
+transmitter buffers each complete frame before initiating wire output.
+While idle and awaiting data, it ingests available bytes from channel
+\code{tx} into a 2048-byte buffer named \code{frame}. Receiving an octet
+with its terminal flag asserted transitions status signal \code{whole}
+high.
 
-The two are two processes. The store takes a byte a cycle, which is
-a loop of one wait. The sender is the wire's protocol written as the
-sequence it is: a wait for a whole frame, then a loop for the
-preamble, a loop over the frame's bytes bounded by \code{fill}, a
-loop for the zeros when the frame is short, the four bytes of the
-check sequence, and a loop for the gap, each turn one byte and one
-edge. The lowering numbers those waits into a state register of its
-own and gives each loop a counter, so the \code{phase} and \code{pos}
-registers the first version of this half kept by hand are gone.
+Asserting \code{whole} triggers the output state machine: emitting
+preamble octets, serializing payload bytes while updating CRC state,
+padding to sixty octets if necessary, transmitting the CRC-32 value, and
+observing the required interpacket gap. Upon concluding the gap, the
+transmitter asserts \code{sent}, clears buffer occupancy, and accepts
+subsequent inbound traffic.
 
-The client may offer bytes as slowly as it likes, and the transmitter
-holds it off while a frame is going out. That is what lets the channel
-between the peripheral and the transmitter cross from one clock to
-another on a board.
+The transmitter architecture partitions into two concurrent processes.
+The ingestion process consumes one byte per clock cycle through a
+single-wait loop. The wire output process expresses the transmission
+sequence directly: waiting for a complete frame, generating the preamble
+sequence, iterating over buffered data up to index \code{fill}, streaming
+zero padding for short frames, dispatching the four CRC octets, and
+counting interpacket gap cycles. Lowering synthesizes these sequential
+waits into an explicit state machine and allocates loop counter registers,
+eliminating the manually managed \code{phase} and \code{pos} registers
+used in early revisions.
+
+Clients may supply payload bytes at arbitrary rates, with backpressure
+asserted whenever an active transmission occupies the buffer. This rate
+decoupling permits asynchronous clock-domain crossing between peripheral
+logic and the physical transmit clock on target hardware.
 
 \ethpart{txstate}{The transmitter's state.}{lst:e-txstate}
 
@@ -156,33 +165,35 @@ another on a board.
 \section{The Receiver}
 \label{sec:e-rx}
 
-The wire cannot be held off, so the receiver stores the whole frame
-too, and offers it only once its check sequence has passed. It waits
-for \code{rx\_dv} with the delimiter on \code{rxd}, passing over the
-preamble, then stores a byte a cycle for as long as \code{rx\_dv} stays
-high, with the register running over every byte, the check sequence
-included. When \code{rx\_dv} falls, the frame is good if the register
-holds the residue, no byte came with \code{rx\_er}, and it is longer
-than its check sequence. A good frame is offered on \code{rx} without
-its check sequence, its last byte marked, as fast as the client takes
-it.
+Because physical wire traffic cannot pause for backpressure, the receiver
+buffers an entire frame before presenting validated data to downstream
+consumers. The input monitor detects data valid signal \code{rx\_dv},
+scans past preamble bytes until recognizing the start-of-frame delimiter on
+\code{rxd}, and buffers one byte per cycle while \code{rx\_dv} remains
+asserted. Throughout reception, the CRC register computes over all
+incoming octets including the trailing checksum. When \code{rx\_dv}
+negates, the receiver validates the frame: the CRC register must match the
+expected residue, error flag \code{rx\_er} must remain unasserted, and
+total frame length must exceed four bytes. Validated frames are then
+presented across channel \code{rx} stripped of their check sequence, with
+the final payload byte tagged accordingly.
 
-Three kinds of frame are dropped and counted in \code{dropped}. A
-frame whose check fails is one. A frame that arrives while the one
-before it is still being offered is another, since there is nowhere to
-put it. The third is a frame whose start the receiver missed: a busy
-line with neither the preamble nor the delimiter on it is ignored
-until \code{rx\_dv} falls.
+Counter \code{dropped} records discarded frames across three distinct
+error conditions. First, frames failing the CRC residue check are dropped
+immediately. Second, frames arriving while previous data remains pending
+on the client channel are discarded due to buffer occupancy. Third,
+incomplete frame fragments encountered without a valid preamble and start
+delimiter are ignored until \code{rx\_dv} deasserts.
 
-This half too is two processes. The receiver proper watches the wire
-every cycle, a loop of one wait: it hunts, stores, checks, and marks
-the frame \code{full}. The offerer is the sequence: a wait for a full
-frame, an edge on which the length is put on \code{rx\_len}, a loop
-over the payload bounded by \code{len} less four, each turn one byte
-offered and held until the client takes it, and then the frame is
-\code{given} back and the receiver lets the next one in. Its state
-register and its loop counter are the lowering's, as the
-transmitter's are.
+The receiver likewise separates into two concurrent processes. The
+physical interface process monitors wire signals on every cycle: hunting
+for frame boundaries, streaming bytes into memory, evaluating integrity,
+and asserting signal \code{full}. The client drain process executes
+sequentially: awaiting \code{full}, driving the payload size onto
+\code{rx\_len}, streaming payload octets bounded by \code{len - 4} until
+consumed, and asserting \code{given} to release the buffer for subsequent
+traffic. As with the transmitter, the lowering generates dedicated state
+registers and loop counters automatically.
 
 \ethpart{rxstate}{The receiver's state.}{lst:e-rxstate}
 
@@ -191,47 +202,50 @@ transmitter's are.
 \section{The Peripheral}
 \label{sec:e-lite}
 
-\code{EthLite} is an AXI-Lite peripheral of three words, and it moves
-one byte per transaction.
-Its words are stated once, by the \code{regmap!} at the head of
-Listing~\ref{lst:e-lite}: \code{status}, read only, with a bit for a
-byte waiting and a bit for room to send; \code{txbyte}, write only,
-the byte and a bit for the frame's last; and \code{rxbyte}, whose read
-takes the byte, with the byte, the last bit and a valid bit.
-The same declaration gives the unit its read mux and its enables, and
-a program its offsets and fields.
+\code{EthLite} is an AXI-Lite peripheral of three words, moving one byte per
+transaction. Its words are declared by the \code{regmap!} macro at the head
+of Listing~\ref{lst:e-lite}: read-only register \code{status}, indicating
+buffered receive data and transmit availability; write-only register
+\code{txbyte}, supplying payload data and end-of-frame flags; and
+register \code{rxbyte}, whose read pops queued octets alongside status and
+validity bits. This macro definition generates read multiplexing logic,
+address decode strobes, and host-accessible register offsets from a single
+specification.
 
-A write to the transmit word is answered only when the transmitter has
-taken the byte, so a client that writes faster than the transmitter
-takes is held off rather than losing bytes. A read of the receive word
-takes the oldest byte if one waits and answers with bit 9 set; with
-none waiting it answers with bit 9 clear and takes nothing. The
-interrupt line is high while a byte waits.
+AXI-Lite write responses complete only after the transmitter accepts the
+queued byte, stalling fast hosts via bus backpressure to prevent buffer
+overruns. Reading the receive register extracts the oldest queued octet
+with status bit~9 asserted; if the FIFO is empty, the read completes with
+bit~9 cleared without altering state. An interrupt request line asserts
+whenever received bytes remain available.
 
-One byte per transaction is slow for a frame of fifteen hundred bytes,
-but the AXI-Lite bridge makes it cheaper than it looks. A fixed burst
-to one address becomes one AXI-Lite transaction per beat at that
-address, so a host sends a whole frame as one burst to the transmit
-word and reads sixteen bytes as one burst from the receive word.
+Single-byte transactions introduce overhead on 1500-byte Ethernet payloads,
+but bridge optimizations mitigate transaction latency. When addressed with
+fixed-burst transfers, the AXI-to-AXI-Lite bridge converts each beat into
+back-to-back single-cycle operations, allowing host software to stream
+complete frames to \code{txbyte} or burst 16-byte chunks from
+\code{rxbyte} efficiently.
 
 \ethpart{lite}{The peripheral.}{lst:e-lite}
 
 \section{The Run}
 \label{sec:e-run}
 
-\code{ex\_eth} puts the three units behind \code{LiteBridge<1, ..>}, behind
-a host's tracker, with the transmitter's GMII looped into the
-receiver's a cycle late. The host client sends three frames, each as
-one fixed burst, and after each reads bursts of sixteen from the
-receive word until the frame comes back or twelve bursts have come
-back empty. The loop flips one data byte of the second frame on its
-way.
+Example \code{ex\_eth} instantiates the three units behind
+\code{LiteBridge<1, ..>} and a host transaction tracker, looping the
+transmitter GMII interface directly into receiver inputs with a one-cycle
+delay. The simulated host issues three frames as fixed-burst transfers.
+Following each frame, the host reads 16-byte bursts from \code{rxbyte} until
+the frame returns or twelve successive bursts return empty. Simulated
+loopback wiring inverts one data byte within the second frame during
+transmission to test error handling.
 
-The first frame is twenty bytes and comes back sixty, padded. The
-second fails its check and does not come back, and the receiver counts
-it. The third is seventy-two bytes and comes back as it went. The run
-asserts all three outcomes, and that the transmitter sent three frames
-and the receiver dropped one.
+The first frame spans 20 payload bytes and returns padded to the 60-byte
+minimum. The corrupted second frame fails its check sequence and is
+rejected, incrementing the receiver's drop counter. The third frame
+contains 72 bytes and returns unmodified. The run asserts all three
+transmission outcomes, confirming that three frames were sent and exactly
+one was dropped.
 
 \begin{figure*}[t]
 \centering
@@ -250,66 +264,64 @@ label={lst:e-ex}]{lib/examples/ex_eth.rs}
 \lstinputlisting[style=ascii,caption={What \code{ex\_eth} printed when
 the build ran it.},label={lst:e-out}]{out_eth.txt}
 
-The transmitter, the receiver and the peripheral are lowered, and the
-build simulates each netlist against this run under \code{nvc} and
-under Verilator, at its ports. A test in the part holds the
-transmitter's wire to a model of the frame, at fifty-nine, sixty and
-sixty-one bytes and longer, and checks the three ways a frame is
-dropped.
+The transmitter, the receiver, and the peripheral are lowered, and the build
+simulates each netlist against this run under \code{nvc} and under Verilator
+at its boundary ports. Unit tests within the module verify transmit wire
+formatting across frame lengths of 59, 60, and 61 bytes, confirming correct
+behavior under each drop condition.
 
 \section{On the Board}
 \label{sec:e-board}
 
-The Alinx AX7A200B has one gigabit port, a JL2121-N040I PHY on
-RGMII. The PHY negotiates 10, 100 or 1000~Mbit and full or half duplex
-by itself, from the levels on its configuration pins at power on, and
-by the manual's power-on table answers on its management bus at
-address 3; on the board it answered at address 0, the first address a
-scan tries. RGMII sends a GMII byte as two nibbles a cycle, the low
-nibble on the clock's rising edge and the high nibble on its falling
-edge, and a control line that is the valid line on the rising edge and
-valid exclusive-or error on the falling edge. Two edges per cycle are
-the FPGA's own primitives, \code{ODDR} out and \code{IDDR} in, which a
-lowered unit does not name, so the board's part is written by hand in
-\code{//eth/board}. The echo design in it sends every good frame it
-receives straight back out.
-On the flagship the core drives the port through \code{EthSlots}, the
-slot registers Zephyr's driver expects, on the fifth slot of its
-peripheral page at \mmget{at}{ethslots}; \code{EthLite}, the peripheral
-above, is the one \code{ex\_eth} uses. The flagship document's address
-map lists the page.
+The Alinx AX7A200B provides a single gigabit Ethernet port wired to a
+JL2121-N040I PHY over RGMII. The physical layer transceiver negotiates
+10, 100, or 1000~Mbit operation and duplex modes autonomously based on
+hardware strap pins sampled during power-up. While documentation indicates
+default management bus responsiveness at MDIO address~3, board probing
+identified the PHY at address~0. RGMII transfers GMII octets as dual-edge
+nibbles: the lower nibble on the rising clock edge and the upper nibble
+on the falling clock edge. Similarly, the control signal encodes data
+valid on rising edges and an XOR error condition on falling edges.
+Handling dual-data-rate signaling requires vendor-specific FPGA primitives
+(\code{ODDR} and \code{IDDR}) not directly generated by the lowered
+subset, prompting a handwritten Verilog shim in \code{//eth/board}. The
+board-level demonstration implements an echo pipeline, immediately
+retransmitting each uncorrupted received frame.
 
-\code{eth\_rgmii.v} is the RGMII wrapper. The transmit clock leaves
-the FPGA through the same kind of register as the data, so its edges
-are aligned with the data's, and the PHY on this board delays it into
-the middle of the bits. The receive clock comes from the PHY through
-an MMCM that shifts it a quarter of its cycle, 2~ns, so that the
-sampling edge falls in the middle of the data, and the receiving half
-of the MAC runs on it. Both were found on the board, issue~231, as
-the section on the run below says.
+On the flagship system, the core accesses the port through \code{EthSlots},
+the slot register interface expected by the Zephyr driver, located at
+peripheral offset \mmget{at}{ethslots}. The register peripheral
+\code{EthLite} described above is the interface used by \code{ex\_eth}.
+The flagship memory map details this assignment.
+
+Module \code{eth\_rgmii.v} implements the RGMII wrapper. Transmit clock
+generation routes through an \code{ODDR} primitive identical to data lines,
+keeping output edges aligned and allowing internal PHY delay lines to
+center the clock within data eyes. Conversely, the incoming receive clock
+passes through an MMCM configured for a 90-degree phase shift (2~ns of the
+8~ns period), placing the sampling edge safely inside the valid data
+window before driving the receive MAC logic. Both phase alignments were
+determined empirically during board bring-up (issue~231).
 
 \lstinputlisting[caption={\code{eth/board/eth\_rgmii.v}: RGMII to
 GMII.},label={lst:e-rgmii}]{eth/board/eth_rgmii.v}
 
-The receiver and the transmitter are on two clocks, the PHY's and the
-FPGA's, so the channel between them crosses from one to the other.
-\code{chan\_cdc.v}, in \code{//lib/board}, is that channel: an asynchronous FIFO of sixteen
-words with the valid and ready of a lowered unit's channel port on each
-side, its pointers in Gray code, each crossing to the other clock
-through two flip-flops. The halves of the MAC store whole frames, so
-the FIFO may hold the bytes up for a cycle or two without harm.
+Because the receiver and transmitter operate in separate clock domains
+(PHY clock and internal FPGA clock), data movement between them crosses
+domains through an asynchronous FIFO. Module \code{chan\_cdc.v} in
+\code{//lib/board} provides this channel: a sixteen-entry FIFO using
+standard valid/ready handshake signals on each side. Gray-code pointers
+cross domains through two flip-flop synchronizers. Buffering complete
+frames allows the FIFO to hold bytes for several cycles without data loss.
 
-Each half of the MAC has a reset on the clock it runs on: the clock
-manager's lock, which is also what holds the PHY in reset, through
-two flip-flops in each domain, so that each release lands on an edge
-of its own clock. The receive clock is the PHY's and does not run
-until the PHY does, so its synchroniser holds the reset from its
-initial value until the first edges arrive. A lowered module's reset
-arm runs from its \code{rst} input and from nothing else (issue 509).
-The FIFO between the two halves takes both of those resets, one for
-each of its clocks, and holds itself empty until both have released,
-so nothing from before a reset reaches the half that comes out of it
-(issue 1325).
+Each MAC domain receives an asynchronous reset synchronized to its local
+clock: the clock manager lock signal passes through dual flip-flops in each
+domain, aligning release with local clock edges. Because the PHY clock
+remains inactive until link startup, its synchronizer maintains active reset
+from power-on until clock edges arrive. Lowered modules reset strictly
+through their \code{rst} input (issue~509). The cross-domain FIFO samples
+both resets, remaining empty until both domains release cleanly
+(issue~1325).
 
 \lstinputlisting[caption={\code{lib/board/chan\_cdc.v}: a channel from
 one clock to another.},label={lst:e-cdc}]{lib/board/chan_cdc.v}
@@ -317,26 +329,23 @@ one clock to another.},label={lst:e-cdc}]{lib/board/chan_cdc.v}
 \lstinputlisting[caption={\code{eth/board/eth\_echo.v}: the echo
 design.},label={lst:e-echo}]{eth/board/eth_echo.v}
 
-\code{bazel build //eth:echo\_synth} puts the lowered halves and the
-three hand-written files through Vivado's synthesis for the board's
-part, with no error and no critical warning. Its two warnings are that
-the halves' frame counters are removed, since nothing on the board
-reads them, and that the management pins are driven by a constant or
-not at all.
+The command \code{bazel build //eth:echo\_synth} runs Vivado synthesis
+for the target device without errors or critical warnings. Vivado emits
+only two benign warnings: unused frame counters are trimmed, and
+unconnected management pins are tied off.
 
-\code{bazel build //eth:echo\_pnr} places and routes the design with
-the board's pins and writes the bitstream. Every timing constraint is
-met, with 1.491~ns of setup slack and 0.065~ns of hold slack over 6549
-endpoints, and the design rule check finds nothing. The design takes
-1330 LUTs, 776 of them memory for the two frames and the FIFO, 232
-flip-flops and 19 pins. No input or output delay is constrained on the
-RGMII pins yet, so that slack says nothing about the timing between
-the FPGA and the PHY.
+Next, \code{bazel build //eth:echo\_pnr} places and routes the design
+against board constraints to generate the bitstream. All timing constraints
+close cleanly, showing 1.491~ns setup slack and 0.065~ns hold slack across
+6549 endpoints with clean design-rule checks. The design consumes 1330
+LUTs (776 for frame and FIFO memories), 232 flip-flops, and 19 pins.
+Because external board trace delays are unconstrained here, reported slack
+applies strictly to internal FPGA paths.
 
-The constraints name the clock and the LEDs, in
-\code{eth/board/ax7a200\_eth.xdc}, and the fifteen pins of the PHY,
-from the table in the AX7A200B manual, in
-\code{eth/board/eth\_pins.xdc}, which the flagship reads too.
+Listing~\ref{lst:e-xdc} gives the clock and LED constraints in
+\code{eth/board/ax7a200\_eth.xdc}. Listing~\ref{lst:e-pins} supplies the
+fifteen PHY pins from the AX7A200B manual in \code{eth/board/eth\_pins.xdc},
+which the flagship system also imports.
 
 \lstinputlisting[caption={\code{eth/board/ax7a200\_eth.xdc}: the
 board's pins.},label={lst:e-xdc}]{eth/board/ax7a200_eth.xdc}
@@ -347,74 +356,61 @@ pins.},label={lst:e-pins}]{eth/board/eth_pins.xdc}
 \section{What Is Not Done}
 \label{sec:e-not}
 
-The echo design has run on the board and works. On September 19, 2026
-the board linked at gigabit with a host and returned every frame sent
-to it: five hundred of 1400 bytes and five hundred of four bytes, byte
-for byte, the short ones padded to sixty, with the host's adapter
-counting no frame with a bad check sequence.
+The echo design was validated on physical hardware. On September 19,
+2026, the AX7A200B established a gigabit link with a host and reflected
+1000 test frames: 500 of 1400 bytes and 500 of 4 bytes. Every frame
+returned intact with short frames padded to 60 bytes, and host network
+diagnostics counted zero frame check sequence errors.
 
-It took two changes, both to the timing at the pins, which is issue~231.
-The receive side clocked its inputs through a plain global buffer, and
-the MAC accepted nothing at all; the receive clock now goes through an
-MMCM that shifts it, 90 degrees in the echo, which is 2~ns of its 8~ns
-period, and 78.75 in the flagship. The
-transmit side had the opposite fault: the design sent its clock a
-quarter cycle late, the PHY delays that clock again on its side, and
-the two together put the PHY's sampling edge where the data changes.
-The board received every frame and the host got most of them back
-corrupted, about one bit in ten thousand, which the host's adapter
-counted under \code{ethtool -S rx\_errors} while the kernel's own
-counter stayed at zero. The transmit clock now leaves the FPGA aligned
-with the data, which is what the vendor's own design for this board
-does; its routed checkpoint, opened in Vivado, says so, and it pings
-without loss over the same cable.
+Achieving clean communication required two pin timing corrections
+(issue~231). The receive path originally clocked input pins through an
+unshifted global buffer, preventing data lock. Passing the receive clock
+through an MMCM introduces a dedicated phase shift: 90~degrees (2~ns of the
+8~ns period) in the echo design and 78.75~degrees in the flagship.
+Conversely, the transmit path initially delayed the clock by a quarter
+cycle. Because the PHY adds internal delay, this combined shift aligned
+clock edges with data transitions, causing bit error rates near
+$10^{-4}$ under \code{ethtool -S rx\_errors}. Realigning transmit clock
+and data edges at FPGA outputs eliminated all errors, matching vendor
+reference designs and yielding loss-free ping traffic.
 
-Why the receive side needed the shift is known in part (issue~864). The
-sweep of the shift and the flagship's run fit a PHY that sends its
-receive clock centred in the data, its edges about 2~ns after the
-data's, rather than on them. The PHY answers MDIO at address~0 with the identifier
-\code{937c 4032}, which JLSemi's Linux driver names its gigabit family,
-and that driver puts the receive delay at bit~9 of register~17 on
-page~3336. That page has not been read, since reading it means writing
-the page register, and without the JL2121's data sheet the bit's value
-at power on is not known.
+The receive phase requirement is understood partially (issue~864).
+Observed timing fits a PHY that centers its receive clock within data eyes,
+placing clock edges roughly 2~ns after data transitions. The PHY answers
+MDIO at address~0 with identifier \code{937c 4032}, identifying the JLSemi
+gigabit family. Linux driver sources place receive delay configuration at
+bit~9 of register~17 on page~3336. Because reading this location requires
+writing page registers and data sheets are unavailable, power-on default
+register values remain unconfirmed.
 
-The I/O standard of the Ethernet pins is LVCMOS33 on both sides: the
-core board's banks are at 3.3~V, and the carrier sets the PHY's RGMII
-pins to 3.3~V.
+Both devices use 3.3~V LVCMOS signaling: core board banks and carrier
+PHY pins are tied to 3.3~V rails. Test target \code{//eth/hil:run}
+executed these hardware verification runs over physical cabling.
 
-\code{//eth/hil:run} is the test that produced those numbers. It runs
-where the cable is, sends a frame and waits for it to come back before
-sending the next, and compares what returns with what went out.
+The current MAC operates only at gigabit line rate. At 10 or 100~Mbit, the
+PHY transmits nibbles across multiple cycles, which this single-cycle byte
+pipeline does not process. Because the autonomous PHY negotiates all three
+speeds, link partners must be configured for gigabit operation. The echo
+design leaves management pins idle, relying on power-on strap defaults
+without active link monitoring. The flagship SoC provides an MDIO master
+at peripheral offset \code{0x3700} (issue~864).
 
-Only gigabit works. At 100 or 10~Mbit the PHY sends a nibble per
-cycle, and neither half of the MAC takes a byte over two cycles. The
-PHY negotiates any of the three speeds, so the port on the other end
-of the cable has to be a gigabit port. In the echo the management
-interface is left idle, so the PHY runs on its power-on
-configuration, nothing restricts what it advertises, and nothing
-reads its link state. The flagship has an MDIO master on its eighth
-slot, at \code{0x3700} (issue 864).
-
-Each half holds one frame. A receiver whose frame the client has not
-yet read drops the next one, and a client that wants to keep frames
-arriving back to back reads each promptly. The peripheral moves a
-byte per transaction.
-
-Vreteno's board does not use this peripheral. It reaches the two
-halves of the MAC through \code{EthSlots}, on the fifth slot of its
-peripheral page, with an engine that fetches a frame to send from the
-DDR3 and one that stores a frame received into it (issue~151).
+Each MAC half buffers a single frame. If client logic fails to drain
+the receiver before another packet arrives, the arriving frame is dropped.
+Peripheral \code{EthLite} transfers one byte per bus transaction. The
+Vreteno system bypasses byte-by-byte register transfers, accessing MAC
+ports through \code{EthSlots} in slot~5 via DMA engines that stream
+packets directly to and from DDR3 memory (issue~151).
 
 \begin{table}[htbp]
-\caption{The port on the board through the engines and through the
-core's own copy, a thousand frames each, on 2026-10-04. Receive was
-paced by the sender at 25\,020 and 16\,681 frames a second.}
+\caption{Port performance on hardware across DMA engines and CPU copy routines
+for 1000 frames (2026-10-04). Transmit was unconstrained; receive was paced
+at 25\,020 and 16\,681 frames per second.}
 \label{tab:e-perf}
 \centering
 \begin{tabular}{@{}llrrr@{}}
 \toprule
-Way & Bytes & Frames/s & MB/s & Cycles \\
+Mechanism & Bytes & Frames/s & MB/s & Cycles \\
 \midrule
 send, engine & 60 & 90\,001 & 5.4 & 155 \\
 send, copy & 60 & 20\,787 & 1.2 & 3\,735 \\
@@ -428,51 +424,40 @@ receive, copy & 1514 & 913 & 1.4 & 105\,059 \\
 \end{tabular}
 \end{table}
 
-Table~\ref{tab:e-perf} is that path measured on the board by
-\code{ethperf.rs}, on the flagship built for issue~1022, against the
-core copying each frame through the slot itself (issue~1038). There
-is no register path on the board to compare with, so the copy stands
-for the least one would cost; \code{EthLite}, a byte to each bus
-transaction, would cost more, and a true comparison wants it on the
-board. The last column is the core's own cycles a frame, not those
-it spent waiting for the port.
+Table~\ref{tab:e-perf} compares DMA engine performance against programmed CPU
+copy operations measured by \code{ethperf.rs} on the flagship build
+(issues 1022 and 1038). CPU copies establish an empirical baseline; single-byte
+\code{EthLite} bus accesses would incur even higher overhead. The final
+column reports CPU active cycles per frame, excluding idle wait time.
 
-With the engines the core's cost is the same at any size, about 155
-cycles to hand over a frame and 880 to note one received. The copy
-costs about 225 cycles a word, a word of DDR3 at a time through the
-bridge, so a full frame is 85\,000 cycles to send and 105\,000 to
-receive. Sending full frames through the engine reaches 12.7~MB/s,
-which is the fetch engine reading the DDR3, the path issue~1023 is
-about. Receiving took 25.2~MB/s with no frame lost, and the 60-byte
-frames lost one in a thousand at the sender's pace. At the line rate
-the receiver keeps about one full frame in five, since it holds a
-frame and two slots and nothing holds the sender back. Those runs also
-landed frames on slots the driver had not read, unannounced; since
-issue~1313 a frame that finds both slots held is dropped and counted
-in \code{rx\_errors} instead, as the examples document's section on
-\code{EthSlots} describes. Every frame the board sent was counted at
-the other end of the cable.
+With DMA engines, CPU overhead remains constant across packet sizes: roughly
+155 cycles to dispatch a transmit frame and 880 cycles to retire a received
+packet. Programmed copying requires 225 cycles per 32-bit DDR3 word across the
+bus bridge, consuming 85\,000 cycles to send and 105\,000 cycles to receive a
+full frame. Transmitting maximum-size frames via DMA sustains 12.7~MB/s,
+limited by DDR3 memory read latency (issue~1023). Inbound DMA achieves
+25.2~MB/s with zero packet loss at test pacing, while 60-byte bursts experience
+a 0.1\% drop rate. Under unthrottled line-rate traffic, the single-buffer
+receiver sustains roughly one full packet in five because wire input cannot
+be stalled. Earlier test runs occasionally deposited unannounced packets into
+unserviced buffer slots. Following issue~1313, frames arriving when both
+slots remain occupied are dropped and counted under \code{rx\_errors}, as
+detailed in the \code{EthSlots} section of the examples document. Every
+transmitted packet arrived verified at the link partner.
 
-Writing the part found three things in the lowering, each worked
-around here at the time, and all three since fixed. A wire named for
-a reserved word of either target
-language, such as \code{next}, \code{out}, \code{begin}, \code{body},
-\code{buf} or \code{byte}, produced a netlist that did not analyse;
-the lowering refused such a name where it was chosen, and now escapes
-it instead, writing \code{next\_rw} in both targets (issue 497). A
-bit of a field of a channel's value, \code{wh.data.bit(8)}, was written
-in Verilog as a bit select of a part select, which Verilog does not
-allow and VHDL did not simulate as the run did; a bit of a part is now
-one bit of the value, at the part's offset, so the peripheral asks for
-the bit of the word it was written with. And a constant of $2^{31}$ or
-more was
-written as an unsized integer, which overflows Verilog's 32-bit signed
-integer and lies above the natural VHDL guarantees, so the receiver
-compared the complement of its register with a smaller constant. The
-lowering now writes a constant at the width of what it stands beside,
-sized hexadecimal in Verilog and a bit string in VHDL, and the
-receiver compares the residue, \code{0xdebb\_20e3}, itself.
+Implementing the Ethernet module resolved three compiler lowering issues.
+First, signals matching HDL keywords (\code{next}, \code{out}, \code{begin},
+\code{body}, \code{buf}, or \code{byte}) originally produced invalid syntax;
+lowering now escapes reserved identifiers systematically as \code{next\_rw}
+(issue~497). Second, bit selections within channel fields (\code{wh.data.bit(8)})
+emitted nested part-selects rejected by Verilog; lowering now resolves field
+bits to absolute vector indices. Third, integer literals above $2^{31}-1$
+were emitted as unsized values, overflowing signed 32-bit integers in Verilog
+and default ranges in VHDL. Lowering now emits constants with explicit bit
+widths, using sized hexadecimal in Verilog and bit strings in VHDL, allowing
+direct residue comparison against \code{0xdebb\_20e3}.
 
+\IEEEtriggeratref{1}
 \begin{thebibliography}{9}
 
 \bibitem{axi}
