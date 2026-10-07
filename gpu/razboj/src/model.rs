@@ -4,8 +4,10 @@
 //! same edge functions, but it says them as a program rather than as
 //! a step per cycle, so that the two agreeing means something.
 use crate::op::{
-    signed, Insn, Kind, EQUAL, GEQUAL, GREATER, LEQUAL, LESS, NEVER, NOTEQUAL,
-    SUB, ZFRAC,
+    signed, Insn, Kind, DST_ALPHA, DST_COLOR, EQUAL, GEQUAL, GREATER, LEQUAL,
+    LESS, NEVER, NOTEQUAL, ONE, ONE_MINUS_DST_ALPHA, ONE_MINUS_DST_COLOR,
+    ONE_MINUS_SRC_ALPHA, ONE_MINUS_SRC_COLOR, SRC_ALPHA, SRC_ALPHA_SATURATE,
+    SRC_COLOR, SUB, ZERO, ZFRAC,
 };
 use txhdl::types::U;
 
@@ -142,31 +144,105 @@ pub fn passes(func: u32, z: u32, d: u32) -> bool {
     }
 }
 
+/// `x` over 255, rounded to the nearest, for `x` up to 65535, and 255
+/// or more past it: what the rasteriser's blend does without a divider.
+pub fn div255(x: u32) -> u32 {
+    let y = x + 128;
+    (y + (y >> 8)) >> 8
+}
+
+/// One blend factor for the channel `c` of a pixel, a byte, from the
+/// source `s` and the destination `d`, each `0xAARRGGBB`, `c` being the
+/// channel's byte, 0 for blue to 3 for alpha (issue 993).
+pub fn factor(f: u32, s: u32, d: u32, c: u32) -> u32 {
+    let ch = |p: u32| (p >> (8 * c)) & 0xff;
+    let (sa, da) = (s >> 24, d >> 24);
+    match f {
+        ZERO => 0,
+        ONE => 255,
+        SRC_COLOR => ch(s),
+        ONE_MINUS_SRC_COLOR => 255 - ch(s),
+        SRC_ALPHA => sa,
+        ONE_MINUS_SRC_ALPHA => 255 - sa,
+        DST_ALPHA => da,
+        ONE_MINUS_DST_ALPHA => 255 - da,
+        DST_COLOR => ch(d),
+        ONE_MINUS_DST_COLOR => 255 - ch(d),
+        SRC_ALPHA_SATURATE if c == 3 => 255,
+        SRC_ALPHA_SATURATE => sa.min(255 - da),
+        _ => 0,
+    }
+}
+
+/// The source `s` blended over the destination `d` with the factors
+/// `sf` and `df`: each channel `s Fs + d Fd`, over 255, at most 255.
+pub fn blend(s: u32, d: u32, sf: u32, df: u32) -> u32 {
+    (0..4)
+        .map(|c| {
+            let ch = |p: u32| (p >> (8 * c)) & 0xff;
+            let x = ch(s) * factor(sf, s, d, c) + ch(d) * factor(df, s, d, c);
+            div255(x).min(255) << (8 * c)
+        })
+        .fold(0, |a, b| a | b)
+}
+
+/// The channels of `new` that `mask` holds, a bit a byte, over `old`.
+pub fn masked(new: u32, old: u32, mask: u32) -> u32 {
+    let m = (0..4)
+        .filter(|c| (mask >> c) & 1 == 1)
+        .fold(0u32, |a, c| a | (0xff << (8 * c)));
+    (new & m) | (old & !m)
+}
+
 /// A display list rendered into a framebuffer of `w` by `h` pixels, as a
 /// tiled list draws it: an entry that tests depth (issue 992) writes a
 /// pixel only where it passes against the depth there, which starts at
 /// the farthest, and writes its own depth there if it says so. A flat
 /// list draws its depth entries without the test; see `crate::dl`.
 pub fn render(ops: &[Insn], w: usize, h: usize) -> Vec<u32> {
-    let mut fb = vec![0u32; w * h];
+    render_over(ops, w, h, vec![0u32; w * h])
+}
+
+/// The same over a framebuffer that already holds `fb`. Each pixel goes
+/// through GL's steps in GL's order (issue 993): the alpha test, the
+/// depth test, the blend with the colour there, and the colour mask.
+/// A pixel that fails a test writes nothing, its depth included.
+pub fn render_over(ops: &[Insn], w: usize, h: usize, fb: Vec<u32>) -> Vec<u32> {
+    let mut fb = fb;
     let mut zb = vec![0xffffu32; w * h];
     for op in ops {
         let (x0, y0, x1, y1) = box_of(op, w, h);
         let on = op.depth.to_bool();
         let raw = |u: U<32>| u.raw() as u32;
         let func = op.zfunc.raw() as u32;
+        let state = op.state.to_bool();
+        let atest = state && op.atest.to_bool();
+        let blending = state && op.blend.to_bool();
+        let (sf, df) = (op.sfactor.raw() as u32, op.dfactor.raw() as u32);
+        let mask = op.mask();
         for y in y0..=y1 {
             for x in x0..=x1 {
                 if !inside(op, x, y) {
                     continue;
                 }
                 let at = y as usize * w + x as usize;
+                let src = colour(op, x - x0, y - y0);
+                let aref = op.aref.raw() as u32;
+                if atest && !passes(op.afunc.raw() as u32, src >> 24, aref) {
+                    continue;
+                }
                 let z =
                     depth(raw(op.z0), raw(op.zdx), raw(op.zdy), x - x0, y - y0);
                 if on && !passes(func, z, zb[at]) {
                     continue;
                 }
-                fb[at] = colour(op, x - x0, y - y0);
+                let dst = fb[at];
+                let out = if blending {
+                    blend(src, dst, sf, df)
+                } else {
+                    src
+                };
+                fb[at] = masked(out, dst, mask);
                 if on && op.zwrite.to_bool() {
                     zb[at] = z;
                 }
@@ -174,4 +250,45 @@ pub fn render(ops: &[Insn], w: usize, h: usize) -> Vec<u32> {
         }
     }
     fb
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{blend, div255, masked};
+    use crate::op::{DST_COLOR, ZERO};
+    use crate::op::{ONE, ONE_MINUS_SRC_ALPHA, SRC_ALPHA, SRC_ALPHA_SATURATE};
+
+    /// The divide by 255 without a divider rounds to the nearest over the
+    /// whole of what one product and another sum to, and stays at 255 or
+    /// more past it, where the blend clamps (issue 993).
+    #[test]
+    fn the_divide_by_255_rounds_to_the_nearest() {
+        for x in 0..=2 * 255 * 255u32 {
+            let want = (2 * x + 255) / 510;
+            if x <= 255 * 255 {
+                assert_eq!(div255(x), want, "{x}");
+            } else {
+                assert!(div255(x) >= 255, "{x}");
+            }
+        }
+    }
+
+    /// The blend is GL's sum of the two factored colours, a channel at a
+    /// time, clamped.
+    #[test]
+    fn the_blend_is_gls() {
+        let (s, d) = (0x80ff_4000, 0xff00_80ff);
+        assert_eq!(blend(s, d, ONE, ZERO), s);
+        assert_eq!(blend(s, d, ZERO, ONE), d);
+        // Half of each, the source's alpha being 0x80.
+        let half = blend(s, d, SRC_ALPHA, ONE_MINUS_SRC_ALPHA);
+        assert_eq!(half, 0xbf80_607f, "{half:08x}");
+        assert_eq!(blend(s, d, ONE, ONE), 0xffff_c0ff, "the sum clamps");
+        // Modulate: the source times the destination.
+        assert_eq!(blend(s, d, DST_COLOR, ZERO), 0x8000_2000);
+        // Saturate takes the source's alpha, at most what the
+        // destination leaves, and one for alpha itself.
+        assert_eq!(blend(s, d, SRC_ALPHA_SATURATE, ZERO), 0x8000_0000);
+        assert_eq!(masked(0x1122_3344, 0x5566_7788, 0b1010), 0x1166_3388);
+    }
 }

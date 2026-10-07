@@ -733,12 +733,14 @@ impl<
                                   if self.word.get() == 14 {
                                       self.cby.set(v);
                                   }
-                                  // Every entry's alpha, last.
-                                  // Every entry's alpha, and its depth bits.
+                                  // Every entry's alpha, its depth bits,
+                                  // and whether a second slot follows,
+                                  // for depth or for the pixel's state
+                                  // (issue 993).
                                   if self.word.get() == 15 {
                                       with!(self <= {
                                           alpha: v.slice::<0, 8>(),
-                                          deep: v.bit(8),
+                                          deep: v.bit(8) | v.bit(13),
                                           zon: v.bit(8) & self.tiled.get(),
                                           zfunc: v.slice::<9, 3>(),
                                           zwrite: v.bit(12),

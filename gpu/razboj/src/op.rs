@@ -100,6 +100,52 @@ pub enum Op {
         colours: [u32; 3],
         z: [u32; 3],
     },
+    /// From here on, blend as `mode` says, or not at all with `None`
+    /// (issue 993). State, as the depth mode is, and like depth it holds
+    /// only in a tiled list.
+    Blend(Option<BlendMode>),
+    /// From here on, drop a pixel whose alpha fails the test, or test
+    /// nothing with `None` (issue 993). Tiled lists only.
+    AlphaTest(Option<AlphaTest>),
+    /// From here on, write only the channels `mask` holds, a bit a byte
+    /// of the pixel: bit 0 blue, 1 green, 2 red, 3 alpha, so `0xf` is
+    /// every channel and nought none (issue 993). Tiled lists only.
+    ColourMask(u32),
+}
+
+/// How an entry blends (issue 993): GL ES 1.1's `glBlendFunc`, the
+/// source's factor and the destination's, as [`ZERO`] to
+/// [`SRC_ALPHA_SATURATE`] say them, under the one equation 1.1 has, the
+/// sum.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlendMode {
+    pub src: u32,
+    pub dst: u32,
+}
+
+/// GL's blend factors, numbered for the four bits the list gives each:
+/// `GL_ZERO` and `GL_ONE` as they are, and from `GL_SRC_COLOR` on, GL's
+/// value less `0x300` and plus two. [`SRC_ALPHA_SATURATE`] is for the
+/// source only.
+pub const ZERO: u32 = 0;
+pub const ONE: u32 = 1;
+pub const SRC_COLOR: u32 = 2;
+pub const ONE_MINUS_SRC_COLOR: u32 = 3;
+pub const SRC_ALPHA: u32 = 4;
+pub const ONE_MINUS_SRC_ALPHA: u32 = 5;
+pub const DST_ALPHA: u32 = 6;
+pub const ONE_MINUS_DST_ALPHA: u32 = 7;
+pub const DST_COLOR: u32 = 8;
+pub const ONE_MINUS_DST_COLOR: u32 = 9;
+pub const SRC_ALPHA_SATURATE: u32 = 10;
+
+/// An alpha test (issue 993): a pixel is kept when its alpha passes the
+/// comparison `func`, [`NEVER`] to [`ALWAYS`] as depth's, against
+/// `reference`, a byte.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AlphaTest {
+    pub func: u32,
+    pub reference: u32,
 }
 
 /// How an entry tests depth: the comparison a pixel's depth must pass
@@ -192,6 +238,38 @@ pub struct Insn {
     pub z0: U<32>,
     pub zdx: U<32>,
     pub zdy: U<32>,
+    /// Blending, the alpha test and the colour mask (issue 993): whether
+    /// the entry has any of them, which also gives it the second slot;
+    /// whether it blends, and its two factors; whether it tests alpha,
+    /// the comparison and the reference; and the channels it writes, a
+    /// bit a byte. Without `state` an entry blends nothing, tests no
+    /// alpha and writes every channel, whatever the rest say.
+    pub state: Bit,
+    pub blend: Bit,
+    pub sfactor: U<4>,
+    pub dfactor: U<4>,
+    pub atest: Bit,
+    pub afunc: U<3>,
+    pub aref: U<8>,
+    pub cmask: U<4>,
+}
+
+impl Insn {
+    /// The channels the entry writes, a bit a byte of the pixel.
+    pub fn mask(&self) -> u32 {
+        if self.state.to_bool() {
+            self.cmask.raw() as u32
+        } else {
+            0xf
+        }
+    }
+
+    /// Whether the entry reads the colour already there: it blends, or
+    /// writes some channels but not all (issue 993).
+    pub fn reads_dst(&self) -> bool {
+        let m = self.mask();
+        self.state.to_bool() && (self.blend.to_bool() || (m != 0 && m != 0xf))
+    }
 }
 // end{op}
 
@@ -320,7 +398,11 @@ impl Op {
             Op::GouraudZ {
                 a, b, c, colours, ..
             } => Op::Gouraud { a, b, c, colours }.encode_in(within, sw, sh),
-            Op::Scissor { .. } | Op::Depth(_) => None,
+            Op::Scissor { .. }
+            | Op::Depth(_)
+            | Op::Blend(_)
+            | Op::AlphaTest(_)
+            | Op::ColourMask(_) => None,
         }
     }
 
@@ -478,19 +560,70 @@ fn plane(
 pub fn assemble(ops: &[Op], sw: usize, sh: usize) -> Vec<Insn> {
     let mut within = Some(screen(sw, sh));
     let mut depth = None;
+    let mut pixel = Pixel::default();
     let mut out = Vec::new();
     for op in ops {
-        if let Op::Scissor { x, y, w, h } = *op {
-            within = clip(x, y, x + w - 1, y + h - 1, screen(sw, sh));
-        } else if let Op::Depth(mode) = *op {
-            depth = mode;
-        } else if let Some(insn) =
-            within.and_then(|b| op.encode_with(b, depth, sw, sh))
-        {
-            out.push(insn);
+        match *op {
+            Op::Scissor { x, y, w, h } => {
+                within = clip(x, y, x + w - 1, y + h - 1, screen(sw, sh))
+            }
+            Op::Depth(mode) => depth = mode,
+            Op::Blend(mode) => pixel.blend = mode,
+            Op::AlphaTest(test) => pixel.alpha = test,
+            Op::ColourMask(mask) => pixel.mask = mask & 0xf,
+            _ => {
+                if let Some(mut insn) =
+                    within.and_then(|b| op.encode_with(b, depth, sw, sh))
+                {
+                    pixel.apply(&mut insn);
+                    out.push(insn);
+                }
+            }
         }
     }
     out
+}
+
+/// What happens to each pixel an entry draws after its coverage and
+/// before its depth (issue 993): the blend, the alpha test and the
+/// colour mask the assembler holds as state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pixel {
+    pub blend: Option<BlendMode>,
+    pub alpha: Option<AlphaTest>,
+    pub mask: u32,
+}
+
+impl Default for Pixel {
+    fn default() -> Self {
+        Pixel {
+            blend: None,
+            alpha: None,
+            mask: 0xf,
+        }
+    }
+}
+
+impl Pixel {
+    /// `insn` with this state: none of it, if the state is GL's default,
+    /// so that a list that uses none of it is as it was.
+    pub fn apply(&self, insn: &mut Insn) {
+        if *self == Pixel::default() {
+            return;
+        }
+        insn.state = Bit::One;
+        if let Some(b) = self.blend {
+            insn.blend = Bit::One;
+            insn.sfactor = U::from(b.src);
+            insn.dfactor = U::from(b.dst);
+        }
+        if let Some(a) = self.alpha {
+            insn.atest = Bit::One;
+            insn.afunc = U::from(a.func);
+            insn.aref = U::from(a.reference & 0xff);
+        }
+        insn.cmask = U::from(self.mask);
+    }
 }
 
 #[cfg(test)]

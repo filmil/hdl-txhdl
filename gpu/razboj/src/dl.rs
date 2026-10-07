@@ -24,6 +24,7 @@
 //!   word 9  g0      word 10 gdx     word 11 gdy
 //!   word 12 b0      word 13 bdx     word 14 bdy
 //!   word 15  [7:0] alpha  [8] depth  [11:9] the comparison  [12] write
+//!            [13] the pixel's state
 //! ```
 //!
 //! Words 6 to 14 are a shaded triangle's three planes, each the
@@ -39,6 +40,20 @@
 //! buffer, so only a tiled list tests it; in a flat list such an entry
 //! draws as if depth were off, and a program that wants depth rings a
 //! tile table.
+//!
+//! An entry with bit 13 set blends, tests alpha or masks its colour
+//! (issue 993), and takes the same second slot, whose words 3 and 4
+//! say how; an entry with either bit takes the slot, and its depth
+//! plane is zero when it does not test depth:
+//!
+//! ```text
+//!   slot word 0  z0      word 1  zdx      word 2  zdy
+//!   slot word 3  [0] blend   [7:4] source factor   [11:8] destination's
+//!   slot word 4  [0] alpha test   [3:1] its comparison   [15:8] its
+//!                reference   [19:16] the colour mask, a bit a byte
+//! ```
+//!
+//! Like depth, these hold only in a tiled list.
 //!
 //! Beside the list is one more word, the count: how many instructions
 //! the list holds, in its low sixteen bits. The rasteriser reads it
@@ -84,22 +99,32 @@ pub fn encode(i: &Insn) -> [u32; WORDS] {
     w[15] = lo(i.alpha.raw())
         | ((i.depth.to_bool() as u32) << 8)
         | (lo(i.zfunc.raw()) << 9)
-        | ((i.zwrite.to_bool() as u32) << 12);
+        | ((i.zwrite.to_bool() as u32) << 12)
+        | ((i.state.to_bool() as u32) << 13);
     w
 }
 
-/// The second slot of an entry that tests depth (issue 992): its depth
-/// plane, the value at the box's first pixel and the two steps, in its
-/// first three words. `None` for an entry that does not, which takes
-/// one slot.
+/// The second slot of an entry that tests depth (issue 992) or carries
+/// the pixel's state (issue 993): its depth plane, the value at the
+/// box's first pixel and the two steps, in its first three words, and
+/// the blend, the alpha test and the colour mask in words 3 and 4.
+/// `None` for an entry with neither, which takes one slot.
 pub fn encode_ext(i: &Insn) -> Option<[u32; WORDS]> {
-    if !i.depth.to_bool() {
+    if !i.depth.to_bool() && !i.state.to_bool() {
         return None;
     }
+    let lo = |v: u128| v as u32;
     let mut w = [0u32; WORDS];
-    w[0] = i.z0.raw() as u32;
-    w[1] = i.zdx.raw() as u32;
-    w[2] = i.zdy.raw() as u32;
+    w[0] = lo(i.z0.raw());
+    w[1] = lo(i.zdx.raw());
+    w[2] = lo(i.zdy.raw());
+    w[3] = (i.blend.to_bool() as u32)
+        | (lo(i.sfactor.raw()) << 4)
+        | (lo(i.dfactor.raw()) << 8);
+    w[4] = (i.atest.to_bool() as u32)
+        | (lo(i.afunc.raw()) << 1)
+        | (lo(i.aref.raw()) << 8)
+        | (lo(i.cmask.raw()) << 16);
     Some(w)
 }
 // end{format}
@@ -141,21 +166,34 @@ pub fn decode(w: &[u32]) -> Insn {
         depth: Bit::from((w[15] >> 8) & 1 == 1),
         zfunc: U::from((w[15] >> 9) & 7),
         zwrite: Bit::from((w[15] >> 12) & 1 == 1),
+        state: Bit::from((w[15] >> 13) & 1 == 1),
         ..Insn::default()
     }
 }
 
+/// An entry's second slot read back into it: the depth plane, and the
+/// pixel's state.
+pub fn decode_ext(i: &mut Insn, e: &[u32]) {
+    let bit = |v: u32| Bit::from(v & 1 == 1);
+    (i.z0, i.zdx, i.zdy) = (U::from(e[0]), U::from(e[1]), U::from(e[2]));
+    i.blend = bit(e[3]);
+    i.sfactor = U::from((e[3] >> 4) & 0xf);
+    i.dfactor = U::from((e[3] >> 8) & 0xf);
+    i.atest = bit(e[4]);
+    i.afunc = U::from((e[4] >> 1) & 7);
+    i.aref = U::from((e[4] >> 8) & 0xff);
+    i.cmask = U::from((e[4] >> 16) & 0xf);
+}
+
 /// A list's words read back as its instructions, an entry that tests
-/// depth taking its second slot with it.
+/// depth or carries the pixel's state taking its second slot with it.
 pub fn decode_list(words: &[[u32; WORDS]]) -> Vec<Insn> {
     let mut out = Vec::new();
     let mut k = 0;
     while k < words.len() {
         let mut i = decode(&words[k]);
-        if i.depth.to_bool() {
-            let e = &words[k + 1];
-            (i.z0, i.zdx, i.zdy) =
-                (U::from(e[0]), U::from(e[1]), U::from(e[2]));
+        if i.depth.to_bool() || i.state.to_bool() {
+            decode_ext(&mut i, &words[k + 1]);
             k += 1;
         }
         out.push(i);
@@ -222,5 +260,51 @@ mod tests {
         // The alpha is word 15's low byte, apart from the colour.
         let r = decode(&words[WORDS..]);
         assert_eq!((r.alpha.raw(), r.colour.raw()), (0x80, 0x65_4321));
+    }
+
+    /// The blend, the alpha test and the colour mask (issue 993) go into
+    /// the second slot and come back, an entry with them two slots and
+    /// the entries after it one, until the state is GL's default again.
+    #[test]
+    fn the_pixels_state_survives_the_format() {
+        use crate::op::SRC_ALPHA;
+        use crate::op::{AlphaTest, BlendMode, GEQUAL, ONE_MINUS_SRC_ALPHA};
+        let rect = Op::Rect {
+            colour: 0x8012_3456,
+            x: 1,
+            y: 2,
+            w: 3,
+            h: 4,
+        };
+        let ops = vec![
+            Op::Blend(Some(BlendMode {
+                src: SRC_ALPHA,
+                dst: ONE_MINUS_SRC_ALPHA,
+            })),
+            Op::AlphaTest(Some(AlphaTest {
+                func: GEQUAL,
+                reference: 0x40,
+            })),
+            Op::ColourMask(0b0101),
+            rect,
+            Op::Blend(None),
+            Op::AlphaTest(None),
+            Op::ColourMask(0xf),
+            rect,
+        ];
+        let list = assemble(&ops, 32, 32);
+        let words = image(&list);
+        assert_eq!(words.len(), 3 * WORDS, "two slots, then one");
+        let slots: Vec<[u32; WORDS]> =
+            words.chunks(WORDS).map(|c| c.try_into().unwrap()).collect();
+        let back = super::decode_list(&slots);
+        let s = &back[0];
+        assert!(s.state.to_bool() && s.blend.to_bool() && s.atest.to_bool());
+        assert_eq!(s.sfactor.raw() as u32, SRC_ALPHA);
+        assert_eq!(s.dfactor.raw() as u32, ONE_MINUS_SRC_ALPHA);
+        assert_eq!((s.afunc.raw() as u32, s.aref.raw()), (GEQUAL, 0x40));
+        assert_eq!(s.mask(), 0b0101);
+        assert!(s.reads_dst());
+        assert!(!back[1].state.to_bool() && back[1].mask() == 0xf);
     }
 }
