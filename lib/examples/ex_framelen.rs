@@ -89,6 +89,9 @@ fn main() {
     let (which_o, which) = signal::<U<1>, DefaultClock>();
     // No store engine here, so nothing holds the next frame off.
     let (_hold_o, hold) = signal::<Bit, DefaultClock>();
+    // Nor any driver, so a slot is always free (issue 1313).
+    let (_noslot_o, no_slot) = signal::<Bit, DefaultClock>();
+    let (drops_o, _drops) = signal::<U<32>, DefaultClock>();
 
     let mut fout = FrameOut::default();
     let mut flen = FrameLen::default();
@@ -115,7 +118,10 @@ fn main() {
             flen.run(mid_rx, (inp_tx, len_o)),
         ),
         join2(
-            fin.run((inp, len, hold), (back_tx, count_o, store_o, which_o)),
+            fin.run(
+                (inp, len, hold, no_slot),
+                (back_tx, count_o, store_o, which_o, drops_o),
+            ),
             sink.run(back_rx, ()),
         ),
     ));

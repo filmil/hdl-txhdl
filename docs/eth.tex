@@ -446,8 +446,12 @@ which is the fetch engine reading the DDR3, the path issue~1023 is
 about. Receiving took 25.2~MB/s with no frame lost, and the 60-byte
 frames lost one in a thousand at the sender's pace. At the line rate
 the receiver keeps about one full frame in five, since it holds a
-frame and two slots and nothing holds the sender back. Every frame
-the board sent was counted at the other end of the cable.
+frame and two slots and nothing holds the sender back. Those runs also
+landed frames on slots the driver had not read, unannounced; since
+issue~1313 a frame that finds both slots held is dropped and counted
+in \code{rx\_errors} instead, as the examples document's section on
+\code{EthSlots} describes. Every frame the board sent was counted at
+the other end of the cable.
 
 Writing the part found three things in the lowering, each worked
 around here at the time, and all three since fixed. A wire named for

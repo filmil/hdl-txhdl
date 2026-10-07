@@ -39,6 +39,7 @@ const BASE: u32 = 0x1000;
 const RX_SLOT: u32 = BASE + regs::rx_slot;
 const RX_LENGTH: u32 = BASE + regs::rx_length;
 const RX_PENDING: u32 = BASE + regs::rx_ev_pending;
+const RX_ERRORS: u32 = BASE + regs::rx_errors;
 const RX_ENABLE: u32 = BASE + regs::rx_ev_enable;
 const TX_SLOT: u32 = BASE + regs::tx_slot;
 const TX_LENGTH: u32 = BASE + regs::tx_length;
@@ -74,15 +75,18 @@ pub struct Engines {
     pub at: Reg<U<10>>,
 }
 
-impl Unit<(), (Out<Bit>, Out<Bit>, Out<U<16>>, Out<U<1>>)> for Engines {
+impl Unit<(), (Out<Bit>, Out<Bit>, Out<U<16>>, Out<U<1>>, Out<U<32>>)>
+    for Engines
+{
     async fn run(
         &mut self,
         _i: (),
-        (tx_busy, rx_busy, rx_len, rx_which): (
+        (tx_busy, rx_busy, rx_len, rx_which, rx_drops): (
             Out<Bit>,
             Out<Bit>,
             Out<U<16>>,
             Out<U<1>>,
+            Out<U<32>>,
         ),
     ) {
         loop {
@@ -95,13 +99,25 @@ impl Unit<(), (Out<Bit>, Out<Bit>, Out<U<16>>, Out<U<1>>)> for Engines {
             // 208, which is where the client aims an acknowledgement,
             // so that the two land in the same cycle.
             let second = (190..208).contains(&at);
-            rx_busy.set(Bit::from((100..130).contains(&at) || second));
+            // A third, landing while the second is still unacknowledged,
+            // so the two wait in order (issue 1313).
+            let third = (250..270).contains(&at);
+            rx_busy.set(Bit::from((100..130).contains(&at) || second || third));
             // A different length and a different slot, so that the
             // second frame is distinguishable from the first rather
             // than being a repeat that any stale register satisfies.
-            let two = at >= 190;
-            rx_len.set(U::<16>::from(if two { 64u32 } else { 342u32 }));
-            rx_which.set(U::<1>::from(if two { 0u8 } else { 1u8 }));
+            let (len, which) = if at >= 250 {
+                (100u32, 1u8)
+            } else if at >= 190 {
+                (64, 0)
+            } else {
+                (342, 1)
+            };
+            rx_len.set(U::<16>::from(len));
+            rx_which.set(U::<1>::from(which));
+            // The frames the receiving side dropped, which it counts and
+            // the register block only reads.
+            rx_drops.set(U::<32>::from(3u8));
             self.at.set(self.at + 1);
         }
     }
@@ -128,12 +144,14 @@ fn main() {
     let (rx_busy_o, rx_busy) = signal::<Bit, DefaultClock>();
     let (rx_len_o, rx_len) = signal::<U<16>, DefaultClock>();
     let (rx_which_o, rx_which) = signal::<U<1>, DefaultClock>();
+    let (rx_drops_o, rx_drops) = signal::<U<32>, DefaultClock>();
     let mut engines = Engines::default();
     let (txb_o, tx_base) = signal::<U<32>, DefaultClock>();
     let (txn_o, tx_bytes) = signal::<U<16>, DefaultClock>();
     let (txs_o, tx_start) = signal::<Bit, DefaultClock>();
     let (rxb_o, rx_base) = signal::<U<32>, DefaultClock>();
     let (irq_o, irq) = signal::<Bit, DefaultClock>();
+    let (full_o, rx_full) = signal::<Bit, DefaultClock>();
 
     let mut host_unit = HostUnit::default();
     let mut bridge = Bridge::default();
@@ -154,11 +172,13 @@ fn main() {
         wave.add("rx_busy", &rx_busy);
         wave.add("rx_len", &rx_len);
         wave.add("rx_which", &rx_which);
+        wave.add("rx_drops", &rx_drops);
         wave.add("tx_base", &tx_base);
         wave.add("tx_bytes", &tx_bytes);
         wave.add("tx_start", &tx_start);
         wave.add("rx_base", &rx_base);
         wave.add("irq", &irq);
+        wave.add("rx_full", &rx_full);
         wave.add("ethslots", &slots);
         wave.start();
     }
@@ -170,6 +190,7 @@ fn main() {
     let watch_base = tx_base.clone();
     let watch_bytes = tx_bytes.clone();
     let watch_rxbase = rx_base.clone();
+    let watch_full = rx_full.clone();
 
     let client = async move {
         let word = |v: u32| [U::<32>::from(v)];
@@ -279,6 +300,33 @@ fn main() {
         assert!(watch_irq.get().to_bool(), "and the line is up for it");
         log.borrow_mut()
             .push("a frame arriving as one is acknowledged survives".into());
+
+        // A third frame lands while the second is unacknowledged. It
+        // waits behind it rather than replacing it, and with both slots
+        // holding a frame the receiving side is told it has none to
+        // fill (issue 1313).
+        until(290).await;
+        assert!(watch_full.get().to_bool(), "both slots hold a frame");
+        let errors = host.read(get(RX_ERRORS)).await.done().await;
+        assert_eq!(errors.data[0].raw(), 3, "the frames the receiver dropped");
+        let first = host.read(get(RX_LENGTH)).await.done().await;
+        assert_eq!(first.data[0].raw(), 64, "the older frame is still first");
+        host.write(put(RX_PENDING), &word(1)).await.done().await;
+        DefaultClock::rising().await;
+        let next = host.read(get(RX_PENDING)).await.done().await;
+        assert_eq!(next.data[0].raw(), 1, "the next frame is pending");
+        assert!(watch_irq.get().to_bool(), "and the line stays up for it");
+        let slot3 = host.read(get(RX_SLOT)).await.done().await;
+        let len3 = host.read(get(RX_LENGTH)).await.done().await;
+        assert_eq!(slot3.data[0].raw(), 1, "the third frame's slot");
+        assert_eq!(len3.data[0].raw(), 100, "and its length");
+        assert!(!watch_full.get().to_bool(), "one slot is free again");
+        host.write(put(RX_PENDING), &word(1)).await.done().await;
+        DefaultClock::rising().await;
+        let none = host.read(get(RX_PENDING)).await.done().await;
+        assert_eq!(none.data[0].raw(), 0, "both frames acknowledged");
+        log.borrow_mut()
+            .push("a frame landing behind another waits its turn".into());
     };
 
     let mut sim = Running::new(join2(
@@ -304,19 +352,22 @@ fn main() {
             // at the edge. The stub has no register to settle in, so
             // the join is what gives it one.
             join2(
-                engines.run((), (tx_busy_o, rx_busy_o, rx_len_o, rx_which_o)),
+                engines.run(
+                    (),
+                    (tx_busy_o, rx_busy_o, rx_len_o, rx_which_o, rx_drops_o),
+                ),
                 slots.run(
                     bus,
                     (
-                        tx_busy, rx_busy, rx_len, rx_which, txb_o, txn_o,
-                        txs_o, rxb_o, irq_o,
+                        tx_busy, rx_busy, rx_len, rx_which, rx_drops, txb_o,
+                        txn_o, txs_o, rxb_o, irq_o, full_o,
                     ),
                 ),
             ),
             client,
         ),
     ));
-    for _ in 0..400 {
+    for _ in 0..500 {
         sim.cycle();
     }
     for line in seen.borrow().iter() {

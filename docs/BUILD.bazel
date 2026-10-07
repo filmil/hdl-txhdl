@@ -885,9 +885,10 @@ waveform(
     lowered = ("ethslots", "ethslots"),
     signals = [
         "//clocks/clk=>clk",
-        "//ethslots/rx_pending=>rx_pending",
+        "//ethslots/queued=>queued",
         "//ethslots/tx_go=>tx_go",
         "//irq=>irq",
+        "//rx_full=>rx_full",
     ],
 )
 

@@ -165,23 +165,31 @@ pub struct FrameIn {
     pub run: Reg<Bit>,
     /// Which slot the next frame lands in.
     pub slot: Reg<U<1>>,
+    /// Whether the frame being taken is being dropped, because both
+    /// slots held a frame the driver had not released when it began
+    /// (issue 1313): its bytes are taken and nothing is stored.
+    pub skip: Reg<Bit>,
+    /// The frames dropped so, which the register block reads as
+    /// `rx_errors`.
+    pub dropped: Reg<U<32>>,
 }
 
 #[lower]
 impl
     Unit<
-        (Rx<EthByte>, In<U<16>>, In<Bit>),
-        (Tx<U<32>>, Out<U<16>>, Out<Bit>, Out<U<1>>),
+        (Rx<EthByte>, In<U<16>>, In<Bit>, In<Bit>),
+        (Tx<U<32>>, Out<U<16>>, Out<Bit>, Out<U<1>>, Out<U<32>>),
     > for FrameIn
 {
     async fn run(
         &mut self,
-        (rx, len, hold): (Rx<EthByte>, In<U<16>>, In<Bit>),
-        (words, count, store, which): (
+        (rx, len, hold, no_slot): (Rx<EthByte>, In<U<16>>, In<Bit>, In<Bit>),
+        (words, count, store, which, drops): (
             Tx<U<32>>,
             Out<U<16>>,
             Out<Bit>,
             Out<U<1>>,
+            Out<U<32>>,
         ),
     ) {
         loop {
@@ -208,12 +216,18 @@ impl
             let start =
                 !run & offered & Bit::from(len.get() != 0) & !hold.get();
 
+            // Both slots hold a frame the driver has not released, so
+            // the frame starting now is taken and dropped, and counted
+            // (issue 1313). Landing it would overwrite one of them.
+            let drop_it = no_slot.get();
+            let skip = self.skip.get();
+
             let more = pos < want;
             let full = have == 4;
             // The frame is done and a partial word is still held.
             let tail = !more & (have != 0);
-            let emit = run & Bit::from(full | tail) & words.ready();
-            let take = run & more & Bit::from(!full) & offered;
+            let emit = run & !skip & Bit::from(full | tail) & words.ready();
+            let take = run & more & (skip | Bit::from(!full)) & offered;
             let b = rx.recv_if(take).unwrap_or_default();
 
             // Packed from the top down, so after four bytes the first
@@ -239,21 +253,25 @@ impl
                     want: len.get(),
                     pos: U::<16>::from(0u8),
                     have: U::<3>::from(0u8),
-                    // The other slot, by counting round.
-                    slot: self.slot.get() + 1,
+                    skip: drop_it,
                 },
-                take ? {
+                // The other slot, by counting round; a dropped frame
+                // takes none.
+                start & !drop_it ? slot: self.slot.get() + 1,
+                start & drop_it ? dropped: self.dropped.get() + 1,
+                take & !skip ? {
                     word: packed,
                     have: have + 1,
-                    pos: pos + 1,
                 },
+                take ? pos: pos + 1,
                 emit ? have: U::<3>::from(0u8),
                 run & Bit::from(!more) & (have == 0) ? run: Bit::Zero,
             });
 
             count.set(want);
-            store.set(run);
+            store.set(run & !skip);
             which.set(self.slot.get());
+            drops.set(self.dropped.get());
 
             if emit.to_bool() {
                 words.send(aligned);

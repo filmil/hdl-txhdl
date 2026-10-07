@@ -4,7 +4,7 @@
 #define ETHSLOTS_REGS_H
 
 #define ETHSLOTS_SPAN 0x40
-#define ETHSLOTS_RX_SLOT 0x00 /* read only: which slot the last frame is in */
+#define ETHSLOTS_RX_SLOT 0x00 /* read only: which slot the oldest unacknowledged frame is in */
 #define ETHSLOTS_RX_SLOT_SLOT_SHIFT 0 /* read only: the slot */
 #define ETHSLOTS_RX_SLOT_SLOT_MASK 0x1
 #define ETHSLOTS_RX_SLOT_SLOT_WIDTH 1
@@ -14,7 +14,7 @@
 #define ETHSLOTS_RX_LENGTH_LENGTH_MASK 0xffff
 #define ETHSLOTS_RX_LENGTH_LENGTH_WIDTH 16
 #define ETHSLOTS_RX_LENGTH_LENGTH_RESET 0x0
-#define ETHSLOTS_RX_ERRORS 0x08 /* read only: frames dropped; none are, so zero */
+#define ETHSLOTS_RX_ERRORS 0x08 /* read only: frames dropped because both slots were pending */
 #define ETHSLOTS_RX_ERRORS_ERRORS_SHIFT 0 /* read only: the count */
 #define ETHSLOTS_RX_ERRORS_ERRORS_MASK 0xffffffff
 #define ETHSLOTS_RX_ERRORS_ERRORS_WIDTH 32
