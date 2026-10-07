@@ -514,6 +514,8 @@ pub struct Csrs {
     pub counteren: U<6>,
     pub stvec: U<32>,
     pub sscratch: U<32>,
+    pub menv_fiom: Bit,
+    pub senv_fiom: Bit,
     pub sepc: U<32>,
     pub scause: U<32>,
     pub stval: U<32>,
@@ -522,7 +524,7 @@ pub struct Csrs {
 }
 
 /// Which of the CSRs that read as anything but zero a number names:
-/// one to thirty-five, in the order [`csr_read_at`] reads them, and
+/// one to thirty-seven, in the order [`csr_read_at`] reads them, and
 /// zero for every other number, which reads as zero. The core finds it
 /// from the instruction register, into a register of its own, so that
 /// the read is a select on a register rather than the number's decode
@@ -566,6 +568,8 @@ fn csr_index(f12: U<12>) -> U<6> {
         0xc80 => U::<6>::from(33u8),
         0xc02 => U::<6>::from(34u8),
         0xc82 => U::<6>::from(35u8),
+        0x30a => U::<6>::from(36u8),
+        0x10a => U::<6>::from(37u8),
         _ => U::<6>::from(0u8),
     })
 }
@@ -611,6 +615,8 @@ fn csr_read_at(at: U<6>, c: Csrs) -> U<32> {
         33 => c.mcycle.slice::<32, 32>(),
         34 => c.minstret.slice::<0, 32>(),
         35 => c.minstret.slice::<32, 32>(),
+        36 => c.menv_fiom.zext::<32>(),
+        37 => c.senv_fiom.zext::<32>(),
         _ => U::<32>::from(0u32),
     })
 }
@@ -629,7 +635,7 @@ fn csr_known(f12: U<12>) -> Bit {
         | 0xf14 | 0xb00 | 0xb02 | 0xb80 | 0xb82 | 0x302 | 0x303 | 0x306 | 0x310
         | 0x100 | 0x104 | 0x105 | 0x106 | 0x140 | 0x141 | 0x142 | 0x143
         | 0x144 | 0x180 | 0xc00 | 0xc01 | 0xc02 | 0xc80 | 0xc81
-        | 0xc82 => Bit::One,
+        | 0xc82 | 0x30a | 0x31a | 0x10a => Bit::One,
         _ => Bit::Zero,
     })
 }
@@ -803,6 +809,11 @@ pub struct Vreteno<const IW: usize, const DW: usize = 16384> {
     pub mip_sw: Reg<U<32>>,
     pub stvec: Reg<U<32>>,
     pub sscratch: Reg<U<32>>,
+    /// `menvcfg.FIOM` and `senvcfg.FIOM`, the one field of each the core
+    /// keeps (issue 1348). They change nothing: a `fence` here already
+    /// waits for every store, whatever it was to.
+    pub menv_fiom: Reg<Bit>,
+    pub senv_fiom: Reg<Bit>,
     pub sepc: Reg<U<32>>,
     pub scause: Reg<U<32>>,
     pub stval: Reg<U<32>>,
@@ -1679,6 +1690,8 @@ impl<const IW: usize, const DW: usize> Unit for Vreteno<IW, DW> {
                     counteren: self.counteren.get(),
                     stvec: self.stvec.get(),
                     sscratch: self.sscratch.get(),
+                    menv_fiom: self.menv_fiom.get(),
+                    senv_fiom: self.senv_fiom.get(),
                     sepc: self.sepc.get(),
                     scause: self.scause.get(),
                     stval: self.stval.get(),
@@ -2646,6 +2659,10 @@ impl<const IW: usize, const DW: usize> Unit for Vreteno<IW, DW> {
                 csr_write & (f12 == isa::CSR_STVEC) ?
                     stvec: csr_new & !U::<32>::from(3u32),
                 csr_write & (f12 == isa::CSR_SSCRATCH) ? sscratch: csr_new,
+                csr_write & (f12 == isa::CSR_MENVCFG) ?
+                    menv_fiom: csr_new.bit(0),
+                csr_write & (f12 == isa::CSR_SENVCFG) ?
+                    senv_fiom: csr_new.bit(0),
                 csr_write & (f12 == isa::CSR_SEPC) ?
                     sepc: csr_new & !U::<32>::from(1u32),
                 csr_write & (f12 == isa::CSR_SCAUSE) ? scause: csr_new,
@@ -2851,6 +2868,8 @@ impl<const IW: usize, const DW: usize> Unit for Vreteno<IW, DW> {
                     mip_sw: U::<32>::from(0u32),
                     stvec: U::<32>::from(0u32),
                     sscratch: U::<32>::from(0u32),
+                    menv_fiom: Bit::Zero,
+                    senv_fiom: Bit::Zero,
                     sepc: U::<32>::from(0u32),
                     scause: U::<32>::from(0u32),
                     stval: U::<32>::from(0u32),

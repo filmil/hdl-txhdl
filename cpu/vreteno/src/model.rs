@@ -11,13 +11,13 @@ use crate::isa::{
     CAUSE_STORE_MISALIGNED, CAUSE_STORE_PAGE, CLINT_BASE, CLINT_MASK,
     CSR_CYCLE, CSR_CYCLEH, CSR_DCSR, CSR_DPC, CSR_INSTRET, CSR_INSTRETH,
     CSR_MARCHID, CSR_MBUSQUIET, CSR_MCAUSE, CSR_MCOUNTEREN, CSR_MCYCLE,
-    CSR_MCYCLEH, CSR_MEDELEG, CSR_MEPC, CSR_MHALT, CSR_MHARTID, CSR_MIDELEG,
-    CSR_MIE, CSR_MIMPID, CSR_MINSTRET, CSR_MINSTRETH, CSR_MIP, CSR_MISA,
-    CSR_MSCRATCH, CSR_MSTATUS, CSR_MSTATUSH, CSR_MTVAL, CSR_MTVEC,
-    CSR_MVENDORID, CSR_SATP, CSR_SCAUSE, CSR_SCOUNTEREN, CSR_SEPC, CSR_SIE,
-    CSR_SIP, CSR_SSCRATCH, CSR_SSTATUS, CSR_STVAL, CSR_STVEC, CSR_TIME,
-    CSR_TIMEH, MEXT, MISA, MSOFT, MTIMECMP_OFF, MTIMER, SEXT, SSOFT, STIMER,
-    UART_BASE,
+    CSR_MCYCLEH, CSR_MEDELEG, CSR_MENVCFG, CSR_MENVCFGH, CSR_MEPC, CSR_MHALT,
+    CSR_MHARTID, CSR_MIDELEG, CSR_MIE, CSR_MIMPID, CSR_MINSTRET, CSR_MINSTRETH,
+    CSR_MIP, CSR_MISA, CSR_MSCRATCH, CSR_MSTATUS, CSR_MSTATUSH, CSR_MTVAL,
+    CSR_MTVEC, CSR_MVENDORID, CSR_SATP, CSR_SCAUSE, CSR_SCOUNTEREN,
+    CSR_SENVCFG, CSR_SEPC, CSR_SIE, CSR_SIP, CSR_SSCRATCH, CSR_SSTATUS,
+    CSR_STVAL, CSR_STVEC, CSR_TIME, CSR_TIMEH, MEXT, MISA, MSOFT, MTIMECMP_OFF,
+    MTIMER, SEXT, SSOFT, STIMER, UART_BASE,
 };
 use txhdl_parts::mmu::{translate, Access, Fault, Mode};
 
@@ -60,6 +60,9 @@ pub struct Csr {
     pub mip_sw: u32,
     pub stvec: u32,
     pub sscratch: u32,
+    /// `menvcfg` and `senvcfg`: `FIOM` alone (issue 1348).
+    pub menvcfg: u32,
+    pub senvcfg: u32,
     pub sepc: u32,
     pub scause: u32,
     pub stval: u32,
@@ -731,6 +734,9 @@ impl Model {
             CSR_MEDELEG => self.csr.medeleg,
             // Its upper half holds nothing here (issue 1076).
             CSR_MSTATUSH => 0,
+            CSR_MENVCFG => self.csr.menvcfg,
+            CSR_MENVCFGH => 0,
+            CSR_SENVCFG => self.csr.senvcfg,
             CSR_MIDELEG => self.csr.mideleg,
             CSR_MCOUNTEREN => self.csr.mcounteren,
             CSR_SCOUNTEREN => self.csr.scounteren,
@@ -805,6 +811,8 @@ impl Model {
             }
             CSR_STVEC => self.csr.stvec = v & !3,
             CSR_SSCRATCH => self.csr.sscratch = v,
+            CSR_MENVCFG => self.csr.menvcfg = v & 1,
+            CSR_SENVCFG => self.csr.senvcfg = v & 1,
             CSR_SEPC => self.csr.sepc = v & !1,
             CSR_SCAUSE => self.csr.scause = v,
             CSR_STVAL => self.csr.stval = v,

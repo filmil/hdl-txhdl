@@ -239,6 +239,10 @@ machine's, and \code{stvec}, \code{sscratch}, \code{sepc},
 counters \code{cycle}, \code{time} and \code{instret} with their high
 halves. A CSR's address names in its bits 9 and 8 the least privilege
 that may reach it, and one whose top two bits are set is read-only.
+The environment configuration registers of privileged version 1.12,
+\code{menvcfg} with \code{menvcfgh} and \code{senvcfg}, keep
+\code{FIOM} alone and read zero elsewhere, since the core has none of
+the extensions their other fields configure (issue~\#1348).
 A unit test checks each format's encoder against the decoder.
 
 The compressed instructions are sixteen-bit spellings of instructions

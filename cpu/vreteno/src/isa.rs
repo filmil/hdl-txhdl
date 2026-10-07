@@ -94,6 +94,11 @@ pub const CSR_MEDELEG: u32 = 0x302;
 /// it reads as zero and a write changes nothing (issue 1076), and
 /// OpenSBI clears a bit of it before anything else.
 pub const CSR_MSTATUSH: u32 = 0x310;
+/// The environment configuration registers of privileged version 1.12
+/// (issue 1348): every field read-only zero but `FIOM`.
+pub const CSR_MENVCFG: u32 = 0x30a;
+pub const CSR_MENVCFGH: u32 = 0x31a;
+pub const CSR_SENVCFG: u32 = 0x10a;
 pub const CSR_MIDELEG: u32 = 0x303;
 pub const CSR_MCOUNTEREN: u32 = 0x306;
 pub const CSR_SSTATUS: u32 = 0x100;

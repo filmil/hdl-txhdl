@@ -1645,6 +1645,62 @@ fn tvm_tw_and_tsr_trap_the_supervisor() {
     assert_eq!(m.x[12], 0, "the trapped read wrote nothing");
 }
 
+/// menvcfg, menvcfgh and senvcfg (issue 1348): each takes a write of
+/// all ones and keeps FIOM alone, menvcfgh nothing; supervisor mode
+/// reads senvcfg and not menvcfg, which is an illegal instruction there.
+#[test]
+fn the_envcfg_registers_keep_fiom_alone() {
+    use vreteno32::isa::*;
+    use vreteno32::program::Asm;
+    let mut a = Asm::default();
+    let (mh, s_code, done) = (a.label(), a.label(), a.label());
+    a.wide(addi(8, 0, 0)); // x8 counts the illegal instructions
+    a.abs(mh, |h| addi(31, 0, h as i32));
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    a.wide(addi(5, 0, -1));
+    a.wide(csrrw(0, CSR_MENVCFG, 5));
+    a.wide(csrrs(10, CSR_MENVCFG, 0)); // 1
+    a.wide(csrrw(0, CSR_MENVCFGH, 5));
+    a.wide(csrrs(11, CSR_MENVCFGH, 0)); // 0
+    a.wide(csrrw(0, CSR_SENVCFG, 5));
+    a.wide(csrrs(12, CSR_SENVCFG, 0)); // 1
+    a.wide(lui(5, 1));
+    a.wide(addi(5, 5, -0x800)); // MPP = supervisor
+    a.wide(csrrw(0, CSR_MSTATUS, 5));
+    a.abs(s_code, |c| addi(31, 0, c as i32));
+    a.wide(csrrw(0, CSR_MEPC, 31));
+    a.wide(mret());
+    // Supervisor mode.
+    a.place(s_code);
+    a.wide(csrrs(13, CSR_SENVCFG, 0)); // 1
+    a.wide(csrrs(14, CSR_MENVCFG, 0)); // illegal here
+    a.wide(ecall());
+    a.wide(halt()); // never reached
+                    // Machine mode's handler: an illegal instruction is counted and
+                    // stepped past; the ecall ends it.
+    a.align();
+    a.place(mh);
+    a.wide(csrrs(21, CSR_MCAUSE, 0));
+    a.wide(addi(22, 0, 2));
+    a.to(done, |o| bne(21, 22, o));
+    a.wide(addi(8, 8, 1));
+    a.wide(csrrs(24, CSR_MEPC, 0));
+    a.wide(addi(24, 24, 4));
+    a.wide(csrrw(0, CSR_MEPC, 24));
+    a.wide(mret());
+    a.place(done);
+    a.wide(halt());
+    let m = lockstep(&a.words(), &[], "envcfg", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[10], 1, "menvcfg keeps FIOM");
+    assert_eq!(m.x[11], 0, "menvcfgh keeps nothing");
+    assert_eq!(m.x[12], 1, "senvcfg keeps FIOM");
+    assert_eq!(m.x[13], 1, "supervisor mode reads senvcfg");
+    assert_eq!(m.x[8], 1, "and not menvcfg");
+    assert_eq!(m.x[14], 0, "which wrote nothing");
+    assert_eq!(m.x[21], 9, "the supervisor's ecall ended it");
+}
+
 /// A delegated interrupt (issue 1012): machine mode delegates the
 /// supervisor's software interrupt, enables it, raises it in `mip` and
 /// returns into supervisor mode with `SIE` set; the interrupt is taken
