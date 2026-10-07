@@ -84,6 +84,10 @@ goes over the wire.
 and the server takes the program back out of it.
 The download is staged in DDR3 at `0x4800_0000`, 16 MiB of it reserved
 in `fastboot/app/boards/ax7a200b.overlay`.
+It is copied there a word at a time whatever the alignment fastboot's
+framing leaves, by `fb_copy` in the core, where `memcpy` copied a byte
+at a time: 41 cycles a byte against 11 in `board_test`'s model of the
+DDR3, and 265 a byte on the board before (issue 1230).
 `boot` copies the program to `0x4000_0000`, the address the serial
 loader uses too, and jumps.
 The copy overwrites the Zephyr that is doing it, so it runs from a few

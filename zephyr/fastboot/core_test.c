@@ -28,7 +28,9 @@ static int t_write(void *ctx, uint32_t off, const uint8_t *p, uint32_t n)
 	if (off + n > STAGE) {
 		return 1;
 	}
-	memcpy(stage + off, p, n);
+	/* As the board stages it, so every session below copies at the
+	 * alignments its framing leaves (issue 1230). */
+	fb_copy(stage + off, p, n);
 	return 0;
 }
 
@@ -202,6 +204,30 @@ int main(void)
 		expect(fb_kernel(image, sizeof(image), &off, &size) == 0 &&
 			       off == 0 && size == sizeof(image),
 		       "an image with no header is the program", 0);
+	}
+
+	/* fb_copy against memcpy, at every alignment of either end and every
+	 * length to 40, with guard bytes around the destination that must
+	 * stay as they were (issue 1230). */
+	{
+		static uint8_t from[64], to[64], want_to[64];
+
+		for (size_t i = 0; i < sizeof(from); i++) {
+			from[i] = (uint8_t)(i * 37 + 11);
+		}
+		for (size_t s_off = 0; s_off < 4; s_off++) {
+			for (size_t d_off = 0; d_off < 4; d_off++) {
+				for (size_t len = 0; len <= 40; len++) {
+					memset(to, 0xa5, sizeof(to));
+					memset(want_to, 0xa5, sizeof(want_to));
+					fb_copy(to + 8 + d_off, from + 8 + s_off, len);
+					memcpy(want_to + 8 + d_off, from + 8 + s_off,
+					       len);
+					expect(memcmp(to, want_to, sizeof(to)) == 0,
+					       "fb_copy copies as memcpy does", len);
+				}
+			}
+		}
 	}
 
 	if (failures) {

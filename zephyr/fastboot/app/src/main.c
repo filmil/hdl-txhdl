@@ -153,7 +153,10 @@ static int board_write(void *ctx, uint32_t offset, const uint8_t *p,
 	}
 	uint32_t t0 = PROF_NOW();
 
-	memcpy((uint8_t *)STAGE_BASE + offset, p, n);
+	/* A word at a time whatever the alignment: `memcpy` copied a byte
+	 * at a time when the framing left the two unaligned, 265 cycles a
+	 * byte into the DDR3 (issue 1230). */
+	fb_copy((uint8_t *)STAGE_BASE + offset, p, n);
 	PROF_ADD(write_cycles, t0);
 	return 0;
 }
