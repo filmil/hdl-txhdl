@@ -1830,10 +1830,12 @@ fn mcycle_steps_steadily_between_two_reads() {
 ///
 /// A load waits for its word, so the loads' difference is what a word
 /// costs the DDR3's path over the block RAM's: the controller's read
-/// latency, which the model has, less two cycles, since the pins part
-/// and the controller's port take two cycles fewer than the data
-/// memory's tracker and block RAM. On the board it is the controller's
-/// own latency, which is what the board run is for.
+/// latency, which the model has. It was that less two cycles, since the
+/// pins part and the controller's port took two cycles fewer than the
+/// data memory's tracker and block RAM; the tracker hands the request
+/// and the read beat on in the cycle (issue 1291), and the two paths
+/// take the same. On the board it is the controller's own latency,
+/// which is what the board run is for.
 ///
 /// The stores into the DDR3 take seven cycles more than into the data
 /// memory, over sixteen. Before the instruction cache (issue 1021) the
@@ -1873,8 +1875,8 @@ fn the_ddr3_path_is_timed_by_the_core() {
     let latency = ddr3::MODEL_READ_LATENCY as i64;
     assert_eq!(
         ld - lm,
-        16 * (latency - 2),
-        "a load costs the DDR3 the controller's latency, less two"
+        16 * latency,
+        "a load costs the DDR3 the controller's latency"
     );
     assert_eq!(sd - sm, 7, "the stores into the DDR3 wait on its path");
 }
