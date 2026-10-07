@@ -31,6 +31,12 @@ A column the beam reads before its word arrived sets \code{under}, a
 sticky bit a host reads and clears, which is how a run on the board
 shows that no line ever starved. \code{ScanFetch}, on the bus clock,
 takes each request across and starts \code{LineFetch} on it.
+The pair is given the frame's memory as two parameters, \code{LO} and
+\code{HI}, and asks for no line outside it.
+Such a line sets \code{stuck}, another sticky bit, with its address,
+shows as late, and the frame goes on (issue 1382).
+On the board, a base gone wrong once sent a line's burst into the
+serial port's page, and the core's prints stopped behind it.
 
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
 rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%

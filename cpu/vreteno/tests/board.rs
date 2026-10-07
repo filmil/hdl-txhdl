@@ -491,7 +491,10 @@ const SCAN_LINE: u64 = 3175;
 /// of a line is held to a harder deadline than on the board.
 type ScanRaster = Raster<640, 16, 96, 2423, 4, 1, 1, 0, 10>;
 const _: () = assert!(640 + 16 + 96 + 2423 == SCAN_LINE as usize);
-type ScanPair = LinePair<640, 10, 4, 6, 4096, DefaultClock>;
+/// The frame's memory is the board's, the gigabyte from `0x4000_0000`,
+/// unless a run gives another (issue 1382).
+type ScanPair<const LO: usize, const HI: usize> =
+    LinePair<640, 10, 4, 6, 4096, LO, HI, DefaultClock>;
 
 /// What a scanout asked for and when its words came: the address, the
 /// cycle the board took the request, and the cycle its last word
@@ -508,6 +511,21 @@ struct ScanLog {
 }
 
 fn run_all(
+    text: &[u32],
+    data: &[u8],
+    reply: &[u8],
+    blocks: &[usize],
+    limit: u64,
+    net: Net,
+    plan: &[Op],
+) -> Ran {
+    run_all_in::<0x4000_0000, 0x8000_0000>(
+        text, data, reply, blocks, limit, net, plan,
+    )
+}
+
+/// [`run_all`] with the scanout's memory from `LO` up to `HI`.
+fn run_all_in<const LO: usize, const HI: usize>(
     text: &[u32],
     data: &[u8],
     reply: &[u8],
@@ -545,7 +563,7 @@ fn run_all(
     let (stuck_o, stuck) = signal::<Bit, DefaultClock>();
     let (stuck_at_o, stuck_at) = signal::<U<32>, DefaultClock>();
     let mut raster = ScanRaster::default();
-    let mut pair = ScanPair::default();
+    let mut pair = ScanPair::<LO, HI>::default();
     base_o.set(U::<32>::from(0u32));
     clear_o.set(Bit::Zero);
     show_o.set(Bit::Zero);
@@ -1123,6 +1141,40 @@ fn the_first_line_is_the_bases_wherever_in_the_frame_it_is_shown() {
         );
         assert_eq!(ran.scan.stuck, None, "shown at {show_at}");
     }
+}
+
+/// A base outside the frame's memory (issue 1382): on the board a base
+/// gone wrong sent a line's burst of 64 beats into the serial port's
+/// page, `0x3000`, and the core's prints through the same path stopped
+/// mid-line. The pair asks for no line outside the memory, says `stuck`
+/// at the base, and the core's greeting comes out whole.
+#[test]
+fn a_base_outside_the_memory_is_never_fetched() {
+    let frame = 6 * SCAN_LINE;
+    let net = Net {
+        scan: Some(Scan {
+            base: 0x3000,
+            show_at: frame,
+        }),
+        ..Net::default()
+    };
+    let ran = run_all(
+        hello_program::TEXT,
+        hello_program::DATA,
+        b"",
+        &[],
+        6 * frame,
+        net,
+        &[],
+    );
+    assert!(
+        ran.scan.lines.is_empty(),
+        "asked for {:x?}",
+        ran.scan.lines.iter().take(8).collect::<Vec<_>>()
+    );
+    let (_, at) = ran.scan.stuck.expect("stuck, at the base");
+    assert_eq!(at, 0x3000);
+    assert_eq!(ran.said, "hello from rust\n", "the core still prints");
 }
 
 /// The configuration flash on the board (issue 312): the core reads the
@@ -2714,7 +2766,9 @@ fn every_slave_answers_every_burst() {
 /// the fetch of the first line waits for good, as the boot memory's one
 /// beat made it wait on the board (#1178). Two line times after that
 /// line was asked for, the pair sets `stuck` with the line's address,
-/// rather than leaving a black screen and a clear underflow bit.
+/// rather than leaving a black screen and a clear underflow bit. The
+/// pair is given the whole address space as its memory here, since it
+/// refuses the peripheral page otherwise (issue 1382).
 #[test]
 fn a_line_that_never_comes_is_stuck() {
     let frame = 6 * SCAN_LINE;
@@ -2725,7 +2779,7 @@ fn a_line_that_never_comes_is_stuck() {
         }),
         ..Net::default()
     };
-    let ran = run_all(
+    let ran = run_all_in::<0, 0x1_0000_0000>(
         hello_program::TEXT,
         hello_program::DATA,
         b"",
