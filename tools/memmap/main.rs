@@ -89,7 +89,7 @@ fn board(key: &str, slots: &[(usize, &str)]) {
     define(
         "board",
         key,
-        &table(cols, head, &ranges::<9, BoardMap>(&[])),
+        &table(cols, head, &ranges::<8, BoardMap>(&[])),
     );
     define(
         "page",
@@ -119,7 +119,7 @@ fn regs(key: &str, base: usize, map: &RegMap) {
 /// are called `regs`, and its base: a router port's or a slot of the
 /// page's. One to a line, and one more as each declaration lands.
 fn reg_maps() -> Vec<(&'static str, usize, &'static RegMap)> {
-    let port = |i: usize| <BoardMap as AddrMap<9>>::RANGES[i].0;
+    let port = |i: usize| <BoardMap as AddrMap<8>>::RANGES[i].0;
     let slot = |i: usize| <SlotMap as AddrMap<10>>::RANGES[i].0;
     vec![
         ("timer", port(1), &vreteno32::timer::clint::MAP),
