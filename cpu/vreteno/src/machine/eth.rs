@@ -55,6 +55,9 @@ pub struct Eth {
     /// Steps until the next frame on the wire arrives: the line's pace,
     /// a byte a step after the one before.
     pub gap: u32,
+    /// A fastboot client on the cable, which takes what is sent in
+    /// place of the peer (issue 1390).
+    pub client: Option<super::fbpeer::FbClient>,
     /// Whether the peer answers what is sent.
     pub peer: bool,
 }
@@ -114,7 +117,9 @@ impl Eth {
 
     /// A frame sent: kept, and answered by the peer if it answers.
     pub fn sent(&mut self, frame: Vec<u8>) {
-        if self.peer {
+        if let Some(c) = self.client.as_mut() {
+            c.received(frame.clone());
+        } else if self.peer {
             if let Some(reply) = answer(&frame) {
                 self.inbox.push_back(reply);
             }
