@@ -10,6 +10,15 @@ use txhdl::comp::{signal, Clock, DefaultClock, In, Out, Reg, Running, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 
+/// Two bytes as signed numbers multiplied at 16 bits, and the product
+/// sign-extended to 32: the shape the Tutorials session found lowered
+/// to a bit of an expression, which Verilator refuses (issue 1369).
+#[lower]
+fn wide_product(a: U<8>, b: U<8>) -> U<32> {
+    let p = a.sext::<16>().mul::<16>(b.sext::<16>());
+    p.sext::<32>()
+}
+
 #[derive(Trace, Default)]
 pub struct Ops {
     pub sum: Reg<U<8>>,
@@ -22,6 +31,10 @@ pub struct Ops {
     pub hits: Reg<U<4>>,
     pub tops: Reg<U<4>>,
     pub spread: Reg<U<8>>,
+    pub wide: Reg<U<32>>,
+    pub mid: Reg<U<4>>,
+    pub nib: Reg<U<4>>,
+    pub carry: Reg<Bit>,
 }
 
 #[lower]
@@ -70,6 +83,20 @@ impl Unit for Ops {
             // repeat the wire itself. See issue 247.
             let odd = a.slice::<0, 1>() ^ b.slice::<0, 1>();
             with!(self <= { en ? spread: odd.sext::<8>() });
+            // A computed value whose bits are taken: a product sign
+            // extended, which takes its top bit, inside a function the
+            // lowering inlines, and a slice of a product and of a sum
+            // and a bit of a sum, written in place. Verilog selects
+            // bits of a name and not of an expression, so each value is
+            // a wire of its own first (issue 1369).
+            with!(self <= {
+                en ? {
+                    wide: wide_product(a, b),
+                    mid: a.mul::<8>(b).slice::<2, 4>(),
+                    nib: (a + b).slice::<4, 4>(),
+                    carry: (a + b).bit(7),
+                },
+            });
             same.set(eq);
             below.set(lt & !eq);
         }
@@ -84,6 +111,7 @@ fn main() {
     let (below_out, below) = signal::<Bit, DefaultClock>();
     let mut ops = Ops::default();
     let (sum, hits, tops, spread) = (ops.sum, ops.hits, ops.tops, ops.spread);
+    let (wide, mid, nib) = (ops.wide, ops.mid, ops.nib);
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();
         w.add("a", &a);
@@ -114,12 +142,16 @@ fn main() {
         en_out.set(e);
         sim.cycle();
         println!(
-            "a={x:3} b={y:3} en={} sum={:3} hits={} tops={} spread={:08b}",
+            "a={x:3} b={y:3} en={} sum={:3} hits={} tops={} spread={:08b} \
+             wide={:08x} mid={:x} nib={:x}",
             e as u8,
             sum.get().raw(),
             hits.get().raw(),
             tops.get().raw(),
-            spread.get().raw()
+            spread.get().raw(),
+            wide.get().raw(),
+            mid.get().raw(),
+            nib.get().raw()
         );
     }
     sim.cycle();

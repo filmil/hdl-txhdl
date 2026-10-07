@@ -1865,6 +1865,41 @@ impl Lowered {
     ) {
         HOISTED.with(|h| h.borrow_mut().clear());
         let mut temps: Vec<(String, usize, Expr)> = Vec::new();
+        // A computed value as a wire of its own, named `sl<n>`; the
+        // same expression twice is one wire.
+        fn wire(
+            a: Expr,
+            l: &Lowered,
+            t: &mut Vec<(String, usize, Expr)>,
+        ) -> Expr {
+            let same = format!("{a:?}");
+            let found = t.iter().find(|(_, _, e)| format!("{e:?}") == same);
+            let name = match found {
+                Some((n, _, _)) => n.clone(),
+                None => {
+                    let n = format!("sl{}", t.len());
+                    let w = l.ewidth(&a);
+                    HOISTED.with(|h| h.borrow_mut().push((n.clone(), w)));
+                    t.push((n.clone(), w, a));
+                    n
+                }
+            };
+            Expr::Name(name)
+        }
+        // Whether Verilog can select a value's top bit where it stands,
+        // as a sign extension does: a name, a memory's word, a slice of
+        // one, a concatenation whose high part is, or a single bit,
+        // which is its own top bit.
+        fn top_in_place(e: &Expr, l: &Lowered) -> bool {
+            match e {
+                Expr::Name(_) | Expr::Slice(_, _, _) => true,
+                Expr::Index(m, _) => {
+                    matches!(&**m, Expr::Name(n) if l.is_mem(n))
+                }
+                Expr::Cat(a, _) => top_in_place(a, l),
+                _ => l.ewidth(e) <= 1,
+            }
+        }
         fn go(
             e: &Expr,
             l: &Lowered,
@@ -1882,22 +1917,7 @@ impl Lowered {
                     if plain {
                         return Expr::Slice(Box::new(a), *lo, *len);
                     }
-                    // The same expression sliced twice is one wire.
-                    let same = format!("{a:?}");
-                    let found =
-                        t.iter().find(|(_, _, e)| format!("{e:?}") == same);
-                    let name = match found {
-                        Some((n, _, _)) => n.clone(),
-                        None => {
-                            let n = format!("sl{}", t.len());
-                            let w = l.ewidth(&a);
-                            HOISTED
-                                .with(|h| h.borrow_mut().push((n.clone(), w)));
-                            t.push((n.clone(), w, a));
-                            n
-                        }
-                    };
-                    Expr::Slice(Box::new(Expr::Name(name)), *lo, *len)
+                    Expr::Slice(Box::new(wire(a, l, t)), *lo, *len)
                 }
                 Expr::Bin(op, a, c) => Expr::Bin(op, b(a, t), b(c, t)),
                 Expr::Not(a) => Expr::Not(b(a, t)),
@@ -1918,24 +1938,22 @@ impl Lowered {
                     if plain {
                         return Expr::Index(Box::new(a), i);
                     }
-                    let same = format!("{a:?}");
-                    let found =
-                        t.iter().find(|(_, _, e)| format!("{e:?}") == same);
-                    let name = match found {
-                        Some((n, _, _)) => n.clone(),
-                        None => {
-                            let n = format!("sl{}", t.len());
-                            let w = l.ewidth(&a);
-                            HOISTED
-                                .with(|h| h.borrow_mut().push((n.clone(), w)));
-                            t.push((n.clone(), w, a));
-                            n
-                        }
-                    };
-                    Expr::Index(Box::new(Expr::Name(name)), i)
+                    Expr::Index(Box::new(wire(a, l, t)), i)
                 }
                 Expr::Cat(a, c) => Expr::Cat(b(a, t), b(c, t)),
-                Expr::Sext(a, m) => Expr::Sext(b(a, t), *m),
+                // A sign extension repeats its operand's top bit, which
+                // Verilog selects of a name and not of an expression: a
+                // product extended was `(x * y)[15]`, which Verilator
+                // refuses (issue 1369). An operand whose top bit cannot
+                // be selected where it stands is a wire of its own.
+                Expr::Sext(a, m) => {
+                    let a = go(a, l, t);
+                    let w = l.ewidth(&a);
+                    if w > 1 && w < *m && !top_in_place(&a, l) {
+                        return Expr::Sext(Box::new(wire(a, l, t)), *m);
+                    }
+                    Expr::Sext(Box::new(a), *m)
+                }
                 // A cast is the value when it is no wider, and its low
                 // bits, a slice and so perhaps a wire, when it is
                 // (issue 496). Both emitters read it from here.
