@@ -397,11 +397,21 @@ thread_local! {
     /// its emitter run (issue 683).
     static HOISTED: std::cell::RefCell<Vec<(String, usize)>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// Of those wires, the products under a register's `#[use_dsp]`,
+    /// each with the register's word on DSP slices (issue 1343).
+    static DSP_WIRES: std::cell::RefCell<Vec<(String, &'static str)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
     /// The wires the helpers called in the unit being lowered asked
     /// for, a frame per unit: `lowered` opens one, and a child lowered
     /// inside it opens its own, so the two do not mix (issue 504).
     static INLINE: std::cell::RefCell<Vec<(Vec<(String, Expr)>, usize)>> =
         const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// What a wire the hoisting pass made says of DSP slices: the word of
+/// the register whose product it is (issue 1343).
+fn dsp_wire(n: &str) -> Option<&'static str> {
+    DSP_WIRES.with(|h| h.borrow().iter().find(|(m, _)| m == n).map(|(_, v)| *v))
 }
 
 /// Open a frame for the wires the helpers of one unit ask for. What a
@@ -1883,6 +1893,7 @@ impl Lowered {
         Vec<(String, usize, Expr)>,
     ) {
         HOISTED.with(|h| h.borrow_mut().clear());
+        DSP_WIRES.with(|h| h.borrow_mut().clear());
         let mut temps: Vec<(String, usize, Expr)> = Vec::new();
         // A computed value as a wire of its own, named `sl<n>`; the
         // same expression twice is one wire.
@@ -1917,6 +1928,109 @@ impl Lowered {
                 }
                 Expr::Cat(a, _) => top_in_place(a, l),
                 _ => l.ewidth(e) <= 1,
+            }
+        }
+        // Every product under the top of a register's next value as a
+        // wire of its own, carrying the register's `use_dsp` (issue
+        // 1343). Vivado applies the attribute only to the arithmetic
+        // that drives the signal it is on, so a register's did not
+        // reach the products under its add, which took the memory read
+        // before them into a DSP and left the memory in LUTs. A product
+        // that is the whole value is the register's own.
+        fn dsp_products(
+            e: Expr,
+            v: &'static str,
+            top: bool,
+            l: &Lowered,
+            t: &mut Vec<(String, usize, Expr)>,
+        ) -> Expr {
+            let d = |x: Box<Expr>, t: &mut Vec<(String, usize, Expr)>| {
+                Box::new(dsp_products(*x, v, false, l, t))
+            };
+            match e {
+                Expr::Bin("*", a, c) if !top => {
+                    let p = Expr::Bin("*", d(a, t), d(c, t));
+                    let w = wire(p, l, t);
+                    if let Expr::Name(n) = &w {
+                        DSP_WIRES.with(|h| {
+                            let mut h = h.borrow_mut();
+                            if !h.iter().any(|(m, _)| m == n) {
+                                h.push((n.clone(), v));
+                            }
+                        });
+                    }
+                    w
+                }
+                // A product named by a `let` is a wire of the unit's
+                // own, which carries the attribute where it is declared.
+                Expr::Name(n) => {
+                    mark_named(&n, v, l);
+                    Expr::Name(n)
+                }
+                Expr::Bin(op, a, c) => Expr::Bin(op, d(a, t), d(c, t)),
+                Expr::Not(a) => Expr::Not(d(a, t)),
+                Expr::Cond(c, a, b) => Expr::Cond(d(c, t), d(a, t), d(b, t)),
+                Expr::Cat(a, c) => Expr::Cat(d(a, t), d(c, t)),
+                Expr::Sext(a, m) => Expr::Sext(d(a, t), m),
+                Expr::Zext(a, m) => Expr::Zext(d(a, t), m),
+                e => e,
+            }
+        }
+        // A named wire whose value is a product takes the attribute, and
+        // so do the named wires it reads that are.
+        fn mark_named(n: &str, v: &'static str, l: &Lowered) {
+            let Some((_, e)) = l.wires.iter().find(|(m, _)| m == n) else {
+                return;
+            };
+            fn names<'a>(e: &'a Expr, out: &mut Vec<&'a str>) {
+                match e {
+                    Expr::Name(n) => out.push(n),
+                    Expr::Bin(_, a, c) | Expr::Cat(a, c) => {
+                        names(a, out);
+                        names(c, out);
+                    }
+                    Expr::Not(a)
+                    | Expr::Sext(a, _)
+                    | Expr::Zext(a, _)
+                    | Expr::Cast(a, _)
+                    | Expr::Slice(a, _, _) => names(a, out),
+                    Expr::Cond(c, a, b) => {
+                        names(c, out);
+                        names(a, out);
+                        names(b, out);
+                    }
+                    _ => {}
+                }
+            }
+            if matches!(e, Expr::Bin("*", _, _)) {
+                DSP_WIRES.with(|h| {
+                    let mut h = h.borrow_mut();
+                    if !h.iter().any(|(m, _)| m == n) {
+                        h.push((n.to_string(), v));
+                    }
+                });
+            }
+            let mut read = Vec::new();
+            names(e, &mut read);
+            for m in read {
+                mark_named(m, v, l);
+            }
+        }
+        // A register's next value, hoisted, and its products too when
+        // it says `use_dsp`.
+        fn value(
+            x: &Target,
+            e: &Expr,
+            l: &Lowered,
+            t: &mut Vec<(String, usize, Expr)>,
+        ) -> Expr {
+            let e = go(e, l, t);
+            match x {
+                Target::Name(n) => match l.use_dsp_of(n) {
+                    Some(v) => dsp_products(e, v, true, l, t),
+                    None => e,
+                },
+                Target::Word(..) => e,
             }
         }
         fn go(
@@ -2012,7 +2126,7 @@ impl Lowered {
             t: &mut Vec<(String, usize, Expr)>,
         ) -> Vec<(Target, Expr)> {
             d.iter()
-                .map(|(x, e)| (target(x, l, t), go(e, l, t)))
+                .map(|(x, e)| (target(x, l, t), value(x, e, l, t)))
                 .collect::<Vec<_>>()
         }
         let wires = self
@@ -2027,7 +2141,7 @@ impl Lowered {
         ) -> Stmt {
             match st {
                 Stmt::Drive(x, e) => {
-                    Stmt::Drive(target(x, l, temps), go(e, l, temps))
+                    Stmt::Drive(target(x, l, temps), value(x, e, l, temps))
                 }
                 Stmt::When(c, a, b) => Stmt::When(
                     go(c, l, temps),
@@ -2468,11 +2582,27 @@ impl Lowered {
         for (n, e) in &wires {
             let w = self.ewidth(e);
             assert!(w > 0, "wire `{n}` has no width: size its literals");
-            writeln!(out, "  wire {}{n};", range(w)).unwrap();
+            writeln!(
+                out,
+                "  {}wire {}{n};",
+                dsp_wire(n)
+                    .map(|v| format!("(* use_dsp = \"{v}\" *) "))
+                    .unwrap_or_default(),
+                range(w)
+            )
+            .unwrap();
         }
         for (t, w, e) in &temps {
-            writeln!(out, "  wire {}{t} = {};", range(*w), vexpr(e, l))
-                .unwrap();
+            writeln!(
+                out,
+                "  {}wire {}{t} = {};",
+                dsp_wire(t)
+                    .map(|v| format!("(* use_dsp = \"{v}\" *) "))
+                    .unwrap_or_default(),
+                range(*w),
+                vexpr(e, l)
+            )
+            .unwrap();
         }
         let mut comb: Vec<String> = Vec::new();
         let drive = |seq: &mut Vec<String>,
@@ -2860,9 +2990,31 @@ impl Lowered {
             let w = self.ewidth(e);
             assert!(w > 0, "wire `{n}` has no width: size its literals");
             writeln!(out, "  signal {n} : {};", ty(w)).unwrap();
+            // A product a register's `use_dsp` reads (issue 1343).
+            if let Some(v) = dsp_wire(n) {
+                if !std::mem::replace(&mut dsp_declared, true) {
+                    writeln!(out, "  attribute use_dsp : string;").unwrap();
+                }
+                writeln!(
+                    out,
+                    "  attribute use_dsp of {n} : signal is \"{v}\";"
+                )
+                .unwrap();
+            }
         }
         for (t, w, _) in &temps {
             writeln!(out, "  signal {t} : {};", ty(*w)).unwrap();
+            // A product under a register's `use_dsp` (issue 1343).
+            if let Some(v) = dsp_wire(t) {
+                if !std::mem::replace(&mut dsp_declared, true) {
+                    writeln!(out, "  attribute use_dsp : string;").unwrap();
+                }
+                writeln!(
+                    out,
+                    "  attribute use_dsp of {t} : signal is \"{v}\";"
+                )
+                .unwrap();
+            }
         }
         for (n, k, w, _) in &self.nets {
             match k {

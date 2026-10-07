@@ -121,6 +121,13 @@ a path into a multiply's input, and the read's register is one of
 them, which leaves the read asynchronous and the memory LUT RAM, even
 where the multiply ends in LUTs (issue 1343). \code{"no"} on the
 products keeps the read's register where it is, at no cycle's cost.
+Vivado applies the attribute only to the arithmetic that drives the
+signal it is on, so a register whose next value adds products would
+leave them uncovered. The lowering therefore puts each product under
+such a register into a wire of its own with the same attribute, and
+gives it as well to a wire named by a \code{let} whose value is a
+product the register reads. With that, Razboj's colour bank is a
+block RAM.
 
 \textbf{A channel is an elastic buffer of two.} A send is an offer:
 \code{valid} and \code{data} high this step, the transaction in the
