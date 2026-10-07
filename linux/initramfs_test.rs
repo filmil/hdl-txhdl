@@ -106,7 +106,14 @@ fn init_says_the_userspace_is_up() {
         .expect("init is text");
     assert!(init.starts_with("#!/bin/sh\n"));
     assert!(init.contains("echo \"txhdl: userspace is up\""));
-    assert!(init.contains("exec /bin/sh"));
+    // The shell in a session of its own with the console as its
+    // controlling tty, started again if it ends, since process 1 must
+    // not exit (issue 1249); it was `exec /bin/sh` before.
+    assert!(
+        init.contains("setsid /bin/busybox cttyhack /bin/sh"),
+        "init runs the shell on the console's tty"
+    );
+    assert!(init.contains("while :; do"), "and starts it again");
 }
 
 #[test]

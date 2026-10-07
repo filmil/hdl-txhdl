@@ -8,6 +8,12 @@
 # pull request should not pay. This job runs it once a night, after the
 # Vivado one, and by hand on a branch that touches the core's model, the
 # machine, the device tree or the boot image.
+#
+# The other Linux tests are manual for the same reason and run here
+# too, on the same build: what the initramfs holds, the boot with the
+# serial port as the loader leaves it, and the network both ways. Before
+# issue 1349 only boot_test ran, and initramfs_test failed unseen for a
+# change to /init it had not followed.
 name: linux
 
 on:
@@ -43,10 +49,13 @@ jobs:
           key: bazelisk-${{ hashFiles('.bazelversion') }}
 
       # The console is the result, so it is printed whole, pass or fail.
-      - name: Boot Linux on the machine model
+      - name: Boot Linux on the machine model, and the other Linux tests
         run: |
           set -o pipefail
-          bazel test --config=ci //linux:boot_test --test_output=all
+          bazel test --config=ci --test_output=all \
+            //linux:boot_test //linux:initramfs_test \
+            //linux:boot_loaded_test //linux:boot_net_test \
+            //linux:boot_ip_test
 
       - name: Save the Bazelisk cache
         if: success() && steps.cache.outputs.cache-hit != 'true'
