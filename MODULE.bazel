@@ -103,7 +103,7 @@ multitool = use_extension("@rules_multitool//multitool:extension.bzl", "multitoo
 multitool.hub(lockfile = "//:multitool.lock.json")
 use_repo(multitool, "multitool")
 
-# Three external crates. The first is an FST writer, so a waveform is a
+# Four external crates. The first is an FST writer, so a waveform is a
 # compressed binary the tools read as they read VCD. Pinned by a lockfile;
 # `CARGO_BAZEL_REPIN=1 bazel sync --only=crates` regenerates it.
 crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
@@ -123,6 +123,22 @@ crate.spec(
 crate.spec(
     package = "miniz_oxide",
     version = "0.8.9",
+)
+# The fourth is smoltcp, a TCP/IP stack in Rust, for the machine
+# model's station on the Ethernet cable: a fastboot client sends the
+# fastboot server a download over it, so a download is timed off the
+# board (issue 1390). The stack is somebody else's, maintained, rather
+# than a TCP written here.
+crate.spec(
+    default_features = False,
+    features = [
+        "alloc",
+        "medium-ethernet",
+        "proto-ipv4",
+        "socket-tcp",
+    ],
+    package = "smoltcp",
+    version = "0.12.0",
 )
 crate.from_specs(
     name = "crates",
