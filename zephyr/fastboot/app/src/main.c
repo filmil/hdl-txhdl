@@ -34,25 +34,46 @@
  * Where a download's time goes (issue 1230): the cycles in `recv`,
  * which is waiting and the copy out of the stack, in the fastboot core
  * and of those in the copy into the staging area, the driver's own
- * counts, and every thread's cycles, all across one connection. Said on
- * the console when the connection closes.
+ * counts, every thread's cycles, and where frames were lost: the port's
+ * `rx_errors`, the driver's, and the stack's IPv4 and TCP drops, all
+ * across one connection. Said on the console when it closes.
+ *
+ * Every count of cycles is 64 bits and said in thousands. A download of
+ * a minute is six billion cycles, and 32 bits wrapped at 43 seconds,
+ * which made the first board run's totals wrong (issue 1377).
  */
 #include <vreteno/eth_vreteno.h>
+#include <zephyr/net/net_mgmt.h>
+#include <zephyr/net/net_stats.h>
 
 #define PROF_THREADS 16
 
 static struct {
-	uint32_t recv_cycles;
+	uint64_t recv_cycles;
 	uint32_t recv_calls;
-	uint32_t fb_cycles;
-	uint32_t write_cycles;
+	uint64_t fb_cycles;
+	uint64_t write_cycles;
 	uint32_t bytes;
-	uint32_t start;
+	uint64_t start;
+	uint32_t rx_errors;
 	struct eth_vreteno_prof eth;
+	struct net_stats net;
 	const struct k_thread *thread[PROF_THREADS];
 	uint64_t cycles[PROF_THREADS];
 	int threads;
 } prof;
+
+/* Thousands of cycles, which 32 bits hold for twelve hours at 100 MHz. */
+static uint32_t kc(uint64_t c)
+{
+	return (uint32_t)(c / 1000u);
+}
+
+static void prof_net(struct net_stats *st)
+{
+	memset(st, 0, sizeof(*st));
+	(void)net_mgmt(NET_REQUEST_STATS_GET_ALL, NULL, st, sizeof(*st));
+}
 
 static void prof_thread_start(const struct k_thread *t, void *arg)
 {
@@ -72,30 +93,50 @@ static void prof_begin(void)
 {
 	memset(&prof, 0, sizeof(prof));
 	prof.eth = eth_vreteno_prof;
+	prof.rx_errors = eth_vreteno_rx_errors();
+	prof_net(&prof.net);
 	k_thread_foreach(prof_thread_start, NULL);
-	prof.start = k_cycle_get_32();
+	prof.start = k_cycle_get_64();
 }
 
 static void prof_end(void)
 {
-	uint32_t total = k_cycle_get_32() - prof.start;
+	uint64_t total = k_cycle_get_64() - prof.start;
 	const struct eth_vreteno_prof *e = &eth_vreteno_prof;
+	struct net_stats n;
 
-	printk("fastboot profile: %u bytes in %u cycles, %u a second\n",
-	       prof.bytes, total, (uint32_t)sys_clock_hw_cycles_per_sec());
-	printk("  recv %u cycles in %u calls; fastboot %u, of which the "
-	       "staging copy %u\n",
-	       prof.recv_cycles, prof.recv_calls, prof.fb_cycles,
-	       prof.write_cycles);
-	printk("  driver rx %u frames, %u cycles, copy %u; tx %u frames, "
-	       "%u cycles, copy %u, %u waits\n",
+	prof_net(&n);
+	printk("fastboot profile: %u bytes in %u kcycles, %u cycles a second\n",
+	       prof.bytes, kc(total), (uint32_t)sys_clock_hw_cycles_per_sec());
+	printk("  recv %u kcycles in %u calls; fastboot %u kcycles, of which "
+	       "the staging copy %u\n",
+	       kc(prof.recv_cycles), prof.recv_calls, kc(prof.fb_cycles),
+	       kc(prof.write_cycles));
+	printk("  driver rx %u frames, %u kcycles, copy %u; no buffer %u, "
+	       "refused %u\n",
 	       e->rx_frames - prof.eth.rx_frames,
-	       e->rx_cycles - prof.eth.rx_cycles,
-	       e->rx_copy_cycles - prof.eth.rx_copy_cycles,
+	       kc(e->rx_cycles - prof.eth.rx_cycles),
+	       kc(e->rx_copy_cycles - prof.eth.rx_copy_cycles),
+	       e->rx_nobuf - prof.eth.rx_nobuf,
+	       e->rx_refused - prof.eth.rx_refused);
+	printk("  driver tx %u frames, %u kcycles, copy %u, %u waits\n",
 	       e->tx_frames - prof.eth.tx_frames,
-	       e->tx_cycles - prof.eth.tx_cycles,
-	       e->tx_copy_cycles - prof.eth.tx_copy_cycles,
+	       kc(e->tx_cycles - prof.eth.tx_cycles),
+	       kc(e->tx_copy_cycles - prof.eth.tx_copy_cycles),
 	       e->tx_waits - prof.eth.tx_waits);
+	printk("  port rx_errors %u (frames dropped with both slots held)\n",
+	       eth_vreteno_rx_errors() - prof.rx_errors);
+	printk("  ipv4 recv %u drop %u; tcp recv %u drop %u seg_drop %u "
+	       "resent %u chkerr %u ackerr %u; processing errors %u\n",
+	       n.ipv4.recv - prof.net.ipv4.recv,
+	       n.ipv4.drop - prof.net.ipv4.drop,
+	       n.tcp.recv - prof.net.tcp.recv,
+	       n.tcp.drop - prof.net.tcp.drop,
+	       n.tcp.seg_drop - prof.net.tcp.seg_drop,
+	       n.tcp.resent - prof.net.tcp.resent,
+	       n.tcp.chkerr - prof.net.tcp.chkerr,
+	       n.tcp.ackerr - prof.net.tcp.ackerr,
+	       n.processing_error - prof.net.processing_error);
 	for (int i = 0; i < prof.threads; i++) {
 		k_thread_runtime_stats_t st;
 		const char *name = k_thread_name_get((k_tid_t)prof.thread[i]);
@@ -103,8 +144,8 @@ static void prof_end(void)
 		if (k_thread_runtime_stats_get((k_tid_t)prof.thread[i], &st)) {
 			continue;
 		}
-		printk("  thread %s: %u cycles\n", name ? name : "?",
-		       (uint32_t)(st.execution_cycles - prof.cycles[i]));
+		printk("  thread %s: %u kcycles\n", name ? name : "?",
+		       kc(st.execution_cycles - prof.cycles[i]));
 	}
 }
 #define PROF_NOW() k_cycle_get_32()

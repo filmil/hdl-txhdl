@@ -99,7 +99,8 @@ The host test's server has no jump page and offers the full 16 MiB.
 `//zephyr:fastboot_profile` is the same server saying where a
 download's time goes (issue 1230), with `fastboot/profile.conf`.
 When a connection closes it prints the bytes and the cycles it took, at
-the rate the line gives.
+the rate the line gives, every count of cycles in thousands and kept in
+64 bits, since a download of a minute is past 32 (issue 1377).
 It prints the cycles spent in `recv` and in the fastboot core, and of
 those in the copy to the staging area.
 It prints the Ethernet driver's frames and cycles each way, the copy
@@ -107,6 +108,10 @@ into or out of a slot apart, and how often a send waited for the
 transmitter (`CONFIG_ETH_VRETENO_PROFILE`).
 It prints every thread's cycles across the connection, from Zephyr's
 runtime statistics.
+It prints where frames were lost: the port's `rx_errors`, frames
+dropped with both receive slots held (issue 1313), the frames the
+driver had no buffer for or the stack refused, and the stack's IPv4
+and TCP drops, resends and checksum errors.
 The driver's counts are `eth_vreteno_prof` in
 `include/vreteno/eth_vreteno.h`.
 

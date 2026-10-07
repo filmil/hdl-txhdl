@@ -66,7 +66,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 struct eth_vreteno_prof eth_vreteno_prof;
 #define PROF_NOW() k_cycle_get_32()
 #define PROF_ADD(field, since) \
-	(eth_vreteno_prof.field += k_cycle_get_32() - (since))
+	(eth_vreteno_prof.field += (uint32_t)(k_cycle_get_32() - (since)))
 #define PROF_COUNT(field) (eth_vreteno_prof.field++)
 #else
 #define PROF_NOW() 0u
@@ -251,6 +251,7 @@ static void eth_vreteno_receive(const struct device *dev)
 					   K_NO_WAIT);
 	if (pkt == NULL) {
 		LOG_ERR("no buffer for a frame of %u bytes", len);
+		PROF_COUNT(rx_nobuf);
 		return;
 	}
 
@@ -265,6 +266,7 @@ static void eth_vreteno_receive(const struct device *dev)
 
 	if (net_recv_data(data->iface, pkt) < 0) {
 		LOG_ERR("the stack would not take the frame");
+		PROF_COUNT(rx_refused);
 		net_pkt_unref(pkt);
 	}
 	PROF_COUNT(rx_frames);
@@ -432,3 +434,11 @@ static int eth_vreteno_init(const struct device *dev)
 				      &eth_vreteno_api, NET_ETH_MTU);
 
 DT_INST_FOREACH_STATUS_OKAY(VRETENO_ETH_INIT)
+
+#ifdef CONFIG_ETH_VRETENO_PROFILE
+uint32_t eth_vreteno_rx_errors(void)
+{
+	return eth_vreteno_read(DEVICE_DT_INST_GET(0),
+				ETHSLOTS_RX_ERRORS);
+}
+#endif
