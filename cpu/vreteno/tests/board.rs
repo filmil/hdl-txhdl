@@ -1143,6 +1143,40 @@ fn the_first_line_is_the_bases_wherever_in_the_frame_it_is_shown() {
     }
 }
 
+/// A base outside the frame's memory (issue 1382): on the board a base
+/// gone wrong sent a line's burst of 64 beats into the serial port's
+/// page, `0x3000`, and the core's prints through the same path stopped
+/// mid-line. The pair asks for no line outside the memory, says `stuck`
+/// at the base, and the core's greeting comes out whole.
+#[test]
+fn a_base_outside_the_memory_is_never_fetched() {
+    let frame = 6 * SCAN_LINE;
+    let net = Net {
+        scan: Some(Scan {
+            base: 0x3000,
+            show_at: frame,
+        }),
+        ..Net::default()
+    };
+    let ran = run_all(
+        hello_program::TEXT,
+        hello_program::DATA,
+        b"",
+        &[],
+        6 * frame,
+        net,
+        &[],
+    );
+    assert!(
+        ran.scan.lines.is_empty(),
+        "asked for {:x?}",
+        ran.scan.lines.iter().take(8).collect::<Vec<_>>()
+    );
+    let (_, at) = ran.scan.stuck.expect("stuck, at the base");
+    assert_eq!(at, 0x3000);
+    assert_eq!(ran.said, "hello from rust\n", "the core still prints");
+}
+
 /// The configuration flash on the board (issue 312): the core reads the
 /// chip's identity over the master, sends write enable, which the pins
 /// refuse, so the chip's latch reads clear, and finds the bitstream's
