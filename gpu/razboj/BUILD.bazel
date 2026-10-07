@@ -128,6 +128,20 @@ rust_binary(
     ],
 )
 
+# The traced run of blending (issue 993), with the rasteriser's
+# netlist, so the build replays the load, the blend, the alpha test
+# and the mask.
+rust_binary(
+    name = "trace_blend",
+    srcs = ["src/trace_blend.rs"],
+    edition = "2021",
+    deps = [
+        ":razboj",
+        ":tile",
+        "//lib:txhdl",
+    ],
+)
+
 rust_test(
     name = "razboj_test",
     crate = ":razboj",
