@@ -287,7 +287,15 @@ impl<
             let owing = self.owing.get();
             let room = owing < U::<3>::from(4u8);
             let asked = (ask_first | ask_next) & req.ready() & room;
-            let addr = mux(ask_first, self.fbase.get(), self.next.get());
+            // The first line after the scanout is shown is asked from the
+            // base as the host gave it, not from the one taken at the last
+            // vertical sync, which a reset leaves at zero: a show written
+            // after a sync and before the last row began asked from zero,
+            // and the fetch walked into the boot memory and the serial
+            // port (issue 1317). Once armed, frames take the base at the
+            // sync, so a host still flips with one write.
+            let first_at = mux(self.armed.get(), self.fbase.get(), base.get());
+            let addr = mux(ask_first, first_at, self.next.get());
             let stride = U::<32>::from(STRIDE as u32);
             // The lines owed (issue 1197). A word counts against the
             // oldest, and the last of its words takes it off; a line
@@ -350,7 +358,7 @@ impl<
                 },
                 frame.get() ? fbase: base.get(),
                 asked & ask_first ? {
-                    next: self.fbase.get() + stride,
+                    next: first_at + stride,
                     armed: Bit::One,
                 },
                 asked & ask_next ? next: self.next.get() + stride,
