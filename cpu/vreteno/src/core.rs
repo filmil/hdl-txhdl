@@ -892,6 +892,14 @@ pub struct Vreteno<const IW: usize> {
     /// not the next program counter (issue 1195).
     pub tp: Reg<Bit>,
     pub tp_vec: Reg<U<32>>,
+    /// Whether an interrupt is pending and enabled, as the state
+    /// stood last cycle; whether it is one machine mode keeps; and the
+    /// pending set it was chosen from. The take reads these and not
+    /// the enables' logic, which was the flagship's worst path into
+    /// the fetch's address (issue 1331).
+    pub int_q: Reg<Bit>,
+    pub int_m_q: Reg<Bit>,
+    pub int_set_q: Reg<U<32>>,
     /// A conditional branch was guessed wrong last cycle, and where it
     /// really goes: a branch is guessed taken when it points back and
     /// not taken when it points forward, from the instruction alone,
@@ -1325,7 +1333,15 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             let m_set = mux(m_on, pend & !mideleg, U::<32>::from(0u32));
             let s_set = mux(s_on, pend & mideleg, U::<32>::from(0u32));
             let int_set = mux(m_set != 0, m_set, s_set);
-            let int_ok = int_set != 0;
+            // The decision is acted on a cycle after it is made (issue
+            // 1331). Interrupts are asynchronous to the program, so a
+            // cycle later is nothing a program can tell; what could be
+            // told is one taken that the state has just forbidden, so
+            // the registered decision is dropped after anything that
+            // changes what may be taken, below.
+            let int_now = int_set != 0;
+            let int_ok = self.int_q.get();
+            let int_m = self.int_m_q.get();
             let stall_m = m_here & !int_ok & !m_done;
             // A `fence` orders what came before it against what comes
             // after: it waits in execute until every store the core
@@ -1685,7 +1701,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // before the timer's.
             let cause = mux(
                 int_take,
-                int_cause(int_set),
+                int_cause(self.int_set_q.get()),
                 mux(
                     is_ecall,
                     // 8 from user mode, 9 from supervisor, 11 from machine.
@@ -1795,7 +1811,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             );
             let d_exc =
                 mux(st_take, medeleg.bit(7), mux(unaligned, d_mis, d_early));
-            let to_s = (prv != 3) & mux(int_take, Bit::from(m_set == 0), d_exc);
+            let to_s = (prv != 3) & mux(int_take, !int_m, d_exc);
             let wb_code = mux(
                 self.wb_amo,
                 U::<5>::from(isa::CAUSE_STORE_ACCESS as u8),
@@ -1810,11 +1826,7 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // check picks between them, one multiplexer from the fetch's
             // address (issue 1130). It is the vector `to_s` says.
             let to_s_other = (prv != 3)
-                & mux(
-                    int_take,
-                    Bit::from(m_set == 0),
-                    mux(st_take, medeleg.bit(7), d_early),
-                );
+                & mux(int_take, !int_m, mux(st_take, medeleg.bit(7), d_early));
             let vec_other = mux(to_s_other, stvec, mtvec);
             let vec_mis = mux((prv != 3) & d_mis, stvec, mtvec);
             let trap_vec =
@@ -2895,6 +2907,31 @@ impl<const IW: usize> Unit for Vreteno<IW> {
             // is never used, and the late trap stays out of these compares.
             let now_any = writes & Bit::from(rd != 0);
             let wr_any = mux(live, now_any, Bit::from(wb_rd != 0));
+            // What drops the registered interrupt decision (issue 1331):
+            // an instruction that changes what may be taken, as it runs,
+            // which is a write of one of the enables' registers or an
+            // `mret` or `sret`; a trap or an interrupt taken, which
+            // clears `MIE` or `SIE`; debug mode, its entry and its exit;
+            // a refused load; and the reset. Only as it runs: a CSR
+            // instruction that merely sits in execute, stalled or a read,
+            // dropped it in every cycle, and a loop reading `mip` while
+            // it waited for an interrupt never took one.
+            let enables = Bit::from(f12 == isa::CSR_MSTATUS)
+                | Bit::from(f12 == isa::CSR_SSTATUS)
+                | Bit::from(f12 == isa::CSR_MIE)
+                | Bit::from(f12 == isa::CSR_SIE)
+                | Bit::from(f12 == isa::CSR_MIDELEG)
+                | Bit::from(f12 == isa::CSR_MIP)
+                | Bit::from(f12 == isa::CSR_SIP);
+            let int_hold = rst
+                | in_debug
+                | dbg_take
+                | resume_take
+                | trap
+                | wb_fault
+                | (csr_write & enables)
+                | mret_ok
+                | sret_ok;
             with!(self <= {
                 ra_at: mux(in_debug, dbg_gpr, rs1_next),
                 m_a: Bit::from(wr_next == rs1_next) & wr_any,
@@ -2907,6 +2944,9 @@ impl<const IW: usize> Unit for Vreteno<IW> {
                 bp_fix: wrong,
                 bp_vec: right_at,
                 tp_vec: trap_vec,
+                int_q: int_now & !int_hold,
+                int_m_q: Bit::from(m_set != 0),
+                int_set_q: int_set,
             });
             case!(rst => {
                 Bit::One => { self.valid <= Bit::Zero },
