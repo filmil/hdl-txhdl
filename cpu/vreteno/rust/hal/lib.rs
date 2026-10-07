@@ -43,7 +43,8 @@ pub mod map {
     /// The data memory, 4 KiB.
     pub const DMEM: usize = 0x0000_1000;
     /// The stack memory, 64 KiB of block RAM, where a program loaded
-    /// into the DDR3 keeps its stack (issue 1278).
+    /// into the DDR3 keeps its stack (issue 1278): in the core, on its
+    /// own port, so only the core reaches it (issue 1275).
     pub const STACK: usize = 0x0001_0000;
     /// The core-local interrupt controller: the timer and the
     /// software interrupt, at the offsets every RISC-V platform has.

@@ -8,13 +8,14 @@
 //! What it holds, each at the address the board's maps give it:
 //!
 //! * the DDR3, a gigabyte at `0x4000_0000`, as plain memory;
-//! * the stack memory, 64 KiB at `0x1_0000`, as plain memory too, since
-//!   a program loaded into the DDR3 keeps its stack there (issue 1278);
 //! * the CLINT, with the count advancing one an instruction;
 //! * the PLIC with its two targets, machine and supervisor;
 //! * the serial port as SiFive's `sifive,uart0`;
 //! * the Ethernet port's slots, with a peer on the cable that answers
 //!   ARP and ping (issue 1203).
+//!
+//! The stack window at `0x1_0000` (issue 1278) is the model's own, as it
+//! is the core's (issue 1275), and not on this bus.
 //!
 //! A program and a device tree blob are loaded into the DDR3, and the
 //! hart starts as a bootloader would leave it: `a0` the hart's number,
@@ -59,7 +60,6 @@ fn range<const N: usize, M: AddrMap<N>>(what: &str) -> (u32, u32) {
 #[derive(Clone, Copy, Debug)]
 pub struct Map {
     pub ddr: (u32, u32),
-    pub stack: (u32, u32),
     pub clint: (u32, u32),
     pub plic: (u32, u32),
     pub uart: (u32, u32),
@@ -72,10 +72,9 @@ impl Map {
     /// The board's, from its maps.
     pub fn board() -> Self {
         Map {
-            ddr: range::<9, BoardMap>("DDR3"),
-            stack: range::<9, BoardMap>("stack memory"),
-            clint: range::<9, BoardMap>("timer"),
-            plic: range::<9, BoardMap>("interrupt controller"),
+            ddr: range::<8, BoardMap>("DDR3"),
+            clint: range::<8, BoardMap>("timer"),
+            plic: range::<8, BoardMap>("interrupt controller"),
             uart: range::<10, SlotMap>("serial"),
             eth: range::<10, SlotMap>("Ethernet port's registers"),
             eth_bufs: crate::isa::ETH_BUF_BASE,
@@ -93,7 +92,6 @@ fn inside((base, len): (u32, u32), addr: u32) -> Option<u32> {
 pub struct Devices {
     pub map: Map,
     pub ddr: memory::Memory,
-    pub stack: memory::Memory,
     pub clint: clint::Clint,
     pub plic: plic::Plic,
     pub uart: uart::Uart,
@@ -119,9 +117,6 @@ impl Bus for Board {
         if d.ddr.holds(addr) {
             return Some(d.ddr.load(addr));
         }
-        if d.stack.holds(addr) {
-            return Some(d.stack.load(addr));
-        }
         if let Some(off) = inside(map.clint, addr) {
             return Some(d.clint.load(off));
         }
@@ -145,11 +140,6 @@ impl Bus for Board {
         if d.ddr.holds(addr) {
             let was = d.ddr.load(addr);
             d.ddr.store(addr, (was & !mask) | (v & mask));
-            return true;
-        }
-        if d.stack.holds(addr) {
-            let was = d.stack.load(addr);
-            d.stack.store(addr, (was & !mask) | (v & mask));
             return true;
         }
         // The devices take whole words: a narrower store writes its lanes
@@ -196,7 +186,6 @@ impl Machine {
         let board = Rc::new(Board(RefCell::new(Devices {
             map,
             ddr: memory::Memory::new(map.ddr.0, map.ddr.1),
-            stack: memory::Memory::new(map.stack.0, map.stack.1),
             clint: clint::Clint::default(),
             plic: plic::Plic::new(PLIC_SOURCES),
             uart: uart::Uart::default(),

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The whole of the design that goes on the board, as one lowered unit.
 //!
-//! The core, its tracker, a router, and nine ranges behind the router,
+//! The core, its tracker, a router, and eight ranges behind the router,
 //! from the boot memory at `0x0000` to the configuration flash, read
-//! as memory, at `0x2000_0000`, and the stack memory at `0x1_0000`
-//! (issue 1278), which `BoardMap` names in the order of the router's
-//! ports. The third of them is the peripheral page: nine
+//! as memory, at `0x2000_0000`, which `BoardMap` names in the order of
+//! the router's ports. The stack memory at `0x1_0000` (issue 1278) is
+//! in the core, on its own port, and not on the bus (issue 1275). The third of them is the peripheral page: nine
 //! slots of 256 bytes from `0x3000` behind an AXI-Lite bridge, which
 //! `SlotMap` names. `//tools/memmap` writes both maps into the
 //! documents from these types, so they are not listed again here
@@ -99,8 +99,7 @@ pub const FLASH_DIV: usize = 3;
 // begin{map}
 /// The address map: each range's base and the bits of an address that
 /// must equal it, in the order of the router's ports. The data memory,
-/// the peripheral page and the boot memory are 4 KiB each, and the
-/// stack memory 64 KiB; the timer
+/// the peripheral page and the boot memory are 4 KiB each; the timer
 /// and the software interrupt, and the debug module (issue 154), 64 KiB
 /// each; the memory is the quarter of the address space from
 /// `0x4000_0000`, the interrupt controller the 64 MiB from
@@ -108,8 +107,8 @@ pub const FLASH_DIV: usize = 3;
 /// 16 MiB from `0x2000_0000` (issue 312).
 pub struct BoardMap;
 
-impl AddrMap<9> for BoardMap {
-    const RANGES: [(usize, usize); 9] = [
+impl AddrMap<8> for BoardMap {
+    const RANGES: [(usize, usize); 8] = [
         (0x1000, 0xffff_f000),
         (0x0200_0000, 0xffff_0000),
         (0x3000, 0xffff_f000),
@@ -118,9 +117,8 @@ impl AddrMap<9> for BoardMap {
         (0x0000_0000, 0xffff_f000),
         (0x1000_0000, 0xffff_0000),
         (0x2000_0000, 0xff00_0000),
-        (0x0001_0000, 0xffff_0000),
     ];
-    const NAMES: [&'static str; 9] = [
+    const NAMES: [&'static str; 8] = [
         "the data memory",
         "the timer and the software interrupt",
         "the peripheral page, behind an AXI-Lite bridge",
@@ -129,7 +127,6 @@ impl AddrMap<9> for BoardMap {
         "the boot memory, read only",
         "the debug module",
         "the configuration flash, read as memory",
-        "the stack memory",
     ];
 }
 
@@ -139,7 +136,7 @@ impl AddrMap<9> for BoardMap {
 /// from here (issue 1015).
 pub const PLIC_SOURCES: [&str; 3] = ["serial", "irq", "ethernet"];
 
-pub type BoardRouter = Router<9, BoardMap, 32, 32, 4, 5>;
+pub type BoardRouter = Router<8, BoardMap, 32, 32, 4, 5>;
 
 /// Where Razboj draws, and where its display list is: both in the DDR3
 /// (issue 985). The frame is the one the scanout shows, rows of 1024
@@ -297,14 +294,6 @@ pub struct Board<const DIV: u32> {
     pub prom: AxiPer<32, 32, 4, 5>,
     pub rom: Rom<5>,
     pub dmem: Dmem<5>,
-    /// The stack memory, 64 KiB of block RAM at `0x1_0000` on the
-    /// router's ninth port, where a program that runs from the DDR3
-    /// keeps its stack (issue 1278). The DDR3 is not cached for data,
-    /// so a stack there paid the controller's latency on every spill
-    /// and reload: on `ico_gl`'s frame, 39% of its cycles. It is the
-    /// data memory's unit, larger, and nothing is fetched from it.
-    pub pstack: AxiPer<32, 32, 4, 5>,
-    pub stack: Dmem<5, 14, 16384>,
     pub timer: Timer<5>,
     pub uart: Uart<DIV>,
     pub pwm: Pwm,
@@ -854,18 +843,6 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (wd7_tx, wd7_rx) = chan::<W<32, 4>, DefaultClock>();
         let (ans7_tx, ans7_rx) = chan::<Answer<5>, DefaultClock>();
         let (rb7_tx, rb7_rx) = chan::<R<32, 5>, DefaultClock>();
-        // The stack memory on the router's ninth port (issue 1278).
-        let (aw8_tx, aw8_rx) = chan::<Aw<32, 5>, DefaultClock>();
-        let (ar8_tx, ar8_rx) = chan::<Ar<32, 5>, DefaultClock>();
-        let (w8_tx, w8_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (b8_tx, b8_rx) = chan::<B<5>, DefaultClock>();
-        #[unregistered]
-        let (r8_tx, r8_rx) = chan::<R<32, 5>, DefaultClock>();
-        #[unregistered]
-        let (req8_tx, req8_rx) = chan::<PerReq<32, 5>, DefaultClock>();
-        let (wd8_tx, wd8_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (ans8_tx, ans8_rx) = chan::<Answer<5>, DefaultClock>();
-        let (rb8_tx, rb8_rx) = chan::<R<32, 5>, DefaultClock>();
         let (w_sclk_o, w_sclk_i) = signal::<Bit, DefaultClock>();
         let (w_mosi_o, w_mosi_i) = signal::<Bit, DefaultClock>();
         let (w_cs_n_o, w_cs_n_i) = signal::<Bit, DefaultClock>();
@@ -1191,7 +1168,6 @@ impl<const DIV: u32> Unit for Board<DIV> {
                             ),
                         ),
                         join2(
-                            join2(
                                 // The tracker runs before the memory and
                                 // the router: the request and the read
                                 // beats it hands them cross in the
@@ -1203,22 +1179,6 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                     ),
                                     (req0_tx, wd0_tx, b0_tx, r0_tx),
                                 ),
-                                join2(
-                                    self.pstack.run(
-                                        (aw8_rx, ar8_rx, w8_rx, ans8_rx, rb8_rx),
-                                        (req8_tx, wd8_tx, b8_tx, r8_tx),
-                                    ),
-                                    self.stack.run(
-                                        PerPort {
-                                            req: req8_rx,
-                                            w: wd8_rx,
-                                            ans: ans8_tx,
-                                            r: rb8_tx,
-                                        },
-                                        (),
-                                    ),
-                                ),
-                            ),
                             self.cpu.run(
                                 (
                                     rst,
@@ -1388,25 +1348,25 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                     xw_rx,
                                     [
                                         b0_rx, b1_rx, b2_rx, b3_rx, b4_rx,
-                                        b5_rx, b6_rx, b7_rx, b8_rx,
+                                        b5_rx, b6_rx, b7_rx,
                                     ],
                                     [
                                         r0_rx, r1_rx, r2_rx, r3_rx, r4_rx,
-                                        r5_rx, r6_rx, r7_rx, r8_rx,
+                                        r5_rx, r6_rx, r7_rx,
                                     ],
                                 ),
                                 (
                                     [
                                         aw0_tx, aw1_tx, aw2_tx, aw3_tx, aw4_tx,
-                                        aw5_tx, aw6_tx, aw7_tx, aw8_tx,
+                                        aw5_tx, aw6_tx, aw7_tx,
                                     ],
                                     [
                                         ar0_tx, ar1_tx, ar2_tx, ar3_tx, ar4_tx,
-                                        ar5_tx, ar6_tx, ar7_tx, ar8_tx,
+                                        ar5_tx, ar6_tx, ar7_tx,
                                     ],
                                     [
                                         w0_tx, w1_tx, w2_tx, w3_tx, w4_tx,
-                                        w5_tx, w6_tx, w7_tx, w8_tx,
+                                        w5_tx, w6_tx, w7_tx,
                                     ],
                                     xb_tx,
                                     xr_tx,

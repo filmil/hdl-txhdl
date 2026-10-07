@@ -71,7 +71,7 @@ pub struct Ran {
 /// Run `text` on the core with `data` in its memory, for at most
 /// `limit` cycles.
 pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
-    let mut hart = Hart::with(text);
+    let mut hart = Hart::<2>::with(text);
     let cpu = &hart.core;
     // The data memory's initial bytes, and the boot memory on the bus:
     // the same words the core fetches, readable by a load and not

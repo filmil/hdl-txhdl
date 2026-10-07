@@ -499,7 +499,7 @@ fn main() {
     );
     sheet(
         "Router",
-        "Router<9, BoardMap, 32, 32, 4, 4>",
+        "Router<8, BoardMap, 32, 32, 4, 4>",
         BoardRouter::lowered("router"),
     );
     sheet(

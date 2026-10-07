@@ -229,7 +229,8 @@ fn hal_map() -> Vec<(String, usize)> {
 
 /// Every base the HAL types by hand is where the router puts it: a
 /// memory or controller at its port's base in `BoardMap`, a small
-/// peripheral at its slot's base in `SlotMap` (issue 709).
+/// peripheral at its slot's base in `SlotMap` (issue 709), and the
+/// stack at the core's own window (issue 1275).
 ///
 /// The registers inside each peripheral come from the maps through
 /// `vreteno_regs`, but the bases are typed in the HAL, and a router
@@ -256,7 +257,11 @@ fn every_base_in_the_hal_is_where_the_router_puts_it() {
         ("FLASH", board(7)),
         ("PLIC", board(4)),
         ("DDR3", board(3)),
-        ("STACK", board(8)),
+        // Not the router's: the core's own window (issue 1275).
+        (
+            "STACK",
+            (vreteno32::core::DRAM_BASE as usize, "the core's data RAM"),
+        ),
     ];
     let hal = hal_map();
     for (name, value) in &hal {
