@@ -45,6 +45,19 @@ rust_test(
     ],
 )
 
+# Depth (#1273): scenes that cross in depth, through Razboj's model as a
+# tile table draws them, against floating point.
+rust_test(
+    name = "depth_test",
+    srcs = ["tests/depth.rs"],
+    edition = "2021",
+    deps = [
+        ":gles",
+        "//gpu/razboj",
+        "//gpu/razboj:tile",
+    ],
+)
+
 # Points and lines through Razboj's model, against what GL says of
 # them (#994).
 rust_test(
