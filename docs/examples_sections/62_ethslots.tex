@@ -92,11 +92,51 @@ interrupt it had not looked at, dropping the frame rather than
 reading it. Only a run that writes zero and finds the bit still set
 can tell those apart.
 
-Four signals say the whole of it: \code{tx\_go} while the transmit
-request waits for the engine to take it, \code{rx\_pending} from the
-arrival to the acknowledgement, and \code{irq} following it.
+Five signals say the whole of it: \code{tx\_go} while the transmit
+request waits for the engine to take it, \code{queued}, the frames
+waiting for the driver, from each arrival to its acknowledgement,
+\code{irq} while any waits, and \code{rx\_full} while both slots
+hold one.
 
 \input{ethslots_timing.tex}
+
+\subsection{Frames the driver has not read}
+
+The receiving side lands every frame, the slots taken in turn, and
+until issue~1313 it did so whether or not the driver had read the
+slot it landed in. Each arrival replaced the slot and length the
+driver was told and set the one pending bit. A driver still copying
+one frame when the next two arrived was told of the last of them
+only, and the frame two behind had landed on the one it was copying.
+\code{rx\_errors} read zero throughout. Zephyr's driver copies each
+frame inside its interrupt handler, about a thousand cycles and more
+out of DDR3, while full frames arrive every 12.3~$\mu$s at a
+gigabit, so on the board it was told of about one frame a burst.
+That was the loss behind fastboot's 55~KB/s (issue~1230).
+
+So the frames wait in order, as LiteEth's own do: a slot and a length
+each, at most one a slot. \code{rx\_slot} and \code{rx\_length} read
+the oldest, the pending bit is held while any waits, and an
+acknowledgement takes the oldest off. A driver that acknowledges one
+frame an interrupt, as Zephyr's and Linux's do, is interrupted again
+for the next, since the interrupt controller asks again for a line
+still high on the complete. While both slots hold a frame, the block
+raises \code{rx\_full}, and the receiving side, \code{FrameIn}, takes
+the next frame's bytes and stores none of them, and counts it; the
+count is what \code{rx\_errors} reads. A frame dropped at the input
+and counted is one TCP retransmits; a frame landed on one being read
+was two frames lost, and silently.
+
+The run here lands a third frame while the second waits, and checks
+that it waits behind it, that \code{rx\_full} is up, that
+\code{rx\_errors} reads the receiving side's count, and that two
+acknowledgements take the two frames off in order. On the board,
+\code{frames\_beyond\_the\_slots\_are\_dropped\_and\_counted\_not\_lost} in
+\code{board\_test} sends eight full frames back to back to a driver
+that spends five thousand loop turns on each: before, it was told of
+two and both had been overwritten under it, with \code{rx\_errors}
+at zero; now it is told of three, intact, and the other five are
+counted.
 
 \subsection{The cycle where the two meet}
 
@@ -104,10 +144,10 @@ The registers are written with \code{with!}, whose entries apply in
 order with the last drive of a field winning. That makes the order of
 two of them a decision about frames rather than about style.
 
-An arrival sets \code{rx\_pending} and an acknowledgement clears it.
-Written in the order they read most naturally, arrival first, an
-acknowledgement in the same cycle as an arrival clears the bit the
-arrival has just set. The frame is in memory, whole and correct, and
+An arrival set a pending bit and an acknowledgement cleared it, before
+the frames waited in order (issue~1313, below). Written in the order
+they read most naturally, arrival first, an acknowledgement in the
+same cycle as an arrival cleared the bit the arrival had just set. The frame is in memory, whole and correct, and
 nothing ever tells the driver it is there. It is the cycle where a
 busy link acknowledges one frame as the next one lands, so the fault
 appears under load and not in a quiet test.
