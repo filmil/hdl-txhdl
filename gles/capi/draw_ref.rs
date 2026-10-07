@@ -92,6 +92,6 @@ fn main() {
     println!("error {:04x}", g.get_error());
     println!("unimplemented {:04x}", gl::INVALID_OPERATION);
     println!(
-        "version OpenGL ES-CL 1.1 TxHDL, Common-Lite without textures, not conformant"
+        "version OpenGL ES-CL 1.1 TxHDL, Common-Lite, one texture unit, not conformant"
     );
 }
