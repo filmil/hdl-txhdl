@@ -22,19 +22,17 @@
 \thanks{Both authors are independent. Filip Filmar is the
 corresponding author, at f@hdlfactory.com; Dragiša Janković is
 reached at linkedin.com/in/dragisa-jankovic.}%
-\thanks{This is the tutorial: for somebody who has written some Rust,
-has not written hardware, and wants to write a unit, run it, see its
-waveform, and get a netlist out, in that order. Every listing is
-included from the project repository \code{HDL/txhdl} at build time
-and every printout is what the build produced by running it. The
-language itself is stated in the embedding article~\cite{embedding},
-the runtime in its own document~\cite{runtime}, every example in the
-examples document~\cite{examples}, and the cover~\cite{cover} lists
-all of them.}%
+\thanks{This tutorial guides developers with Rust familiarity through
+authoring synthesizable hardware, running simulations, inspecting waveforms,
+and deriving verified netlists. Every listing is extracted directly from the
+repository \code{HDL/txhdl} during the build, and execution logs reflect actual
+testbench output. Theoretical foundations appear in~\cite{embedding}, runtime
+mechanics in~\cite{runtime}, reference examples in~\cite{examples}, and the
+complete document corpus in~\cite{cover}.}%
 \thanks{The authors used a large language model, Claude, as an
-assistant in exploring the concepts and in writing and constructing
-the documents and the programs; every commit of the repository says
-so and carries the prompts that led to it, verbatim.}%
+assistant in exploring concepts and in drafting and constructing
+the documents and implementations; every repository commit documents
+this collaboration and includes the prompt sequence verbatim.}%
 \thanks{\buildstamp}}
 
 \markboth{TxHDL, Step by Step}{Filmar and Janković: TxHDL, Step by Step}
@@ -43,17 +41,17 @@ so and carries the prompts that led to it, verbatim.}%
 \maketitle
 
 \begin{abstract}
-TxHDL is a hardware description language that is a Rust library. A
-design is a struct whose state is registers, its behaviour an
-\code{async fn} that waits for a clock edge, reads, and drives; the
-same file simulates under Rust, writes a waveform, and lowers to
-Verilog and VHDL that the build checks against the simulation. This
-tutorial takes you from nothing to that in eight steps, each on a
-small example the build runs: a counter, the model of time, the ways
-of choosing, channels between units, ports with names, units made of
-units on more than one clock, the waveform, and the netlist with its
-checks. A ninth step shows how to add an example of your own, which
-is how everything here was added.
+TxHDL is a hardware description language implemented directly as a Rust
+library. A hardware design is a struct whose sequential state resides in typed
+registers, governed by an asynchronous execution function that synchronizes to
+clock edges, reads sampled inputs, and asserts synchronous drives. A single
+source file simulates natively in Rust, emits execution waveforms, and lowers to
+cycle-equivalent Verilog and VHDL netlists verified automatically against
+simulation traces. This tutorial introduces the system through eight executable
+milestones: basic counters, discrete-event time, conditional multiplexing,
+transactional channels, structured port bundles, multi-clock domain
+hierarchies, waveform visualization, and netlist verification. A final
+milestone demonstrates contributing new modules to the verified codebase.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -64,76 +62,67 @@ VHDL.
 \section{Before You Start}
 \label{sec:t-start}
 
-You need two things installed: \code{bazelisk}, which fetches the
-right Bazel, and Git, to clone. Everything else, the Rust and C
-toolchains, the simulators, the \LaTeX{} that made this page, comes
-through the build. Clone the
-repository and build it:
+Toolchain prerequisites are minimal: \code{bazelisk}, which provisions the
+pinned Bazel binary, and Git. Compilers, HDL simulators, formal model
+checkers, and the \LaTeX{} engines that typeset this document are fetched
+hermetically by Bazel. Clone the repository and execute the test suite:
 
 \begin{lstlisting}[style=ascii]
 bazel build //...
 bazel test  //...
 \end{lstlisting}
 
-The first build fetches toolchains and takes a while; the second is
-seconds. If both finish, you have everything this tutorial uses.
+The initial invocation caches hermetic toolchains; subsequent builds complete in
+seconds. Successful execution confirms a fully operational environment.
 
-Three sentences on what you are about to read. A \emph{unit} is a
-struct of registers with an \code{async fn run} that is its process.
-A process \emph{waits} for an edge of a clock, \emph{reads} its
-registers and inputs, and \emph{drives} its registers and outputs; a
-register's drive lands at the end of the step and an output's is seen
-at once, so the whole cycle reads as plain Rust with one rule about
-time. And a unit written in a subset
-the lowering reads is also a netlist, from the same file.
+The core mental model rests on three principles. A \emph{unit} is a struct whose
+fields declare sequential registers, animated by an \code{async fn run} process.
+The process synchronizes to active clock edges, samples registered and input
+values, and asserts combinational and registered drives: register updates take
+effect at cycle boundaries while combinational drives propagate immediately.
+When constrained to the lowerable language subset, a single unit source compiles
+both as an executable Rust model and as a synthesizable Verilog and VHDL
+netlist.
 
 \section{Step One: A Counter}
 \label{sec:t-counter}
 
-Listing~\ref{lst:t-counter} is the whole of a unit. It counts to
-eight while enabled and raises \code{tick} on the last count. Read it
-top to bottom.
+Listing~\ref{lst:t-counter} presents a self-contained unit: a 3-bit counter that
+advances while \code{enable} is asserted and emits a synchronous \code{tick}
+pulse at terminal count seven.
 
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=unit-unit,caption={The counter: a register, a wait, two reads, a predicated drive and an output. From \code{ex\_cheat.rs}.},label={lst:t-counter}]{lib/examples/ex_cheat.rs}
 
-The struct holds the state: one register, \code{n}, three bits wide.
-\code{Reg<T>} is a register of any value type; \code{U<3>} is an
-unsigned of three bits. \code{\#[derive(Trace)]} lets a waveform find
-the field by its name, and \code{Default} gives every register its
-zero.
+The struct definition encapsulates sequential state: a single 3-bit register,
+\code{n}. \code{Reg<T>} wraps any value type; \code{U<3>} denotes an unsigned
+3-bit integer. Deriving \code{Trace} exposes the register by name within
+simulation waveforms, while \code{Default} specifies its reset state.
 
-The \code{impl} names the unit's ports in its type: one input, a
-\code{Bit} called \code{enable}, and one output, a \code{Bit} called
-\code{tick}. \code{In} and \code{Out} are the two ends of a wire; the
-testbench holds the other ends. \code{\#[lower]} on the \code{impl}
-is what makes the file a netlist as well. Leave it off and the unit
-still simulates, but the header must then name its sides,
-\code{impl Unit<In, Out> for Counter}: the attribute is what writes
-them into the bare header from \code{run}'s signature.
+The \code{impl} block exposes port signatures: a scalar input \code{enable:
+In<Bit>} and an output \code{tick: Out<Bit>}. \code{In} and \code{Out}
+represent paired endpoints of a combinational wire. The \code{\#[lower]}
+procedural attribute derives synthesizable netlists directly. Without this
+attribute, units remain simulatable provided the header declares explicit port
+interfaces (\code{impl Unit<In, Out> for Counter}).
 
-The body is one \code{loop}, and the first line of the loop is the
-wait: \code{DefaultClock::rising().await}. Everything after it is one
-cycle. \code{get} reads the input as the edge left it, and
-\code{self.n} in an expression is the register as the edge left it.
-\code{with!} is the drives of the unit: under \code{enable},
-\code{n} becomes \code{n + 1} at the end of the step, the arrow
-\code{<=} pointing into the struct and the entry written as a
-struct literal writes a field.
-\code{tick.set} drives the output, this cycle, from the value the
-register had at the top. Nothing here branches, and nothing is
-assigned twice; that is the shape every unit has.
+The process body executes an infinite \code{loop} initiated by an edge wait:
+\code{DefaultClock::rising().await}. Logic following this wait executes within a
+single clock cycle. Input \code{enable.get()} reflects the wire state sampled at
+the clock edge, while \code{self.n} reads the registered count. Macro
+\code{with!} governs sequential updates: when \code{enable} is true, \code{n}
+latches \code{n + 1} at the cycle boundary, using struct-literal syntax with
+update operator \code{<=}. Combinational output \code{tick.set} asserts during
+the active cycle based on the state sampled at edge arrival. This
+structure---a wait, reads, combinational evaluations, and single-assignment
+drives---defines the canonical shape of all lowerable units.
 
-Now run it. \code{bazel run //lib/examples:ex\_cheat} runs the
-\code{main} below the unit, which you will read in
-Section~\ref{sec:t-testbench}, and prints Listing~\ref{lst:t-counter-out}:
-the counter's Verilog, which is Step Eight. The \code{rst} among its
-ports is the reset, which every module gets without asking; Step Six
-says what it does. Fig.~\ref{fig:t-counter}
-is its waveform, drawn by the build from the run: \code{n} counts
-while \code{enable} is high, \code{tick} is high in the cycle \code{n}
-is seven, and both stop when the enable drops.
-A wire is drawn at the edge that ends its cycle, so the pulse of
-\code{tick} sits one cycle right of the seven.
+Execute the design via \code{bazel run //lib/examples:ex\_cheat}. The runner
+executes the embedded testbench (Section~\ref{sec:t-testbench}) and emits the
+derived Verilog netlist in Listing~\ref{lst:t-counter-out}. Synchronous reset
+\code{rst} is bound implicitly. Figure~\ref{fig:t-counter} illustrates the
+cycle-accurate trace: \code{n} increments while \code{enable} is asserted,
+\code{tick} pulses when \code{n} equals seven, and progression halts when
+\code{enable} deasserts.
 
 \begin{figure}[htbp]
 \centering
@@ -149,70 +138,60 @@ edge after each seven.}
 \section{Step Two: Time}
 \label{sec:t-time}
 
-Everything you need to know about time fits on this page, and the
-figure above shows it. Time is in \emph{ticks}. The default clock has
-a period of two ticks and rises at the even ones, so a cycle is two
-ticks and every rising edge is an even number on the axis.
+Discrete time is quantified in half-cycle \emph{ticks}. The default clock runs
+with a period of two ticks, rising on even ticks and falling on odd ticks.
 
-A \emph{register} takes its value at an edge. When the loop drives
-\code{self.n <= n + 1}, nothing changes yet; the drive is remembered,
-and at the end of the step every drive lands at once. So a register
-read after the wait is the value as the edge left it, and a register
-driven after the wait shows the new value in the next cycle. That is
-why \code{tick} is computed from \code{n} before the drive: the
-output in a cycle is a function of the state at the start of it,
-which is what hardware does, and what the netlist will do.
+A \emph{register} updates exclusively at clock edges. When code evaluates
+\code{self.n <= n + 1}, the update is scheduled rather than committed
+immediately; all registered drives latch simultaneously at the end of the
+simulation step. Consequently, reading a register after an edge yields its value
+prior to the step, while driven values emerge in the subsequent cycle. Computing
+\code{tick} from \code{n} prior to the drive ensures the output reflects the
+registered state at the beginning of the cycle, matching hardware RTL behavior.
 
-A \emph{wire} is what \code{set} drives: an output, or a \code{let}
-inside the loop, which the lowering keeps as a named wire. A wire has
-no memory; it is a function of the state and the inputs of this
-cycle.
+A \emph{wire} represents combinational nets driven by \code{set}: output ports
+or intermediate \code{let} bindings, which lowering preserves as named nets.
+Wires hold no state and evaluate strictly as combinational functions of current
+inputs and registered state.
 
-The one rule: \textbf{every \code{.await} is a cycle boundary.} A
-process that has crossed an edge at this step cannot cross it again,
-so a second wait written after the first waits for the next edge. If
-you want two events at one edge, you write them in
-\code{parallel!}, and the examples document has one that does; it is
-for the simulation only, and the lowering does not read it. State
-read before a wait, at the top of the loop, is state read in the
-previous cycle; read after the wait, always.
+The core temporal invariant is simple: \textbf{every \code{.await} defines a
+cycle boundary.} A process cannot cross multiple edges in a single simulation
+step; a subsequent wait statement suspends until the next active edge.
+Evaluating concurrent events at an identical edge requires \code{parallel!}
+(simulation only). State sampled prior to a wait reflects the previous cycle;
+reads must follow the wait statement.
 
-So a process may wait more than once in its loop and take a step a
-cycle: an address at one edge, the data at the next. The lowering
-makes such a loop a state machine with a state per wait, and a wait
-under \code{if} a state the process visits only when the condition
-holds. An output set in one state keeps its value until another state
-sets it, as a wire in the run does. Step Eight has the rest.
+Multi-step sequential routines execute across successive cycles by placing
+multiple wait points within a loop. The lowering engine transforms such
+processes into explicit finite state machines, where each wait defines a
+distinct state and conditional waits branch across the state graph. Signals
+asserted in a state hold their values until reassigned.
 
 \section{Step Three: Choosing}
 \label{sec:t-choosing}
 
-Hardware has no branch. Both arms of a choice exist at once and a
-condition selects, which is why the three ways of choosing have their
-own names, so that the file reads as the hardware does. \code{with!}
-you have seen: the drives of the unit, each under a condition if it
-has one, a group of them under one with an optional \code{else}.
-\code{when!(c => self \{ .. \})} is one such group with the
-condition written first, for a line that is about the condition.
-\code{case!} is the group with many arms, and it is what a state
-machine is made of. Rust's own \code{if} is there too,
-over a \code{bool}, with the drives under it written as \code{set};
-its arms are the same priority chain, read as written, and they nest. Listing~\ref{lst:t-case} is a
-sequencer that waits for \code{go}, loads a count, runs it down and
-reports done.
+Hardware circuits implement multiplexers rather than procedural branches:
+competing expressions evaluate concurrently and a selector selects the active
+signal. TxHDL provides explicit selection primitives to reflect circuit
+topology. Macro \code{with!} specifies conditional register updates, supporting
+single guards or prioritized chains with an optional \code{else}. Macro
+\code{when!(c => self \{ .. \})} places the condition first for guard-centric
+logic. Macro \code{case!} implements multi-way pattern matching, the primary
+building block of finite state machines. Standard Rust \code{if} statements
+evaluate boolean conditions around \code{set} drives, nesting as priority
+decoders. Listing~\ref{lst:t-case} illustrates an explicit state machine
+sequencing an execution countdown.
 
 \lstinputlisting[caption={A state machine with \code{case!}: each arm is a Rust pattern, guards included, and the first that matches wins. \code{ex\_case.rs}.},label={lst:t-case}]{lib/examples/ex_case.rs}
 
-The arms are Rust patterns. An arm with a guard, \code{State::Run if
-n == 0}, sits above the plain arm for the same state, and the first
-arm that matches wins, exactly as \code{match} would. The state is an
-enum of your own: \code{\#[derive(Value)]} gives it a width, two
-bits for four variants, and a look in a waveform.
-Fig.~\ref{fig:t-case} shows it running: \code{go} for one cycle,
-then the states one per edge, and \code{count} running down. The
-printout, Listing~\ref{lst:t-case-out}, is the same run as text, and
-then the state machine's Verilog: every arm is there, in order, and
-nothing else.
+Case arms match native Rust patterns in top-to-bottom order, including pattern
+guards (\code{State::Run if n == 0}). State representations use custom enums:
+deriving \code{Value} automatically establishes netlist bit width (two bits for
+four variants) and waveform formatting. Figure~\ref{fig:t-case} demonstrates
+cycle progression: assertion of \code{go} triggers transition to \code{Load},
+followed by three decrements in \code{Run}, entering \code{Done}, and returning
+to \code{Idle}. Listing~\ref{lst:t-case-out} shows execution logs alongside the
+emitted Verilog state machine.
 
 \begin{figure}[htbp]
 \centering
@@ -224,44 +203,39 @@ three cycles of \code{Run}, \code{Done}, and back to \code{Idle}.}
 
 \lstinputlisting[style=ascii,caption={What \code{ex\_case} printed: one state per cycle, then the lowering.},label={lst:t-case-out}]{out_case.txt}
 
-The third way is \code{select!}, which chooses a \emph{value} rather
-than a drive: \code{select!(f3.raw() => \{ 0 => a + b, 1 => a <{}< b,
-.. \})} is a multiplexer, and the Vreteno core's ALU is one of
-these. \code{mux(c, a, b)} is the two-way form. Rust's own forms
-work as well: an \code{if} with an \code{else} that yields a value,
-and a \code{match}, lower to the same chain of conditions, and a
-pattern may be a range, \code{0x30..=0x39}, as may
-\code{(lo..=hi).contains(\&x)}. You choose between values with
-\code{select!}, \code{mux}, a value \code{if} or a \code{match};
-between drives with \code{with!}, \code{when!}, \code{case!} and
-\code{if}. That is the whole vocabulary of choice.
+For selecting \emph{values} rather than drives, \code{select!} synthesizes an
+explicit multiplexer (\code{select!(op => \{ 0 => a + b, 1 => a << b, ..\})}),
+as used in the Vreteno ALU. Primitive \code{mux(c, a, b)} provides 2-to-1
+selection. Rust value-yielding \code{if/else} blocks and \code{match}
+expressions lower to identical multiplexer trees, supporting pattern ranges
+(\code{0x30..=0x39}) and range checks (\code{(lo..=hi).contains(\&x)}). In
+summary: choose values via \code{select!}, \code{mux}, or \code{match}; choose
+drives via \code{with!}, \code{when!}, \code{case!}, or \code{if}.
 
 \section{Step Four: Talking Between Units}
 \label{sec:t-channels}
 
-Two units talk over a \emph{channel}. A channel carries a
-\emph{transaction}, a value with the trait \code{Transaction}, which
-any \code{U<N>} has and a struct of values gets by deriving it. It
-has two ends: \code{Tx}, on which a unit \code{send}s, and \code{Rx},
-on which a unit \code{recv}s. Between them the runtime keeps an
-elastic buffer of two, so a send lands in the next cycle and a
-receiver never sees a word before the edge after it was offered.
-Listing~\ref{lst:t-stage} is a unit between two channels: it waits
-\code{until} a word is offered and there is room to pass it on, then
-receives it, sends it on incremented, and counts.
+Inter-unit communication relies on \emph{channels}. A channel transports a
+structured \emph{transaction} implementing the \code{Transaction} trait,
+automatically derived for any \code{U<N>} or composite value struct. Channels
+expose paired endpoints: \code{Tx} for sending and \code{Rx} for receiving. The
+runtime arbitrates transfers through an elastic 2-element FIFO buffer, ensuring
+offered data commits on the subsequent cycle and receivers never sample unready
+payloads. Listing~\ref{lst:t-stage} presents an elastic pipeline stage that
+synchronizes via \code{until}, reads an incoming transaction, and forwards an
+incremented result.
 
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=unit-unit,caption={A stage between two channels: \code{until} is the wait, and its condition guards everything after it. From \code{ex\_stage.rs}.},label={lst:t-stage}]{lib/examples/ex_stage.rs}
 
-\code{until(clock, condition)} is a wait like \code{rising}, one that
-passes only at an edge at which the condition holds. \code{peek} is
-the head of the channel as the edge left it, \code{ready} whether
-there is room on the other channel, \code{recv} the take, \code{take}
-the take of whatever is offered as \code{(offered, value)}, for a
-unit that serves the channel every cycle, and \code{send} the offer. In the netlist a channel is a \code{valid}, a \code{ready}
-and the data, and the lowering makes the wait's condition the guard
-of every drive, the \code{ready} of the receive and the \code{valid}
-of the send. Fig.~\ref{fig:t-stage} shows the handshake on both
-sides of the stage.
+Primitive \code{until(clock, condition)} suspends execution until an active
+clock edge on which the boolean predicate evaluates true. Channel methods
+include \code{peek} to inspect head data non-destructively, \code{ready} to query
+downstream buffer capacity, \code{recv} to dequeue, \code{take} to sample
+\code{(valid, data)} opportunistically each cycle, and \code{send} to enqueue.
+In synthesised netlists, a channel expands into payload, \code{valid}, and
+\code{ready} signals, with the \code{until} predicate synthesizing as an
+activation guard. Figure~\ref{fig:t-stage} illustrates the resulting channel
+handshake.
 
 \begin{figure}[htbp]
 \centering
@@ -271,78 +245,62 @@ taken, and passed on incremented on \code{out} a cycle later.}
 \label{fig:t-stage}
 \end{figure}
 
-A unit that runs every cycle, as a processor core does, cannot wait
-\code{until}. It talks by predicate instead: it receives with no wait
-before the receive, which takes whatever is offered, and sends under
-\code{if}, whose condition becomes the channel's \code{valid}.
-Listing~\ref{lst:t-tap} is that form: a tap that takes every word and
-passes on the odd ones.
+Modules running continuously every clock cycle---such as processor
+pipelines---avoid blocking \code{until} calls. Instead, they sample channels
+opportunistically using \code{take} and drive downstream channels under standard
+\code{if} blocks, where the branch condition maps directly to channel
+\code{valid}. Listing~\ref{lst:t-tap} shows this pattern in a stream filter
+routing odd values.
 
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=unit-unit,caption={A tap: a receive with no wait, and a send under a plain \code{if}. From \code{ex\_tap.rs}.},label={lst:t-tap}]{lib/examples/ex_tap.rs}
 
-One thing to know before you wire two units with plain wires rather
-than a channel: a wire between units carries no promise about which
-of the two sees the other's value in the same step. A channel does.
-When you need a wire between units, drive it from a register and run
-the unit that drives it first; the Vreteno document has the one
-case where that was needed, and the reasons.
+Crucially, raw combinational wires between modules provide no cross-module
+evaluation ordering guarantees within the same simulation step. Transactional
+channels enforce explicit cycle boundaries. When direct wires are necessary,
+drive them strictly from registered outputs and schedule the driver first.
 
 \section{Step Five: Ports With Names}
 \label{sec:t-ports}
 
-The units so far had one port on each side. A unit with more could
-take a tuple, but a tuple is read by position, so swapping two ports
-of the same type compiles and is wrong. Name them instead. A side of
-a unit may be any struct of ports: its fields are the ends of
-channels and wires, or smaller structs of ports, and each is named
-where it is declared, where it is passed and where it is read.
-Listing~\ref{lst:t-ports} is a subtractor whose two operands have the
-same type and cannot be swapped by accident.
+While scalar ports suffice for simple modules, complex interfaces group signals
+within structured structs to prevent accidental pin-swapping bugs. Port bundles
+declare channel and wire endpoints as named fields, preserving clarity at
+instantiation and extraction. Listing~\ref{lst:t-ports} defines a signed
+subtractor whose identical operand types are disambiguated by named fields.
 
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=unit-unit,caption={Ports as structs: \code{Diff} takes \code{DiffIn} and gives \code{DiffOut}, and \code{Top} takes the sink of an \code{interface!}. From \code{ex\_ports.rs}.},label={lst:t-ports}]{lib/examples/ex_ports.rs}
 
-\code{Diff} takes \code{DiffIn} and gives \code{DiffOut}. Its
-\code{run} takes the input side apart in its signature, as any Rust
-function may, and reads the output side by field: \code{out.diff},
-\code{out.borrow}. A struct of ports may be generic, as these are
-over the width, and it may be declared in another crate:
-\code{\#[derive(Ports)]} on it is all the lowering asks. Every
-AXI-Lite peripheral in \code{//lib/parts} is handed its link as one
-such struct, \code{LitePort}. Such a peripheral says its registers once,
-in \code{regmap!}: each register's place, whether a host reads it,
-writes it or both, and its bit fields. What \code{run} reads and
-writes goes through the map, and the same declaration writes the C
-header a driver includes and the datasheet's table, as
-\code{ex\_regmap} shows.
+\code{Diff} accepts a structured \code{DiffIn} bundle and produces
+\code{DiffOut}. Function \code{run} destructures input ports in its signature
+while addressing output fields by name (\code{out.diff}, \code{out.borrow}).
+Port structs support generic parameters and external declarations via
+\code{\#[derive(Ports)]}. For example, all AXI-Lite peripherals in
+\code{//lib/parts} consume standard \code{LitePort} bundles. Peripheral
+registers are declared once via \code{regmap!}, specifying addresses, access
+permissions, and bit fields; the macro derives address decoders, C firmware
+headers, and datasheet tables automatically.
 
-A side may also be an array of ports, \code{ins: [Rx<U<8>>; N]},
-\code{N} a const parameter. The body goes over it with
-\code{for i in 0..N}, which the lowering unrolls for each \code{N},
-and the netlist's ports are \code{ins\_0} onward, as \code{ex\_loop}
-shows. The AXI arbiter in \code{//lib/parts} is one unit for any
-number of hosts this way.
+Port arrays (\code{ins: [Rx<U<8>>; N]}) parameterise module interfaces across
+compile-time constants \code{N}. Processes traverse them with unrolled
+\code{for i in 0..N} loops, synthesizing indexed netlist ports (\code{ins\_0},
+\code{ins\_1}), as seen in the multi-host AXI arbiter.
 
-\code{interface!} declares the members of a link once and writes a
-struct per \emph{role}, each role saying which way each member goes.
-\code{Operands} has two channels: its \code{Source} role sends on
-both, its \code{Sink} receives on both, and \code{Operands::new()}
-makes the two roles, joined. \code{Top} takes the sink and passes its
-members to \code{Diff} in a struct literal, by name, so the order in
-which they are written no longer matters.
+Macro \code{interface!} declares bus protocols once, synthesizing asymmetric
+role structs. \code{Operands} defines a dual-channel link: the \code{Source}
+role transmits while \code{Sink} receives, connected via
+\code{Operands::new()}. The top-level module maps sink signals to \code{Diff} by
+name, making port order irrelevant.
 
-The netlist flattens each struct into its fields.
-Listing~\ref{lst:t-ports-out} is the top of the module the lowering
-wrote: each channel is its data, its \code{valid} and its
-\code{ready}, under the field's name. Fig.~\ref{fig:t-ports} is the
-run.
+Lowering flattens structured ports into discrete nets.
+Listing~\ref{lst:t-ports-out} shows emitted Verilog port declarations with
+flattened channel signals (\code{diff\_data}, \code{diff\_valid},
+\code{diff\_ready}). Figure~\ref{fig:t-ports} illustrates cycle-accurate
+subtraction and borrow generation.
 
 \lstinputlisting[style=ascii,linerange={20-27},caption={The ports of the module \code{ex\_ports} printed: every field, flattened, under its name.},label={lst:t-ports-out}]{out_ports.txt}
 
 \begin{figure}[htbp]
 \centering
-% Eight long signal names make this one wider than a column at the
-% waveforms' 7 cm, so it is scaled to the column rather than spilling
-% into the next one.
 \resizebox{\columnwidth}{!}{\input{paper_ports_timing.tex}}
 \caption{The subtractor: a pair is taken when both operands are
 offered and the output has room, and the difference leaves a cycle
@@ -353,32 +311,25 @@ later. \code{3 - 7} raises \code{borrow} and leaves 252, \code{fc} in hex.}
 \section{Step Six: Units of Units, and Their Clocks}
 \label{sec:t-units}
 
-A design bigger than a counter is a unit that holds units. The
-children are fields of the parent. Its \code{run} hands each child its
-ports and runs them together, with \code{join2} for two and nested
-\code{join2}s for more, and the lowering reads that as one module
-with an instance of each child. \code{Top} in
-Listing~\ref{lst:t-ports} is one already, with a single child.
-A parent can pass a child a side it took whole, \code{bus}, even when
-the struct is declared in another crate. It makes a whole link
-between two children in one line,
-\code{let (host, per) = link::<LitePort<32, 32, 4>>()}, rather than a
-channel at a time, and it holds a child's input at a constant with
-\code{tie(v)} where the input is passed.
+Modular architectures compose child units within parent structs. A parent holds
+child instances as struct fields, wires their ports inside \code{run}, and
+schedules concurrent execution using \code{join2} (nested for three or more
+units). Lowering generates hierarchical module instantiations. A parent can
+forward complex port bundles (\code{bus}) across hierarchy boundaries,
+instantiate bidirectional links via \code{link::<LitePort<32, 32, 4>>()}, and tie
+unused inputs to constants using \code{tie(v)}.
 
-A unit's process waits on one clock, so a second clock is the other
-reason to have children. A clock is a type: a struct that implements
-\code{Clock}, with a name and a period in ticks. \code{DefaultClock}
-has a period of two. Listing~\ref{lst:t-twoclock} declares a clock
-three times slower, and two counters. One runs on the default clock,
-which it names only in its wait. The other runs on \code{Slow}, and names it in
-its wait, its register and both its ports: \code{Reg<U<8>, Slow>},
-\code{In<Bit, Slow>}, \code{Out<U<8>, Slow>}. The parent, \code{Two},
-has no wait and no register; its ports name \code{Slow} where the slow
-counter's do. The module the lowering writes has an input
-for each clock, and the build checks each port against the edges of
-its own clock. Fig.~\ref{fig:t-twoclock} shows the two counts, one
-step of the slow count to three of the fast.
+Because a unit process synchronizes to a single clock, multi-clock systems
+mandate hierarchical decomposition. A clock domain is an affine type
+implementing \code{Clock}, specifying its name and tick period.
+\code{DefaultClock} has a period of two ticks. Listing~\ref{lst:t-twoclock}
+defines a clock domain running three times slower alongside two independent
+counters. The default counter names its clock only in edge waits. The slow
+counter binds \code{Slow} in its wait, registers, and port signatures
+(\code{Reg<U<8>, Slow>}, \code{In<Bit, Slow>}). The parent module declares no
+waits or internal registers, forwarding clock ports directly. Lowering emits
+distinct clock inputs and validates each interface against its domain edges
+(Figure~\ref{fig:t-twoclock}).
 
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange={clock-clock,units-units},caption={A clock three times slower, a counter on each clock, and a parent that holds both. From \code{ex\_twoclock.rs}.},label={lst:t-twoclock}]{lib/examples/ex_twoclock.rs}
 
@@ -390,205 +341,122 @@ step of the slow count to three of the fast.
 \label{fig:t-twoclock}
 \end{figure}
 
-Nothing passes between the two counters, and that is deliberate. The
-clock is part of a port's type, so a signal on one clock cannot be
-handed to a unit that wants another, and a value crosses as a channel,
-through \code{ChanCdc} from \code{//lib/parts}: two processes, one on each
-clock, a memory between them, and each side keeping the other's Gray
-pointer through two flops of its own clock. The example
-\code{ex\_cdc} runs one, and the build checks its netlist as it checks
-any other.
+Signals cannot cross clock domains directly; type checking enforces clock domain
+isolation statically. Inter-domain transfers require explicit dual-clock
+synchronizers such as \code{ChanCdc}, implementing dual-port RAM buffers
+synchronized by two-stage Gray-code pointer synchronizers, verified under
+\code{ex\_cdc}.
 
-One port you never write is the reset. Every module the lowering
-writes gets an \code{rst} input, as it gets its clocks; while it is
-high, every register goes back to what it held before the first edge,
-and the channels empty. The counter's Verilog in
-Listing~\ref{lst:t-counter-out} has it. A unit that must do something
-under reset, rather than just forget, takes \code{rst: In<Bit>} and
-reads it, and the netlist joins that port to the same net. Such a
-unit's own registers are then not put back by the reset: under it
-they do what its body says, and nothing else. The
-Vreteno core does this, because it has to fetch from its reset
-vector.
+Synchronous resets are implicit. Lowered modules receive an active-high
+\code{rst} input, asserting which restores initial register values and clears
+channel buffers. Modules requiring explicit reset routines declare an input
+\code{rst: In<Bit>}, joining the global reset net while executing custom
+initialization logic. The Vreteno processor uses this to initialize its program
+counter to the reset vector.
 
 \section{Step Seven: Running and Watching}
 \label{sec:t-testbench}
 
-The \code{main} of an example is its testbench. Listing~\ref{lst:t-main}
-is the counter's: it makes the two wires with \code{signal}, keeping
-the ends the unit does not take; starts a waveform if the build asked
-for one; runs the unit with \code{Running::new}; and then drives
-\code{enable} and steps the design one cycle at a time with
-\code{sim.cycle()}, which is where a testbench looks at wires and
-registers between steps.
+The \code{main} function serves as the unit testbench. Listing~\ref{lst:t-main}
+shows the counter testbench: instantiating wires via \code{signal}, attaching
+waveform logging via \code{Wave::from\_env()}, initializing execution state
+with \code{Running::new}, and stepping through simulation cycles via
+\code{sim.cycle()}.
 
 \lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,linerange=main-main,caption={The counter's testbench: wires, a waveform, the unit running, twelve cycles. From \code{ex\_cheat.rs}.},label={lst:t-main}]{lib/examples/ex_cheat.rs}
 
-The waveform is the part you will use most. \code{Wave::from\_env()}
-returns a writer when \code{TXHDL\_FST} or \code{TXHDL\_VCD} names a
-file, so the same binary runs silent or writes a trace, and the build
-sets the variable when it draws a figure. You name what to watch:
-the clock, each wire by a name of your choosing, and a unit by name,
-which brings every field it derives \code{Trace} for, under that
-name. Then \code{start()}, and every step from there on is written
-until \code{stop()}. Open the file in any waveform viewer, or let the
-build draw it: every figure in this tutorial is a
-\code{waveform()} entry in \code{docs/BUILD.bazel} that names the
-example and the signals, and the build runs the example, converts the
-trace and draws the picture, so a figure can never disagree with the
-code.
+Simulation tracing is controlled by environment variables.
+\code{Wave::from\_env()} instantiates a logger when \code{TXHDL\_FST} or
+\code{TXHDL\_VCD} is set, allowing binaries to run silently or generate traces
+without recompilation. Testbenches register clocks, wire signals, and units
+deriving \code{Trace}, logging all active state between \code{start()} and
+\code{stop()}. Documentation waveforms are generated via Bazel \code{waveform()}
+targets that execute the example and render figures automatically, guaranteeing
+consistency with code.
 
-A value of your own, an enum or a struct with \code{\#[derive(Value)]},
-shows in a trace by its variant name or field by field, as
-\code{state} did in Fig.~\ref{fig:t-case}.
+Custom enums and structs deriving \code{Value} render symbolic variant names
+directly in traces. Internal combinational nets not bound to ports can be
+observed by declaring them as struct fields of type \code{Wire<T>}: driving them
+via \code{set} and sampling via \code{get} enables waveform capture while
+synthesizing into identical netlist wires.
 
-One more thing you will want to watch: a signal inside the unit that
-is neither a register nor a port. A \code{let} in the loop lives
-only in the step, so the trace cannot see it. Keep it as a field of
-type \code{Wire<T>} instead, drive it with \code{set} where the
-\code{let} was, and read it back with \code{get} in the same step:
-it shows in the trace under the unit's name, and in the netlist it is
-exactly the wire the \code{let} would have been, so the hardware
-does not change. The divider in the examples document~\cite{examples}
-keeps its two decisions that way, and the Vreteno core keeps its
-stall, its interrupt and its redirect so.
-
-A unit runs in a plain \code{\#[test]} too, with the same
-\code{signal}, \code{Running::new} and \code{cycle} as in a
-\code{main}. The runtime's clock and executor are per thread, so the
-tests of a crate run in parallel as Rust runs them, each with a time
-of its own. Compare the unit's registers after a cycle, not its
-output wires, which a process sets during the step from the state
-before it. A \code{\#[test]} is the place for assertions about
-values; the netlist check needs a trace, and comes from the
-\code{waveform()} entry of Step Nine.
+Units also execute within standard Rust \code{\#[test]} harnesses. The runtime
+maintains per-thread executors, executing unit tests concurrently with isolated
+simulation clocks. Test assertions should verify registered state following
+cycle advancement rather than transient combinational nets.
 
 \section{Step Eight: From Rust to Hardware}
 \label{sec:t-netlist}
 
-You have seen the counter's Verilog in Listing~\ref{lst:t-counter-out}.
-It came from \code{Counter::verilog("counter")}, and
-\code{Counter::lowered("counter")} is the netlist itself, which the
-runtime can also write as VHDL. Both come from the same \code{run}
-you read in Step One: \code{\#[lower]} reads the loop, and the
-lowering rewrites what it finds. A register is a register. A wire
-named by \code{let} is a wire of that name. \code{with!}, \code{when!},
-\code{case!} and \code{if} are predicated assignments in the clocked
-block.
-\code{select!} and \code{mux} are conditional expressions. The wait
-is the clock edge of the block, and an \code{until} is a guard on
-everything after it. A memory, \code{Mem<T, N>}, is an array,
-written through \code{at} and read by index.
+Listing~\ref{lst:t-counter-out} shows Verilog emitted by
+\code{Counter::verilog("counter")}. Equivalent netlist data structures and VHDL
+entities are generated via \code{Counter::lowered("counter")}. Both
+representations derive from the \code{run} process: \code{\#[lower]} traverses
+the AST, mapping registers to clocked flip-flops, \code{let} bindings to named
+wires, \code{with!}/\code{case!} to synchronous assignment blocks,
+\code{select!}/\code{mux} to multiplexers, edge waits to sensitivity lists, and
+\code{Mem<T, N>} to synchronous memory arrays.
 
-That is the subset: a loop of one wait, then reads, \code{let}s that
-are functions of what was read, and drives. A loop of several waits
-is read too, as a state machine with a state per wait, which
-\code{ex\_seq} in the examples document shows. A wait under \code{if}
-is a state with a way around it, as \code{ex\_frame} shows. Inside it you have
-Rust's operators on the value types, \code{+}, \code{-}, \code{*},
-\code{\%}, unary \code{-}, \code{\&}, \code{|}, \code{\^{}}, \code{!},
-\code{<{}<}, \code{>{}>}, the compares and \code{as} to an unsigned
-integer, then \code{slice}, \code{concat}, \code{sext} and
-\code{zext} for taking words apart and putting them together, and
-\code{mul::<M>} for a product wider than its operands. A value may be wider
-than 128 bits: \code{U<256, 2>} keeps its bits in two limbs of 128,
-the second parameter the number of limbs. An \code{if}
-that yields a value and a \code{match} lower as \code{mux} and
-\code{select!} do, and a range, as a pattern or in
-\code{contains}, as the two compares it stands for. What you do not
-have inside a lowered loop is what hardware does not have: a function
-call the lowering does not know. A \code{for} whose body does not wait
-is unrolled, so its count is fixed, \code{N} a const parameter; one
-whose body waits is a counted loop with a register for its counter,
-and its bound may be a register's value, as \code{ex\_repeat} shows.
-The macro says so at compile time, with a message that names the
-construct.
+Lowerable logic supports standard arithmetic and bitwise operators (\code{+},
+\code{-}, \code{*}, \code{\%}, \code{\&}, \code{|}, \code{\^{}}, \code{!},
+\code{<<}, \code{>>}), signed comparisons, \code{as} casts, bit extraction
+(\code{slice}), concatenation (\code{concat}), sign/zero extension
+(\code{sext}/\code{zext}), and multi-limb wide integers (\code{U<256, 2>}). Loops
+without internal waits unroll statically; loops containing waits synthesize as
+counter-driven state machines (\code{ex\_repeat}). Functions annotated with
+\code{\#[lower]} inline transparently, allowing modular helper routines
+(\code{ex\_helpers}). Keyword collisions with Verilog or VHDL are resolved by
+appending \code{\_rw}.
 
-A function the lowering does know is one that carries
-\code{\#[lower]} itself, in the same file or \code{pub} in any module
-of the crate or of a dependency, as \code{ex\_helpers} shows: it stays plain Rust for
-the simulation and is inlined at every call, so a step can keep its
-arithmetic in named pieces, as \code{ex\_fn} does. Names are yours to
-choose. A port called \code{next}, \code{begin} or \code{out}, or a
-register called \code{signal}, is a word VHDL or SystemVerilog
-reserves; the netlist writes it with \code{\_rw} after it, the same
-in both and in the generated testbench, so \code{next} is
-\code{next\_rw} and the co-simulation still finds it.
+Generated netlists undergo rigorous co-simulation. For every lowered example,
+Bazel captures the golden Rust execution trace, derives VHDL and Verilog
+netlists, and generates testbenches that replay inputs and assert register and
+port equivalence at every tick under \code{nvc} (VHDL) and Verilator (Verilog).
+Custom units inherit these checks automatically upon declaration in
+\code{waveform()}.
 
-The lowering is checked, not trusted. For every lowered example the
-build runs the Rust simulation, keeps its trace, writes the VHDL and
-the Verilog, and generates a testbench from the trace that replays
-the inputs into the netlist and asserts every register and every
-output at every tick; then it simulates the VHDL under nvc and the
-Verilog under Verilator, nvc built from source by the build and
-Verilator fetched by it as a prebuilt binary. The
-tests are \code{//docs:cheat\_sim\_counter\_tb\_test} and
-\code{//docs:cheat\_vsim\_test} for the counter, and there is a pair
-for every unit in this tutorial. When you write a unit that lowers,
-the same two tests appear for it the moment you add it to the build,
-which is Step Nine.
-
-That comparison says the netlist does what the run did, not that
-either is right. For that, a unit states what it knows about itself
-where it is written: \code{check!(c, "why")} must hold where it is
-reached, \code{assume!} is what the unit takes for granted of its
-inputs, and \code{cover!} is what it should be possible to reach. The
-run panics on a broken check or assumption and counts each cover
-point, and the netlist carries them as assertions, which nvc and
-Verilator check as they replay the run and a formal tool can prove
-for every input. \code{ex\_formal} states all three.
+Beyond regression co-simulation, modules formalize invariants using \code{check!}
+(safety assertions), \code{assume!} (environment preconditions), and
+\code{cover!} (reachability targets). Simulation halts on violated assertions,
+while netlist assertions export to SymbiYosys for formal unbounded proof across
+all inputs.
 
 \section{Step Nine: Adding Your Own}
 \label{sec:t-adding}
 
-Every example you have read was added the same way, and it is the
-way to add yours.
+Every reference example in the codebase follows a four-step lifecycle:
 
 \begin{enumerate}
-\item Write \code{lib/examples/ex\_\emph{name}.rs}: the unit, and a
-  \code{main} that runs it, prints what is worth reading, and, if
-  the unit lowers, writes its netlist with
-  \code{txhdl::netlist::write\_vhdl\_from\_env} and prints its
-  Verilog. Copy \code{ex\_cheat.rs} and change it.
-\item Add a \code{rust\_binary} for it in
-  \code{lib/examples/BUILD.bazel}, next to the others, and add the
-  file to the \code{sources} filegroup there. Now \code{bazel run
-  //lib/examples:ex\_\emph{name}} runs it.
-\item Add a \code{waveform()} entry in \code{docs/BUILD.bazel}
-  naming the example and the signals to draw; give it
-  \code{lowered = (entity, unit)} if the unit lowers. That makes the
-  figure, the printout, and the two netlist tests.
-\item Write a section for it in \code{docs/examples\_sections}, with
-  a number in its name that sorts it where it belongs; the build
-  includes every file there in the order of the names. Add the run
-  and the figure to the examples document's \code{data}. Build the
-  document and look at the page.
+\item \textbf{Implement the Unit:} Create \code{lib/examples/ex\_\emph{name}.rs},
+  implementing the module and a testbench that runs simulation and derives
+  netlists via \code{txhdl::netlist::write\_vhdl\_from\_env}.
+\item \textbf{Register Build Targets:} Declare a \code{rust\_binary} in
+  \code{lib/examples/BUILD.bazel} and register the file in the \code{sources}
+  filegroup.
+\item \textbf{Configure Waveform Verification:} Add a \code{waveform()} target
+  in \code{docs/BUILD.bazel} specifying trace signals and declaring
+  \code{lowered = (entity, unit)} for automated co-simulation.
+\item \textbf{Document the Module:} Author a numbered exposition file in
+  \code{docs/examples\_sections/}, registering the generated figure and
+  execution log in the examples document.
 \end{enumerate}
 
-The rule behind the four steps is in the repository's
-\code{AGENTS.md}: a concept lives in three places, the runtime, an
-example, and a document, or it is not finished. The example is the
-test.
+This workflow enforces the triad rule: every feature exists simultaneously in
+the runtime library, in an automated executable test, and in verified
+documentation.
 
 \section{Where Next}
 \label{sec:t-next}
 
-The examples document~\cite{examples} has one of these per concept,
-in the order of the language, with the runtime's public interface at
-the end for looking things up. Three more tutorials pick up where
-this one stops: \code{//docs:zero} builds a blinky in an empty
-directory against the published repository, \code{//docs:axi} is the
-AXI bus from one register to a router of peripherals, and
-\code{//docs:station} is the reservation station read cycle by
-cycle. The embedding
-article~\cite{embedding} states the language: the rule that every
-construct Rust provides is deleted, and what is left. The runtime
-document~\cite{runtime} is the library itself, verbatim, with the
-model of time stated in prose, for when you want to know what a
-construct does inside. And the Vreteno document is a RISC-V core
-written in the subset you have just read, checked every cycle against
-a reference model, lowered, and placed and routed at 100~MHz, which
-is what the eight steps add up to.
+\code{//docs:examples} catalogues reference designs organized by language
+feature. Three specialized tutorials extend this foundation: \code{//docs:zero}
+configures an isolated Bazel workspace from scratch; \code{//docs:axi} details
+AXI bus interconnects and peripheral routers; \code{//docs:station} examines
+out-of-order reservation stations. The theoretical foundations of language
+reduction appear in \code{//docs:embedding}~\cite{embedding}; discrete-event
+runtime mechanics are documented in \code{//docs:runtime}~\cite{runtime}; the
+complete Vreteno RISC-V processor demonstrates these principles scaled to
+physical silicon.
 
 \begin{thebibliography}{10}
 
