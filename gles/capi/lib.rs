@@ -99,6 +99,7 @@ struct Arrays {
     vertex: Array,
     colour: Array,
     normal: Array,
+    texcoord: Array,
 }
 
 /// The current context: the library's, and its client arrays.
@@ -135,6 +136,7 @@ pub unsafe extern "C" fn gles_make_current(
             vertex: Array::OFF,
             colour: Array::OFF,
             normal: Array::OFF,
+            texcoord: Array::OFF,
         },
     });
 }
@@ -401,6 +403,21 @@ pub extern "C" fn glDepthMask(flag: u8) {
 }
 
 #[no_mangle]
+pub extern "C" fn glBlendFunc(sfactor: u32, dfactor: u32) {
+    with(|g| g.blend_func(sfactor, dfactor));
+}
+
+#[no_mangle]
+pub extern "C" fn glAlphaFuncx(func: u32, reference: Fx) {
+    with(|g| g.alpha_func(func, reference));
+}
+
+#[no_mangle]
+pub extern "C" fn glColorMask(red: u8, green: u8, blue: u8, alpha: u8) {
+    with(|g| g.color_mask(red != 0, green != 0, blue != 0, alpha != 0));
+}
+
+#[no_mangle]
 pub extern "C" fn glClearDepthx(depth: Fx) {
     with(|g| g.clear_depth(depth));
 }
@@ -445,7 +462,7 @@ pub extern "C" fn glGetString(name: u32) -> *const u8 {
         VENDOR => b"TxHDL\0",
         RENDERER => b"Razboj\0",
         VERSION => {
-            b"OpenGL ES-CL 1.1 TxHDL, Common-Lite without textures, not conformant\0"
+            b"OpenGL ES-CL 1.1 TxHDL, Common-Lite, one texture unit, not conformant\0"
         }
         EXTENSIONS => b"\0",
         _ => {
@@ -462,6 +479,7 @@ fn array(c: &mut Context, which: u32) -> Option<&mut Array> {
         VERTEX_ARRAY => Some(&mut c.arrays.vertex),
         COLOR_ARRAY => Some(&mut c.arrays.colour),
         NORMAL_ARRAY => Some(&mut c.arrays.normal),
+        gl::TEXTURE_COORD_ARRAY => Some(&mut c.arrays.texcoord),
         _ => None,
     }
 }
@@ -599,10 +617,24 @@ unsafe fn fetch(c: &Arrays, i: usize) -> Vertex {
             }
         })
     });
+    let t = &c.texcoord;
+    let tex = t.on.then(|| {
+        let mut v = [0, 0, 0, ONE];
+        for (k, p) in v.iter_mut().enumerate().take(t.size) {
+            let raw = t.raw(i, k);
+            *p = if t.kind == FIXED {
+                raw as Fx
+            } else {
+                (raw << 16) as Fx
+            };
+        }
+        v
+    });
     Vertex {
         position,
         colour,
         normal,
+        tex,
     }
 }
 
@@ -654,4 +686,187 @@ pub unsafe extern "C" fn glDrawElements(
     c.gl.draw_vertices(mode, count as usize, |k| {
         fetch(&arrays, index.raw(k, 0) as usize)
     });
+}
+
+/// Gives the current context room for its textures (#997): `words` words
+/// at `mem`, which Razboj reads at the bus address `bus`. Not a GL call:
+/// EGL's, at `eglMakeCurrent`.
+///
+/// # Safety
+/// `mem` must be `words` words the context may keep for as long as it
+/// lives, which nothing else writes.
+#[no_mangle]
+pub unsafe extern "C" fn gles_texture_room(
+    mem: *mut u32,
+    words: usize,
+    bus: u32,
+) {
+    let room = core::slice::from_raw_parts_mut(mem, words);
+    with(|g| g.texture_room(room, bus));
+}
+
+/// The textures' descriptor table's bus address, which Razboj is told,
+/// or nought with no room given. Not a GL call: EGL's.
+pub fn gles_texture_table() -> u32 {
+    current()
+        .and_then(|c| c.gl.textures().map(|s| s.table()))
+        .unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "C" fn glTexCoordPointer(
+    size: i32,
+    kind: u32,
+    stride: i32,
+    at: *const c_void,
+) {
+    pointer(
+        gl::TEXTURE_COORD_ARRAY,
+        size,
+        kind,
+        stride,
+        at,
+        &[2, 3, 4],
+        &[BYTE, SHORT, FIXED],
+    );
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn glGenTextures(n: i32, names: *mut u32) {
+    if n < 0 {
+        return gles_record_error(gl::INVALID_VALUE);
+    }
+    let out = core::slice::from_raw_parts_mut(names, n as usize);
+    with(|g| g.gen_textures(out));
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn glDeleteTextures(n: i32, names: *const u32) {
+    if n < 0 {
+        return gles_record_error(gl::INVALID_VALUE);
+    }
+    let names = core::slice::from_raw_parts(names, n as usize);
+    with(|g| g.delete_textures(names));
+}
+
+#[no_mangle]
+pub extern "C" fn glBindTexture(target: u32, name: u32) {
+    with(|g| g.bind_texture(target, name));
+}
+
+/// The bytes `glTexImage2D` reads: every row but the last padded to the
+/// unpack alignment `align`, as the library reads them.
+fn image_bytes(
+    w: usize,
+    h: usize,
+    format: u32,
+    kind: u32,
+    align: usize,
+) -> usize {
+    let texel = match (format, kind) {
+        (gl::RGBA, gl::UNSIGNED_BYTE) => 4,
+        (gl::RGB, gl::UNSIGNED_BYTE) => 3,
+        (gl::LUMINANCE_ALPHA, gl::UNSIGNED_BYTE) => 2,
+        (_, gl::UNSIGNED_BYTE) => 1,
+        _ => 2,
+    };
+    (w * texel).div_ceil(align) * align * (h - 1) + w * texel
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn glTexImage2D(
+    target: u32,
+    level: i32,
+    internal: i32,
+    width: i32,
+    height: i32,
+    border: i32,
+    format: u32,
+    kind: u32,
+    pixels: *const c_void,
+) {
+    if level < 0 || width < 1 || height < 1 || border != 0 || pixels.is_null() {
+        return gles_record_error(gl::INVALID_VALUE);
+    }
+    let (w, h) = (width as usize, height as usize);
+    let Some(c) = current() else {
+        return;
+    };
+    let bytes = image_bytes(w, h, format, kind, c.gl.unpack_alignment());
+    let data = core::slice::from_raw_parts(pixels as *const u8, bytes);
+    with(|g| {
+        g.tex_image_2d(
+            target,
+            level as u32,
+            internal as u32,
+            w as u32,
+            h as u32,
+            0,
+            format,
+            kind,
+            data,
+        )
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn glTexParameteri(target: u32, pname: u32, param: i32) {
+    with(|g| g.tex_parameter(target, pname, param as u32));
+}
+
+/// An enumerant given through the fixed-point call is the enumerant's
+/// own value, as GL ES 1.1 says of enumerated parameters.
+#[no_mangle]
+pub extern "C" fn glTexParameterx(target: u32, pname: u32, param: Fx) {
+    with(|g| g.tex_parameter(target, pname, param as u32));
+}
+
+#[no_mangle]
+pub extern "C" fn glTexEnvx(target: u32, pname: u32, param: Fx) {
+    with(|g| g.tex_env(target, pname, &[param]));
+}
+
+#[no_mangle]
+pub extern "C" fn glTexEnvi(target: u32, pname: u32, param: i32) {
+    with(|g| g.tex_env(target, pname, &[param as Fx]));
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn glTexEnvxv(
+    target: u32,
+    pname: u32,
+    params: *const Fx,
+) {
+    let n = if pname == gl::TEXTURE_ENV_COLOR { 4 } else { 1 };
+    let v = vals(params, n);
+    with(|g| g.tex_env(target, pname, &v[..n]));
+}
+
+/// The one texture unit, `GL_TEXTURE0`: any other is
+/// `GL_INVALID_ENUM`.
+const TEXTURE0: u32 = 0x84C0;
+
+#[no_mangle]
+pub extern "C" fn glActiveTexture(unit: u32) {
+    if unit != TEXTURE0 {
+        gles_record_error(gl::INVALID_ENUM);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn glClientActiveTexture(unit: u32) {
+    glActiveTexture(unit);
+}
+
+#[no_mangle]
+pub extern "C" fn glMultiTexCoord4x(unit: u32, s: Fx, t: Fx, r: Fx, q: Fx) {
+    if unit != TEXTURE0 {
+        return gles_record_error(gl::INVALID_ENUM);
+    }
+    with(|g| g.tex_coord(s, t, r, q));
+}
+
+#[no_mangle]
+pub extern "C" fn glPixelStorei(pname: u32, param: i32) {
+    with(|g| g.pixel_store(pname, param as u32));
 }

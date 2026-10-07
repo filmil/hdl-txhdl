@@ -100,6 +100,81 @@ pub enum Op {
         colours: [u32; 3],
         z: [u32; 3],
     },
+    /// From here on, blend as `mode` says, or not at all with `None`
+    /// (issue 993). State, as the depth mode is, and like depth it holds
+    /// only in a tiled list.
+    Blend(Option<BlendMode>),
+    /// From here on, drop a pixel whose alpha fails the test, or test
+    /// nothing with `None` (issue 993). Tiled lists only.
+    AlphaTest(Option<AlphaTest>),
+    /// From here on, write only the channels `mask` holds, a bit a byte
+    /// of the pixel: bit 0 blue, 1 green, 2 red, 3 alpha, so `0xf` is
+    /// every channel and nought none (issue 993). Tiled lists only.
+    ColourMask(u32),
+    /// From here on, texture the entries that carry texture coordinates
+    /// as `mode` says, or not at all with `None` (issue 997). Tiled lists
+    /// only.
+    Texture(Option<TexMode>),
+    /// A triangle with texture coordinates: flat in `colours[0]`, or
+    /// shaded from a colour at each vertex when `shaded`; a depth at each
+    /// vertex, used under a depth mode; and at each vertex `u q`, `v q`
+    /// and `q`, with 32, 32 and 48 bits of fraction (see
+    /// `razboj_tile::tex`). The assembler works out the level of detail's
+    /// planes from them.
+    TexTri {
+        a: (i32, i32),
+        b: (i32, i32),
+        c: (i32, i32),
+        colours: [u32; 3],
+        shaded: bool,
+        z: [u32; 3],
+        uvq: [(i64, i64, u64); 3],
+    },
+}
+
+/// How entries are textured (issue 997): the texture's descriptor index,
+/// the environment, `razboj_tile::tex::REPLACE` to `ADD`, and the
+/// environment's colour, `0xAARRGGBB`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TexMode {
+    pub desc: u32,
+    pub env: u32,
+    pub env_colour: u32,
+}
+
+/// How an entry blends (issue 993): GL ES 1.1's `glBlendFunc`, the
+/// source's factor and the destination's, as [`ZERO`] to
+/// [`SRC_ALPHA_SATURATE`] say them, under the one equation 1.1 has, the
+/// sum.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlendMode {
+    pub src: u32,
+    pub dst: u32,
+}
+
+/// GL's blend factors, numbered for the four bits the list gives each:
+/// `GL_ZERO` and `GL_ONE` as they are, and from `GL_SRC_COLOR` on, GL's
+/// value less `0x300` and plus two. [`SRC_ALPHA_SATURATE`] is for the
+/// source only.
+pub const ZERO: u32 = 0;
+pub const ONE: u32 = 1;
+pub const SRC_COLOR: u32 = 2;
+pub const ONE_MINUS_SRC_COLOR: u32 = 3;
+pub const SRC_ALPHA: u32 = 4;
+pub const ONE_MINUS_SRC_ALPHA: u32 = 5;
+pub const DST_ALPHA: u32 = 6;
+pub const ONE_MINUS_DST_ALPHA: u32 = 7;
+pub const DST_COLOR: u32 = 8;
+pub const ONE_MINUS_DST_COLOR: u32 = 9;
+pub const SRC_ALPHA_SATURATE: u32 = 10;
+
+/// An alpha test (issue 993): a pixel is kept when its alpha passes the
+/// comparison `func`, [`NEVER`] to [`ALWAYS`] as depth's, against
+/// `reference`, a byte.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AlphaTest {
+    pub func: u32,
+    pub reference: u32,
 }
 
 /// How an entry tests depth: the comparison a pixel's depth must pass
@@ -192,6 +267,69 @@ pub struct Insn {
     pub z0: U<32>,
     pub zdx: U<32>,
     pub zdy: U<32>,
+    /// Blending, the alpha test and the colour mask (issue 993): whether
+    /// the entry has any of them, which also gives it the second slot;
+    /// whether it blends, and its two factors; whether it tests alpha,
+    /// the comparison and the reference; and the channels it writes, a
+    /// bit a byte. Without `state` an entry blends nothing, tests no
+    /// alpha and writes every channel, whatever the rest say.
+    pub state: Bit,
+    pub blend: Bit,
+    pub sfactor: U<4>,
+    pub dfactor: U<4>,
+    pub atest: Bit,
+    pub afunc: U<3>,
+    pub aref: U<8>,
+    pub cmask: U<4>,
+    /// Texturing (issue 997): whether the entry is textured, which gives
+    /// it two slots more; its texture's descriptor index, environment and
+    /// environment colour; the planes `u q`, `v q` and `q`, 64 bits each,
+    /// which a triangle with texture coordinates carries whether textured
+    /// or not; and for the level of detail, the numerators of `du/dx`,
+    /// `dv/dx`, `du/dy` and `dv/dy`, each a value at the box's first pixel
+    /// and a step, down for the first two and right for the others, since
+    /// that is all each varies with, shifted right by `lodk`; see
+    /// `crate::tex::lod`.
+    pub tex: Bit,
+    pub tdesc: U<16>,
+    pub tenv: U<3>,
+    pub tenvc: U<32>,
+    pub lodk: U<8>,
+    pub nux: U<32>,
+    pub nuxd: U<32>,
+    pub nvx: U<32>,
+    pub nvxd: U<32>,
+    pub nuy: U<32>,
+    pub nuyd: U<32>,
+    pub nvy: U<32>,
+    pub nvyd: U<32>,
+    pub u0: U<64>,
+    pub udx: U<64>,
+    pub udy: U<64>,
+    pub v0: U<64>,
+    pub vdx: U<64>,
+    pub vdy: U<64>,
+    pub q0: U<64>,
+    pub qdx: U<64>,
+    pub qdy: U<64>,
+}
+
+impl Insn {
+    /// The channels the entry writes, a bit a byte of the pixel.
+    pub fn mask(&self) -> u32 {
+        if self.state.to_bool() {
+            self.cmask.raw() as u32
+        } else {
+            0xf
+        }
+    }
+
+    /// Whether the entry reads the colour already there: it blends, or
+    /// writes some channels but not all (issue 993).
+    pub fn reads_dst(&self) -> bool {
+        let m = self.mask();
+        self.state.to_bool() && (self.blend.to_bool() || (m != 0 && m != 0xf))
+    }
 }
 // end{op}
 
@@ -304,11 +442,16 @@ impl Op {
                 .encode_in(within, sw, sh)
             }
             Op::TriQ4 { colour, a, b, c } => {
-                triangle(colour, a, b, c, None, None, within)
+                triangle(colour, [a, b, c], None, None, None, within)
             }
-            Op::Gouraud { a, b, c, colours } => {
-                triangle(colours[0], a, b, c, Some(colours), None, within)
-            }
+            Op::Gouraud { a, b, c, colours } => triangle(
+                colours[0],
+                [a, b, c],
+                Some(colours),
+                None,
+                None,
+                within,
+            ),
             // Without a depth mode an entry with a depth draws as the
             // same entry without one.
             Op::RectZ {
@@ -320,7 +463,24 @@ impl Op {
             Op::GouraudZ {
                 a, b, c, colours, ..
             } => Op::Gouraud { a, b, c, colours }.encode_in(within, sw, sh),
-            Op::Scissor { .. } | Op::Depth(_) => None,
+            Op::TexTri {
+                a,
+                b,
+                c,
+                colours,
+                shaded,
+                uvq,
+                ..
+            } => {
+                let s = shaded.then_some(colours);
+                triangle(colours[0], [a, b, c], s, None, Some(uvq), within)
+            }
+            Op::Scissor { .. }
+            | Op::Depth(_)
+            | Op::Blend(_)
+            | Op::AlphaTest(_)
+            | Op::ColourMask(_)
+            | Op::Texture(_) => None,
         }
     }
 
@@ -346,7 +506,7 @@ impl Op {
                 i
             }
             Op::TriZ { colour, a, b, c, z } => {
-                triangle(colour, a, b, c, None, Some(z), within)?
+                triangle(colour, [a, b, c], None, Some(z), None, within)?
             }
             Op::GouraudZ {
                 a,
@@ -354,7 +514,27 @@ impl Op {
                 c,
                 colours,
                 z,
-            } => triangle(colours[0], a, b, c, Some(colours), Some(z), within)?,
+            } => triangle(
+                colours[0],
+                [a, b, c],
+                Some(colours),
+                Some(z),
+                None,
+                within,
+            )?,
+            Op::TexTri {
+                a,
+                b,
+                c,
+                colours,
+                shaded,
+                z,
+                uvq,
+            } => {
+                let s = shaded.then_some(colours);
+                let t = Some(uvq);
+                triangle(colours[0], [a, b, c], s, Some(z), t, within)?
+            }
             _ => return self.encode_in(within, sw, sh),
         };
         insn.depth = Bit::One;
@@ -368,19 +548,20 @@ impl Op {
 /// `colour`, or shaded from a colour at each vertex.
 fn triangle(
     colour: u32,
-    a: (i32, i32),
-    b: (i32, i32),
-    c: (i32, i32),
+    v: [(i32, i32); 3],
     shades: Option<[u32; 3]>,
     zs: Option<[u32; 3]>,
+    uvq: Option<[(i64, i64, u64); 3]>,
     within: Bounds,
 ) -> Option<Insn> {
+    let [a, b, c] = v;
     // The winding the rasteriser wants: swap two vertices, and their
     // colours and depths, when the signed area says the other way.
     let swap = area2(a, b, c) < 0;
     let (b, c) = if swap { (c, b) } else { (b, c) };
     let turn = |s: [u32; 3]| if swap { [s[0], s[2], s[1]] } else { s };
     let (shades, zs) = (shades.map(turn), zs.map(turn));
+    let uvq = uvq.map(|t| if swap { [t[0], t[2], t[1]] } else { t });
     if area2(a, b, c) == 0 {
         return None;
     }
@@ -431,7 +612,81 @@ fn triangle(
         let v = z.map(|z| (z & 0xffff) as i64);
         (insn.z0, insn.zdx, insn.zdy) = plane(a, b, c, v, first, ZFRAC);
     }
+    if let Some(t) = uvq {
+        // The texture's planes, exact in 64 bits: no fraction is dropped,
+        // so no half is added (issue 997).
+        let first = (x0 as i32 * SUB + SUB / 2, y0 as i32 * SUB + SUB / 2);
+        let w = |p: [i128; 3]| p.map(|v| U::<64>::from(v as i64 as u64));
+        let pl = |v: [i128; 3]| plane64(a, b, c, v, first);
+        let (u, v, q) = (
+            pl(t.map(|t| t.0 as i128)),
+            pl(t.map(|t| t.1 as i128)),
+            pl(t.map(|t| t.2 as i128)),
+        );
+        [insn.u0, insn.udx, insn.udy] = w(u);
+        [insn.v0, insn.vdx, insn.vdy] = w(v);
+        [insn.q0, insn.qdx, insn.qdy] = w(q);
+        // The level of detail's numerators. With `U = u q`, `du/dx` is
+        // `(U_x Q - U Q_x) / Q^2`, whose numerator varies with the row and
+        // not the column, and `du/dy`'s with the column and not the row:
+        // each is a value at the box's first pixel and one step.
+        let wrap = |p: [i128; 3]| p.map(|v| v as i64 as i128);
+        let ([u0, ux, uy], [v0, vx, vy], [q0, qx, qy]) =
+            (wrap(u), wrap(v), wrap(q));
+        let n = [
+            (ux * q0 - u0 * qx, ux * qy - uy * qx),
+            (vx * q0 - v0 * qx, vx * qy - vy * qx),
+            (uy * q0 - u0 * qy, uy * qx - ux * qy),
+            (vy * q0 - v0 * qy, vy * qx - vx * qy),
+        ];
+        // Shifted right until each fits 31 bits across the box, so that
+        // the walk steps them in 32: what `log2` needs of them.
+        let (bw, bh) = ((x1 - x0) as i128, (y1 - y0) as i128);
+        let far = n
+            .iter()
+            .enumerate()
+            .map(|(k, &(v, d))| {
+                let span = if k < 2 { bh } else { bw };
+                v.abs().max((v + d * span).abs())
+            })
+            .max()
+            .unwrap_or(0);
+        let k = (128 - far.leading_zeros()).saturating_sub(30);
+        let s = |x: i128| U::<32>::from((x >> k) as i32 as u32);
+        insn.lodk = U::from(k);
+        (insn.nux, insn.nuxd) = (s(n[0].0), s(n[0].1));
+        (insn.nvx, insn.nvxd) = (s(n[1].0), s(n[1].1));
+        (insn.nuy, insn.nuyd) = (s(n[2].0), s(n[2].1));
+        (insn.nvy, insn.nvyd) = (s(n[3].0), s(n[3].1));
+    }
     Some(insn)
+}
+
+/// A plane in 64 bits for a texture (issue 997): its value at `first` and
+/// its two steps, in the units the values `v` at the vertices are in,
+/// rounded to the nearest, with nothing dropped below them.
+fn plane64(
+    a: (i32, i32),
+    b: (i32, i32),
+    c: (i32, i32),
+    v: [i128; 3],
+    first: (i32, i32),
+) -> [i128; 3] {
+    let d = |p: (i32, i32), q: (i32, i32)| {
+        ((q.0 - p.0) as i128, (q.1 - p.1) as i128)
+    };
+    let ((ux, uy), (vx, vy)) = (d(a, b), d(a, c));
+    let area = ux * vy - uy * vx;
+    let (db, dc) = (v[1] - v[0], v[2] - v[0]);
+    let nx = db * vy - dc * uy;
+    let ny = dc * ux - db * vx;
+    let round = |n: i128| (n + area / 2).div_euclid(area);
+    let (px, py) = d(a, first);
+    [
+        v[0] + round(nx * px + ny * py),
+        round(nx * SUB as i128),
+        round(ny * SUB as i128),
+    ]
 }
 // end{encode}
 
@@ -478,19 +733,78 @@ fn plane(
 pub fn assemble(ops: &[Op], sw: usize, sh: usize) -> Vec<Insn> {
     let mut within = Some(screen(sw, sh));
     let mut depth = None;
+    let mut pixel = Pixel::default();
+    let mut texture = None;
     let mut out = Vec::new();
     for op in ops {
-        if let Op::Scissor { x, y, w, h } = *op {
-            within = clip(x, y, x + w - 1, y + h - 1, screen(sw, sh));
-        } else if let Op::Depth(mode) = *op {
-            depth = mode;
-        } else if let Some(insn) =
-            within.and_then(|b| op.encode_with(b, depth, sw, sh))
-        {
-            out.push(insn);
+        match *op {
+            Op::Scissor { x, y, w, h } => {
+                within = clip(x, y, x + w - 1, y + h - 1, screen(sw, sh))
+            }
+            Op::Depth(mode) => depth = mode,
+            Op::Blend(mode) => pixel.blend = mode,
+            Op::AlphaTest(test) => pixel.alpha = test,
+            Op::ColourMask(mask) => pixel.mask = mask & 0xf,
+            Op::Texture(mode) => texture = mode,
+            _ => {
+                if let Some(mut insn) =
+                    within.and_then(|b| op.encode_with(b, depth, sw, sh))
+                {
+                    pixel.apply(&mut insn);
+                    if let (Some(t), Op::TexTri { .. }) = (texture, op) {
+                        insn.tex = Bit::One;
+                        insn.tdesc = U::from(t.desc);
+                        insn.tenv = U::from(t.env);
+                        insn.tenvc = U::from(t.env_colour);
+                    }
+                    out.push(insn);
+                }
+            }
         }
     }
     out
+}
+
+/// What happens to each pixel an entry draws after its coverage and
+/// before its depth (issue 993): the blend, the alpha test and the
+/// colour mask the assembler holds as state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pixel {
+    pub blend: Option<BlendMode>,
+    pub alpha: Option<AlphaTest>,
+    pub mask: u32,
+}
+
+impl Default for Pixel {
+    fn default() -> Self {
+        Pixel {
+            blend: None,
+            alpha: None,
+            mask: 0xf,
+        }
+    }
+}
+
+impl Pixel {
+    /// `insn` with this state: none of it, if the state is GL's default,
+    /// so that a list that uses none of it is as it was.
+    pub fn apply(&self, insn: &mut Insn) {
+        if *self == Pixel::default() {
+            return;
+        }
+        insn.state = Bit::One;
+        if let Some(b) = self.blend {
+            insn.blend = Bit::One;
+            insn.sfactor = U::from(b.src);
+            insn.dfactor = U::from(b.dst);
+        }
+        if let Some(a) = self.alpha {
+            insn.atest = Bit::One;
+            insn.afunc = U::from(a.func);
+            insn.aref = U::from(a.reference & 0xff);
+        }
+        insn.cmask = U::from(self.mask);
+    }
 }
 
 #[cfg(test)]

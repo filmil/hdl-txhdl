@@ -129,7 +129,13 @@ fn window(s: &Scene, v: [f64; 3]) -> (f64, f64, f64) {
 fn reference(s: &Scene, x: usize, y: usize) -> (Option<u32>, bool) {
     let (px, py) = (x as f64 + 0.5, y as f64 + 0.5);
     let mut colour = 0xff00_0000u32;
-    let mut depth = (s.clear_depth * 65535.0).round();
+    // The clear writes the depth only where the mask lets it (#993); a
+    // tile's depth is the farthest until something writes it.
+    let mut depth = if s.mask {
+        (s.clear_depth * 65535.0).round()
+    } else {
+        65535.0
+    };
     // How far the depth there may be from the library's: a unit for the
     // rounding of the planes, and what the depth moves across a
     // sixteenth of a pixel, where a vertex worked out in fixed point may

@@ -82,6 +82,40 @@ pub fn depth(w: &mut [u32; WORDS], func: u32, write: bool) {
     w[15] = (w[15] & 0xff) | 1 << 8 | (func & 7) << 9 | (write as u32) << 12;
 }
 
+/// What happens to a pixel after its coverage (#993), as Razboj's list
+/// says it: the blend's two factors, Razboj's codes from nought for
+/// `GL_ZERO`; the alpha test's comparison, from nought for `GL_NEVER`,
+/// and its reference, a byte; and the channels written, a bit a byte,
+/// bit 0 blue to bit 3 alpha.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pixel {
+    pub blend: Option<(u32, u32)>,
+    pub alpha: Option<(u32, u32)>,
+    pub mask: u32,
+}
+
+impl Pixel {
+    /// GL's initial state, which an instruction says by leaving it out.
+    pub const DEFAULT: Pixel = Pixel {
+        blend: None,
+        alpha: None,
+        mask: 0xf,
+    };
+}
+
+/// An instruction's word 15 told it has the pixel's state `p`, and its
+/// second slot, `slot`, given it in words 3 and 4 (Razboj's #993).
+pub fn state(w: &mut [u32; WORDS], slot: &mut [u32; WORDS], p: Pixel) {
+    w[15] |= 1 << 13;
+    slot[3] = p
+        .blend
+        .map_or(0, |(s, d)| 1 | (s & 0xf) << 4 | (d & 0xf) << 8);
+    slot[4] = p
+        .alpha
+        .map_or(0, |(f, r)| 1 | (f & 7) << 1 | (r & 0xff) << 8)
+        | (p.mask & 0xf) << 16;
+}
+
 /// A depth plane's slot for a depth `z` everywhere, of sixteen bits:
 /// the plane of a clear, a rectangle or a point, half a unit up as a
 /// triangle's start is.
@@ -178,4 +212,99 @@ pub fn rect(colour: u32, within: Bounds) -> [u32; WORDS] {
     w[2] = x1 | (y1 << 16);
     w[15] = colour >> 24;
     w
+}
+
+/// A triangle's two texture slots (#997), for the triangle `v`, in
+/// sixteenths, on `within`, with `u q`, `v q` and `q` at its vertices
+/// (32, 32 and 48 bits of fraction): its three planes and the level of
+/// detail's numerators, as `razboj::op`'s assembler works them out, bit
+/// for bit, and the tests check. Words 13 to 15 of the first slot, the
+/// texture and its environment, are the caller's. `None` where
+/// [`triangle`] draws nothing.
+pub fn textured(
+    v: [(i32, i32); 3],
+    uvq: [(i64, i64, u64); 3],
+    within: Bounds,
+) -> Option<[[u32; WORDS]; 2]> {
+    let [a, b, c] = v;
+    let swap = area2(a, b, c) < 0;
+    let (b, c) = if swap { (c, b) } else { (b, c) };
+    let t = if swap { [uvq[0], uvq[2], uvq[1]] } else { uvq };
+    if area2(a, b, c) == 0 {
+        return None;
+    }
+    let px = |v: i32| v.div_euclid(SUB as i32);
+    let lo = |f: fn((i32, i32)) -> i32| px(f(a).min(f(b)).min(f(c)));
+    let hi = |f: fn((i32, i32)) -> i32| px(f(a).max(f(b)).max(f(c)));
+    let (x0, y0, x1, y1) =
+        clip(lo(|p| p.0), lo(|p| p.1), hi(|p| p.0), hi(|p| p.1), within)?;
+    let first = (x0 as i32 * 16 + 8, y0 as i32 * 16 + 8);
+    let pl =
+        |v: [i128; 3]| plane64(a, b, c, v, first).map(|v| v as i64 as i128);
+    let u = pl(t.map(|t| t.0 as i128));
+    let w = pl(t.map(|t| t.1 as i128));
+    let q = pl(t.map(|t| t.2 as i128));
+    let ([u0, ux, uy], [v0, vx, vy], [q0, qx, qy]) = (u, w, q);
+    let n = [
+        (ux * q0 - u0 * qx, ux * qy - uy * qx),
+        (vx * q0 - v0 * qx, vx * qy - vy * qx),
+        (uy * q0 - u0 * qy, uy * qx - ux * qy),
+        (vy * q0 - v0 * qy, vy * qx - vx * qy),
+    ];
+    let (bw, bh) = ((x1 - x0) as i128, (y1 - y0) as i128);
+    let far = n
+        .iter()
+        .enumerate()
+        .map(|(k, &(v, d))| {
+            let span = if k < 2 { bh } else { bw };
+            v.abs().max((v + d * span).abs())
+        })
+        .max()
+        .unwrap_or(0);
+    let k = (128 - far.leading_zeros()).saturating_sub(30);
+    let (mut sa, mut sb) = ([0u32; WORDS], [0u32; WORDS]);
+    let words =
+        |p: [i128; 3]| razboj_tile::tex::plane_words(p.map(|v| v as u64));
+    sa[0..6].copy_from_slice(&words(u));
+    sa[6..12].copy_from_slice(&words(w));
+    sa[12] = k;
+    sb[0..6].copy_from_slice(&words(q));
+    for (j, (v, d)) in n.iter().enumerate() {
+        sb[6 + 2 * j] = (v >> k) as i32 as u32;
+        sb[7 + 2 * j] = (d >> k) as i32 as u32;
+    }
+    Some([sa, sb])
+}
+
+/// A plane in 64 bits for a texture: its value at `first` and its two
+/// steps, in the units of the values `v` at the vertices, rounded to the
+/// nearest, as `razboj::op`'s `plane64`.
+fn plane64(
+    a: (i32, i32),
+    b: (i32, i32),
+    c: (i32, i32),
+    v: [i128; 3],
+    first: (i32, i32),
+) -> [i128; 3] {
+    let d = |p: (i32, i32), q: (i32, i32)| {
+        ((q.0 - p.0) as i128, (q.1 - p.1) as i128)
+    };
+    let ((ux, uy), (vx, vy)) = (d(a, b), d(a, c));
+    let area = ux * vy - uy * vx;
+    let (db, dc) = (v[1] - v[0], v[2] - v[0]);
+    let nx = db * vy - dc * uy;
+    let ny = dc * ux - db * vx;
+    let round = |n: i128| (n + area / 2).div_euclid(area);
+    let (px, py) = d(a, first);
+    [
+        v[0] + round(nx * px + ny * py),
+        round(nx * SUB as i128),
+        round(ny * SUB as i128),
+    ]
+}
+
+/// An instruction's word 15 told it is textured, which gives it its
+/// second slot and the two texture slots after that.
+pub fn textured_bit(w: &mut [u32; WORDS]) {
+    w[15] |= razboj_tile::tex::TEXTURED;
 }

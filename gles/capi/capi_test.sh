@@ -17,8 +17,8 @@ if [[ "$c" != "$rust" ]]; then
   exit 1
 fi
 # A clear of the colour and the depth with its depth plane's slot, the
-# quad's two triangles, and the fan's two, each testing depth with its
-# slot: eight slots. An empty frame on both sides is not a pass.
+# quad's two triangles, and the fan's two, each testing depth and
+# blending with its slot: eight slots. An empty frame on both sides is not a pass.
 if [[ "$(echo "$c" | head -1)" != "frame 8" ]]; then
   echo "the scene drew $(echo "$c" | head -1), not eight slots" >&2
   exit 1

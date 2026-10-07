@@ -19,6 +19,7 @@ rust_library(
         "src/lib.rs",
         "src/light.rs",
         "src/matrix.rs",
+        "src/texture.rs",
     ],
     crate_name = "gles",
     edition = "2021",
@@ -50,6 +51,33 @@ rust_test(
 rust_test(
     name = "depth_test",
     srcs = ["tests/depth.rs"],
+    edition = "2021",
+    deps = [
+        ":gles",
+        "//gpu/razboj",
+        "//gpu/razboj:tile",
+    ],
+)
+
+# Blending, the alpha test and the colour mask (#993), through Razboj's
+# model, against floating point; and the clear of the depth alone.
+rust_test(
+    name = "blend_test",
+    srcs = ["tests/blend.rs"],
+    edition = "2021",
+    deps = [
+        ":gles",
+        "//gpu/razboj",
+        "//gpu/razboj:tile",
+    ],
+)
+
+# Textures (#997): a quad in perspective, uploaded with its levels
+# generated, through Razboj's model, against GL in floating point; and
+# the formats an upload takes.
+rust_test(
+    name = "texture_test",
+    srcs = ["tests/texture.rs"],
     edition = "2021",
     deps = [
         ":gles",

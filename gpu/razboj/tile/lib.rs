@@ -23,6 +23,8 @@
 //! place and could differ in the last bit.
 #![cfg_attr(not(test), no_std)]
 
+pub mod tex;
+
 // begin{clip}
 /// A box of pixels, both ends included: the first column and row, then
 /// the last.
@@ -80,7 +82,7 @@ pub const TILED: u32 = 1 << 31;
 ///
 /// ```text
 ///   word 0  [15:0] first     [31:16] count
-///   word 1   [9:0] x origin  [25:16] y origin
+///   word 1   [9:0] x origin  [25:16] y origin  [26] load
 /// ```
 ///
 /// `first` is the index of the tile's first entry in the binned list,
@@ -89,7 +91,8 @@ pub const TILED: u32 = 1 << 31;
 /// holds only the tiles some entry touches, left to right and top to
 /// bottom, so a pixel that no entry covers is not written, as it is not
 /// in the untiled list either; its length takes the place of the count
-/// the rasteriser polls for.
+/// the rasteriser polls for. The load bit, [`LOAD`], is set by the
+/// binning, not here.
 pub fn record(first: u32, count: u32, x: u32, y: u32) -> [u32; TILE_WORDS] {
     [
         (first & 0xffff) | (count << 16),
@@ -175,10 +178,60 @@ pub enum Refused {
 }
 
 // begin{bin}
-/// Whether an entry tests depth, which makes it two slots: its own and
-/// its depth plane's after it (issue 992).
-pub fn has_depth(e: &[u32; WORDS]) -> bool {
-    (e[15] >> 8) & 1 == 1
+/// Whether an entry has a second slot, which makes it two slots: its
+/// own and, after it, its depth plane's and the pixel's state, when it
+/// tests depth (issue 992) or blends, tests alpha or masks its colour
+/// (issue 993).
+pub fn has_ext(e: &[u32; WORDS]) -> bool {
+    (e[15] >> 8) & 1 == 1 || (e[15] >> 13) & 1 == 1 || is_textured(e)
+}
+
+/// Whether an entry is textured (issue 997), which gives it two slots more
+/// after its second, for its texture's planes; see [`tex`].
+pub fn is_textured(e: &[u32; WORDS]) -> bool {
+    e[15] & tex::TEXTURED != 0
+}
+
+/// The slots an entry takes: its own, its second, and its texture's two.
+pub fn slots_of(e: &[u32; WORDS]) -> usize {
+    1 + has_ext(e) as usize + 2 * is_textured(e) as usize
+}
+
+/// The bit of a tile's record, in its second word, that says the tile
+/// is to be loaded from the framebuffer before its entries are drawn,
+/// since one of them reads the colour already there (issue 993).
+pub const LOAD: u32 = 1 << 26;
+
+/// Whether an entry with its second slot `ext` reads the colour already
+/// at a pixel: it blends, or writes some of the channels but not all.
+fn reads_dst(e: &[u32; WORDS], ext: &[u32; WORDS]) -> bool {
+    let mask = (ext[4] >> 16) & 0xf;
+    (e[15] >> 13) & 1 == 1 && (ext[3] & 1 == 1 || (mask != 0 && mask != 0xf))
+}
+
+/// Whether an entry, clipped to the tile `within`, writes every pixel of
+/// it in full, whatever was there: a clear, or a rectangle over the
+/// whole tile, that neither blends, tests alpha nor masks a channel,
+/// and passes every depth test it makes.
+fn covers(
+    e: &[u32; WORDS],
+    ext: Option<&[u32; WORDS]>,
+    within: Bounds,
+) -> bool {
+    let kind = e[0] & 3;
+    let whole = kind == CLEAR
+        || (kind == RECT
+            && e[1] & 0x3ff <= within.0
+            && (e[1] >> 16) & 0x3ff <= within.1
+            && e[2] & 0x3ff >= within.2
+            && (e[2] >> 16) & 0x3ff >= within.3);
+    let state = (e[15] >> 13) & 1 == 1;
+    let plain = !state
+        || ext.is_some_and(|x| {
+            x[3] & 1 == 0 && x[4] & 1 == 0 && (x[4] >> 16) & 0xf == 0xf
+        });
+    let depth = (e[15] >> 8) & 1 == 0 || (e[15] >> 9) & 7 == 7;
+    whole && plain && depth
 }
 
 /// A depth plane's slot for an entry clipped `i` pixels right and `j`
@@ -196,9 +249,11 @@ pub fn step_depth(ext: &[u32; WORDS], i: u32, j: u32) -> [u32; WORDS] {
 /// tile's entries, in the list's order, one tile after another, into
 /// `entries`, and the tiles' records into `tiles`, in the order of
 /// [`record`]. Each entry goes into every tile its box touches, clipped
-/// to the tile by [`clip_entry`]; an entry that tests depth takes its
-/// depth plane's slot with it, stepped to the clipped box, and a record
-/// counts entries, its first a slot.
+/// to the tile by [`clip_entry`]; an entry with a second slot takes it
+/// along, its depth plane stepped to the clipped box, and a record
+/// counts entries, its first a slot. A tile in which an entry reads the
+/// colour already there before an entry has covered the whole tile has
+/// [`LOAD`] set in its record.
 ///
 /// Two passes over the list, and no allocation: the first counts each
 /// tile's entries and slots, so each tile's place is known, and the
@@ -225,18 +280,27 @@ pub fn bin(
             y1 >> TILE_SHIFT,
         )
     };
-    // How many entries and slots each tile takes.
+    // How many entries and slots each tile takes, and which tiles are
+    // to be loaded: those where an entry reads the colour there before
+    // any entry has covered the whole tile (issue 993).
     let mut count = [0u32; MAX_TILES];
     let mut slots = [0u32; MAX_TILES];
+    let mut covered = [false; MAX_TILES];
+    let mut load = [false; MAX_TILES];
     let mut s = 0;
     while s < list.len() {
         let e = &list[s];
-        let n = 1 + has_depth(e) as u32;
+        let ext = has_ext(e).then(|| &list[s + 1]);
+        let n = slots_of(e) as u32;
+        let reads = ext.is_some_and(|x| reads_dst(e, x));
         let (i0, j0, i1, j1) = span(e);
         for j in j0..=j1 {
             for i in i0..=i1 {
-                count[j as usize * cols + i as usize] += 1;
-                slots[j as usize * cols + i as usize] += n;
+                let k = j as usize * cols + i as usize;
+                count[k] += 1;
+                slots[k] += n;
+                load[k] |= reads && !covered[k];
+                covered[k] |= covers(e, ext, tile(i, j, sw, sh));
             }
         }
         s += n as usize;
@@ -260,6 +324,9 @@ pub fn bin(
         }
         let (i, j) = ((k % cols) as u32, (k / cols) as u32);
         tiles[t] = record(n, c, i << TILE_SHIFT, j << TILE_SHIFT);
+        if load[k] {
+            tiles[t][1] |= LOAD;
+        }
         at[k] = n;
         n += slots[k];
         t += 1;
@@ -269,7 +336,8 @@ pub fn bin(
     let mut s = 0;
     while s < list.len() {
         let e = &list[s];
-        let deep = has_depth(e);
+        let deep = has_ext(e);
+        let textured = is_textured(e);
         let (x0, y0, _, _) = walked(e, sw, sh);
         let (i0, j0, i1, j1) = span(e);
         for j in j0..=j1 {
@@ -288,9 +356,18 @@ pub fn bin(
                         step_depth(&list[s + 1], cx0 - x0, cy0 - y0);
                     at[k] += 1;
                 }
+                if textured {
+                    let (cx0, cy0) =
+                        (clipped[1] & 0x3ff, (clipped[1] >> 16) & 0x3ff);
+                    let (a, b) = (&list[s + 2], &list[s + 3]);
+                    for slot in tex::step_slots(a, b, cx0 - x0, cy0 - y0) {
+                        entries[at[k] as usize] = slot;
+                        at[k] += 1;
+                    }
+                }
             }
         }
-        s += 1 + deep as usize;
+        s += slots_of(e);
     }
     Ok(Binned {
         tiles: t,
@@ -310,6 +387,52 @@ mod tests {
         w[1] = x0 | (y0 << 16);
         w[2] = x1 | (y1 << 16);
         w
+    }
+
+    /// An entry with the pixel's state (issue 993) and its second slot:
+    /// blending if `blend`, writing the channels `mask`.
+    fn stated(e: [u32; WORDS], blend: bool, mask: u32) -> [[u32; WORDS]; 2] {
+        let mut e = e;
+        e[15] |= 1 << 13;
+        let mut x = [0u32; WORDS];
+        x[3] = blend as u32;
+        x[4] = mask << 16;
+        [e, x]
+    }
+
+    /// The records' load bits, of a list of slots on a screen two tiles
+    /// across and one down.
+    fn loads(list: &[[u32; WORDS]]) -> Vec<bool> {
+        let mut entries = [[0u32; WORDS]; 64];
+        let mut tiles = [[0u32; TILE_WORDS]; 8];
+        let b = bin(list, 128, 64, &mut entries, &mut tiles).unwrap();
+        tiles[..b.tiles].iter().map(|r| r[1] & LOAD != 0).collect()
+    }
+
+    /// A tile is loaded from the framebuffer only where an entry reads
+    /// the colour there before anything covered the whole tile: never in
+    /// a frame that starts with a clear, nor for a blend after a
+    /// rectangle over the tile, nor for an entry that writes no channel
+    /// or every one (issue 993).
+    #[test]
+    fn a_tile_is_loaded_only_when_it_has_to_be() {
+        let mut clear = [0u32; WORDS];
+        clear[0] = CLEAR;
+        let both = rect(1, 10, 10, 100, 20);
+        let [b, bx] = stated(both, true, 0xf);
+        assert_eq!(loads(&[b, bx]), [true, true], "a blend over nothing");
+        assert_eq!(loads(&[clear, b, bx]), [false, false], "after a clear");
+        let left = rect(2, 0, 0, 63, 63);
+        assert_eq!(loads(&[left, b, bx]), [false, true], "the left covered");
+        let [p, px] = stated(both, false, 0b0011);
+        assert_eq!(loads(&[p, px]), [true, true], "two channels of four");
+        let [n, nx] = stated(both, false, 0);
+        assert_eq!(loads(&[n, nx]), [false, false], "no channel written");
+        let [f, fx] = stated(both, false, 0xf);
+        assert_eq!(loads(&[f, fx]), [false, false], "every channel written");
+        // A rectangle over the tile that blends covers nothing.
+        let [lb, lbx] = stated(left, true, 0xf);
+        assert_eq!(loads(&[lb, lbx, b, bx]), [true, true]);
     }
 
     #[test]

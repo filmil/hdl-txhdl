@@ -20,6 +20,7 @@ rust_library(
         "src/raster.rs",
         "src/scene.rs",
         "src/sim.rs",
+        "src/tex.rs",
         "src/tiles.rs",
     ],
     crate_name = "razboj",
@@ -37,7 +38,10 @@ rust_library(
 # can use it as the tests do.
 rust_library(
     name = "tile",
-    srcs = ["tile/lib.rs"],
+    srcs = [
+        "tile/lib.rs",
+        "tile/tex.rs",
+    ],
     crate_name = "razboj_tile",
     edition = "2021",
 )
@@ -51,7 +55,10 @@ rust_test(
 # The sources by name, for the documents' listings.
 filegroup(
     name = "sources",
-    srcs = glob(["src/*.rs"]) + ["tile/lib.rs"],
+    srcs = glob(["src/*.rs"]) + [
+        "tile/lib.rs",
+        "tile/tex.rs",
+    ],
 )
 
 # Render the scene and show it:  bazel run //gpu/razboj:demo
@@ -124,6 +131,20 @@ rust_binary(
     edition = "2021",
     deps = [
         ":razboj",
+        "//lib:txhdl",
+    ],
+)
+
+# The traced run of blending (issue 993), with the rasteriser's
+# netlist, so the build replays the load, the blend, the alpha test
+# and the mask.
+rust_binary(
+    name = "trace_blend",
+    srcs = ["src/trace_blend.rs"],
+    edition = "2021",
+    deps = [
+        ":razboj",
+        ":tile",
         "//lib:txhdl",
     ],
 )

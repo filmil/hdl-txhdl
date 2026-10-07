@@ -731,6 +731,249 @@ mod tests {
         );
     }
 
+    /// Scenes that blend, test alpha and mask channels (issue 993), with
+    /// and without depth, are drawn in tiles as the model draws them,
+    /// byte for byte, under every blend factor and comparison. Each scene
+    /// is drawn twice: over the last picture without a clear, so that its
+    /// tiles are loaded from the framebuffer first and the blend reads
+    /// what memory had; and after a clear, which loads no tile.
+    #[test]
+    fn blending_in_tiles_is_the_models() {
+        use crate::op::{AlphaTest, BlendMode, DepthMode, LESS};
+        use razboj_tile::LOAD;
+        const A: usize = 20;
+        const LOGW: usize = 7;
+        const W: usize = 1 << LOGW;
+        const H: usize = 64;
+        const N: usize = 16384;
+        const DL: usize = 0xa000;
+        const CTRL: usize = 0xfffc;
+        let mut x = 0x9e37_79b9u32;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x
+        };
+        // How many of a work's tiles are to be loaded.
+        let loads = |w: &Work| {
+            (0..(w.count & 0xffff) as usize)
+                .filter(|t| w.words[2 * t + 1] & LOAD != 0)
+                .count()
+        };
+        // A backdrop that blending reads: bands of colour and alpha.
+        let backdrop: Vec<Op> = (0..4)
+            .map(|k| Op::Rect {
+                colour: 0x40_2010u32.wrapping_mul(k + 1) | (k * 0x3f) << 24,
+                x: 0,
+                y: k as i32 * 16,
+                w: W as i32,
+                h: 16,
+            })
+            .collect();
+        let first = assemble(&backdrop, W, H);
+        let mut changed = 0;
+        for round in 0..11u32 {
+            let mut ops = vec![
+                Op::Blend(Some(BlendMode {
+                    src: round,
+                    dst: (round * 7 + 3) % 10,
+                })),
+                Op::AlphaTest((round % 3 == 1).then_some(AlphaTest {
+                    func: round % 8,
+                    reference: 0x60,
+                })),
+                Op::ColourMask(if round % 4 == 2 { 0b1011 } else { 0xf }),
+                Op::Depth((round % 2 == 1).then_some(DepthMode {
+                    func: LESS,
+                    write: true,
+                })),
+            ];
+            for k in 0..6 {
+                let (r, q) = (next(), next());
+                let p = |v: u32| {
+                    (
+                        (v % (W as u32 * 16)) as i32 - 64,
+                        ((v >> 12) % (H as u32 * 16)) as i32 - 64,
+                    )
+                };
+                let z = [r & 0xffff, q & 0xffff, (r >> 16) ^ (q >> 16)];
+                let (a, b, c) = (p(r), p(q), p(r ^ q.rotate_left(7)));
+                ops.push(match k % 3 {
+                    0 => Op::TriZ {
+                        colour: q,
+                        a,
+                        b,
+                        c,
+                        z,
+                    },
+                    1 => Op::GouraudZ {
+                        a,
+                        b,
+                        c,
+                        colours: [q, r, q ^ r],
+                        z,
+                    },
+                    _ => Op::Rect {
+                        colour: r,
+                        x: (r % 100) as i32,
+                        y: (q % 50) as i32,
+                        w: 20,
+                        h: 12,
+                    },
+                });
+            }
+            let over = assemble(&ops, W, H);
+            let mut cleared = vec![Op::Clear {
+                colour: 0x8020_4060,
+            }];
+            cleared.extend(ops.iter().copied());
+            let fresh = assemble(&cleared, W, H);
+            let (w1, w2, w3) = (
+                Work::tiled(&first, W, H),
+                Work::tiled(&over, W, H),
+                Work::tiled(&fresh, W, H),
+            );
+            assert!(loads(&w2) > 0, "round {round}: a blend over memory loads");
+            assert_eq!(loads(&w3), 0, "round {round}: after a clear, none");
+            let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
+                &[w1, w2, w3],
+                false,
+                false,
+            );
+            let base = model::render(&first, W, H);
+            assert_eq!(runs[0].fb, base, "round {round}: the backdrop");
+            let want = model::render_over(&over, W, H, base.clone());
+            let at = want.iter().zip(&runs[1].fb).position(|(p, q)| p != q);
+            assert_eq!(at, None, "round {round}: blended over memory");
+            let want = model::render_over(&fresh, W, H, want);
+            let at = want.iter().zip(&runs[2].fb).position(|(p, q)| p != q);
+            assert_eq!(at, None, "round {round}: blended after a clear");
+            changed += (runs[1].fb
+                != model::render_over(
+                    &over
+                        .iter()
+                        .map(|i| {
+                            let mut i = *i;
+                            i.state = txhdl::types::Bit::Zero;
+                            i
+                        })
+                        .collect::<Vec<_>>(),
+                    W,
+                    H,
+                    base,
+                )) as u32;
+        }
+        assert!(changed >= 8, "the state mattered in {changed} rounds");
+    }
+
+    /// A textured entry (issue 997) takes four slots, and the rasteriser,
+    /// which does not texture yet, passes over its texture's two and draws
+    /// it untextured, in a flat list and in tiles, among entries that are
+    /// not textured.
+    #[test]
+    fn a_textured_entry_draws_untextured_for_now() {
+        use crate::op::TexMode;
+        const A: usize = 20;
+        const LOGW: usize = 7;
+        const W: usize = 1 << LOGW;
+        const H: usize = 64;
+        const N: usize = 16384;
+        const DL: usize = 0xa000;
+        const CTRL: usize = 0xfffc;
+        let q = |w: f64| ((1u64 << 48) as f64 / w) as u64;
+        let ops = [
+            Op::Clear { colour: 0x10_2030 },
+            Op::Texture(Some(TexMode {
+                desc: 0,
+                env: 1,
+                env_colour: 0,
+            })),
+            Op::TexTri {
+                a: (4 * 16, 4 * 16),
+                b: (120 * 16, 10 * 16),
+                c: (30 * 16, 60 * 16),
+                colours: [0xff40_80c0; 3],
+                shaded: false,
+                z: [0; 3],
+                uvq: [
+                    (0, 0, q(1.0)),
+                    (1 << 37, 0, q(2.0)),
+                    (0, 1 << 36, q(1.5)),
+                ],
+            },
+            Op::Rect {
+                colour: 0xffc0_4020,
+                x: 60,
+                y: 20,
+                w: 30,
+                h: 30,
+            },
+        ];
+        let list = assemble(&ops, W, H);
+        assert!(list.iter().any(|i| i.tex.to_bool()));
+        let want = model::render(&list, W, H);
+        let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
+            &[Work::flat(&list), Work::tiled(&list, W, H)],
+            false,
+            false,
+        );
+        assert_eq!(runs[0].fb, want, "flat");
+        assert_eq!(runs[1].fb, want, "in tiles");
+    }
+
+    /// What a load costs (issue 993): the same tile table drawn with its
+    /// tiles loaded and with the load bits cleared, the difference in
+    /// cycles shared among the tiles loaded. A load reads a burst of the
+    /// tile's width a row and writes a pixel a beat, so it costs about
+    /// what a write-out does, the reads' latency besides.
+    #[test]
+    fn a_load_costs_about_a_write_out() {
+        use crate::op::{BlendMode, ONE, ONE_MINUS_SRC_ALPHA};
+        use razboj_tile::LOAD;
+        const A: usize = 20;
+        const LOGW: usize = 7;
+        const W: usize = 1 << LOGW;
+        const H: usize = 64;
+        const N: usize = 16384;
+        const DL: usize = 0xa000;
+        const CTRL: usize = 0xfffc;
+        let ops = [
+            Op::Blend(Some(BlendMode {
+                src: ONE,
+                dst: ONE_MINUS_SRC_ALPHA,
+            })),
+            Op::Rect {
+                colour: 0x8040_2010,
+                x: 8,
+                y: 8,
+                w: 112,
+                h: 40,
+            },
+        ];
+        let list = assemble(&ops, W, H);
+        let loaded = Work::tiled(&list, W, H);
+        let tiles = (loaded.count & 0xffff) as usize;
+        let mut plain = Work {
+            words: loaded.words.clone(),
+            count: loaded.count,
+        };
+        for t in 0..tiles {
+            plain.words[2 * t + 1] &= !LOAD;
+        }
+        let with =
+            run_works_at::<A, LOGW, H, N, DL, CTRL>(&[loaded], false, false);
+        let without =
+            run_works_at::<A, LOGW, H, N, DL, CTRL>(&[plain], false, false);
+        let each = (with[0].cycles - without[0].cycles) / tiles as u64;
+        println!("a load costs {each} cycles a tile, {tiles} tiles");
+        let write_out = (razboj_tile::TILE * (razboj_tile::TILE + 1)) as u64;
+        assert!(
+            each >= write_out && each < 2 * write_out,
+            "a load costs {each} cycles a tile, a write-out {write_out}"
+        );
+    }
+
     /// Every scene drawn from a tile table is the picture its flat list
     /// draws, byte for byte (issue 1255). There are six scenes of
     /// rectangles, flat and shaded triangles, and clears, many over tile

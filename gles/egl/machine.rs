@@ -26,6 +26,15 @@ pub trait Machine {
         tiles: &[[u32; TILE_WORDS]],
         entries: &[[u32; WORDS]],
     );
+    /// Room for the textures (#997), and the bus address Razboj reads
+    /// its first word at: none, the default, leaves GL without textures,
+    /// and `glTexImage2D` then fails with `GL_OUT_OF_MEMORY`.
+    fn textures(&mut self) -> Option<(&'static mut [u32], u32)> {
+        None
+    }
+    /// Tells Razboj where the textures' descriptor table is, before a
+    /// tile table that reads them is drawn. The default tells it nothing.
+    fn texture_table(&mut self, _table: u32) {}
     /// Points the scanout at the buffer whose first row is `row`, and
     /// shows the scanout.
     fn show(&mut self, row: u32);
