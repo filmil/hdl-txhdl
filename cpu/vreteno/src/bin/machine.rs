@@ -16,6 +16,10 @@
 //! ARP and ping at 10.0.0.2 (issue 1203), and says on standard error how
 //! many frames went each way when the machine stops.
 //!
+//! `--timing` charges each step what the core would spend on it, with
+//! the board's costs (issue 1392), so `mcycle` reads cycles and the
+//! machine says the total when it stops.
+//!
 //! `--as-loaded` starts the serial port as the serial loader leaves it
 //! on the board (issue 1136): its receive interrupt enabled, as the
 //! hardware resets it, and `BYTES` waiting to be read, so the line is
@@ -52,6 +56,7 @@ fn main() {
     let mut steps = 100_000_000u64;
     let mut loaded = None;
     let mut peer = false;
+    let mut timing = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         let mut val =
@@ -64,6 +69,7 @@ fn main() {
             "--steps" => steps = number(&val()),
             "--as-loaded" => loaded = Some(val()),
             "--eth-peer" => peer = true,
+            "--timing" => timing = true,
             _ => panic!("unknown argument {a}"),
         }
     }
@@ -78,6 +84,9 @@ fn main() {
     }
     m.boot(at, if dtb.is_some() { dtb_at } else { 0 });
     m.board.0.borrow_mut().eth.peer = peer;
+    if timing {
+        m.model.timing = Some(vreteno32::model::Timing::board());
+    }
     if let Some(bytes) = &loaded {
         m.board.0.borrow_mut().uart.ie = 2;
         m.type_bytes(bytes.as_bytes());
@@ -118,6 +127,9 @@ fn main() {
         None => "stopped at the step limit".to_string(),
     };
     eprintln!("\n{how} after {ran} instructions, pc {:#010x}", m.model.pc);
+    if timing {
+        eprintln!("timing: {} cycles", m.model.cycles);
+    }
     if peer {
         let d = m.board.0.borrow();
         eprintln!(

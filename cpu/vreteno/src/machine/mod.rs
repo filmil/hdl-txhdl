@@ -272,8 +272,17 @@ impl Machine {
             self.model.sline(seip);
         }
         let interrupt = self.model.interrupt();
+        let was = self.model.cycles;
         self.model.step(&[], interrupt);
-        self.board.0.borrow_mut().clint.tick(1);
+        // The timer counts the core's cycles: one a step, or in the
+        // timing mode what the step was charged (issue 1392), so that a
+        // timeout and the timer's ticks are in the same time as `mcycle`.
+        let n = if self.model.timing.is_some() {
+            self.model.cycles - was
+        } else {
+            1
+        };
+        self.board.0.borrow_mut().clint.tick(n);
     }
 
     /// Steps until the hart halts or `limit` instructions have run, and
