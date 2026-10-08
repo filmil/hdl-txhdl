@@ -528,6 +528,71 @@ linerange={1-51}]{lib/logo/logo.rs}
 \lstinputlisting[caption={\code{tools/logo2rs/main.go}: the PNG to the
 crate.},label={lst:f-logo2rs},tabsize=2]{tools/logo2rs/main.go}
 
+\section{What the engines gain}
+\label{sec:f-dma}
+
+The two bulk peripherals move their data through engines of their own,
+hosts on the DDR3 side of the bus, rather than through the core
+(issue~151). Before them, the core was the copy: it wrote the video
+peripheral's framebuffer a register a pixel, and moved each frame
+through the Ethernet port a word at a time across the bridge. Both
+halves were measured on the board, with the core's cycle counter.
+
+\emph{Ethernet.} The port's two engines move a frame between its slots
+in the DDR3 and the MAC, and the core only names the slot and the
+length (\code{EthSlots}, issue~1203). Against the core's own copy of
+each frame, which is the lower bound of any register path, on the
+flagship of 2026-10-04 (issue~1038):
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+full frames, 1514 bytes & frames/s & MB/s & core cycles a frame \\
+\midrule
+sent by the engine & 8\,358 & 12.7 & 158 \\
+sent by the core's copy & 1\,104 & 1.7 & 84\,663 \\
+received by the engine & 16\,672 & 25.2 & 884 \\
+received by the core's copy & 913 & 1.4 & 105\,059 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent The engine sends 7.5 times as fast and receives 18 times as
+fast, and the core's cost is flat at any frame size: about 155 cycles
+to send a frame and 880 to note one received, where its copy costs
+about 225 cycles a word. A full-frame send tops out at the fetch
+engine's rate of reading the DDR3 (issue~1023). Receiving was paced in
+that run; unpaced, the board's receiver then held one frame, and lost
+most of a burst sent back to back, which it now takes whole
+(issue~1409).
+
+\emph{HDMI.} The scanout reads a whole 640 by 480 frame from the DDR3,
+a line ahead of the beam, at every refresh, and the core writes no
+register to show it: it paints the frame into memory and gives the
+scanout its base (issue~151). The program \code{fbtime} times both
+ways on the core's cycle counter, at 100~MHz, on the flagship of
+2026-10-08 from \code{main} 2b8ee847:
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+way & cycles a pixel & a 640 by 480 screen & time \\
+\midrule
+a register write a pixel & 38.16 & 11\,724\,880 & 117~ms \\
+painted into the DDR3 & 20.03 & 6\,155\,828 & 61.6~ms \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent The register way was measured on the video peripheral's own
+framebuffer, 160 by 120, 19\,200 writes in 732\,805 cycles; its full
+screen of 307\,200 writes is that rate times the pixels, since the
+peripheral has no larger framebuffer to measure. The DDR3 way was
+measured whole. Painting into memory costs the core about half as
+much a pixel, and once a frame is painted it costs nothing more: the
+scanout shows it at every refresh, where the register way has the
+core write each pixel again for each change.
+
 \section{What is not done}
 \label{sec:f-todo}
 
