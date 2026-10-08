@@ -716,6 +716,44 @@ Pass:
 Through GL a frame's list is built and binned while Razboj draws the frame before (#1433), so each line says `list`, the core's building and binning; `wait`, what was left of the frame before's drawing; and `frame`, the whole frame with the wait for the blanking. The frame rate comes in steps of blankings, 1.667 M cycles at 60 Hz.
 Set the counts beside `ico gl list`'s, and put the log and the recording on #997.
 
+### Doom, #1177
+
+A flagship from a `main` that holds #1445 (the data cache) or later, programmed over JTAG, with a monitor on the HDMI connector, and the board's serial port open on the board server so that keys can be typed into it.
+Nothing is written to flash.
+
+`//demo/doom:doom` is doomgeneric for the core, bare metal, with Freedoom's first episode as its game data (#1177).
+It is 314 KB, too large for the loader's serial line, so it goes through fastboot (section 7), which stages 48 MiB since #1177, and the game data is 28.8 MB.
+The game data goes as the boot image's ramdisk, and the program reads it where fastboot staged it, at `0x4800_0000`:
+
+```sh
+bazel build //zephyr:fastboot //demo/doom:doom @freedoom//:freedoom1.wad
+scp bazel-bin/demo/doom/doom.bin \
+    "$(bazel info output_base)/external/+http_archive+freedoom/freedoom1.wad" \
+    $TXHDL_BOARD_SERVER:txhdl_fastboot/
+bazel run //flagship:flagship_prog -- "${PROG[@]}"
+bazel run //cpu/vreteno/board/remote:load -- \
+    --image=$PWD/bazel-bin/zephyr/fastboot.bin --seconds=60 \
+    2>&1 | tee board-1177-listen.log
+ssh $TXHDL_BOARD_SERVER txhdl_fastboot/fastboot -s tcp:192.168.1.50 \
+    getvar max-download-size
+bazel run //cpu/vreteno/board/remote:serial -- --seconds=300 \
+    2>&1 | tee board-1177.log &
+ssh $TXHDL_BOARD_SERVER txhdl_fastboot/fastboot -s tcp:192.168.1.50 \
+    boot txhdl_fastboot/doom.bin txhdl_fastboot/freedoom1.wad
+```
+
+Keys are bytes on the serial line, each held for 180 ms: `w`, `a`, `s` and `d` or the arrows to move, `f` to fire, the space bar to use, Enter, Escape, `y`, `n` and the digits.
+Enter three times from the title goes through the menu, the episode and the skill, and a fourth starts E1M1.
+
+Pass:
+* `max-download-size` answers `0x02fff000`.
+* The serial log has Doom's startup text, ending in `I_InitGraphics`, then a `doom frame` line every 64 frames, with the cycles of the last frame and the frames a second.
+* The screen shows the title and the demo loop, 320 by 200 doubled, between black bands, then E1M1 after the keys, and the view moves with them.
+
+Done on October 8, 2026, on flagship main ed9a9a70 with #1445, with a recording: the demo loop at 4.6 to 6.0 frames a second, E1M1 at 6.3 to 7.5, the 28.4 MB boot in 31.9 s.
+E1M1 started 5 s after the Enter that chose the skill, and the keys moved, turned and fired.
+The logs are on #1177.
+
 ### Ethernet throughput, #1038
 
 The Ethernet half of #151: the port's throughput through the slots and the DMA engines, against the core's own copy of each frame.
