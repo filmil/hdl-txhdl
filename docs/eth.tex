@@ -194,6 +194,21 @@ on the client channel while both frames are held are discarded. Third,
 incomplete frame fragments encountered without a valid preamble and start
 delimiter are ignored until \code{rx\_dv} deasserts.
 
+The dropped frames are also counted by cause (issue~1404): no room, both
+frames held; a failed check or a receive error; and a frame of four bytes
+or fewer, or longer than the store.
+Each count is sixteen bits, and the three leave the receiver on
+\code{rx\_counts} in Gray code, from a register, so that a count steps
+in one bit at an edge.
+On the flagship the receiver runs on the PHY's clock and the core on its
+own, and two flip-flops on the core's clock sample the counts.
+A sampled count is then the old one or the new one, never a mixture,
+and \code{EthSlots} decodes them into words 14 and 15 of its map,
+beside \code{rx\_errors}.
+Before, a frame lost in the receiver was counted only there, where
+nothing on the board could read it, and four frames in ten went missing
+on a board run with no count saying where (issue~1409).
+
 The receiver likewise separates into two concurrent processes. The
 physical interface process monitors wire signals on every cycle: hunting
 for frame boundaries, streaming bytes into memory, evaluating integrity,
@@ -453,7 +468,9 @@ receiver sustains roughly one full packet in five because wire input cannot
 be stalled. Earlier test runs occasionally deposited unannounced packets into
 unserviced buffer slots. Following issue~1313, frames arriving when both
 slots remain occupied are dropped and counted under \code{rx\_errors}, as
-detailed in the \code{EthSlots} section of the examples document. Every
+detailed in the \code{EthSlots} section of the examples document, and
+the frames the receiver drops ahead of the slots are counted by cause in
+\code{rx\_mac\_check} and \code{rx\_mac\_drops} (issue~1404). Every
 transmitted packet arrived verified at the link partner.
 
 Implementing the Ethernet module resolved three compiler lowering issues.
