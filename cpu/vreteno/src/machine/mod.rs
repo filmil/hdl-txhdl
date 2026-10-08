@@ -8,8 +8,10 @@
 //! What it holds, each at the address the board's maps give it:
 //!
 //! * the DDR3, a gigabyte at `0x4000_0000`, as plain memory;
-//! * the CLINT, with the count advancing one an instruction;
-//! * the PLIC with its two targets, machine and supervisor;
+//! * the CLINT, with the count advancing one an instruction, and hart
+//!   1's words and the mailbox;
+//! * the PLIC with its four targets, machine and supervisor for each of
+//!   two harts;
 //! * the serial port as SiFive's `sifive,uart0`;
 //! * the Ethernet port's slots, with a peer on the cable that answers
 //!   ARP and ping (issue 1203).
@@ -22,6 +24,18 @@
 //! `a1` the blob's address. Everything else on the board answers
 //! nothing, which the model takes as an access fault, so a program that
 //! strays is told rather than quietly read zeros.
+//!
+//! A second hart (issue 1408) waits as the board's does until the first
+//! starts it through the mailbox: when its `msip` is set it clears it and
+//! starts at the mailbox's entry, with `a0` one and `a1` the argument,
+//! and `mie.MSIE` on, which is what the board's `park` does; a jump to
+//! zero, where `park` is on the board, sends it back to wait. The
+//! board's `park` is not on this bus, so its effect is the machine's
+//! own. While it runs it steps until it has caught up with the first
+//! hart, in cycles in the timing mode and in steps otherwise, so the two
+//! run side by side; the count moves with the first. Each step is a
+//! whole instruction, so an AMO is atomic, and a store by either hart
+//! takes the other's reservation of that word.
 //!
 //! The devices are in files of their own, and the model learns of them
 //! only through its `Bus`, so the ISA's own growth in `model.rs` (A,
@@ -121,6 +135,10 @@ pub struct Devices {
     /// a step need not ask them otherwise (issue 1132).
     pub meip: bool,
     pub seip: bool,
+    /// The second hart's two, from the third and fourth targets (issue
+    /// 1408).
+    pub meip1: bool,
+    pub seip1: bool,
     pub stale: bool,
     pub rx_seen: usize,
     /// Steps taken, or in the timing mode cycles: the clock of what is
@@ -233,7 +251,7 @@ impl Bus for Board {
     }
 }
 
-/// The model in its machine.
+/// The model in its machine, and the second hart's (issue 1408).
 pub struct Machine {
     pub model: Model,
     pub board: Rc<Board>,
@@ -245,6 +263,11 @@ pub struct Machine {
     /// return address in `ra`, how many times and the sum of `a2`, a
     /// copy's length (issue 1434).
     pub watch: Option<(u32, std::collections::HashMap<u32, (u64, u64)>)>,
+    /// The second hart, whether it waits to be started, and the two
+    /// harts' clocks: cycles in the timing mode, steps otherwise.
+    pub model1: Model,
+    pub parked1: bool,
+    pub clock: (u64, u64),
 }
 
 impl Machine {
@@ -263,6 +286,8 @@ impl Machine {
             video: [0; 64],
             meip: false,
             seip: false,
+            meip1: false,
+            seip1: false,
             stale: true,
             rx_seen: 0,
             steps: 0,
@@ -272,11 +297,19 @@ impl Machine {
             bus: Some(board.clone() as Rc<dyn Bus>),
             ..Model::default()
         };
+        let model1 = Model {
+            bus: Some(board.clone() as Rc<dyn Bus>),
+            hartid: 1,
+            ..Model::default()
+        };
         Machine {
             model,
             board,
             profile: None,
             watch: None,
+            model1,
+            parked1: true,
+            clock: (0, 0),
         }
     }
 
@@ -337,6 +370,7 @@ impl Machine {
                 // The second target, the supervisor's, is `mip.SEIP`'s
                 // line (issue 1094).
                 (d.meip, d.seip) = (d.plic.irq(0), d.plic.irq(1));
+                (d.meip1, d.seip1) = (d.plic.irq(2), d.plic.irq(3));
                 d.rx_seen = d.uart.rx.len();
                 d.stale = false;
             }
@@ -346,9 +380,27 @@ impl Machine {
             self.model.tirq = d.clint.mtip();
             self.model.msip = d.clint.msip;
             let (meip, seip) = (d.meip, d.seip);
+            // The second hart: started when its `msip` is set, as `park`
+            // does, then given its lines as the first is.
+            if self.parked1 && d.clint.msip1 {
+                d.clint.msip1 = false;
+                self.parked1 = false;
+                self.model1.pc = d.clint.mbox_entry;
+                self.model1.x[10] = 1;
+                self.model1.x[11] = d.clint.mbox_arg;
+                self.model1.csr.mie |= 1 << 3;
+                self.model1.timing = self.model.timing.clone();
+                self.clock.1 = self.clock.0;
+            }
+            self.model1.time = d.clint.mtime;
+            self.model1.tirq = d.clint.mtip1();
+            self.model1.msip = d.clint.msip1;
+            let (meip1, seip1) = (d.meip1, d.seip1);
             drop(d);
             self.model.line(meip);
             self.model.sline(seip);
+            self.model1.line(meip1);
+            self.model1.sline(seip1);
         }
         let interrupt = self.model.interrupt();
         let was = self.model.cycles;
@@ -361,6 +413,7 @@ impl Machine {
             }
         }
         self.model.step(&[], interrupt);
+        Self::takes(&self.model, &mut self.model1);
         // The timer counts the core's cycles: one a step, or in the
         // timing mode what the step was charged (issue 1392), so that a
         // timeout and the timer's ticks are in the same time as `mcycle`.
@@ -374,9 +427,39 @@ impl Machine {
             e.0 += n;
             e.1 += 1;
         }
+        self.clock.0 += n;
+        // The second hart, until it has caught up.
+        while !self.parked1
+            && self.clock.1 < self.clock.0
+            && self.model1.halted.is_none()
+        {
+            let interrupt = self.model1.interrupt();
+            let was = self.model1.cycles;
+            self.model1.step(&[], interrupt);
+            Self::takes(&self.model1, &mut self.model);
+            self.clock.1 += if self.model1.timing.is_some() {
+                (self.model1.cycles - was).max(1)
+            } else {
+                1
+            };
+            if self.model1.pc == 0 {
+                self.parked1 = true;
+            }
+        }
         let mut d = self.board.0.borrow_mut();
         d.clint.tick(n);
         d.elapsed = n;
+    }
+
+    /// A store by one hart takes the other's reservation of the same
+    /// word (issue 1408).
+    fn takes(by: &Model, other: &mut Model) {
+        if let Some(addr) = by.wrote {
+            if other.rsv_pa.is_some_and(|r| r & !3 == addr & !3) {
+                other.rsv = None;
+                other.rsv_pa = None;
+            }
+        }
     }
 
     /// Steps until the hart halts or `limit` instructions have run, and
@@ -567,5 +650,111 @@ mod tests {
         assert_eq!(b.load(0x9000_0000), None);
         assert!(!b.store(0x9000_0000, 1, u32::MAX));
         assert_eq!(b.load(0x4000_0000), Some(0));
+    }
+
+    /// `rd` gets `v`, in two words.
+    fn li(rd: u32, v: u32) -> [u32; 2] {
+        use crate::isa::{addi, lui};
+        let hi = v.wrapping_add(0x800) >> 12;
+        [lui(rd, hi), addi(rd, rd, v.wrapping_sub(hi << 12) as i32)]
+    }
+
+    /// A thousand adds with `amoadd.w` to one counter and a
+    /// thousand with `lr.w` and `sc.w` to another, in x5 and x16.
+    fn adds(p: &mut Vec<u32>) {
+        use crate::isa::{addi, amoadd_w, bne, lr_w, sc_w};
+        p.extend(li(5, 0x4000_0100));
+        p.extend(li(6, 1));
+        p.extend(li(16, 0x4000_0200));
+        p.extend(li(10, 1000));
+        p.extend([
+            amoadd_w(0, 5, 6),
+            lr_w(20, 16),
+            addi(20, 20, 1),
+            sc_w(21, 16, 20),
+            bne(21, 0, -12),
+            addi(10, 10, -1),
+            bne(10, 0, -24),
+        ]);
+    }
+
+    fn bytes(words: &[u32]) -> Vec<u8> {
+        words.iter().flat_map(|w| w.to_le_bytes()).collect()
+    }
+
+    /// The second hart (issue 1408): the first starts it through the
+    /// mailbox; each adds one to a counter a thousand times with
+    /// `amoadd.w` and to another a thousand times with `lr.w` and
+    /// `sc.w`, side by side, and neither count loses one; then the second
+    /// says it is done and jumps back to wait. In steps and in cycles.
+    #[test]
+    fn two_harts_lose_no_count() {
+        use crate::isa::{beq, halt, jalr, lw, sw, CLINT_BASE};
+        use crate::model::Bus;
+        const JOB: u32 = 0x4001_0000;
+        const FLAG: u32 = 0x4000_0300;
+        for timing in [false, true] {
+            let mut m = Machine::new();
+            if timing {
+                m.model.timing = Some(crate::model::Timing::board());
+            }
+            let mut job = vec![];
+            adds(&mut job);
+            job.extend(li(22, 1));
+            job.extend([sw(22, 11, 0), jalr(0, 0, 0)]);
+            m.load(JOB, &bytes(&job));
+            let mut p = vec![];
+            p.extend(li(9, CLINT_BASE + 0xc000));
+            p.extend(li(8, JOB));
+            p.push(sw(8, 9, 0));
+            p.extend(li(12, FLAG));
+            p.push(sw(12, 9, 4));
+            p.extend(li(13, CLINT_BASE));
+            p.extend(li(14, 1));
+            p.push(sw(14, 13, 4));
+            adds(&mut p);
+            p.extend([lw(15, 12, 0), beq(15, 0, -4), halt()]);
+            m.load(0x4000_0000, &bytes(&p));
+            m.boot(0x4000_0000, 0);
+            m.run(1_000_000);
+            assert!(
+                m.model.halted.is_some(),
+                "hart 0 finished, timing {timing}"
+            );
+            assert!(m.parked1, "hart 1 went back to wait");
+            assert_eq!(m.board.load(0x4000_0100), Some(2000), "the AMOs");
+            assert_eq!(m.board.load(0x4000_0200), Some(2000), "the pairs");
+        }
+    }
+
+    /// The second hart's lines (issue 1408): a byte on the serial port,
+    /// its source enabled for the controller's third target alone, raises
+    /// hart 1's `mip.MEIP` and not hart 0's; hart 1's `msip` and compare
+    /// raise its software and timer bits.
+    #[test]
+    fn the_second_harts_lines_are_its_own() {
+        use crate::isa::MEXT;
+        let mut m = Machine::new();
+        let nop = 0x0000_0013u32.to_le_bytes();
+        let prog: Vec<u8> = (0..16).flat_map(|_| nop).collect();
+        m.load(0x4000_0000, &prog);
+        m.boot(0x4000_0000, 0);
+        {
+            let mut d = m.board.0.borrow_mut();
+            d.plic.store(4 * SERIAL_SOURCE as u32, 1);
+            d.plic.store(plic::ENABLE[2], 1 << SERIAL_SOURCE);
+            d.uart.ie = 2;
+            d.uart.rx.push_back(b'x');
+            d.clint.store(clint::MTIMECMP1 + 4, 0);
+            d.clint.store(clint::MTIMECMP1, 0);
+        }
+        m.run(2);
+        assert_eq!(m.model1.csr.mip & MEXT, MEXT, "hart 1's external line");
+        assert_eq!(m.model.csr.mip & MEXT, 0, "and not hart 0's");
+        assert!(m.model1.tirq, "hart 1's timer");
+        assert!(!m.model.tirq, "and not hart 0's timer");
+        // Hart 1's software interrupt, while it waits, starts it rather
+        // than interrupting it, so it is seen once it has started.
+        assert!(m.parked1, "hart 1 waits");
     }
 }

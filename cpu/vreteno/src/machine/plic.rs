@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The platform-level interrupt controller, as the machine model has it:
-//! the part in `lib/parts/src/plic.rs` with its two targets, machine and
-//! supervisor, at the same offsets (issues 1013 and 1016).
+//! the part in `lib/parts/src/plic.rs` with its four targets, the machine
+//! and the supervisor mode of each of two harts, at the same offsets
+//! (issues 1013, 1016 and 1408).
 //!
 //! Every source here asks while its line is high, which is what the
 //! board's three are. A source's request goes forward only when it is
@@ -10,10 +11,13 @@
 
 /// The words, by offset.
 pub const PENDING: u32 = 0x1000;
-/// Each target's enables, thresholds and claim words, machine first.
-pub const ENABLE: [u32; 2] = [0x2000, 0x2080];
-pub const THRESHOLD: [u32; 2] = [0x20_0000, 0x20_1000];
-pub const CLAIM: [u32; 2] = [0x20_0004, 0x20_1004];
+/// The targets: hart 0's machine and supervisor modes, then hart 1's.
+pub const TARGETS: usize = 4;
+/// Each target's enables, thresholds and claim words, in that order.
+pub const ENABLE: [u32; TARGETS] = [0x2000, 0x2080, 0x2100, 0x2180];
+pub const THRESHOLD: [u32; TARGETS] =
+    [0x20_0000, 0x20_1000, 0x20_2000, 0x20_3000];
+pub const CLAIM: [u32; TARGETS] = [0x20_0004, 0x20_1004, 0x20_2004, 0x20_3004];
 
 /// The controller of `n` sources, numbered from 1.
 #[derive(Clone, Debug)]
@@ -28,8 +32,8 @@ pub struct Plic {
     pub active: u32,
     /// The lines.
     pub lines: u32,
-    pub enable: [u32; 2],
-    pub threshold: [u32; 2],
+    pub enable: [u32; TARGETS],
+    pub threshold: [u32; TARGETS],
 }
 
 impl Plic {
@@ -41,8 +45,8 @@ impl Plic {
             pending: 0,
             active: 0,
             lines: 0,
-            enable: [0; 2],
-            threshold: [0; 2],
+            enable: [0; TARGETS],
+            threshold: [0; TARGETS],
         }
     }
 
@@ -91,7 +95,7 @@ impl Plic {
 
     /// A word read at `off`. A read of a claim word takes the request.
     pub fn load(&mut self, off: u32) -> u32 {
-        for t in 0..2 {
+        for t in 0..TARGETS {
             if off == CLAIM[t] {
                 let s = self.best(t);
                 if s != 0 {
@@ -120,7 +124,7 @@ impl Plic {
     /// A word written at `off`. A write of a source's number to a claim
     /// word completes it.
     pub fn store(&mut self, off: u32, v: u32) {
-        for t in 0..2 {
+        for t in 0..TARGETS {
             if off == CLAIM[t] {
                 if (v as usize) <= self.n {
                     self.active &= !(1 << v);
