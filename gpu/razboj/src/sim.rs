@@ -1133,6 +1133,172 @@ mod tests {
         assert_eq!(changed, 12, "the fog changed the picture in every round");
     }
 
+    /// The stencil in tiles (issue 998). Each round, in one list:
+    /// - a rectangle that writes only the stencil, under some of its bits;
+    /// - triangles that test the stencil under each comparison, with an
+    ///   operation for each outcome, masks and a reference, under depth in
+    ///   some rounds and an alpha test in others;
+    /// - a rectangle over the window that draws only where the stencil
+    ///   passes a test of its own, which makes the stencil show.
+    ///
+    /// All of it is drawn as the model draws it, byte for byte, and the
+    /// stencil changes the picture in nearly every round.
+    #[test]
+    fn the_stencil_in_tiles_is_the_models() {
+        use crate::op::stencil::{INCR, KEEP, REPLACE};
+        use crate::op::{AlphaTest, DepthMode, StencilMode};
+        use crate::op::{ALWAYS, EQUAL, GREATER, LESS, NOTEQUAL};
+        const A: usize = 20;
+        const LOGW: usize = 7;
+        const W: usize = 1 << LOGW;
+        const H: usize = 64;
+        const N: usize = 16384;
+        const DL: usize = 0xa000;
+        const CTRL: usize = 0xfffc;
+        let mut x = 0x2c1b_3c6du32;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x
+        };
+        let mut changed = 0;
+        for round in 0..16u32 {
+            let mut ops = vec![
+                Op::Clear {
+                    colour: 0xff10_2030,
+                },
+                Op::Depth((round % 3 == 1).then_some(DepthMode {
+                    func: LESS,
+                    write: true,
+                })),
+                Op::ColourMask(0),
+                Op::Stencil(Some(StencilMode {
+                    func: ALWAYS,
+                    reference: 0x40 + round,
+                    mask: 0xff,
+                    write_mask: [0xff, 0x0f, 0xf0][round as usize % 3],
+                    fail: KEEP,
+                    zfail: KEEP,
+                    zpass: REPLACE,
+                })),
+                Op::Rect {
+                    colour: 0,
+                    x: 16,
+                    y: 8,
+                    w: 80,
+                    h: 40,
+                },
+                Op::ColourMask(0xf),
+                Op::AlphaTest((round % 5 == 2).then_some(AlphaTest {
+                    func: GREATER,
+                    reference: 0x80,
+                })),
+                Op::Stencil(Some(StencilMode {
+                    func: round % 8,
+                    reference: next() & 0xff,
+                    mask: [0xff, next() & 0xff][round as usize % 2],
+                    write_mask: [0xff, next() & 0xff][(round / 2) as usize % 2],
+                    fail: round % 6,
+                    zfail: (round / 2 + 3) % 6,
+                    zpass: (round / 3 + 1) % 6,
+                })),
+            ];
+            for k in 0..5 {
+                let (r, q) = (next(), next());
+                let p = |v: u32| {
+                    (
+                        (v % (W as u32 * 16)) as i32 - 64,
+                        ((v >> 12) % (H as u32 * 16)) as i32 - 64,
+                    )
+                };
+                let z = [r & 0xffff, q & 0xffff, (r >> 16) ^ (q >> 16)];
+                let (a, b, c) = (p(r), p(q), p(r ^ q.rotate_left(7)));
+                ops.push(if k % 2 == 0 {
+                    Op::TriZ {
+                        colour: q,
+                        a,
+                        b,
+                        c,
+                        z,
+                    }
+                } else {
+                    Op::GouraudZ {
+                        a,
+                        b,
+                        c,
+                        colours: [q, r, q ^ r],
+                        z,
+                    }
+                });
+            }
+            // Twice more over one place, counting up, so that INCR meets
+            // what the triangles left.
+            ops.push(Op::Stencil(Some(StencilMode {
+                func: ALWAYS,
+                reference: 0,
+                mask: 0xff,
+                write_mask: 0xff,
+                fail: KEEP,
+                zfail: INCR,
+                zpass: INCR,
+            })));
+            for _ in 0..2 {
+                ops.push(Op::Rect {
+                    colour: next() | 0xff00_0000,
+                    x: 40,
+                    y: 20,
+                    w: 30,
+                    h: 30,
+                });
+            }
+            ops.push(Op::AlphaTest(None));
+            ops.push(Op::Stencil(Some(StencilMode {
+                func: [EQUAL, NOTEQUAL, GREATER, LESS][round as usize % 4],
+                reference: [0x40 + round, 0, 0x30, 0x80][round as usize % 4],
+                mask: 0xff,
+                write_mask: 0,
+                fail: KEEP,
+                zfail: KEEP,
+                zpass: KEEP,
+            })));
+            ops.push(Op::Rect {
+                colour: 0xffff_ffff,
+                x: 0,
+                y: 0,
+                w: W as i32,
+                h: H as i32,
+            });
+            let list = assemble(&ops, W, H);
+            assert!(list.iter().any(|i| i.sten.to_bool()));
+            let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
+                &[Work::tiled(&list, W, H)],
+                false,
+                false,
+            );
+            let want = model::render(&list, W, H);
+            let at = want.iter().zip(&runs[0].fb).position(|(p, q)| p != q);
+            assert_eq!(
+                at,
+                None,
+                "round {round}: {:08x} not {:08x}",
+                at.map_or(0, |a| runs[0].fb[a]),
+                at.map_or(0, |a| want[a])
+            );
+            // Against the same entries without the stencil.
+            let bare: Vec<_> = list
+                .iter()
+                .map(|i| {
+                    let mut i = *i;
+                    i.sten = txhdl::types::Bit::Zero;
+                    i
+                })
+                .collect();
+            changed += (model::render(&bare, W, H) != want) as u32;
+        }
+        assert!(changed >= 14, "the stencil mattered in {changed} rounds");
+    }
+
     /// Texturing in tiles (issue 997): textured triangles in perspective,
     /// flat and shaded, under every class of texel, every environment,
     /// both magnification filters and all six minification filters over
