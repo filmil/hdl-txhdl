@@ -70,6 +70,9 @@ pub struct ExMon<
     /// identifier of its exclusive write whose answer is still to
     /// come, which would make that answer ambiguous; a test reads it.
     pub xdup: Reg<Bit>,
+    /// The exclusive writes that failed, which a test reads to know a
+    /// host had to try again.
+    pub fails: Reg<U<16>>,
     /// A write burst taken whose beats are still coming.
     pub wpend: Reg<Bit>,
     /// Whether those beats are a failed exclusive write's, taken and
@@ -242,6 +245,7 @@ impl<
             with!(self <= {
                 wids: (wids | w_set) & !w_clr,
                 dup ? xdup: Bit::One,
+                aw_abs ? fails: self.fails.get() + 1,
                 aw_fwd | aw_abs ? { wpend: Bit::One, wdrop: aw_abs },
                 aw_abs ? binjid: aw.id,
                 w_end ? wpend: Bit::Zero,
