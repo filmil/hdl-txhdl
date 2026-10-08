@@ -16,6 +16,7 @@
 extern void gles_make_current(unsigned int *frame, size_t capacity,
                               unsigned int width, unsigned int height);
 extern size_t gles_frame_len(void);
+extern void gles_buffer_room(unsigned char *mem, size_t bytes);
 
 #define ONE 65536
 #define CAP 64
@@ -112,6 +113,42 @@ int main(void) {
   void *at = 0;
   glGetPointerv(GL_VERTEX_ARRAY_POINTER, &at);
   printf("vertex pointer %d\n", at == (void *)fan);
+
+
+  /* Buffer objects (#1488): a new context with room for their stores,
+     and the quad drawn from them, its positions and, at an offset into
+     the same buffer, its colours, and its indices from an element
+     buffer. */
+  static unsigned char room[1024];
+  gles_make_current(frame, CAP, 64, 48);
+  gles_buffer_room(room, sizeof room);
+  GLuint names[2];
+  glGenBuffers(2, names);
+  glBindBuffer(GL_ARRAY_BUFFER, names[0]);
+  glBufferData(GL_ARRAY_BUFFER, sizeof quad + sizeof colours, 0,
+               GL_STATIC_DRAW);
+  glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof quad, quad);
+  glBufferSubData(GL_ARRAY_BUFFER, sizeof quad, sizeof colours, colours);
+  glEnableClientState(GL_VERTEX_ARRAY);
+  glEnableClientState(GL_COLOR_ARRAY);
+  glVertexPointer(3, GL_SHORT, sizeof quad[0], (const void *)0);
+  glColorPointer(4, GL_UNSIGNED_BYTE, 0, (const void *)sizeof quad);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, names[1]);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof indices, indices,
+               GL_STATIC_DRAW);
+  glScalex(ONE / 2, ONE / 2, ONE);
+  glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_BYTE, (const void *)0);
+  glBindBuffer(GL_ARRAY_BUFFER, names[0]);
+  GLint size = 0;
+  glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE, &size);
+  printf("buffers %u %u size %d is %d\n", names[0], names[1], size,
+         glIsBuffer(names[0]));
+  size_t m = gles_frame_len();
+  printf("buffer frame %zu\n", m);
+  for (size_t i = 0; i < m * 16; i++) {
+    printf("%08x\n", frame[i]);
+  }
   printf("error %04x\n", glGetError());
   return 0;
 }

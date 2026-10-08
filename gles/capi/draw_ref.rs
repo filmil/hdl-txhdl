@@ -110,5 +110,19 @@ fn main() {
     // The fan's array: two fixed components a vertex, packed.
     println!("vertex array 2 140c 0");
     println!("vertex pointer 1");
+
+    // Buffer objects (#1488): the quad in a new context, scaled by a half,
+    // its colours per vertex, as draw.c draws it from its buffers.
+    let mut frame = [[0u32; 16]; CAP];
+    let mut g = Gl::new(&mut frame, 64, 48);
+    g.scale(ONE / 2, ONE / 2, ONE);
+    g.draw_elements(gl::TRIANGLES, &indices, &positions, Some(&colours), None);
+    // Two names, the first store a quad of shorts and its colours.
+    println!("buffers 1 2 size 48 is 1");
+    let words = g.frame();
+    println!("buffer frame {}", words.len());
+    for w in words.iter().flatten() {
+        println!("{w:08x}");
+    }
     println!("error {:04x}", g.get_error());
 }
