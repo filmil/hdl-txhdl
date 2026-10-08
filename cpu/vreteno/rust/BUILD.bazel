@@ -78,6 +78,31 @@ rust_library(
     edition = "2021",
 )
 
+# A program that prints a count without end, for a test that watches
+# the serial port stop and start (issue 1412).
+rust_binary(
+    name = "chatter",
+    srcs = ["chatter.rs"],
+    compile_data = ["vreteno.ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_FLAGS,
+    tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
+)
+
+vreteno_image(
+    name = "chatter_image",
+    platform = ":vreteno",
+    program = ":chatter",
+)
+
+rust_library(
+    name = "chatter_program",
+    srcs = [":chatter_image"],
+    crate_name = "chatter_program",
+    edition = "2021",
+)
+
 # An icosahedron, worked out on the core and written into memory as a
 # display list for Razboj to fill. Built exactly as the greeting is.
 rust_binary(
