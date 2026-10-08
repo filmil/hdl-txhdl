@@ -24,11 +24,22 @@ CORE_RUSTC_FLAGS = [
     "-Coverflow-checks=no",
 ]
 
+# The crates built for the core at a level of their own, after the
+# flags above, as `prefix@flag` for rules_rust's per-crate setting. On
+# the board, the binning in `razboj_tile` at level 2 takes 0.45 M cycles
+# a frame of the textured icosahedron where `z` takes 1.1 M; the whole
+# program at level 2 builds its list only 4 per cent faster, likely
+# because the larger code misses more in the instruction cache (#1450).
+CORE_PER_CRATE_FLAGS = [
+    "//gpu/razboj:tile@-Copt-level=2",
+]
+
 def _to_vreteno(settings, attr):
     _ = settings  # the incoming configuration is not read
     return {
         "//command_line_option:platforms": str(attr.platform),
         "@rules_rust//rust/settings:extra_rustc_flags": CORE_RUSTC_FLAGS,
+        "@rules_rust//rust/settings:per_crate_rustc_flag": CORE_PER_CRATE_FLAGS,
     }
 
 _vreteno_transition = transition(
@@ -37,6 +48,7 @@ _vreteno_transition = transition(
     outputs = [
         "//command_line_option:platforms",
         "@rules_rust//rust/settings:extra_rustc_flags",
+        "@rules_rust//rust/settings:per_crate_rustc_flag",
     ],
 )
 
