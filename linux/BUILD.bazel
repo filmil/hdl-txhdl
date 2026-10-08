@@ -179,6 +179,51 @@ boot_image(
     tags = ["manual"],
 )
 
+# The board with its root on NFS from srv (issue 1438): the address
+# from the kernel's own command line, so no DHCP server is needed, the
+# root at srv's export, and an initramfs with nothing to run, so the
+# kernel mounts that root and runs its /init. The tree for the export
+# is nfs_root.tar, the initramfs's system, unpacked as root on srv with
+# `tar -xpf` into /srv/vreteno-root. board_boot stays the fallback.
+#
+#   bazel build //linux:board_nfs_boot //linux:nfs_root_tar
+#   fastboot -s tcp:192.168.1.50 boot bazel-bin/linux/board_nfs_boot.bin
+genrule(
+    name = "nfs_initramfs",
+    srcs = ["@linux//:src"],
+    outs = ["nfs_initramfs.cpio"],
+    cmd = _ENV + " $(execpath userspace.sh) nfsboot " +
+          "$(execpath @linux//:src) $@",
+    tags = ["manual"],
+    tools = _TOOLS,
+)
+
+genrule(
+    name = "nfs_root_tar",
+    srcs = [
+        "bin/busybox",
+        "init",
+    ],
+    outs = ["nfs_root.tar"],
+    cmd = _ENV + " $(execpath userspace.sh) roottar " +
+          "$(execpath bin/busybox) $(execpath init) $@",
+    tags = ["manual"],
+    tools = _TOOLS,
+)
+
+boot_image(
+    name = "board_nfs_boot",
+    bootargs = "earlycon console=ttySIF0 root=/dev/nfs " +
+               "nfsroot=192.168.1.1:/srv/vreteno-root,v3,tcp " +
+               "ip=192.168.1.50::192.168.1.1:255.255.255.0:vreteno:eth0:off " +
+               "rw init=/init",
+    initramfs = "nfs_initramfs.cpio",
+    kernel = "Image",
+    opensbi = "fw_jump.bin",
+    system_map = "System.map",
+    tags = ["manual"],
+)
+
 sh_test(
     name = "boot_test",
     size = "large",

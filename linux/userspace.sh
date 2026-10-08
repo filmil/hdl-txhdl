@@ -242,8 +242,59 @@ EOF
   # Every entry at time nought, so the archive is the same each build.
   "$work/gen_init_cpio" -t 0 "$work/list" >"$out"
   ;;
+nfsboot)
+  # The initramfs of the image whose root is on NFS (issue 1438): the
+  # console and nothing to run, so the kernel, finding no /init, goes on
+  # to mount the root its command line names.
+  linux=$root/$1 out=$2
+  work=$root/.unfs
+  rm -rf "$work" && mkdir -p "$work"
+  $host_cc -fuse-ld=lld -O2 "$linux/usr/gen_init_cpio.c" -o "$work/gen_init_cpio"
+  printf '%s\n' 'dir /dev 0755 0 0' 'nod /dev/console 0600 0 0 c 5 1' \
+    >"$work/list"
+  "$work/gen_init_cpio" -t 0 "$work/list" >"$out"
+  ;;
+roottar)
+  # The same system as the initramfs, as a tree for the NFS export on
+  # srv (issue 1438): a tar, written by Python's tarfile so that the
+  # device nodes and root's ownership are in it without running as root,
+  # and unpacked there with `tar -xpf` as root. Every entry at time
+  # nought, so the archive is the same each build.
+  busybox=$root/$1 init=$root/$2 out=$3
+  "$PYTHON3" - "$busybox" "$init" "$out" <<'PY'
+import io
+import sys
+import tarfile
+
+busybox, init, out = sys.argv[1:]
+with tarfile.open(out, "w", format=tarfile.GNU_FORMAT) as t:
+
+    def add(name, kind, mode, data=b"", target="", dev=(0, 0)):
+        i = tarfile.TarInfo(name)
+        i.type, i.mode, i.uid, i.gid, i.mtime = kind, mode, 0, 0, 0
+        i.uname = i.gname = "root"
+        if kind == tarfile.REGTYPE:
+            i.size = len(data)
+        i.linkname = target
+        i.devmajor, i.devminor = dev
+        t.addfile(i, io.BytesIO(data) if kind == tarfile.REGTYPE else None)
+
+    for d, m in [("dev", 0o755), ("bin", 0o755), ("sbin", 0o755),
+                 ("usr", 0o755), ("usr/bin", 0o755), ("usr/sbin", 0o755),
+                 ("proc", 0o755), ("sys", 0o755), ("tmp", 0o1777),
+                 ("root", 0o700)]:
+        add(d, tarfile.DIRTYPE, m)
+    add("dev/console", tarfile.CHRTYPE, 0o600, dev=(5, 1))
+    add("dev/null", tarfile.CHRTYPE, 0o666, dev=(1, 3))
+    with open(busybox, "rb") as f:
+        add("bin/busybox", tarfile.REGTYPE, 0o755, f.read())
+    add("bin/sh", tarfile.SYMTYPE, 0o777, target="busybox")
+    with open(init, "rb") as f:
+        add("init", tarfile.REGTYPE, 0o755, f.read())
+PY
+  ;;
 *)
-  echo "userspace.sh: sysroot, busybox or initramfs, not $what" >&2
+  echo "userspace.sh: sysroot, busybox, initramfs, nfsboot or roottar, not $what" >&2
   exit 2
   ;;
 esac
