@@ -119,6 +119,8 @@ fn main() {
     g.draw_elements(gl::TRIANGLES, &indices, &positions, Some(&colours), None);
     // Two names, the first store a quad of shorts and its colours.
     println!("buffers 1 2 size 48 is 1");
+    // The element buffer, and the vertex array's, the first.
+    println!("bindings 2 1");
     let words = g.frame();
     println!("buffer frame {}", words.len());
     for w in words.iter().flatten() {

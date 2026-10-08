@@ -293,8 +293,9 @@ pub extern "C" fn glIsEnabled(cap: u32) -> u8 {
 
 /// The client arrays' state, which the C API keeps rather than the
 /// library (#1484): each array's switch, and its size, type and stride as
-/// given, by GL ES 1.1's names for them; `None` for any other name.
-fn array_state(a: &Arrays, pname: u32) -> Option<i64> {
+/// given, and the buffer objects' bindings (#1488), by GL ES 1.1's names
+/// for them; `None` for any other name.
+fn array_state(a: &Arrays, b: &Buffers, pname: u32) -> Option<i64> {
     let size = |x: &Array| x.size as i64;
     let kind = |x: &Array| x.kind as i64;
     let stride = |x: &Array| x.stride as i64;
@@ -316,6 +317,14 @@ fn array_state(a: &Arrays, pname: u32) -> Option<i64> {
         0x808A => stride(&a.texcoord),
         // GL_CLIENT_ACTIVE_TEXTURE: the one unit's.
         0x84E1 => 0x84C0,
+        // The buffer bindings (#1488): the two targets', and the buffer
+        // each array was given under.
+        0x8894 => b.array as i64,
+        0x8895 => b.element as i64,
+        0x8896 => a.vertex.buffer as i64,
+        0x8897 => a.normal.buffer as i64,
+        0x8898 => a.colour.buffer as i64,
+        0x889A => a.texcoord.buffer as i64,
         _ => return None,
     })
 }
@@ -326,7 +335,7 @@ unsafe fn query(pname: u32, put: impl FnOnce(&gles::get::Got)) {
     let Some(c) = current() else {
         return;
     };
-    if let Some(v) = array_state(&c.arrays, pname) {
+    if let Some(v) = array_state(&c.arrays, &c.buffers, pname) {
         let kind = gles::get::Kind::Integer;
         let mut values = [0i64; 16];
         values[0] = v;

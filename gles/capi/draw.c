@@ -144,6 +144,10 @@ int main(void) {
   glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE, &size);
   printf("buffers %u %u size %d is %d\n", names[0], names[1], size,
          glIsBuffer(names[0]));
+  GLint bound[2];
+  glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, bound);
+  glGetIntegerv(GL_VERTEX_ARRAY_BUFFER_BINDING, bound + 1);
+  printf("bindings %d %d\n", bound[0], bound[1]);
   size_t m = gles_frame_len();
   printf("buffer frame %zu\n", m);
   for (size_t i = 0; i < m * 16; i++) {
