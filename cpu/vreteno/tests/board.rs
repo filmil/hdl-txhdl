@@ -592,6 +592,7 @@ fn run_all_in<const LO: usize, const HI: usize>(
     let mut vwords: HashMap<u32, u32> = HashMap::new();
     let mut board = TestBoard {
         cpu: Hart::with(text),
+        cpu1: Hart::with(&vreteno32::park::text()),
         rom: Rom::with(text),
         dmem: Dmem::with(data),
         ..Default::default()
@@ -2214,6 +2215,9 @@ fn mcycle_steps_steadily_between_two_reads() {
 /// The stores into the DDR3 take nine cycles more than into the data
 /// memory, over sixteen; seven before the cache's snoop, which holds
 /// each write's answer on the DDR3's port a registered cycle longer.
+/// The second hart (issue 1408) waits in `wfi` here, so the snoop has
+/// nobody to tell of the first hart's writes and holds no answer for
+/// them; with both running it does, and they take twenty-nine.
 /// Before the instruction cache (issue 1021) the two were equal: the core issued stores no faster than it fetched the
 /// routine over the bus, so they showed that the core could not fill
 /// the path. From the cache it issues them faster than the DDR3's path
@@ -3825,4 +3829,282 @@ fn amos_from_the_ddr3_lose_no_count() {
         rereads += ran.amo_rereads;
     }
     println!("reads again across the sweep: {rereads}");
+}
+
+/// Words for hart 0 to write `code` into memory at the address in `at`,
+/// a word at a time through x7 (issue 1408).
+fn place(c: &mut Checked, at: u32, code: &[u32]) {
+    use vreteno32::isa::sw;
+    for (i, &w) in code.iter().enumerate() {
+        c.li(7, w).op(sw(7, at, (i * 4) as i32));
+    }
+}
+
+/// Words for hart 0 to start hart 1 at the address in `entry` with the
+/// argument in `arg` (issue 1408): `fence`, so the code it wrote is in
+/// memory and gone from hart 1's data cache, then the mailbox, then
+/// hart 1's `msip`. x9 and x13 hold the mailbox and the timer.
+fn start_hart1(c: &mut Checked, entry: u32, arg: u32) {
+    use vreteno32::isa::{fence, sw};
+    c.op(fence())
+        .li(9, vreteno32::park::MAILBOX)
+        .op(sw(entry, 9, 0))
+        .op(sw(arg, 9, 4))
+        .li(13, vreteno32::isa::CLINT_BASE)
+        .li(14, 1)
+        .op(sw(14, 13, 4));
+}
+
+/// Hart 1, started through the mailbox, runs code hart 0 wrote into the
+/// DDR3 and writes a flag hart 0 waits on; then hart 0 writes other code
+/// at the same address and starts it again, and the flag says the new
+/// code ran: hart 1's `fence.i` on the way out of its wait emptied the
+/// instruction cache that held the old (issue 1408).
+#[test]
+fn hart_one_starts_twice_from_the_mailbox() {
+    use vreteno32::isa::{beq, jalr, lw, sw};
+    const CODE: u32 = 0x4002_0000;
+    const FLAG: u32 = 0x4003_0000;
+    // Hart 1: the value to the flag, whose address is its argument,
+    // and back to its wait.
+    let job = |v: u32| {
+        let mut j = Checked::new();
+        j.li(29, v).op(sw(29, 11, 0)).op(jalr(0, 0, 0));
+        j.p.clone()
+    };
+    let mut c = Checked::new();
+    c.li(8, CODE).li(12, FLAG).op(sw(0, 12, 0));
+    for v in [0x111, 0x222] {
+        place(&mut c, 8, &job(v));
+        c.op(sw(0, 12, 0));
+        start_hart1(&mut c, 8, 12);
+        c.op(lw(15, 12, 0)).op(beq(15, 0, -4)).eq(15, v);
+    }
+    let ran = run_debugged(&c.done(), &[], 100_000, &[]);
+    assert!(ran.halted_at.is_some(), "hart 1 ran each code once");
+}
+
+/// The two harts' atomics on one memory (issue 1408): each adds one to a
+/// counter a hundred times with `amoadd.w` and to another a hundred
+/// times with `lr.w` and `sc.w`, and neither count loses an add. Each
+/// hart then hands the other a word the other has cached, with a `fence`
+/// and a flag: hart 0 writes one hart 1 read at its start and raises a
+/// flag hart 1 polls, and hart 1 says what it then read; hart 1 writes
+/// one hart 0 read at its start and raises the flag hart 0 polls. The
+/// snoop takes each word out of the other hart's cache. No hold runs
+/// out.
+#[test]
+fn two_harts_lose_no_count() {
+    use vreteno32::isa::{
+        addi, amoadd_w, beq, bne, fence, jalr, lr_w, lw, sc_w, sw,
+    };
+    const CODE: u32 = 0x4002_0000;
+    const COUNT: u32 = 0x4000_0000;
+    const PAIRS: u32 = 0x4000_0100;
+    const DATA: u32 = 0x4000_0200;
+    const FLAG: u32 = 0x4000_0300;
+    const DATA1: u32 = 0x4000_0400;
+    const FLAG1: u32 = 0x4000_0500;
+    const SAW: u32 = 0x4000_0600;
+    // Each hart's loop: x5 the AMO's counter, x16 the pairs', x10 the
+    // rounds; an `lr.w` and `sc.w` until the store holds.
+    let rounds = |c: &mut Checked| {
+        c.li(5, COUNT).li(6, 1).li(16, PAIRS).li(10, 100);
+        c.op(amoadd_w(0, 5, 6))
+            .op(lr_w(20, 16))
+            .op(addi(20, 20, 1))
+            .op(sc_w(21, 16, 20))
+            .op(bne(21, 0, -12))
+            .op(addi(10, 10, -1))
+            .op(bne(10, 0, -24));
+    };
+    let mut j = Checked::new();
+    // Hart 1 reads the word hart 0 will write, so its line is cached.
+    j.li(17, DATA1).op(lw(30, 17, 0));
+    rounds(&mut j);
+    // It waits for hart 0's flag, then says what the word is.
+    j.li(18, FLAG1)
+        .op(lw(19, 18, 0))
+        .op(beq(19, 0, -4))
+        .op(lw(30, 17, 0))
+        .li(19, SAW)
+        .op(sw(30, 19, 0));
+    j.li(22, DATA)
+        .li(23, 0xabc)
+        .op(sw(23, 22, 0))
+        .op(fence())
+        .li(24, 1)
+        .op(sw(24, 11, 0))
+        .op(jalr(0, 0, 0));
+    let job = j.p.clone();
+    let mut c = Checked::new();
+    // The word hart 1 will write, read first so its line is cached.
+    c.li(22, DATA).op(lw(25, 22, 0)).eq(25, 0);
+    c.li(8, CODE).li(12, FLAG).op(sw(0, 12, 0));
+    place(&mut c, 8, &job);
+    start_hart1(&mut c, 8, 12);
+    rounds(&mut c);
+    // The word hart 1 read at its start, then hart 1's flag.
+    c.li(17, DATA1)
+        .li(28, 0x55)
+        .op(sw(28, 17, 0))
+        .op(fence())
+        .li(18, FLAG1)
+        .li(28, 1)
+        .op(sw(28, 18, 0));
+    c.op(lw(15, 12, 0)).op(beq(15, 0, -4));
+    c.li(19, SAW).op(lw(29, 19, 0)).eq(29, 0x55);
+    c.li(5, COUNT).op(lw(26, 5, 0)).eq(26, 200);
+    c.li(16, PAIRS).op(lw(27, 16, 0)).eq(27, 200);
+    c.op(lw(25, 22, 0)).eq(25, 0xabc);
+    let ran = run_debugged(&c.done(), &[], 400_000, &[]);
+    assert!(ran.halted_at.is_some(), "a count or the word was wrong");
+    assert_eq!(ran.htimeouts, 0, "no hold ran out");
+}
+
+/// Both harts store into the DDR3 at once (issue 1408): two hundred
+/// words each, each hart timing its own loop with `mcycle`, against
+/// hart 0's loop alone. Every word lands. The three times go to memory,
+/// where the JTAG host reads them at the end and then lets hart 0 halt;
+/// the test prints them, and holds each hart to less than four times
+/// the loop alone: the two share the path and the snoop, which holds
+/// every write's answer while it names the line to the other hart.
+#[test]
+fn both_harts_storing_share_the_path() {
+    use vreteno32::isa::{
+        addi, beq, bne, csrrs, fence, jalr, lw, sw, CSR_MCYCLE,
+    };
+    const CODE: u32 = 0x4002_0000;
+    const A: u32 = 0x4004_0000;
+    const B: u32 = 0x4005_0000;
+    const T0: u32 = 0x4000_0700;
+    const TT: u32 = 0x4000_0704;
+    const T1: u32 = 0x4000_0708;
+    const FLAG: u32 = 0x4000_0800;
+    const RELEASE: u32 = 0x4000_0900;
+    // 200 stores from `base` up, timed into x26.
+    let stores = |c: &mut Checked, base: u32| {
+        c.li(5, base).li(10, 200).op(csrrs(25, CSR_MCYCLE, 0));
+        c.op(sw(10, 5, 0))
+            .op(addi(5, 5, 4))
+            .op(addi(10, 10, -1))
+            .op(bne(10, 0, -12))
+            .op(fence())
+            .op(csrrs(26, CSR_MCYCLE, 0));
+        c.op(vreteno32::isa::sub(26, 26, 25));
+    };
+    let mut j = Checked::new();
+    stores(&mut j, B);
+    j.li(27, T1)
+        .op(sw(26, 27, 0))
+        .op(fence())
+        .li(24, 1)
+        .op(sw(24, 11, 0))
+        .op(jalr(0, 0, 0));
+    let job = j.p.clone();
+    let mut c = Checked::new();
+    // Alone first, into A.
+    stores(&mut c, A);
+    c.op(addi(28, 26, 0));
+    // Then together, hart 1 into B, hart 0 into A again.
+    c.li(8, CODE).li(12, FLAG).op(sw(0, 12, 0));
+    place(&mut c, 8, &job);
+    start_hart1(&mut c, 8, 12);
+    stores(&mut c, A);
+    c.op(lw(15, 12, 0)).op(beq(15, 0, -4));
+    // Every word of both: the last of each run, and the first.
+    c.li(5, A).op(lw(29, 5, 0)).eq(29, 200);
+    c.li(5, A + 199 * 4).op(lw(29, 5, 0)).eq(29, 1);
+    c.li(5, B).op(lw(29, 5, 0)).eq(29, 200);
+    c.li(5, B + 199 * 4).op(lw(29, 5, 0)).eq(29, 1);
+    // The times to memory, then wait for the JTAG host to say it has
+    // read them.
+    c.li(27, T0).op(sw(28, 27, 0)).op(sw(26, 27, 4)).op(fence());
+    c.li(27, RELEASE).op(lw(29, 27, 0)).op(beq(29, 0, -4));
+    let plan = [
+        Op::Wait(150_000),
+        Op::Read(T0),
+        Op::Read(TT),
+        Op::Read(T1),
+        Op::Write(RELEASE, 1),
+    ];
+    let ran = run_debugged(&c.done(), &[], 400_000, &plan);
+    assert!(ran.halted_at.is_some(), "a word was missing");
+    assert_eq!(ran.htimeouts, 0, "no hold ran out");
+    let (alone, together, one) = (ran.got[0], ran.got[1], ran.got[2]);
+    println!(
+        "200 stores: hart 0 alone {alone}, together {together}; \
+         hart 1 together {one}"
+    );
+    assert!(together < 4 * alone, "hart 0: {together} against {alone}");
+    assert!(one < 4 * alone, "hart 1: {one} against {alone}");
+}
+
+/// A waiting hart is told nothing and forgets its cache as it wakes
+/// (issue 1408). Hart 1's first job reads a word, so its line is
+/// cached, and goes back to wait; hart 0 then writes the word and wakes
+/// hart 1, in one order or the other, with up to thirty instructions
+/// between, so that hart 1 wakes on either side of the cycle the write's
+/// answer comes and the snoop decides whether to tell it. Hart 1's
+/// second job reads the word until it is the new one, and must get
+/// there: a line kept stale from before it slept never would.
+#[test]
+fn a_hart_woken_as_a_write_lands_sees_it() {
+    use vreteno32::isa::{addi, beq, bne, jalr, lw, sw};
+    const CODE: u32 = 0x4002_0000;
+    const CODE2: u32 = 0x4002_1000;
+    const WORD: u32 = 0x4000_0a00;
+    const FLAG: u32 = 0x4000_0b00;
+    let mut a = Checked::new();
+    a.li(29, WORD)
+        .op(lw(30, 29, 0))
+        .li(28, 1)
+        .op(sw(28, 11, 0))
+        .op(jalr(0, 0, 0));
+    let first = a.p.clone();
+    let mut b = Checked::new();
+    b.li(29, WORD)
+        .li(27, 0x77)
+        .op(lw(30, 29, 0))
+        .op(bne(30, 27, -4))
+        .li(28, 2)
+        .op(sw(28, 11, 0))
+        .op(jalr(0, 0, 0));
+    let second = b.p.clone();
+    for write_first in [true, false] {
+        for gap in 0..30 {
+            let mut c = Checked::new();
+            c.li(12, FLAG).op(sw(0, 12, 0));
+            c.li(8, CODE);
+            place(&mut c, 8, &first);
+            start_hart1(&mut c, 8, 12);
+            c.op(lw(15, 12, 0)).op(beq(15, 0, -4));
+            // The second job, the mailbox for it, then the race.
+            c.li(8, CODE2);
+            place(&mut c, 8, &second);
+            c.op(vreteno32::isa::fence())
+                .li(9, vreteno32::park::MAILBOX)
+                .op(sw(8, 9, 0))
+                .op(sw(12, 9, 4))
+                .op(vreteno32::isa::fence())
+                .li(13, vreteno32::isa::CLINT_BASE)
+                .li(14, 1)
+                .li(16, WORD)
+                .li(17, 0x77);
+            let wake = sw(14, 13, 4);
+            let write = sw(17, 16, 0);
+            c.op(if write_first { write } else { wake });
+            for _ in 0..gap {
+                c.op(addi(0, 0, 0));
+            }
+            c.op(if write_first { wake } else { write });
+            c.li(18, 2).op(lw(15, 12, 0)).op(bne(15, 18, -4));
+            let ran = run_debugged(&c.done(), &[], 200_000, &[]);
+            assert!(
+                ran.halted_at.is_some(),
+                "hart 1 never saw the word, write first {write_first}, \
+                 gap {gap}"
+            );
+        }
+    }
 }
