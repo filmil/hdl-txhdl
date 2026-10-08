@@ -45,7 +45,7 @@ A later issue means the entry point is accepted from the start but does what tha
 | Clip planes | `glClipPlanex` | Now, one plane at least |
 | Clearing | `glClearColorx`, `glClear`; `glClearDepthx` | Now, under the colour and depth masks |
 | Scissor | `glScissor` | #990 |
-| Depth | `glDepthFunc`, `glDepthMask` | Now, from #1273, drawn in a tile table |
+| Depth | `glDepthFunc`, `glDepthMask`, `glPolygonOffsetx`; `GL_POLYGON_OFFSET_FILL` | Now, from #1273, drawn in a tile table; polygon offset from #998 |
 | Blending and masks | `glBlendFunc`, `glAlphaFuncx`, `glColorMask` | Now, from #993, drawn in a tile table |
 | Textures | `glGenTextures`, `glDeleteTextures`, `glBindTexture`, `glTexImage2D`, `glTexParameteri`, `glTexParameterx`, `glTexEnvi`, `glTexEnvx`, `glTexEnvxv`, `glTexCoordPointer`, `glMultiTexCoord4x`, `glActiveTexture`, `glClientActiveTexture`, `glPixelStorei`; `GL_TEXTURE_2D` and `GL_TEXTURE_COORD_ARRAY` | From #997, one unit, drawn in a tile table; the rasteriser samples under every filter, mipmapped, and every environment but `GL_COMBINE`, as Razboj's model does |
 | Points and lines | `glPointSizex`, `glLineWidthx`, and the point and line modes of the draw calls | Now, from issue 994 |
@@ -54,7 +54,7 @@ A later issue means the entry point is accepted from the start but does what tha
 | Completion | `glFlush`, `glFinish` | Now (section 7) |
 | Hints | `glHint` | Accepted and ignored, as the specification allows |
 
-Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit, which wait for a program that needs them; fog (#998), stencil (#998), `glLogicOp` (#998), `glPolygonOffsetx` (#998), point sprites (#998), and `glReadPixels`, which needs a read path from the framebuffer that nothing has asked for yet.
+Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit, which wait for a program that needs them; fog (#998), stencil (#998), `glLogicOp` (#998), point sprites (#998), and `glReadPixels`, which needs a read path from the framebuffer that nothing has asked for yet.
 An entry point that is left out still exists, so that a program links, and sets `GL_INVALID_ENUM` or `GL_INVALID_OPERATION` as the specification says for an unsupported value.
 
 The limits the library reports are the specification's minimums: a modelview stack of 16, projection and texture stacks of 2, eight lights, one clip plane.
@@ -335,6 +335,9 @@ So a frame that tests depth anywhere is binned at the swap and drawn as a tile t
 A clear of both the colour and the depth to another depth, or after depth has been tested, is one rectangle that writes both.
 A clear of the depth alone is a rectangle that writes no channel, since issue 993 gave Razboj the colour mask.
 `//gles:depth_test` holds forty scenes of triangles crossing in depth, in perspective, to a reference in f64, pixel by pixel, through Razboj's model.
+With `GL_POLYGON_OFFSET_FILL` on, a filled polygon's depth gains `glPolygonOffsetx`'s factor times its largest slope plus its units times one step of the sixteen bits (#998).
+The depth plane is affine, so the library adds that to the plane's start and leaves its steps, and the lines and points the library draws are not offset, as GL ES 1.1 has only the fill mode.
+`polygon_offset_is_gls_formula` holds the offset to that formula over forty triangles, and `an_offset_polygon_wins_over_its_own_depth` draws a polygon over itself, which loses every pixel under `GL_LESS` without the offset and wins every one with it.
 The GL icosahedron hides its back faces by depth rather than culling them, binned into a tile table on the board, and its picture is the culled one but for pixels on the solid's outline.
 
 Blending, the alpha test and the colour mask are issue 993's, on the same tile buffer.
