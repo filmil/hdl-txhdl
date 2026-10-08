@@ -153,6 +153,10 @@ pub struct Gl<'a> {
     tex_coords: [Fx; 4],
     store: Option<texture::Store<'a>>,
     unpack: usize,
+    /// Point sprites (#998): their switch, and whether a sprite's texture
+    /// coordinates run across it, `GL_COORD_REPLACE_OES`.
+    sprite_on: bool,
+    coord_replace: bool,
     error: u32,
 }
 
@@ -207,6 +211,8 @@ impl<'a> Gl<'a> {
             tx: [IDENTITY; gl::MAX_TEXTURE_STACK_DEPTH],
             tx_top: 0,
             texture_on: false,
+            sprite_on: false,
+            coord_replace: false,
             bound: 0,
             env: razboj_tile::tex::MODULATE,
             env_colour: [0; 4],
@@ -389,6 +395,7 @@ impl<'a> Gl<'a> {
             gl::BLEND => self.blend_on = on,
             gl::ALPHA_TEST => self.alpha_on = on,
             gl::TEXTURE_2D => self.texture_on = on,
+            gl::POINT_SPRITE_OES => self.sprite_on = on,
             l if (gl::LIGHT0..gl::LIGHT0 + gl::MAX_LIGHTS as u32)
                 .contains(&l) =>
             {
@@ -417,6 +424,7 @@ impl<'a> Gl<'a> {
             gl::BLEND => self.blend_on,
             gl::ALPHA_TEST => self.alpha_on,
             gl::TEXTURE_2D => self.texture_on,
+            gl::POINT_SPRITE_OES => self.sprite_on,
             l if (gl::LIGHT0..gl::LIGHT0 + gl::MAX_LIGHTS as u32)
                 .contains(&l) =>
             {
@@ -792,6 +800,12 @@ impl<'a> Gl<'a> {
     /// `glTexEnvx` and `glTexEnvxv`: the environment, `GL_REPLACE`,
     /// `GL_MODULATE`, `GL_DECAL`, `GL_BLEND` or `GL_ADD`, or its colour.
     pub fn tex_env(&mut self, target: u32, pname: u32, params: &[Fx]) {
+        if (target, pname) == (gl::POINT_SPRITE_OES, gl::COORD_REPLACE_OES) {
+            return match params.first() {
+                Some(&p) => self.coord_replace = p != 0,
+                None => self.fail(gl::INVALID_ENUM),
+            };
+        }
         if target != gl::TEXTURE_ENV || params.is_empty() {
             return self.fail(gl::INVALID_ENUM);
         }
@@ -1262,9 +1276,50 @@ impl<'a> Gl<'a> {
         let (x0, gy0) = (lo(wx), lo(wy));
         let (x1, y0, y1) = (x0 + s - 1, sh - gy0 - s, sh - 1 - gy0);
         let c = |v: i64| v.clamp(-(1 << 20), 1 << 20) as i32;
+        if self.sprite_on && self.coord_replace {
+            if let Some(sides) = self.texturing() {
+                return self.sprite(&v, (x0, y0, x1, y1), sides);
+            }
+        }
         if let Some(b) = clip(c(x0), c(y0), c(x1), c(y1), self.bounds()) {
             let slot = emit::flat_depth(self.window_z(&v));
             self.push_drawn(emit::rect(colour_word(&v.col), b), Some(slot));
+        }
+    }
+
+    /// A point sprite (#998, `OES_point_sprite`): the point's square, its
+    /// pixels `x0` to `x1` and rows `y0` to `y1` in Razboj's rows, as two
+    /// textured triangles whose corners are the square's, with `s` from
+    /// nought at its left edge to one at its right and `t` from nought at
+    /// its top to one at its bottom, so that a pixel's are GL's
+    /// `1/2 + (x - x_w + 1/2) / size` and `1/2 - (y - y_w + 1/2) / size`.
+    /// `q` is one: a point is not in perspective across itself. The
+    /// texture is `2^lw` by `2^lh`, its level of detail the square's to
+    /// the texture's, and the depth the point's.
+    fn sprite(
+        &mut self,
+        v: &Vert,
+        (x0, y0, x1, y1): (i64, i64, i64, i64),
+        (lw, lh): (u32, u32),
+    ) {
+        let r = |c: i64| (16 * c).clamp(VMIN as i64, VMAX as i64) as i32;
+        let (l, t, rt, b) = (r(x0), r(y0), r(x1 + 1), r(y1 + 1));
+        let corners = [(l, t), (rt, t), (rt, b), (l, b)];
+        let (u, w) = ((1i64 << lw) << 32, (1i64 << lh) << 32);
+        let q = 1u64 << 48;
+        let st = [(0, 0, q), (u, 0, q), (u, w, q), (0, w, q)];
+        let z = self.window_z(v);
+        let zs = self.depth_test.then_some([z; 3]);
+        let colour = colour_word(&v.col);
+        let screen = self.bounds();
+        for (i, j, k) in [(0, 1, 2), (0, 2, 3)] {
+            let (a, bb, cc) = (corners[i], corners[j], corners[k]);
+            let drawn = emit::triangle(colour, a, bb, cc, None, zs, screen);
+            let tex =
+                emit::textured([a, bb, cc], [st[i], st[j], st[k]], screen);
+            if let Some((w, slot)) = drawn {
+                self.push_textured(w, slot, tex);
+            }
         }
     }
 
