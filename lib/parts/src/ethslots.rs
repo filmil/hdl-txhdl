@@ -34,6 +34,7 @@ use txhdl::types::{Bit, U};
 use txhdl::{lower, regmap, with, Trace};
 
 use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
+use crate::eth::ungray16;
 
 /// A slot is this many bytes, which is `FRAME_MAX`.
 pub const SLOT: usize = 2048;
@@ -86,6 +87,13 @@ regmap! { regs (regs_read, regs_we), 4: [
     ]),
     (13, tx_ev_enable, rw, "kept for the driver; it raises nothing", [
         (enable, 0, 1, rw, 0, "the enable"),
+    ]),
+    (14, rx_mac_check, ro, "frames the MAC dropped for their check", [
+        (count, 0, 16, ro, 0, "a failed check sequence or a receive error"),
+    ]),
+    (15, rx_mac_drops, ro, "frames the MAC dropped for room or size", [
+        (room, 0, 16, ro, 0, "both of the MAC's frames were held"),
+        (size, 16, 16, ro, 0, "four bytes or fewer, or longer than its store"),
     ]),
 ] }
 // end{regs}
@@ -149,6 +157,7 @@ impl<const BASE: usize> Unit for EthSlots<BASE> {
             rx_len,
             rx_which,
             rx_drops,
+            rx_mac,
             tx_base,
             tx_bytes,
             tx_start,
@@ -161,6 +170,7 @@ impl<const BASE: usize> Unit for EthSlots<BASE> {
             In<U<16>>,
             In<U<1>>,
             In<U<32>>,
+            In<U<48>>,
             Out<U<32>>,
             Out<U<16>>,
             Out<Bit>,
@@ -284,10 +294,13 @@ impl<const BASE: usize> Unit for EthSlots<BASE> {
             });
 
             if rgo.to_bool() {
-                // The map, as LiteEth has it: the write-only words, the
-                // counts nothing here keeps, and the unnamed 14 and 15
-                // read as zero rather than mirror a neighbour (issue
-                // 454).
+                // The map, as LiteEth has it: the write-only words and
+                // the counts nothing here keeps read as zero rather than
+                // mirror a neighbour (issue 454). 14 and 15, which
+                // LiteEth leaves unnamed, are the MAC's drops ahead of
+                // the slots, crossed from its clock in Gray code and
+                // counted here (issue 1404).
+                let mac = rx_mac.get();
                 let ready = !tx_busy.get() & !self.tx_go.get();
                 let zero = U::<32>::from(0u8);
                 let word = regs_read(
@@ -306,6 +319,11 @@ impl<const BASE: usize> Unit for EthSlots<BASE> {
                     zero,
                     regs_tx_ev_pending_pack(self.tx_pending.get()),
                     regs_tx_ev_enable_pack(self.tx_enable.get()),
+                    regs_rx_mac_check_pack(ungray16(mac.slice::<16, 16>())),
+                    regs_rx_mac_drops_pack(
+                        ungray16(mac.slice::<32, 16>()),
+                        ungray16(mac.slice::<0, 16>()),
+                    ),
                 );
                 bus.r.send(LiteR {
                     data: word,
@@ -383,6 +401,11 @@ mod tests {
         let (_rx_len_o, rx_len) = signal::<U<16>, DefaultClock>();
         let (_rx_which_o, rx_which) = signal::<U<1>, DefaultClock>();
         let (_rx_drops_o, rx_drops) = signal::<U<32>, DefaultClock>();
+        // The MAC's drops by cause, in Gray code as they cross: room 3,
+        // check 5, size 7 (issue 1404).
+        let (rx_mac_o, rx_mac) = signal::<U<48>, DefaultClock>();
+        let g = |x: u32| crate::eth::gray16(U::<16>::from(x)).raw();
+        rx_mac_o.set(U::<48>::from((g(3) << 32) | (g(5) << 16) | g(7)));
         let (tx_base, _) = signal::<U<32>, DefaultClock>();
         let (tx_bytes, _) = signal::<U<16>, DefaultClock>();
         let (tx_start, _) = signal::<Bit, DefaultClock>();
@@ -404,8 +427,8 @@ mod tests {
             slots.run(
                 bus,
                 (
-                    tx_busy, rx_busy, rx_len, rx_which, rx_drops, tx_base,
-                    tx_bytes, tx_start, rx_base, irq, rx_full,
+                    tx_busy, rx_busy, rx_len, rx_which, rx_drops, rx_mac,
+                    tx_base, tx_bytes, tx_start, rx_base, irq, rx_full,
                 ),
             ),
             client,
@@ -416,7 +439,13 @@ mod tests {
         let seen = seen.borrow();
         assert_eq!(seen.len(), 10, "every read answered");
         for (word, v) in seen.iter() {
-            let want = if *word == 13 { 1 } else { 0 };
+            let want = match *word {
+                13 => 1,
+                // The MAC's drops, decoded: check, then size over room.
+                14 => 5,
+                15 => (7 << 16) | 3,
+                _ => 0,
+            };
             assert_eq!(*v, want, "word {word}");
         }
     }

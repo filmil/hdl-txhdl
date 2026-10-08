@@ -245,6 +245,7 @@ module vreteno_board_jtag (
     // device failed. //flagship is the board with the port.
     .net_tx_data(), .net_tx_valid(), .net_tx_ready(1'b1),
     .net_rx_data(9'd0), .net_rx_valid(1'b0), .net_rx_ready(),
+    .mac_drops(48'd0),
     // The JTAG master's pins (issue 241), driven by the master below.
     // The master's identifier is one bit; the board's host ports carry
     // two, so it is widened with a zero and narrowed back.

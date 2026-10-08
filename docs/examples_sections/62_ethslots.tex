@@ -138,6 +138,15 @@ two and both had been overwritten under it, with \code{rx\_errors}
 at zero; now it is told of three, intact, and the other five are
 counted.
 
+Words 14 and 15, which LiteEth leaves unnamed, read the MAC's drops
+ahead of the slots by cause: \code{rx\_mac\_check}, the frames that
+failed their check, and \code{rx\_mac\_drops}, with the frames that
+found both of the MAC's frames held in its low half and those too short
+or too long in its high half (issue 1404).
+They arrive on \code{rx\_mac} in Gray code from the MAC's clock, and
+the block decodes them as it answers. The run gives \code{rx\_mac} one,
+four and two, and reads them back from the two words.
+
 \subsection{The cycle where the two meet}
 
 The registers are written with \code{with!}, whose entries apply in

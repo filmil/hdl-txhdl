@@ -119,6 +119,8 @@ fn main() {
     let (dv_o, rx_dv) = signal::<Bit, DefaultClock>();
     let (er_o, rx_er) = signal::<Bit, DefaultClock>();
     let (rxlen_o, rx_len) = signal::<U<16>, DefaultClock>();
+    // The receiver's drops by cause, which nothing here reads.
+    let (rxcnt_o, _rxcnt) = signal::<U<48>, DefaultClock>();
     let (inbytes_o, in_bytes) = signal::<U<16>, DefaultClock>();
     let (ingo_o, in_go) = signal::<Bit, DefaultClock>();
     let (which_o, which) = signal::<U<1>, DefaultClock>();
@@ -176,7 +178,10 @@ fn main() {
             ),
         ),
         join2(
-            mac_rx.run(EthRxLines { rxd, rx_dv, rx_er }, (rx_tx, rxlen_o)),
+            mac_rx.run(
+                EthRxLines { rxd, rx_dv, rx_er },
+                (rx_tx, rxlen_o, rxcnt_o),
+            ),
             join2(
                 fin.run(
                     (rx_rx, rx_len, hold, no_slot),

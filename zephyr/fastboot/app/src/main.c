@@ -35,8 +35,9 @@
  * which is waiting and the copy out of the stack, in the fastboot core
  * and of those in the copy into the staging area, the driver's own
  * counts, every thread's cycles, and where frames were lost: the port's
- * `rx_errors`, the driver's, and the stack's IPv4 and TCP drops, all
- * across one connection. Said on the console when it closes.
+ * `rx_errors`, the MAC's ahead of the slots by cause (issue 1404), the
+ * driver's, and the stack's IPv4 and TCP drops, all across one
+ * connection. Said on the console when it closes.
  *
  * Every count of cycles is 64 bits and said in thousands. A download of
  * a minute is six billion cycles, and 32 bits wrapped at 43 seconds,
@@ -56,6 +57,7 @@ static struct {
 	uint32_t bytes;
 	uint64_t start;
 	uint32_t rx_errors;
+	struct eth_vreteno_mac_drops mac;
 	struct eth_vreteno_prof eth;
 	struct net_stats net;
 	const struct k_thread *thread[PROF_THREADS];
@@ -94,6 +96,7 @@ static void prof_begin(void)
 	memset(&prof, 0, sizeof(prof));
 	prof.eth = eth_vreteno_prof;
 	prof.rx_errors = eth_vreteno_rx_errors();
+	eth_vreteno_mac_drops(&prof.mac);
 	prof_net(&prof.net);
 	k_thread_foreach(prof_thread_start, NULL);
 	prof.start = k_cycle_get_64();
@@ -126,6 +129,15 @@ static void prof_end(void)
 	       e->tx_waits - prof.eth.tx_waits);
 	printk("  port rx_errors %u (frames dropped with both slots held)\n",
 	       eth_vreteno_rx_errors() - prof.rx_errors);
+	/* Ahead of the slots, in the MAC (issue 1404): sixteen-bit
+	 * counts, so the differences are taken in sixteen bits. */
+	struct eth_vreteno_mac_drops m;
+
+	eth_vreteno_mac_drops(&m);
+	printk("  mac drops: no room %u, failed check %u, size %u\n",
+	       (uint16_t)(m.room - prof.mac.room),
+	       (uint16_t)(m.check - prof.mac.check),
+	       (uint16_t)(m.size - prof.mac.size));
 	printk("  ipv4 recv %u drop %u; tcp recv %u drop %u seg_drop %u "
 	       "resent %u chkerr %u ackerr %u; processing errors %u\n",
 	       n.ipv4.recv - prof.net.ipv4.recv,

@@ -27,6 +27,7 @@ use txhdl::types::{Bit, U};
 use txhdl::Trace;
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
+use txhdl_parts::eth::gray16;
 use txhdl_parts::ethslots::{regs, EthSlots};
 
 /// Where the four buffers begin: sixteen megabytes into the board's
@@ -40,6 +41,8 @@ const RX_SLOT: u32 = BASE + regs::rx_slot;
 const RX_LENGTH: u32 = BASE + regs::rx_length;
 const RX_PENDING: u32 = BASE + regs::rx_ev_pending;
 const RX_ERRORS: u32 = BASE + regs::rx_errors;
+const RX_MAC_CHECK: u32 = BASE + regs::rx_mac_check;
+const RX_MAC_DROPS: u32 = BASE + regs::rx_mac_drops;
 const RX_ENABLE: u32 = BASE + regs::rx_ev_enable;
 const TX_SLOT: u32 = BASE + regs::tx_slot;
 const TX_LENGTH: u32 = BASE + regs::tx_length;
@@ -145,6 +148,12 @@ fn main() {
     let (rx_len_o, rx_len) = signal::<U<16>, DefaultClock>();
     let (rx_which_o, rx_which) = signal::<U<1>, DefaultClock>();
     let (rx_drops_o, rx_drops) = signal::<U<32>, DefaultClock>();
+    // The MAC's drops ahead of the slots, as the top hands them over
+    // from the PHY's clock: room 1, check 4 and size 2, each in Gray
+    // code (issue 1404).
+    let (rx_mac_o, rx_mac) = signal::<U<48>, DefaultClock>();
+    let gray = |x: u32| gray16(U::<16>::from(x)).raw();
+    rx_mac_o.set(U::<48>::from((gray(1) << 32) | (gray(4) << 16) | gray(2)));
     let mut engines = Engines::default();
     let (txb_o, tx_base) = signal::<U<32>, DefaultClock>();
     let (txn_o, tx_bytes) = signal::<U<16>, DefaultClock>();
@@ -173,6 +182,7 @@ fn main() {
         wave.add("rx_len", &rx_len);
         wave.add("rx_which", &rx_which);
         wave.add("rx_drops", &rx_drops);
+        wave.add("rx_mac", &rx_mac);
         wave.add("tx_base", &tx_base);
         wave.add("tx_bytes", &tx_bytes);
         wave.add("tx_start", &tx_start);
@@ -309,6 +319,17 @@ fn main() {
         assert!(watch_full.get().to_bool(), "both slots hold a frame");
         let errors = host.read(get(RX_ERRORS)).await.done().await;
         assert_eq!(errors.data[0].raw(), 3, "the frames the receiver dropped");
+        // And the MAC's, ahead of the slots, decoded from Gray code.
+        let check = host.read(get(RX_MAC_CHECK)).await.done().await;
+        assert_eq!(check.data[0].raw(), 4, "failed their check");
+        let drops = host.read(get(RX_MAC_DROPS)).await.done().await;
+        assert_eq!(drops.data[0].raw(), (2 << 16) | 1, "size over room");
+        log.borrow_mut().push(format!(
+            "the MAC dropped {} for room, {} for their check, {} for size",
+            drops.data[0].raw() & 0xffff,
+            check.data[0].raw(),
+            drops.data[0].raw() >> 16
+        ));
         let first = host.read(get(RX_LENGTH)).await.done().await;
         assert_eq!(first.data[0].raw(), 64, "the older frame is still first");
         host.write(put(RX_PENDING), &word(1)).await.done().await;
@@ -359,8 +380,8 @@ fn main() {
                 slots.run(
                     bus,
                     (
-                        tx_busy, rx_busy, rx_len, rx_which, rx_drops, txb_o,
-                        txn_o, txs_o, rxb_o, irq_o, full_o,
+                        tx_busy, rx_busy, rx_len, rx_which, rx_drops, rx_mac,
+                        txb_o, txn_o, txs_o, rxb_o, irq_o, full_o,
                     ),
                 ),
             ),

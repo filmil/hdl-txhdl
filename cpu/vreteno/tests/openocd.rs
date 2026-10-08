@@ -319,6 +319,7 @@ fn rig_with(text: Vec<u32>, busy: bool) -> Rig {
             vb: chan::<LiteB, DefaultClock>().1,
             vr: chan::<LiteR<32>, DefaultClock>().1,
             net_rx: chan::<EthByte, DefaultClock>().1,
+            mac_drops: signal::<U<48>, DefaultClock>().1,
             fl_miso: lo(),
             phy_mdio_in: lo(),
             sd_cmd_in: lo(),

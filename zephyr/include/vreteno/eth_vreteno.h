@@ -39,4 +39,16 @@ extern struct eth_vreteno_prof eth_vreteno_prof;
  * slots held one the driver had not acknowledged (issue 1313). */
 uint32_t eth_vreteno_rx_errors(void);
 
+/* The frames the MAC dropped ahead of the slots, by cause, each a
+ * sixteen-bit count that wraps (issue 1404): no room, both of its two
+ * frames held; a failed check sequence or a receive error; and a
+ * frame of four bytes or fewer, or longer than its store. */
+struct eth_vreteno_mac_drops {
+	uint16_t room;
+	uint16_t check;
+	uint16_t size;
+};
+
+void eth_vreteno_mac_drops(struct eth_vreteno_mac_drops *d);
+
 #endif

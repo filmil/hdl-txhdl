@@ -713,6 +713,8 @@ fn run_all_in<const LO: usize, const HI: usize>(
             vb: vb_rx,
             vr: vr_rx,
             net_rx: net_in_rx,
+            // No MAC here: the frames come straight into the port.
+            mac_drops: signal::<U<48>, DefaultClock>().1,
             fl_miso,
             phy_mdio_in,
             sd_cmd_in,
