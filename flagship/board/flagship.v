@@ -165,6 +165,10 @@ module flagship (
   // The controller's own reset is a pulse at power-on, counted on the
   // board's clock, and nothing else.
   wire clk, ui_rst;
+  // The receiver's drops by cause on the core's clock, synchronised
+  // below where the receiver is (#1404).
+  (* ASYNC_REG = "TRUE" *) reg [47:0] mac_drops_s0 = 48'd0;
+  (* ASYNC_REG = "TRUE" *) reg [47:0] mac_drops_s1 = 48'd0;
   reg [7:0] por = 8'd0;
   always @(posedge clk200_in) if (por != 8'hff) por <= por + 1;
   wire sys_rst = (por != 8'hff);
@@ -298,6 +302,7 @@ module flagship (
     .net_tx_ready(net_tx_ready),
     .net_rx_data(net_rx_data), .net_rx_valid(net_rx_valid),
     .net_rx_ready(net_rx_ready),
+    .mac_drops(mac_drops_s1),
     // The JTAG master's pins (issue 241). This top has no master on
     // them: every valid low, every ready low, and the answers unread.
     // //cpu/vreteno:vreteno_board_jtag_pnr is the top that has one.
@@ -391,12 +396,26 @@ module flagship (
 
   wire [8:0] rx_data;
   wire rx_valid, rx_ready;
+  wire [47:0] rx_counts;
   eth_rx mac_rx (
     .clk(rx_clk),
     .rst(rx_rst),
     .rxd(rxd), .rx_dv(rx_dv), .rx_er(rx_er),
-    .rx_data(rx_data), .rx_valid(rx_valid), .rx_ready(rx_ready)
+    .rx_data(rx_data), .rx_valid(rx_valid), .rx_ready(rx_ready),
+    .rx_counts(rx_counts)
   );
+  // The receiver's drops by cause, three counts in Gray code from
+  // registers on the PHY's clock, so each changes in one bit at a time
+  // and two flip-flops on the core's clock read a count that is either
+  // the old one or the new one (#1404). The slots read them at words
+  // 14 and 15. The receive clock is grouped apart from the core's, so
+  // nothing bounds the skew between the bits of a count; skew past a
+  // cycle could show one read wrong, which counts a person reads can
+  // bear.
+  always @(posedge clk) begin
+    mac_drops_s0 <= rx_counts;
+    mac_drops_s1 <= mac_drops_s0;
+  end
 
   // The received frames cross to the core's clock, where the remote
   // peripheral's link reads them. The FIFO is 128 bytes rather than

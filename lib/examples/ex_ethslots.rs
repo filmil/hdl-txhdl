@@ -145,6 +145,10 @@ fn main() {
     let (rx_len_o, rx_len) = signal::<U<16>, DefaultClock>();
     let (rx_which_o, rx_which) = signal::<U<1>, DefaultClock>();
     let (rx_drops_o, rx_drops) = signal::<U<32>, DefaultClock>();
+    // The MAC's drops ahead of the slots, as the top hands them over
+    // from the PHY's clock: room 1, check 4 and size 2, each in Gray
+    // code (issue 1404).
+    let (_rx_mac_o, rx_mac) = signal::<U<48>, DefaultClock>();
     let mut engines = Engines::default();
     let (txb_o, tx_base) = signal::<U<32>, DefaultClock>();
     let (txn_o, tx_bytes) = signal::<U<16>, DefaultClock>();
@@ -173,6 +177,7 @@ fn main() {
         wave.add("rx_len", &rx_len);
         wave.add("rx_which", &rx_which);
         wave.add("rx_drops", &rx_drops);
+        wave.add("rx_mac", &rx_mac);
         wave.add("tx_base", &tx_base);
         wave.add("tx_bytes", &tx_bytes);
         wave.add("tx_start", &tx_start);
@@ -359,8 +364,8 @@ fn main() {
                 slots.run(
                     bus,
                     (
-                        tx_busy, rx_busy, rx_len, rx_which, rx_drops, txb_o,
-                        txn_o, txs_o, rxb_o, irq_o, full_o,
+                        tx_busy, rx_busy, rx_len, rx_which, rx_drops, rx_mac,
+                        txb_o, txn_o, txs_o, rxb_o, irq_o, full_o,
                     ),
                 ),
             ),

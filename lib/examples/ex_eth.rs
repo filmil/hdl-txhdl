@@ -102,6 +102,8 @@ fn main() {
     // is simulated against this trace and a port the trace holds
     // nothing for is a port the testbench cannot drive.
     let (rxlen_out, rx_len) = signal::<U<16>, DefaultClock>();
+    // The receiver's drops by cause, in Gray code: room, check, size.
+    let (counts_out, counts) = signal::<U<48>, DefaultClock>();
     let (irq_out, irq) = signal::<Bit, DefaultClock>();
 
     let mut host_unit = HostUnit::default();
@@ -121,6 +123,7 @@ fn main() {
         wave.add("tx", &tx_rx);
         wave.add("rx", &rx_rx);
         wave.add("rx_len", &rx_len);
+        wave.add("rx_counts", &counts);
         wave.add("txd", &txd);
         wave.add("tx_en", &tx_en);
         wave.add("rxd", &rxd);
@@ -200,8 +203,10 @@ fn main() {
                         tx_en: en_out,
                     },
                 ),
-                mac_rx
-                    .run(EthRxLines { rxd, rx_dv, rx_er }, (rx_tx, rxlen_out)),
+                mac_rx.run(
+                    EthRxLines { rxd, rx_dv, rx_er },
+                    (rx_tx, rxlen_out, counts_out),
+                ),
             ),
         ),
     );

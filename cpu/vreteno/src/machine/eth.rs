@@ -82,6 +82,10 @@ impl Eth {
             regs::rx_slot => self.waiting.front().map_or(0, |w| w.0),
             regs::rx_length => self.waiting.front().map_or(0, |w| w.1),
             regs::rx_errors => self.dropped,
+            // The MAC's drops ahead of the slots (issue 1404): frames
+            // reach the model's slots whole, with no MAC in front, so
+            // none.
+            regs::rx_mac_check | regs::rx_mac_drops => 0,
             regs::rx_ev_status | regs::rx_ev_pending => {
                 b(!self.waiting.is_empty())
             }

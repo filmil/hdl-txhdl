@@ -224,6 +224,7 @@ module vreteno_board (
     // device failed. //flagship is the board with the port.
     .net_tx_data(), .net_tx_valid(), .net_tx_ready(1'b1),
     .net_rx_data(9'd0), .net_rx_valid(1'b0), .net_rx_ready(),
+    .mac_drops(48'd0),
     // The JTAG master's pins (issue 241). This top has no master on
     // them: every valid low, every ready low, and the answers unread.
     // //cpu/vreteno:vreteno_board_jtag_pnr is the top that has one.

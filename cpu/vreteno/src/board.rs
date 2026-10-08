@@ -453,6 +453,11 @@ pub struct BoardIn {
     pub vb: Rx<LiteB>,
     pub vr: Rx<LiteR<32>>,
     pub net_rx: Rx<EthByte>,
+    /// The MAC's drops ahead of the slots, room, check and size, each
+    /// sixteen bits in Gray code: the receiver counts them on the
+    /// PHY's clock, and the top samples them through two flip-flops
+    /// onto this one (issue 1404).
+    pub mac_drops: In<U<48>>,
     /// The JTAG master's pins, one field; its ports are `jtag_awid`
     /// and the rest (issue 579).
     pub jtag: AxiHostPins<32, 32, 4, 1>,
@@ -563,6 +568,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
             vb,
             vr,
             net_rx,
+            mac_drops,
             jtag,
             fl_miso,
             phy_mdio_in,
@@ -1156,6 +1162,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                             eth_rx_len_i,
                                             eth_rx_which_i,
                                             eth_rx_drops_i,
+                                            mac_drops,
                                             eth_tx_base_o,
                                             eth_tx_bytes_o,
                                             eth_tx_start_o,

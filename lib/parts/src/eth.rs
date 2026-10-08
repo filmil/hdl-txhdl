@@ -64,6 +64,23 @@ pub const FRAME_MAX: usize = 2048;
 /// The receiver's store: two frames of [`FRAME_MAX`] (issue 1409).
 pub const RX_STORE: usize = 2 * FRAME_MAX;
 
+/// A count in Gray code, which changes in one bit as the count steps
+/// by one (issue 1404).
+#[lower]
+pub fn gray16(x: U<16>) -> U<16> {
+    x ^ (x >> 1usize)
+}
+
+/// A Gray code back to its count: each bit is the parity of the bits
+/// from it up.
+#[lower]
+pub fn ungray16(g: U<16>) -> U<16> {
+    let a = g ^ (g >> 1usize);
+    let b = a ^ (a >> 2usize);
+    let c = b ^ (b >> 4usize);
+    c ^ (c >> 8usize)
+}
+
 /// Byte `i` of the receiver's frame `k`, the second when `k` is set.
 #[lower]
 fn slot_at(k: Bit, i: U<11>) -> U<12> {
@@ -355,12 +372,25 @@ pub struct EthRx {
     pub frames: Reg<U<16>>,
     /// Frames dropped: a failed check, an error, or no room.
     pub dropped: Reg<U<16>>,
+    /// The same by cause (issue 1404): a frame on the line while both
+    /// frames were held.
+    pub drop_room: Reg<U<16>>,
+    /// A frame whose check sequence failed, or that had `rx_er` high.
+    pub drop_check: Reg<U<16>>,
+    /// A frame of four bytes or fewer, or one longer than the store.
+    pub drop_size: Reg<U<16>>,
+    /// The frame being received ran past the store's last byte.
+    pub long: Reg<Bit>,
+    /// The three counts in Gray code, room highest, then check, then
+    /// size: a register, so that each changes in one bit at an edge
+    /// and another clock can sample it through two flip-flops.
+    pub counts: Reg<U<48>>,
 }
 // end{rxstate}
 
 // begin{rx}
 #[lower]
-impl Unit<EthRxLines, (Tx<EthByte>, Out<U<16>>)> for EthRx {
+impl Unit<EthRxLines, (Tx<EthByte>, Out<U<16>>, Out<U<48>>)> for EthRx {
     /// Two processes. The receiver watches the wire every cycle: it
     /// hunts for the delimiter, stores a byte a cycle while `rx_dv`
     /// is high, checks the frame at its end, and marks it full when
@@ -371,12 +401,13 @@ impl Unit<EthRxLines, (Tx<EthByte>, Out<U<16>>)> for EthRx {
     async fn run(
         &mut self,
         EthRxLines { rxd, rx_dv, rx_er }: EthRxLines,
-        (rx, rx_len): (Tx<EthByte>, Out<U<16>>),
+        (rx, rx_len, rx_counts): (Tx<EthByte>, Out<U<16>>, Out<U<48>>),
     ) {
         join2(
             async {
                 loop {
                     DefaultClock::rising().await;
+                    rx_counts.set(self.counts.get());
                     let len = self.len.get();
                     let crc = self.crc.get();
                     let d = rxd.get();
@@ -399,9 +430,12 @@ impl Unit<EthRxLines, (Tx<EthByte>, Out<U<16>>)> for EthRx {
                     // Receiving: a byte a cycle while `rx_dv` is high.
                     let store = receiving & dv;
                     let dv_end = receiving & !dv;
-                    let good = !self.bad.get()
-                        & Bit::from(crc == CRC_RESIDUE)
-                        & Bit::from(len > 4);
+                    // A frame too short to hold its check sequence, or
+                    // longer than the store, is dropped for its size;
+                    // any other that fails, for its check (issue 1404).
+                    let sized = !self.long.get() & Bit::from(len > 4);
+                    let good =
+                        !self.bad.get() & Bit::from(crc == CRC_RESIDUE) & sized;
                     // A frame on the line while both frames are held.
                     let busy_line = !receiving & dv & full;
                     let kept = dv_end & good;
@@ -416,8 +450,10 @@ impl Unit<EthRxLines, (Tx<EthByte>, Out<U<16>>)> for EthRx {
                             len: U::<11>::from(0u8),
                             crc: U::<32>::from(CRC_INIT),
                             bad: Bit::Zero,
+                            long: Bit::Zero,
                         },
                         store & !last_slot ? len: len + 1,
+                        store & last_slot ? long: Bit::One,
                         store ? {
                             crc: crc_byte(crc, d),
                             bad: self.bad.get() | er,
@@ -427,6 +463,10 @@ impl Unit<EthRxLines, (Tx<EthByte>, Out<U<16>>)> for EthRx {
                         kept & !w ? { full0: Bit::One, len0: len },
                         kept & w ? { full1: Bit::One, len1: len },
                         dv_end & !good ? dropped: self.dropped.get() + 1,
+                        dv_end & !good & !sized ?
+                            drop_size: self.drop_size.get() + 1,
+                        dv_end & !good & sized ?
+                            drop_check: self.drop_check.get() + 1,
                         // The frame offered is given back, and the next
                         // is offered.
                         given ? rsel: !r,
@@ -437,8 +477,13 @@ impl Unit<EthRxLines, (Tx<EthByte>, Out<U<16>>)> for EthRx {
                         kept & (w == mux(given, !r, r)) ? olen: len,
                         given & !r ? full0: Bit::Zero,
                         given & r ? full1: Bit::Zero,
-                        busy_line & !self.skip.get() ?
+                        busy_line & !self.skip.get() ? {
                             dropped: self.dropped.get() + 1,
+                            drop_room: self.drop_room.get() + 1,
+                        },
+                        counts: gray16(self.drop_room.get())
+                            .concat::<16, 32>(gray16(self.drop_check.get()))
+                            .concat::<16, 48>(gray16(self.drop_size.get())),
                     });
                     if store.to_bool() {
                         self.frame.at(slot_at(w, len)).set(d);
@@ -643,6 +688,7 @@ mod tests {
         // The length the receiver reports is not what this test
         // checks; it reads the bytes and counts them itself.
         let (rxlen_out, _rxlen) = signal::<U<16>, DefaultClock>();
+        let (counts_out, _counts) = signal::<U<48>, DefaultClock>();
         let mut sim = Running::new(join2(
             mac_tx.run(
                 in_rx,
@@ -657,7 +703,7 @@ mod tests {
                     rx_dv: dv,
                     rx_er: er,
                 },
-                (out_tx, rxlen_out),
+                (out_tx, rxlen_out, counts_out),
             ),
         ));
         let mut queue: Vec<EthByte> = Vec::new();
@@ -796,6 +842,7 @@ mod tests {
         let (dv_out, dv) = signal::<Bit, DefaultClock>();
         let (_er_out, er) = signal::<Bit, DefaultClock>();
         let (rxlen_out, _rxlen) = signal::<U<16>, DefaultClock>();
+        let (counts_out, _counts) = signal::<U<48>, DefaultClock>();
         let mut mac_rx = EthRx::default();
         let dropped = mac_rx.dropped;
         let mut sim = Running::new(mac_rx.run(
@@ -804,7 +851,7 @@ mod tests {
                 rx_dv: dv,
                 rx_er: er,
             },
-            (out_tx, rxlen_out),
+            (out_tx, rxlen_out, counts_out),
         ));
         let mut line: Vec<Option<u8>> = Vec::new();
         for f in frames {

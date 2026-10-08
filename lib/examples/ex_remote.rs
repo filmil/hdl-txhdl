@@ -112,6 +112,9 @@ fn main() {
     // needs the length, so both ports are taken and ignored.
     let (alen_out, _alen) = signal::<U<16>, DefaultClock>();
     let (blen_out, _blen) = signal::<U<16>, DefaultClock>();
+    // The receivers' drops by cause, which nothing here reads.
+    let (acnt_out, _acnt) = signal::<U<48>, DefaultClock>();
+    let (bcnt_out, _bcnt) = signal::<U<48>, DefaultClock>();
     let mut mac_rx = EthRx::default();
     let mut prog_mac_tx = EthTx::default();
     let mut prog_mac_rx = EthRx::default();
@@ -215,7 +218,7 @@ fn main() {
                         rx_dv: adv,
                         rx_er: aer,
                     },
-                    (prog_tx, alen_out),
+                    (prog_tx, alen_out, acnt_out),
                 ),
             ),
             join2(
@@ -233,7 +236,7 @@ fn main() {
                             rx_dv: bdv,
                             rx_er: ber,
                         },
-                        (in_tx, blen_out),
+                        (in_tx, blen_out, bcnt_out),
                     ),
                 ),
                 client,

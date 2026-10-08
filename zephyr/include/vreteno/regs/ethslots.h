@@ -74,5 +74,19 @@
 #define ETHSLOTS_TX_EV_ENABLE_ENABLE_MASK 0x1
 #define ETHSLOTS_TX_EV_ENABLE_ENABLE_WIDTH 1
 #define ETHSLOTS_TX_EV_ENABLE_ENABLE_RESET 0x0
+#define ETHSLOTS_RX_MAC_CHECK 0x38 /* read only: frames the MAC dropped for their check */
+#define ETHSLOTS_RX_MAC_CHECK_COUNT_SHIFT 0 /* read only: a failed check sequence or a receive error */
+#define ETHSLOTS_RX_MAC_CHECK_COUNT_MASK 0xffff
+#define ETHSLOTS_RX_MAC_CHECK_COUNT_WIDTH 16
+#define ETHSLOTS_RX_MAC_CHECK_COUNT_RESET 0x0
+#define ETHSLOTS_RX_MAC_DROPS 0x3c /* read only: frames the MAC dropped for room or size */
+#define ETHSLOTS_RX_MAC_DROPS_ROOM_SHIFT 0 /* read only: both of the MAC's frames were held */
+#define ETHSLOTS_RX_MAC_DROPS_ROOM_MASK 0xffff
+#define ETHSLOTS_RX_MAC_DROPS_ROOM_WIDTH 16
+#define ETHSLOTS_RX_MAC_DROPS_ROOM_RESET 0x0
+#define ETHSLOTS_RX_MAC_DROPS_SIZE_SHIFT 16 /* read only: four bytes or fewer, or longer than its store */
+#define ETHSLOTS_RX_MAC_DROPS_SIZE_MASK 0xffff0000
+#define ETHSLOTS_RX_MAC_DROPS_SIZE_WIDTH 16
+#define ETHSLOTS_RX_MAC_DROPS_SIZE_RESET 0x0
 
 #endif
