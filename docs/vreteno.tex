@@ -2048,7 +2048,9 @@ it either; a fetch there is refused, in the model as on the board.
 The netlist the documents simulate and the layout maps keeps four
 words a lane, where the window's addresses wrap, since a cell library
 has no RAM and 64~KiB of flip-flops would be most of the layout; the
-board's is 16384.
+board's is 16384. For the same reason that netlist has no instruction
+cache (issue~\#1323): no fetch goes to it there and its arrays are
+never written, so the synthesis folds them away.
 
 The data memory's tracker hands a request to the memory, and a read
 beat to the router, over unregistered channels (issue~\#1291), so each

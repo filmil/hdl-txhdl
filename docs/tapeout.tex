@@ -233,6 +233,16 @@ physical area. This distinction is vital to state explicitly: the
 silicon area reported below measures this core executing this exact
 benchmark binary, rather than a generic programmable microarchitecture.
 
+The core's two larger memories are not in the layout at all. The
+instruction cache, sixteen kilobytes, and the data RAM at the stack
+window, sixty-four, are block RAM on the FPGA; on these cells they
+would be nearly 680 thousand flip-flops, most of the layout, and the
+mapping of the cache alone took ten minutes. So the netlist mapped
+here is built without the cache, no fetch going to it and its arrays
+never written, which the synthesis folds away, and with four words in
+each lane of the data RAM (issues 1275 and 1323). A tapeout would take
+both as SRAM macros, which is what the node lacks.
+
 The multiplier exemplifies a third trade-off. The four dedicated DSP48
 slices utilized on the FPGA are replaced by an array multiplier
 synthesized entirely from discrete standard cells.

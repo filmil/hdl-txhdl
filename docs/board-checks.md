@@ -542,7 +542,7 @@ Stop the serial watcher by its pid on the server, then stop `hw_server` as in se
 ssh $TXHDL_BOARD_SERVER "pkill -f 'bin/[h]w_server -stcp'"
 scp tools/openocd/ax7a200.cfg $TXHDL_BOARD_SERVER:/tmp/txhdl-ax7a200.cfg
 ssh $TXHDL_BOARD_SERVER openocd -f /tmp/txhdl-ax7a200.cfg -c "'\
-  init; halt 2000; \
+  riscv set_command_timeout_sec 10; init; halt 5000; \
   echo \"state [xc7.cpu curstate]\"; echo [capture {reg pc}]; \
   echo [capture {reg mepc}]; echo [capture {reg mcause}]; \
   riscv set_mem_access sysbus; \
@@ -550,6 +550,7 @@ ssh $TXHDL_BOARD_SERVER openocd -f /tmp/txhdl-ax7a200.cfg -c "'\
   echo \"scan stuck_at [capture {mdw 0x3290}]\"; \
   echo \"razboj count [capture {mdw 0x3900}]\"; \
   echo \"razboj status [capture {mdw 0x3904}]\"; \
+  echo \"kept trap [capture {mdw 0x1000 5}]\"; \
   shutdown'" 2>&1 | tee board-1317-wedge.log
 ```
 
@@ -557,6 +558,9 @@ ssh $TXHDL_BOARD_SERVER openocd -f /tmp/txhdl-ax7a200.cfg -c "'\
 2. **The scanout's status and `stuck_at`**, `0x3288` and `0x3290` (`ScanCtl`'s words 2 and 4 at the slot's `0x3280`): bit 1 of the status set and an address in `stuck_at` say which line's fetch never came back.
 3. **Razboj's count and status**, `0x3900` and `0x3904`: a count left non-zero with the idle bit clear says Razboj had a list in flight.
 4. If the system bus reads in steps 2 and 3 time out as well, the bus itself is stuck, not one host.
+5. **The trap the loader kept**, five words at `0x1000` (issue 1411): `54524150` ("TRAP"), a count, and the last trap's `mcause`, `mepc` and `mtval`. A `pc` in the loader, near zero, with a count that went up, says the program trapped and came back through `mtvec` 0, whatever `mcause` reads: the loader clears `mcause` and `mepc` once it has said them, which made the 2026-10-07 catch read as a jump to zero with no trap (#1317).
+
+The 10 s command timeout is not a choice: with the default 2 s, the first session on 2026-10-07 failed with "DMI operation didn't complete" while the core waited on the stalled access.
 
 Capture: `board-1317-wedge.log` and the program's serial log, posted on #1317, with the time it began so srv's recording can be matched to it.
 Then reset and go on with the session.
