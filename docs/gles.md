@@ -54,7 +54,7 @@ A later issue means the entry point is accepted from the start but does what tha
 | Completion | `glFlush`, `glFinish` | Now (section 7) |
 | Hints | `glHint` | Accepted and ignored, as the specification allows |
 
-Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed textures, and a second texture unit, which wait for a program that needs them; fog (#998), stencil (#998), `glLogicOp` (#998), `glPolygonOffsetx` (#998), point sprites (#998), and `glReadPixels`, which needs a read path from the framebuffer that nothing has asked for yet.
+Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit, which wait for a program that needs them; fog (#998), stencil (#998), `glLogicOp` (#998), `glPolygonOffsetx` (#998), point sprites (#998), and `glReadPixels`, which needs a read path from the framebuffer that nothing has asked for yet.
 An entry point that is left out still exists, so that a program links, and sets `GL_INVALID_ENUM` or `GL_INVALID_OPERATION` as the specification says for an unsupported value.
 
 The limits the library reports are the specification's minimums: a modelview stack of 16, projection and texture stacks of 2, eight lights, one clip plane.
@@ -357,6 +357,11 @@ The room's head is a table of 64 descriptors, one an object, and the texels foll
 It stores every texel as 32-bit RGBA in blocks of four by four, and the descriptor keeps the base format, since the environments read each format differently.
 Level 0 of a new size takes room for its whole chain of levels, and with `GL_GENERATE_MIPMAP` on it writes every level below it, each texel the rounded mean of the two by two above.
 An object whose levels are not all given, when its filter reads them, leaves texturing off, as GL says.
+`glCompressedTexImage2D` takes the ten paletted formats of `OES_compressed_paletted_texture` (#998), the compressed formats GL ES 1.1 requires, and no others.
+Its data is the palette of 16 or 256 entries, then each level's indices, `-level` levels after the base when `level` is below nought.
+The library looks every index up when it uploads and stores the texels as `glTexImage2D` does, an entry read as the uncompressed format of the same layout reads a texel, so the texture costs Razboj what an uncompressed one does.
+A level's indices are packed with no padding, two 4-bit indices a byte with the first in the high bits, and the next level starts on a byte.
+`the_paletted_formats_upload_as_gl_says` uploads each of the ten formats with four levels and holds every texel to GL's conversion of its entry.
 A textured triangle carries two slots after its pixel's: the byte address of the texture's descriptor, its environment and colour, `s/w`, `t/w` and `1/w` as planes across the window in 64 bits, and the numerators Razboj takes the level of detail from.
 The emitter works them out as Razboj's assembler does, bit for bit, which `//gles:model_test` holds it to.
 Texture coordinates go through the texture matrix, and points and lines are drawn untextured for now.
