@@ -46,8 +46,8 @@
 
 use core::ffi::c_void;
 use gles_capi::{
-    gles_flush, gles_frame_len, gles_frame_tiled, gles_make_current,
-    gles_retarget, gles_texture_room,
+    gles_buffer_room, gles_flush, gles_frame_len, gles_frame_tiled,
+    gles_make_current, gles_retarget, gles_texture_room,
 };
 use razboj_tile::{MAX_TILES, TILE_WORDS};
 
@@ -527,6 +527,10 @@ pub extern "C" fn eglMakeCurrent(
             // SAFETY: the machine's room is its own and static, as the
             // list is.
             unsafe { gles_texture_room(room.as_mut_ptr(), room.len(), bus) };
+        }
+        if let Some(room) = m.buffers() {
+            // SAFETY: as the textures' room.
+            unsafe { gles_buffer_room(room.as_mut_ptr(), room.len()) };
         }
         target(m, s.back);
         s.current = true;
