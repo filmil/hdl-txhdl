@@ -780,6 +780,88 @@ mod tests {
         assert_eq!(dropped, 1);
     }
 
+    /// Frames on the receiver's wire as a standard sender puts them:
+    /// each preamble, frame and check sequence, then `gap` idle bytes.
+    /// The reader takes a byte in `take` of every `of` cycles, as the
+    /// board's core clock reads the receive clock's bytes, 100 MHz
+    /// against 125. What came out, and what was dropped.
+    fn wire_in(
+        frames: &[Vec<u8>],
+        gap: usize,
+        take: usize,
+        of: usize,
+    ) -> (Vec<Vec<u8>>, u128) {
+        let (out_tx, out_rx) = chan::<EthByte, DefaultClock>();
+        let (rxd_out, rxd) = signal::<U<8>, DefaultClock>();
+        let (dv_out, dv) = signal::<Bit, DefaultClock>();
+        let (_er_out, er) = signal::<Bit, DefaultClock>();
+        let (rxlen_out, _rxlen) = signal::<U<16>, DefaultClock>();
+        let mut mac_rx = EthRx::default();
+        let dropped = mac_rx.dropped;
+        let mut sim = Running::new(mac_rx.run(
+            EthRxLines {
+                rxd,
+                rx_dv: dv,
+                rx_er: er,
+            },
+            (out_tx, rxlen_out),
+        ));
+        let mut line: Vec<Option<u8>> = Vec::new();
+        for f in frames {
+            line.extend(wire_bytes(f).into_iter().map(Some));
+            line.extend(std::iter::repeat_n(None, gap));
+        }
+        let mut got: Vec<Vec<u8>> = vec![Vec::new()];
+        let total = line.len() + frames.len() * 2000;
+        for t in 0..total {
+            let b = line.get(t).copied().flatten();
+            rxd_out.set(U::from(b.unwrap_or(0)));
+            dv_out.set(Bit::from_bool(b.is_some()));
+            let taken = if t % of < take { out_rx.recv() } else { None };
+            if let Some(b) = taken {
+                got.last_mut().unwrap().push(b.data.raw() as u8);
+                if b.last.to_bool() {
+                    got.push(Vec::new());
+                }
+            }
+            sim.cycle();
+        }
+        got.pop();
+        (got, dropped.get().raw())
+    }
+
+    /// Two full frames back to back at the minimum gap of twelve
+    /// bytes, read at the board's pace (issue 1409). A sender that
+    /// segments a window of two in its NIC puts them so, and on the
+    /// board the second of each such pair was lost.
+    #[test]
+    fn two_full_frames_at_the_minimum_gap_both_come_through() {
+        let frames = vec![frame(1514), frame(1514)];
+        let (got, dropped) = wire_in(&frames, 12, 4, 5);
+        assert_eq!(dropped, 0, "nothing dropped");
+        assert_eq!(got.len(), 2, "both frames");
+        assert_eq!(got, frames);
+    }
+
+    /// A longer train at the minimum gap, read at the board's pace:
+    /// the reader is slower than the wire, so two frames held cannot
+    /// keep up for ever, but every frame comes out whole or is counted,
+    /// and the ones that come out are in order.
+    #[test]
+    fn a_train_at_the_minimum_gap_loses_nothing_uncounted() {
+        let frames: Vec<Vec<u8>> = (0..6)
+            .map(|k| frame(1514).iter().map(|b| b ^ k).collect())
+            .collect();
+        let (got, dropped) = wire_in(&frames, 12, 4, 5);
+        assert_eq!(got.len() + dropped as usize, frames.len(), "{dropped}");
+        assert!(got.len() >= 2, "a pair at least: {}", got.len());
+        let mut at = 0;
+        for g in &got {
+            let k = frames[at..].iter().position(|f| f == g).expect("whole");
+            at += k + 1;
+        }
+    }
+
     /// A frame that arrives while both frames the receiver holds are
     /// still waiting is dropped and counted, and the two held are
     /// intact (issue 1409).
