@@ -29,6 +29,10 @@ const IW: usize = 2;
 /// and 64 KiB of flip-flops would be most of the layout. The window's
 /// addresses wrap in it; the demonstration does not use it.
 const DW: usize = 4;
+/// And without the instruction cache, for the same reason (issue 1323):
+/// the demonstration runs from the boot memory, which the cache does
+/// not hold, so its run is the same with it or without.
+const IC: usize = 0;
 const NIDS: usize = 4;
 
 /// The address map, a range per router port in the order of the
@@ -69,7 +73,7 @@ fn main() {
     } else {
         demo()
     };
-    let mut hart = Hart::<IW, DW>::with(&program);
+    let mut hart = Hart::<IW, DW, IC>::with(&program);
     let cpu = &hart.core;
     let (wb_pc, regs) = (cpu.wb_pc, cpu.regs.clone());
     // Read to know when the external interrupt has been taken.
@@ -405,7 +409,7 @@ fn main() {
     // goes into its core's memory (issue 1014), by hand, since an
     // `init` the hart has no memory for is dropped without a word
     // (#1104).
-    let mut lowered = Hart::<IW, DW>::lowered(if atomics {
+    let mut lowered = Hart::<IW, DW, IC>::lowered(if atomics {
         "vreteno_amo"
     } else {
         "vreteno"

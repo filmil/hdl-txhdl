@@ -746,7 +746,11 @@ fn m_result(f3: U<3>, hi: U<33>, lo: U<32>, neg_q: Bit, neg_r: Bit) -> U<32> {
 /// halts. The halt itself, which the writeback stage sets. And the two
 /// memories, the registers and the boot memory.
 #[derive(Trace, Default)]
-pub struct Vreteno<const IW: usize, const DW: usize = 16384> {
+pub struct Vreteno<
+    const IW: usize,
+    const DW: usize = 16384,
+    const IC: usize = 1,
+> {
     pub pc: Reg<U<32>>,
     pub ir: Reg<U<32>>,
     pub ir_c: Reg<Bit>,
@@ -1058,7 +1062,7 @@ pub struct Vreteno<const IW: usize, const DW: usize = 16384> {
     // end{vm}
 }
 
-impl<const IW: usize, const DW: usize> Vreteno<IW, DW> {
+impl<const IW: usize, const DW: usize, const IC: usize> Vreteno<IW, DW, IC> {
     /// The data RAM's depth is a power of two, since its addresses are
     /// masked to it with `DW - 1` (issue 1275).
     const DW_POW2: () = assert!(
@@ -1094,7 +1098,9 @@ impl<const IW: usize, const DW: usize> Vreteno<IW, DW> {
 }
 
 #[lower]
-impl<const IW: usize, const DW: usize> Unit for Vreteno<IW, DW> {
+impl<const IW: usize, const DW: usize, const IC: usize> Unit
+    for Vreteno<IW, DW, IC>
+{
     async fn run(
         &mut self,
         (
@@ -2138,11 +2144,20 @@ impl<const IW: usize, const DW: usize> Unit for Vreteno<IW, DW> {
             // not wait for the add.
             let c_page0 = cacheable(want_vpn);
             let c_page1 = mux(last_word, cacheable(want_vpn + 1), c_page0);
+            // IC is 1 on the board and 0 in the netlist the documents
+            // simulate and the layout maps: there no fetch goes to the
+            // cache and its arrays are never written, so they are
+            // constants the synthesis folds away, since a cell library
+            // has no RAM and 16 KiB of flip-flops would be most of the
+            // layout (issue 1323). The writes are gated as well as the
+            // fetch, since the synthesis does not follow the cache's
+            // state through its registers to see that it never fills.
+            let ic_on = U::<1>::from(IC as u32).bit(0);
             let f_cache = mux(
                 vm,
                 cacheable(self.ft_ppn.get()),
                 mux(hit0, c_page1, c_page0),
-            );
+            ) & ic_on;
             let c_go = f_send & f_cache;
             let b_go = f_send & !f_cache;
             let ic_st = self.ic_st.get();
@@ -2308,11 +2323,11 @@ impl<const IW: usize, const DW: usize> Unit for Vreteno<IW, DW> {
             // Each beat goes into its word's bank.
             let beat = self.ic_beat.get();
             let fill_at = ic_line.concat::<_, 11>(beat.slice::<1, 1>());
-            let fill_even = r_beat & !beat.bit(0);
-            let fill_odd = r_beat & beat.bit(0);
+            let fill_even = r_beat & !beat.bit(0) & ic_on;
+            let fill_odd = r_beat & beat.bit(0) & ic_on;
             when!(fill_even => self { ic_even.at(fill_at): resp_data });
             when!(fill_odd => self { ic_odd.at(fill_at): resp_data });
-            let tag_go = ic_clearing | r_ok;
+            let tag_go = (ic_clearing | r_ok) & ic_on;
             let tag_at = mux(ic_clearing, self.ic_clr.get(), ic_line);
             let tag_val = mux(
                 ic_clearing,

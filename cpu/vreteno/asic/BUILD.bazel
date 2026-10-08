@@ -6,7 +6,7 @@
 # before one, and `//docs:tapeout` says which of the remaining steps a
 # real node would add.
 #
-#   bazel build //cpu/vreteno/asic:vreteno_cells   # about ten seconds
+#   bazel build //cpu/vreteno/asic:vreteno_cells   # about a minute
 #   bazel build //cpu/vreteno/asic:vreteno_pnr     # about twenty minutes
 load("//tools/asic:defs.bzl", "asic_pnr", "asic_synth")
 
