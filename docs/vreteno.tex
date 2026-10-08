@@ -450,6 +450,23 @@ all of them & +845\,824 & +320~ms \\
 thousand instructions; the board adds the transfer, which the larger
 kernel lengthens by its bytes over fastboot.
 
+The board can also keep its root on srv, over NFS, so that what is
+written there outlives a reboot (issue~1438). \code{board\_nfs\_boot}
+is the image: its command line gives the address itself,
+\code{ip=192.168.1.50::192.168.1.1:255.255.255.0:vreteno:eth0:off},
+so no DHCP server is needed, names the root as
+\code{nfsroot=192.168.1.1:/srv/vreteno-root,v3,tcp}, and runs
+\code{/init} from it. Its initramfs holds only the console and nothing
+to run, so the kernel, finding no \code{/init} there, mounts the root
+its command line names. The tree for the export is
+\code{nfs\_root.tar}, the initramfs's own system, every entry root's
+and the device nodes in it, written without running as root and
+unpacked on srv as root with \code{tar -xpf}; \code{nfs\_root\_test}
+reads it back. On the model the kernel configures \code{eth0} from the
+command line and goes to mount the root, which the model cannot serve,
+so the mount itself is the board's to check. \code{board\_boot}, with
+its root in memory, stays the image to fall back on.
+
 Linux reaches the network through its own LiteEth driver,
 \code{litex\_liteeth}, on the Ethernet port (issue~\#1203). The
 port's registers are LiteEth's at LiteX's offsets, and its two
