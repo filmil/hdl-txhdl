@@ -676,6 +676,9 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (tirq_o, tirq_i) = signal::<Bit, DefaultClock>();
         // The software interrupt the controller raises for a program.
         let (sirq_o, sirq_i) = signal::<Bit, DefaultClock>();
+        // Hart 1's lines, unread until the board has hart 1 (issue 1408).
+        let (tirq1_o, _tirq1_i) = signal::<Bit, DefaultClock>();
+        let (sirq1_o, _sirq1_i) = signal::<Bit, DefaultClock>();
         let (time_o, time_i) = signal::<U<64>, DefaultClock>();
         let (uirq_o, uirq_i) = signal::<Bit, DefaultClock>();
         let (eirq_o, eirq_i) = signal::<Bit, DefaultClock>();
@@ -1117,7 +1120,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                         ans: ans1_tx,
                                         r: rb1_tx,
                                     },
-                                    (rst_timer, tirq_o, sirq_o, time_o),
+                                    (rst_timer, tirq_o, sirq_o, time_o, tirq1_o, sirq1_o),
                                 ),
                             ),
                             join2(

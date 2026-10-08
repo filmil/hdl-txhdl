@@ -88,6 +88,9 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let (irq_out, irq) = signal::<Bit, DefaultClock>();
     let (tirq_out, tirq) = signal::<Bit, DefaultClock>();
     let (sirq_out, sirq) = signal::<Bit, DefaultClock>();
+    // Hart 1's lines, which a one-hart design leaves unread (issue 1408).
+    let (tirq1_out, _tirq1) = signal::<Bit, DefaultClock>();
+    let (sirq1_out, _sirq1) = signal::<Bit, DefaultClock>();
     let (time_out, time) = signal::<U<64>, DefaultClock>();
     // The supervisor's external line, which no controller here drives
     // (issue 1094).
@@ -153,7 +156,10 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let mut sim = Running::new(join2(
         join2(
             join2(
-                timer.run(tbus, (rst_t, tirq_out, sirq_out, time_out)),
+                timer.run(
+                    tbus,
+                    (rst_t, tirq_out, sirq_out, time_out, tirq1_out, sirq1_out),
+                ),
                 uart.run(ubus, (rst_u, rx, tx_out, uirq_out)),
             ),
             join2(

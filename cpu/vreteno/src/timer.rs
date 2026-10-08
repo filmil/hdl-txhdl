@@ -32,17 +32,27 @@ use txhdl::{lower, with, Trace};
 use txhdl_parts::bus::axi::{Answer, PerPort, Resp, R};
 
 // begin{map}
-// The map: the five words at the offsets every RISC-V platform puts
-// them at, as word indices, fourteen address bits above the byte bits
-// selecting one of the window's 16384 words (issues 499 and 668).
+// The map: the words at the offsets every RISC-V platform puts them
+// at, a software interrupt and a compare for each of two harts and one
+// count, as word indices, fourteen address bits above the byte bits
+// selecting one of the window's 16384 words (issues 499 and 668); and
+// the mailbox, two words at 0xc000 by which one hart tells the other
+// where to start and with what (issue 1408).
 regmap! { clint (clint_read, clint_we), 14: [
-    (0x0000, msip, rw, "the software interrupt", [
-        (msip, 0, 1, rw, 0, "one raises the software interrupt"),
+    (0x0000, msip, rw, "hart 0's software interrupt", [
+        (msip, 0, 1, rw, 0, "one raises hart 0's software interrupt"),
     ]),
-    (0x1000, mtimecmp_lo, rw, "the compare, low half"),
-    (0x1001, mtimecmp_hi, rw, "the compare, high half"),
+    (0x0001, msip1, rw, "hart 1's software interrupt", [
+        (msip1, 0, 1, rw, 0, "one raises hart 1's software interrupt"),
+    ]),
+    (0x1000, mtimecmp_lo, rw, "hart 0's compare, low half"),
+    (0x1001, mtimecmp_hi, rw, "hart 0's compare, high half"),
+    (0x1002, mtimecmp1_lo, rw, "hart 1's compare, low half"),
+    (0x1003, mtimecmp1_hi, rw, "hart 1's compare, high half"),
     (0x2ffe, mtime_lo, rw, "the count, low half"),
     (0x2fff, mtime_hi, rw, "the count, high half"),
+    (0x3000, mbox_entry, rw, "the mailbox: where hart 1 starts"),
+    (0x3001, mbox_arg, rw, "the mailbox: what it starts with"),
 ] }
 // end{map}
 
@@ -61,6 +71,37 @@ fn sel_of(addr: U<32>) -> U<14> {
     )
 }
 
+/// The word a write's beat merges into, by the enables held since its
+/// request, in the map's order: at most one is set, and none for a word
+/// the map does not name, which merges into zero.
+#[allow(clippy::too_many_arguments)]
+#[lower]
+fn clint_read_we(
+    we: U<10>,
+    msip: U<32>,
+    msip1: U<32>,
+    cmp_lo: U<32>,
+    cmp_hi: U<32>,
+    cmp1_lo: U<32>,
+    cmp1_hi: U<32>,
+    time_lo: U<32>,
+    time_hi: U<32>,
+    entry: U<32>,
+    arg: U<32>,
+) -> U<32> {
+    let z = U::<32>::from(0u8);
+    mux(we.bit(0), msip, z)
+        | mux(we.bit(1), msip1, z)
+        | mux(we.bit(2), cmp_lo, z)
+        | mux(we.bit(3), cmp_hi, z)
+        | mux(we.bit(4), cmp1_lo, z)
+        | mux(we.bit(5), cmp1_hi, z)
+        | mux(we.bit(6), time_lo, z)
+        | mux(we.bit(7), time_hi, z)
+        | mux(we.bit(8), entry, z)
+        | mux(we.bit(9), arg, z)
+}
+
 #[derive(Trace, Default)]
 pub struct Timer<const I: usize> {
     pub mtime: Reg<U<64>>,
@@ -68,12 +109,20 @@ pub struct Timer<const I: usize> {
     /// The software interrupt: bit 0 of the word at `msip`.
     pub msip: Reg<Bit>,
     pub pending: Reg<Bit>,
+    /// Hart 1's (issue 1408): its compare, its software interrupt and
+    /// whether its count has reached its compare.
+    pub mtimecmp1: Reg<U<64>>,
+    pub msip1: Reg<Bit>,
+    pub pending1: Reg<Bit>,
+    /// The mailbox: two words a program writes and the other hart reads.
+    pub mbox_entry: Reg<U<32>>,
+    pub mbox_arg: Reg<U<32>>,
     /// A write taken and waiting for its beat: the write enables its
     /// word sets, decoded by the map when the request was taken, and
     /// which identifier answers it. Five bits rather than the
     /// fourteen of the word's select, which the beat does not need.
     pub pend: Reg<U<1>>,
-    pub pwe: Reg<U<5>>,
+    pub pwe: Reg<U<10>>,
     pub pid: Reg<U<I>>,
     /// The write waiting is a burst of more than one beat, refused.
     pub pburst: Reg<Bit>,
@@ -88,14 +137,24 @@ impl<const I: usize> Unit for Timer<I> {
     async fn run(
         &mut self,
         bus: PerPort<32, 32, 4, I>,
-        // The count goes to the core too, which `time` reads (issue 1012).
-        (rst, tirq, sirq, time): (In<Bit>, Out<Bit>, Out<Bit>, Out<U<64>>),
+        // The count goes to the core too, which `time` reads (issue 1012),
+        // and hart 1 has a timer line and a software line of its own
+        // (issue 1408).
+        (rst, tirq, sirq, time, tirq1, sirq1): (
+            In<Bit>,
+            Out<Bit>,
+            Out<Bit>,
+            Out<U<64>>,
+            Out<Bit>,
+            Out<Bit>,
+        ),
     ) {
         loop {
             DefaultClock::rising().await;
             let rst = rst.get();
             // The two words are sliced below, so they are read once.
             let (mtime, mtimecmp) = (self.mtime.get(), self.mtimecmp.get());
+            let mtimecmp1 = self.mtimecmp1.get();
             time.set(mtime);
             let q = bus.req.head();
             let qoff = bus.req.peek().is_some();
@@ -123,34 +182,28 @@ impl<const I: usize> Unit for Timer<I> {
             // one (issue 681).
             let sel = sel_of(q.addr);
             let msip = clint_msip_pack(self.msip.get());
+            let msip1 = clint_msip1_pack(self.msip1.get());
             let (cmp_lo, cmp_hi) =
                 (mtimecmp.slice::<0, 32>(), mtimecmp.slice::<32, 32>());
+            let (cmp1_lo, cmp1_hi) =
+                (mtimecmp1.slice::<0, 32>(), mtimecmp1.slice::<32, 32>());
             let (time_lo, time_hi) =
                 (mtime.slice::<0, 32>(), mtime.slice::<32, 32>());
-            let word = clint_read(sel, msip, cmp_lo, cmp_hi, time_lo, time_hi);
+            let (entry, arg) = (self.mbox_entry.get(), self.mbox_arg.get());
+            let word = clint_read(
+                sel, msip, msip1, cmp_lo, cmp_hi, cmp1_lo, cmp1_hi, time_lo,
+                time_hi, entry, arg,
+            );
             // The word a write's beat merges into, chosen by the enables
             // held since its request: at most one is set, and none for a
             // word the map does not name, which merges into zero and is
             // written nowhere.
             let pwe = self.pwe.get();
-            let old = mux(
-                pwe.bit(0),
-                msip,
-                mux(
-                    pwe.bit(1),
-                    cmp_lo,
-                    mux(
-                        pwe.bit(2),
-                        cmp_hi,
-                        mux(
-                            pwe.bit(3),
-                            time_lo,
-                            mux(pwe.bit(4), time_hi, U::<32>::from(0u8)),
-                        ),
-                    ),
-                ),
+            let old = clint_read_we(
+                pwe, msip, msip1, cmp_lo, cmp_hi, cmp1_lo, cmp1_hi, time_lo,
+                time_hi, entry, arg,
             );
-            let we = mux(wgo & !pburst, pwe, U::<5>::from(0u8));
+            let we = mux(wgo & !pburst, pwe, U::<10>::from(0u8));
             // A write puts the lanes its strobe covers into the word.
             let wdata = wh.data;
             let strb = wh.strb;
@@ -183,20 +236,29 @@ impl<const I: usize> Unit for Timer<I> {
                 take_read & burst ? { rleft: q.len, rid: q.id },
                 more ? rleft: rleft - 1,
                 we.bit(0) ? msip: clint_msip_msip(merged),
-                we.bit(1) ? mtimecmp: mtimecmp
+                we.bit(1) ? msip1: clint_msip1_msip1(merged),
+                we.bit(2) ? mtimecmp: mtimecmp
                     .slice::<32, 32>()
                     .concat::<_, 64>(merged),
-                we.bit(2) ? mtimecmp: merged
+                we.bit(3) ? mtimecmp: merged
                     .concat::<_, 64>(mtimecmp.slice::<0, 32>()),
-                we.bit(3) ?
+                we.bit(4) ? mtimecmp1: mtimecmp1
+                    .slice::<32, 32>()
+                    .concat::<_, 64>(merged),
+                we.bit(5) ? mtimecmp1: merged
+                    .concat::<_, 64>(mtimecmp1.slice::<0, 32>()),
+                we.bit(6) ?
                     mtime: mtime.slice::<32, 32>().concat::<_, 64>(merged),
-                we.bit(4) ?
+                we.bit(7) ?
                     mtime: merged.concat::<_, 64>(mtime.slice::<0, 32>()),
+                we.bit(8) ? mbox_entry: merged,
+                we.bit(9) ? mbox_arg: merged,
                 // The compare goes to all ones with the count to zero:
                 // a compare left by the previous program would fire from
                 // nowhere once the count reached it, and a compare of
                 // zero would fire at once (issue 419).
                 rst ? mtimecmp: U::<64>::from(u64::MAX),
+                rst ? mtimecmp1: U::<64>::from(u64::MAX),
             });
             // A read's first beat as it is taken, or a refused burst's
             // next: never both, since a burst being refused takes no
@@ -217,10 +279,13 @@ impl<const I: usize> Unit for Timer<I> {
                 });
             }
             self.pending.set(mtime >= mtimecmp);
+            self.pending1.set(mtime >= mtimecmp1);
             tirq.set(self.pending);
+            tirq1.set(self.pending1);
             // The software line is the register itself: a program
             // raises it and clears it, and nothing else touches it.
             sirq.set(self.msip.get());
+            sirq1.set(self.msip1.get());
         }
     }
 }
@@ -235,8 +300,14 @@ mod tests {
     /// Write `data` at `off` in the timer's window, then read `off`:
     /// what the read answered, and `msip` after both.
     fn write_then_read(off: u32, data: u32) -> (u32, bool) {
+        let (got, msip, _) = write_then_read_both(off, data);
+        (got, msip)
+    }
+
+    /// The same, with hart 1's `msip` too.
+    fn write_then_read_both(off: u32, data: u32) -> (u32, bool, bool) {
         let mut t = Timer::<2>::default();
-        let msip = t.msip;
+        let (msip, msip1) = (t.msip, t.msip1);
         let (req_tx, req) = chan::<PerReq<32, 2>, DefaultClock>();
         let (w_tx, w) = chan();
         let (ans, ans_rx) = chan();
@@ -245,8 +316,11 @@ mod tests {
         let (tirq, _tirq) = signal::<Bit, DefaultClock>();
         let (sirq, _sirq) = signal::<Bit, DefaultClock>();
         let (time, _time) = signal::<U<64>, DefaultClock>();
+        let (tirq1, _tirq1) = signal::<Bit, DefaultClock>();
+        let (sirq1, _sirq1) = signal::<Bit, DefaultClock>();
         let port = PerPort { req, w, ans, r };
-        let mut sim = Running::new(t.run(port, (rst, tirq, sirq, time)));
+        let mut sim =
+            Running::new(t.run(port, (rst, tirq, sirq, time, tirq1, sirq1)));
         let at = U::<32>::from(0x0200_0000 + off);
         let req_at = |read| PerReq {
             read,
@@ -273,7 +347,11 @@ mod tests {
                 got = Some(beat.data.raw() as u32);
             }
         }
-        (got.expect("the read was answered"), msip.get().to_bool())
+        (
+            got.expect("the read was answered"),
+            msip.get().to_bool(),
+            msip1.get().to_bool(),
+        )
     }
 
     /// `msip` itself: written one, it reads one and is set. This is
@@ -290,5 +368,22 @@ mod tests {
     #[test]
     fn a_write_to_an_unused_offset_leaves_msip_alone() {
         assert_eq!(write_then_read(0x0008, 1), (0, false));
+    }
+
+    /// Hart 1's words (issue 1408): its `msip` at `0x0004` raises its line
+    /// and not hart 0's; its compare at `0x4008` and the mailbox's two
+    /// words at `0xc000` read back what was written.
+    #[test]
+    fn hart_ones_words_and_the_mailbox() {
+        assert_eq!(write_then_read_both(0x0004, 1), (1, false, true));
+        assert_eq!(write_then_read_both(0x0000, 1), (1, true, false));
+        for (off, v) in [
+            (0x4008, 0x1234_5678),
+            (0x400c, 0x9abc_def0),
+            (0xc000, 0x4000_0000),
+            (0xc004, 0x0000_002a),
+        ] {
+            assert_eq!(write_then_read_both(off, v), (v, false, false));
+        }
     }
 }
