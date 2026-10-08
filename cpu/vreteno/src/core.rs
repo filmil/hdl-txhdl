@@ -648,6 +648,46 @@ fn csr_ro(f12: U<12>) -> Bit {
     Bit::from(f12.slice::<10, 2>() == 3)
 }
 
+/// One line's bit in a half of the data cache's valid bits, or none
+/// (issue 1275).
+#[lower]
+fn dc_bit(line: U<8>, en: Bit, hi: Bit) -> U<128> {
+    let here = en & mux(hi, line.bit(7), !line.bit(7));
+    // Made from one bit widened, so that the netlist writes no literal
+    // of 128 bits.
+    let one = mux(here, U::<1>::from(1u8), U::<1>::from(0u8));
+    one.zext::<128>() << (line.slice::<0, 7>().raw() as usize)
+}
+
+/// Line `line`'s valid bit, of the two halves (issue 1275).
+#[lower]
+fn dc_vget(v0: U<128>, v1: U<128>, line: U<8>) -> Bit {
+    let v = mux(line.bit(7), v1, v0);
+    (v >> (line.slice::<0, 7>().raw() as usize)).bit(0)
+}
+
+/// The bits of a word a store's four lanes cover.
+#[lower]
+fn lane_mask(en: U<4>) -> U<32> {
+    mux(
+        en.bit(3),
+        U::<32>::from(0xff00_0000u32),
+        U::<32>::from(0u32),
+    ) | mux(
+        en.bit(2),
+        U::<32>::from(0x00ff_0000u32),
+        U::<32>::from(0u32),
+    ) | mux(
+        en.bit(1),
+        U::<32>::from(0x0000_ff00u32),
+        U::<32>::from(0u32),
+    ) | mux(
+        en.bit(0),
+        U::<32>::from(0x0000_00ffu32),
+        U::<32>::from(0u32),
+    )
+}
+
 /// Bit `i` of a word, for a delegation register read by a cause
 /// (issue 1012).
 #[lower]
@@ -845,6 +885,35 @@ pub struct Vreteno<
     /// theirs.
     pub dl_word: Reg<U<32>>,
     pub wb_loc: Reg<Bit>,
+    /// The data cache for the DDR3 (issue 1275): 4 KiB, 256 lines of
+    /// four words, direct mapped, indexed by the page offset's bits 11
+    /// to 4 and tagged by the physical page, written through, and
+    /// filled by a load's miss alone. The words and the tags are block
+    /// RAMs read into registers at the address of the access in
+    /// execute; the valid bits are registers, so that another host's
+    /// write, the core's own invalidations and a fill can all change
+    /// them in one cycle.
+    pub dc_data: Mem<U<32>, 1024>,
+    pub dc_tag: Mem<U<20>, 256>,
+    pub dc_v0: Reg<U<128>>,
+    pub dc_v1: Reg<U<128>>,
+    pub dc_word: Reg<U<32>>,
+    pub dc_tagr: Reg<U<20>>,
+    pub dc_vr: Reg<Bit>,
+    /// Whether the load in writeback may be the cache's; where its miss
+    /// is: 0 the lookup, 1 waiting to ask, 2 the answer's beats coming;
+    /// the next beat; whether the fill is not to be kept; and whether
+    /// it is a single word read around the cache.
+    pub wb_dc: Reg<Bit>,
+    pub dc_st: Reg<U<2>>,
+    pub dc_beat: Reg<U<2>>,
+    pub dc_kill: Reg<Bit>,
+    pub dc_one: Reg<Bit>,
+    /// A store in writeback that may update a line the cache holds: its
+    /// data and its lanes.
+    pub wb_st: Reg<Bit>,
+    pub wb_sd: Reg<U<32>>,
+    pub wb_en: Reg<U<4>>,
     /// A store the bus refused, kept until the trap for it is taken
     /// before the next instruction to run: a store is posted, so its
     /// fault is raised late and without the address (issue 417).
@@ -1118,6 +1187,7 @@ impl<const IW: usize, const DW: usize, const IC: usize> Unit
             dbg_we,
             time,
             seirq,
+            dc_snoop,
             ires,
             dres,
             ptw,
@@ -1139,6 +1209,9 @@ impl<const IW: usize, const DW: usize, const IC: usize> Unit
             // The interrupt controller's supervisor line, `mip.SEIP`'s
             // (issue 1094).
             In<Bit>,
+            // Another host's write into the DDR3, answered: the data
+            // cache's line to invalidate, bit 8 its valid (issue 1275).
+            In<U<9>>,
             // The memory management unit's answers, registers, to the
             // fetch and to the data, and its walker's reads (issues
             // 1014 and 1122).
@@ -1630,7 +1703,39 @@ impl<const IW: usize, const DW: usize, const IC: usize> Unit
             // to the bus (issue 1275). An AMO there waits a cycle in
             // writeback for its word, as one on the bus waits for its
             // answer.
-            let send_load = run & is_load & !unaligned & !xf & !local;
+            // A plain load whose address is in the DDR3 tries the data
+            // cache (issue 1275), from rs1's top two bits or, translated,
+            // the physical address's; a wrong guess either way is safe,
+            // since writeback reads around the cache when the address
+            // is not the DDR3's, and a load not tried goes to the bus.
+            // The arrays are read at the page offset's bits, the same
+            // before and after translation.
+            let dc_on = U::<1>::from(IC as u32).bit(0);
+            let dc_pred = mux(
+                self.x_done,
+                Bit::from(x_pa.slice::<30, 2>() == 1),
+                Bit::from(a.slice::<30, 2>() == 1),
+            );
+            let dc_at = lo17.slice::<2, 10>();
+            let dc_line_x = lo17.slice::<4, 8>();
+            let dc_try = run
+                & is_load
+                & !is_lr
+                & !is_rmw
+                & !unaligned
+                & !xf
+                & !local
+                & dc_pred
+                & dc_on;
+            // An AMO, lr.w or sc.w there goes around the cache and takes
+            // its line out of it.
+            let dc_own_x = run
+                & (is_lr | is_rmw | is_sc)
+                & !unaligned
+                & !xf
+                & !local
+                & dc_pred;
+            let send_load = run & is_load & !unaligned & !xf & !local & !dc_try;
             let ld_loc = run & is_load & !unaligned & !xf & local;
             let amo_loc = ld_loc & is_rmw;
 
@@ -2226,7 +2331,21 @@ impl<const IW: usize, const DW: usize, const IC: usize> Unit
                 & issue.ready();
             let p_addr = ptw.head();
             let _ = ptw.recv_if(p_send);
-            let send_any = send_load | st_go | b_go | r_go | p_send;
+            // The data cache's miss asks for its line (issue 1275) once
+            // every store of the core's is answered, so that the line has
+            // them, and nothing else of the core's is out; a single word
+            // for a load not in the DDR3 after all.
+            let wb_pa = self.wb_pa.get();
+            let dc_st = self.dc_st.get();
+            let dc_ask = self.dev_wait
+                & self.wb_dc
+                & Bit::from(dc_st == 1)
+                & !self.f_wait
+                & !self.p_wait
+                & Bit::from(self.stores_out.get() == 0)
+                & issue.ready();
+            let dc_line_go = dc_ask & !self.dc_one;
+            let send_any = send_load | st_go | b_go | r_go | p_send | dc_ask;
             // The address: the access's, which settles last behind its
             // adder, goes through one choice, and the rest are chosen
             // among beforehand.
@@ -2239,17 +2358,34 @@ impl<const IW: usize, const DW: usize, const IC: usize> Unit
                     mux(
                         r_go,
                         line_base,
-                        mux(amo_go, self.wb_pa.get(), self.x_pa.get()),
+                        mux(
+                            amo_go,
+                            self.wb_pa.get(),
+                            mux(
+                                dc_ask,
+                                mux(
+                                    self.dc_one,
+                                    wb_pa,
+                                    wb_pa & U::<32>::from(0xffff_fff0u32),
+                                ),
+                                self.x_pa.get(),
+                            ),
+                        ),
                     ),
                 ),
             );
-            let use_addr = !p_send & !b_go & !r_go & !amo_go & !self.x_done;
+            let use_addr =
+                !p_send & !b_go & !r_go & !amo_go & !dc_ask & !self.x_done;
             if bool::from(send_any) {
                 issue.send(Issue {
                     read: !st_go,
                     addr: mux(use_addr, addr, other),
                     // A fill is a burst of the line's four words.
-                    len: mux(r_go, U::<8>::from(3u8), U::<8>::from(0u8)),
+                    len: mux(
+                        r_go | dc_line_go,
+                        U::<8>::from(3u8),
+                        U::<8>::from(0u8),
+                    ),
                     size: U::<3>::from(2u8),
                     burst: BurstKind::Incr,
                     lock: Bit::Zero,
@@ -2281,6 +2417,71 @@ impl<const IW: usize, const DW: usize, const IC: usize> Unit
             let f_bus = (self.f_wait & Bit::from(ic_st == 0)) | filling;
             let p_resp = resp_valid & self.p_wait;
             let d_resp = resp_valid & !f_bus & !self.p_wait;
+            // The data cache in writeback (issue 1275). The load's first
+            // cycle there is the lookup, on the tag and the word read at
+            // its address in execute; a hit takes the word. A miss takes
+            // the line out, asks for it, writes its beats in as they come,
+            // takes the load's word as it passes, and keeps the line on
+            // the last beat unless another host's write, a refused beat or
+            // a store of the core's came to it meanwhile.
+            let wb_line = wb_pa.slice::<4, 8>();
+            let dc_in = Bit::from(wb_pa.slice::<30, 2>() == 1);
+            let dc_tag_hit = self.dc_vr
+                & Bit::from(self.dc_tagr.get() == wb_pa.slice::<12, 20>());
+            let dc_look = self.dev_wait & self.wb_dc & Bit::from(dc_st == 0);
+            let dc_hit = dc_look & dc_in & dc_tag_hit;
+            let dc_miss = dc_look & !dc_hit;
+            let dc_fill = Bit::from(dc_st == 2);
+            let dc_beat_r = d_resp & dc_fill;
+            let dc_want = self.dc_one
+                | Bit::from(self.dc_beat.get() == wb_pa.slice::<2, 2>());
+            let dc_last = dc_beat_r & rh.last;
+            // Another host's write into the DDR3, answered (issue 1275).
+            let snoop = dc_snoop.get();
+            let snoop_v = snoop.bit(8) & dc_on;
+            let snoop_line = snoop.slice::<0, 8>();
+            let dc_kill_now = self.dc_kill
+                | (snoop_v & Bit::from(snoop_line == wb_line))
+                | (dc_beat_r & resp_bad);
+            let dc_keep = dc_last & !self.dc_one & !dc_kill_now & dc_on;
+            let dc_drop = dc_last & !self.dc_one & dc_kill_now;
+            // A store of the core's in writeback writes its word into a
+            // line the cache holds, under its lanes.
+            let dc_st_up = self.wb_valid & self.wb_st & dc_in & dc_tag_hit;
+            let dc_dwe = ((dc_beat_r & !self.dc_one) | dc_st_up) & dc_on;
+            let dc_da = mux(
+                dc_st_up,
+                wb_pa.slice::<2, 10>(),
+                wb_line.concat::<_, 10>(self.dc_beat.get()),
+            );
+            let st_mask = lane_mask(self.wb_en.get());
+            let dc_dd = mux(
+                dc_st_up,
+                (self.dc_word.get() & !st_mask) | (self.wb_sd.get() & st_mask),
+                resp_data,
+            );
+            when!(dc_dwe => self { dc_data.at(dc_da): dc_dd });
+            when!(dc_keep => self { dc_tag.at(wb_line): wb_pa.slice::<12, 20>() });
+            // The valid bits: cleared by another host's write, by an AMO,
+            // lr.w or sc.w, by a miss for its line and by a fill not kept;
+            // set by a fill kept; and all cleared at reset and when the bus
+            // refuses a store of the core's, whose line is not known.
+            let dc_all = rst | (take_done & done_bad & !self.busquiet);
+            let dc_miss_in = dc_miss & dc_in;
+            let dc_clr0 = dc_bit(snoop_line, snoop_v, Bit::Zero)
+                | dc_bit(dc_line_x, dc_own_x, Bit::Zero)
+                | dc_bit(wb_line, dc_miss_in | dc_drop, Bit::Zero);
+            let dc_clr1 = dc_bit(snoop_line, snoop_v, Bit::One)
+                | dc_bit(dc_line_x, dc_own_x, Bit::One)
+                | dc_bit(wb_line, dc_miss_in | dc_drop, Bit::One);
+            let dc_live =
+                mux(dc_all, U::<1>::from(0u8), U::<1>::from(1u8)).sext::<128>();
+            let dc_v0n = ((self.dc_v0.get() & !dc_clr0)
+                | dc_bit(wb_line, dc_keep, Bit::Zero))
+                & dc_live;
+            let dc_v1n = ((self.dc_v1.get() & !dc_clr1)
+                | dc_bit(wb_line, dc_keep, Bit::One))
+                & dc_live;
             if bool::from(p_resp) {
                 pte.send(Pte {
                     data: resp_data,
@@ -2335,12 +2536,14 @@ impl<const IW: usize, const DW: usize, const IC: usize> Unit
                 U::<1>::from(1u8).concat::<_, 21>(ic_pa.slice::<12, 20>()),
             );
             when!(tag_go => self { ic_tag.at(tag_at): tag_val });
-            when!(d_resp => self { wb_dev: resp_data });
+            let d_word = d_resp & (!dc_fill | dc_want);
+            when!(d_word => self { wb_dev: resp_data });
+            when!(dc_hit => self { wb_dev: self.dc_word.get() });
             // A load from the data RAM is never refused, so it clears
             // what a refused load before it left (issue 1275); a local
             // AMO's word is captured in its first cycle in writeback.
             let l_ans = self.dev_wait & self.wb_loc;
-            when!(d_resp | ld_loc => self { wb_err: resp_bad & d_resp });
+            when!(d_word | ld_loc | dc_hit => self { wb_err: resp_bad & d_word });
             when!(l_ans => self { wb_dev: self.dl_word.get() });
             // The fetch's request to the unit (issue 1014): made for the
             // page of the word the fetch wants when it is not the page
@@ -2555,6 +2758,28 @@ impl<const IW: usize, const DW: usize, const IC: usize> Unit
                     .concat::<_, 16>(self.dl2.read(dl_at))
                     .concat::<_, 24>(self.dl1.read(dl_at))
                     .concat::<_, 32>(self.dl0.read(dl_at)),
+                // The data cache's word, tag and valid bit at the address
+                // of the access in execute (issue 1275), and its valid
+                // bits.
+                dc_word: self.dc_data.read(dc_at),
+                dc_tagr: self.dc_tag.read(dc_line_x),
+                dc_vr: dc_vget(self.dc_v0.get(), self.dc_v1.get(), dc_line_x),
+                dc_v0: dc_v0n,
+                dc_v1: dc_v1n,
+                dc_miss ? {
+                    dc_st: U::<2>::from(1u8),
+                    dc_one: !dc_in,
+                    dc_kill: Bit::Zero
+                },
+                dc_ask ? {
+                    dc_st: U::<2>::from(2u8),
+                    dc_beat: U::<2>::from(0u8)
+                },
+                dc_beat_r ? {
+                    dc_beat: self.dc_beat.get() + 1,
+                    dc_kill: dc_kill_now
+                },
+                dc_last ? dc_st: U::<2>::from(0u8),
                 ic_clr2: ic_clearing,
                 rst ? {
                     ic_st: U::<2>::from(0u8),
@@ -2597,10 +2822,16 @@ impl<const IW: usize, const DW: usize, const IC: usize> Unit
             });
             case!(rst => {
                 Bit::One => { self.dev_wait <= Bit::Zero },
-                _ if (send_load | amo_loc).to_bool() => {
+                _ if (send_load | amo_loc | dc_try).to_bool() => {
                     self.dev_wait <= Bit::One
                 },
-                _ if (self.dev_wait & (resp_valid | self.wb_loc)).to_bool() => {
+                _ if (self.dev_wait
+                    & ((resp_valid & !self.wb_dc)
+                        | self.wb_loc
+                        | dc_hit
+                        | dc_last))
+                    .to_bool() =>
+                {
                     self.dev_wait <= Bit::Zero
                 },
                 _ => {},
@@ -2875,6 +3106,8 @@ impl<const IW: usize, const DW: usize, const IC: usize> Unit
                     dcsr: U::<32>::from(0x4000_0003u32),
                     wb_err: Bit::Zero,
                     st_err: Bit::Zero,
+                    dc_st: U::<2>::from(0u8),
+                    dc_kill: Bit::Zero,
                     stores_out: U::<3>::from(0u8),
                     busquiet: Bit::Zero,
                     prv: U::<2>::from(3u8),
@@ -2974,9 +3207,13 @@ impl<const IW: usize, const DW: usize, const IC: usize> Unit
                     // Only a load that went out waits for an answer, and
                     // only it can be refused: one that trapped in
                     // execute went nowhere (issue 1084).
-                    self.wb_load <= send_load | ld_loc;
+                    self.wb_load <= send_load | ld_loc | dc_try;
                     self.wb_amo <= is_rmw & (send_load | ld_loc);
                     self.wb_loc <= ld_loc;
+                    self.wb_dc <= dc_try;
+                    self.wb_st <= store & !local & dc_pred & dc_on & !is_sc;
+                    self.wb_sd <= sdata;
+                    self.wb_en <= en;
                     self.amo_op <= funct5;
                     self.amo_b <= b;
                     self.wb_stop <= halting

@@ -25,6 +25,7 @@
 //! coming out, since the controller makes it. `DIV` is the serial
 //! port's clock divider.
 use crate::core::Writeback;
+use crate::dcsnoop::DcSnoop;
 use crate::debug::Dm;
 use crate::dmem::Dmem;
 use crate::hart::Hart;
@@ -248,6 +249,11 @@ pub struct Board<const DIV: u32> {
     /// moving a frame cannot hold the core off the bus for the length
     /// of it. With every host offering, each wins one turn in seven.
     pub arb: Arbiter7<32, 32, 4, 2, 5, 0>,
+    /// The data cache's snoop (issue 1275), on the router's port to the
+    /// DDR3: another host's write into the DDR3, once answered,
+    /// invalidates its lines in the core's data cache before the answer
+    /// goes back.
+    pub dcsnoop: DcSnoop,
     pub router: BoardRouter,
     pub pdmem: AxiPer<32, 32, 4, 5>,
     pub ptimer: AxiPer<32, 32, 4, 5>,
@@ -709,6 +715,15 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (xar_tx, xar_rx) = chan::<Ar<32, 5>, DefaultClock>();
         let (xw_tx, xw_rx) = chan::<W<32, 4>, DefaultClock>();
         let (xb_tx, xb_rx) = chan::<B<5>, DefaultClock>();
+        // The DDR3's side of the snoop (issue 1275): the router's write
+        // address and data pass it in the cycle they are offered, and
+        // the answer waits there while its lines are invalidated.
+        #[unregistered]
+        let (snaw_tx, snaw_rx) = chan::<Aw<32, 5>, DefaultClock>();
+        #[unregistered]
+        let (snw_tx, snw_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (snb_tx, snb_rx) = chan::<B<5>, DefaultClock>();
+        let (dcs_o, dcs_i) = signal::<U<9>, DefaultClock>();
         let (xr_tx, xr_rx) = chan::<R<32, 5>, DefaultClock>();
         // The router and each peripheral's tracker.
         let (aw0_tx, aw0_rx) = chan::<Aw<32, 5>, DefaultClock>();
@@ -1202,6 +1217,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                     dbg_we_i,
                                     time_i,
                                     seirq_i,
+                                    dcs_i,
                                 ),
                                 (
                                     halt,
@@ -1348,13 +1364,14 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                 ),
                                 ),
                             ),
+                            join2(
                             self.router.run(
                                 (
                                     xaw_rx,
                                     xar_rx,
                                     xw_rx,
                                     [
-                                        b0_rx, b1_rx, b2_rx, b3_rx, b4_rx,
+                                        b0_rx, b1_rx, b2_rx, snb_rx, b4_rx,
                                         b5_rx, b6_rx, b7_rx,
                                     ],
                                     [
@@ -1364,7 +1381,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                 ),
                                 (
                                     [
-                                        aw0_tx, aw1_tx, aw2_tx, aw3_tx, aw4_tx,
+                                        aw0_tx, aw1_tx, aw2_tx, snaw_tx, aw4_tx,
                                         aw5_tx, aw6_tx, aw7_tx,
                                     ],
                                     [
@@ -1372,12 +1389,19 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                         ar5_tx, ar6_tx, ar7_tx,
                                     ],
                                     [
-                                        w0_tx, w1_tx, w2_tx, w3_tx, w4_tx,
+                                        w0_tx, w1_tx, w2_tx, snw_tx, w4_tx,
                                         w5_tx, w6_tx, w7_tx,
                                     ],
                                     xb_tx,
                                     xr_tx,
                                 ),
+                            ),
+                            // After the router, which sends to it in the
+                            // cycle (issue 1275).
+                            self.dcsnoop.run(
+                                (snaw_rx, snw_rx, b3_rx),
+                                (aw3_tx, w3_tx, snb_tx, dcs_o),
+                            ),
                             ),
                         ),
                         join2(

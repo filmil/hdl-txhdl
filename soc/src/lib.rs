@@ -206,6 +206,8 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     // The supervisor's external line, which no controller here drives
     // (issue 1094).
     let (_seirq_out, seirq) = signal::<Bit, DefaultClock>();
+    // No other host writes the DDR3 here, so nothing is snooped (issue 1275).
+    let (_dc_snoop_out, dc_snoop) = signal::<U<9>, DefaultClock>();
     let (halt_out, halt) = signal::<Bit, DefaultClock>();
     // No debugger here: its request lines stay low and what the
     // core says about debug mode is not read (issue 154).
@@ -341,6 +343,7 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
                 (
                     rst_c, irq, tirq, sirq, crdata, cdone, grant, haltreq,
                     resumereq, dbg_regno, dbg_wdata, dbg_we, time, seirq,
+                    dc_snoop,
                 ),
                 (
                     halt_out,

@@ -3,6 +3,7 @@
 //! checked against and the programs it runs.
 pub mod board;
 pub mod core;
+pub mod dcsnoop;
 pub mod debug;
 pub mod dmem;
 pub mod hart;

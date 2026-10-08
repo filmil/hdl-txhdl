@@ -59,6 +59,7 @@ impl<const IW: usize, const DW: usize, const IC: usize> Unit
             dbg_we,
             time,
             seirq,
+            dc_snoop,
         ): (
             In<Bit>,
             In<Bit>,
@@ -74,6 +75,7 @@ impl<const IW: usize, const DW: usize, const IC: usize> Unit
             In<Bit>,
             In<U<64>>,
             In<Bit>,
+            In<U<9>>,
         ),
         (halt, instr, wb, issue, wbeat, release, dbg, dbg_rdata): (
             Out<Bit>,
@@ -114,7 +116,7 @@ impl<const IW: usize, const DW: usize, const IC: usize> Unit
                 (
                     rst, irq, tirq, sirq, rdata, done, grant, haltreq,
                     resumereq, dbg_regno, dbg_wdata, dbg_we, time, seirq,
-                    ires_i, dres_i, ptw_rx,
+                    dc_snoop, ires_i, dres_i, ptw_rx,
                 ),
                 (
                     halt, instr, wb, issue, wbeat, release, dbg, dbg_rdata,
