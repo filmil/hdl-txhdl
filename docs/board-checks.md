@@ -713,7 +713,8 @@ Pass:
 * The icosahedron turns with the checker on every face, straight in perspective, and no back face shows through a front one.
 * A still of the recording looks as `bazel run //cpu/vreteno/rust:ico_tex_frame -- <n> $PWD/f.png` draws frame `n` through Razboj's model; `//cpu/vreteno/rust:ico_gl_test` holds the rasteriser's own frame to the model's, byte for byte.
 
-Set the `draw` count of `ico gl tex list` beside `ico gl list`'s, and put the log and the recording on #997.
+Through GL a frame's list is built and binned while Razboj draws the frame before (#1433), so each line says `list`, the core's building and binning; `wait`, what was left of the frame before's drawing; and `frame`, the whole frame with the wait for the blanking. The frame rate comes in steps of blankings, 1.667 M cycles at 60 Hz.
+Set the counts beside `ico gl list`'s, and put the log and the recording on #997.
 
 ### Ethernet throughput, #1038
 

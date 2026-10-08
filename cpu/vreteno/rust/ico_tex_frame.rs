@@ -50,7 +50,7 @@ fn main() {
         dy,
         Box::SCREEN,
         true,
-        Some((&mut room, TEX)),
+        Some((&mut room, TEX, true)),
         &mut out,
     );
     let list = decode_list(&out[..k]);

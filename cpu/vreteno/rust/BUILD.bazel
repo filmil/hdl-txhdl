@@ -1301,3 +1301,32 @@ vreteno_flat(
     platform = ":vreteno",
     program = ":ethirq_ram",
 )
+
+# Where the textured icosahedron's cycles go on the core (#1433): its
+# frame's parts timed one at a time, with no Razboj, for the machine's
+# timing mode or the board.
+rust_binary(
+    name = "ico_cost",
+    srcs = [
+        "ico_cost.rs",
+        "ico_gl.rs",
+        "ico_list.rs",
+    ],
+    compile_data = ["vreteno_ram.ld"],
+    crate_root = "ico_cost.rs",
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS,
+    tags = ["manual"],
+    deps = [
+        "//cpu/vreteno/rust/hal:vreteno_hal",
+        "//cpu/vreteno/rust/regs:vreteno_regs",
+        "//gles",
+        "//gpu/razboj:tile",
+    ],
+)
+
+vreteno_flat(
+    name = "ico_cost_bin",
+    platform = ":vreteno",
+    program = ":ico_cost",
+)

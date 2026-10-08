@@ -171,8 +171,9 @@ fn degrees(a: i32) -> Fx {
 /// One frame's list, as `ico_list::frame` writes it: into `out`, for the
 /// frame `dy` rows down, the solid turned by `ay` and `ax`, the backdrop
 /// first over `clear`, the back faces culled or, with `depth`, hidden by
-/// the depth test, and with `tex`, a texture's room and the bus address
-/// Razboj reads it at, textured. Returns the slots written and the box
+/// the depth test, and with `tex`, a texture's room, the bus address
+/// Razboj reads it at and whether to upload the texture into it, textured:
+/// a room a frame filled before keeps its texture (#1433). Returns the slots written and the box
 /// the faces fill now.
 #[allow(clippy::too_many_arguments)] // The frame's own parameters.
 pub fn frame<'a>(
@@ -182,7 +183,7 @@ pub fn frame<'a>(
     dy: i32,
     clear: Box,
     depth: bool,
-    tex: Option<(&'a mut [u32], u32)>,
+    tex: Option<(&'a mut [u32], u32, bool)>,
     out: &'a mut [[u32; WORDS]; MOST],
 ) -> (usize, Box) {
     out[0] = rect(BACKDROP, clear, dy);
@@ -218,19 +219,12 @@ pub fn frame<'a>(
     }
     g.shade_model(gl::FLAT);
     let textured = tex.is_some();
-    if let Some((room, bus)) = tex {
-        g.texture_room(room, bus);
-        let mut name = [0u32];
-        g.gen_textures(&mut name);
-        g.bind_texture(gl::TEXTURE_2D, name[0]);
-        let t2 = gl::TEXTURE_2D;
-        g.tex_parameter(t2, gl::TEXTURE_MIN_FILTER, gl::NEAREST);
-        g.tex_parameter(t2, gl::TEXTURE_MAG_FILTER, gl::NEAREST);
-        let (s, rgba, ub) = (TEX_SIDE, gl::RGBA, gl::UNSIGNED_BYTE);
-        g.tex_image_2d(t2, 0, rgba, s, s, 0, rgba, ub, &CHECKER);
-        let modulate = gl::MODULATE as Fx;
-        g.tex_env(gl::TEXTURE_ENV, gl::TEXTURE_ENV_MODE, &[modulate]);
-        g.enable(gl::TEXTURE_2D);
+    if let Some((room, bus, upload)) = tex {
+        if upload {
+            texture(&mut g, room, bus);
+        } else {
+            kept(&mut g, room, bus);
+        }
     }
 
     // `ico_list` turns about y and then about x.
@@ -277,4 +271,31 @@ pub fn frame<'a>(
         k += 1 + (second + texture) as usize;
     }
     (1 + drawn.len(), b)
+}
+
+/// The checker uploaded into `room`, which Razboj reads at `bus`, and
+/// bound as `g`'s texture: nearest, the lighting modulating it, on.
+pub fn texture<'a>(g: &mut Gl<'a>, room: &'a mut [u32], bus: u32) {
+    g.texture_room(room, bus);
+    let mut name = [0u32];
+    g.gen_textures(&mut name);
+    g.bind_texture(gl::TEXTURE_2D, name[0]);
+    let t2 = gl::TEXTURE_2D;
+    g.tex_parameter(t2, gl::TEXTURE_MIN_FILTER, gl::NEAREST);
+    g.tex_parameter(t2, gl::TEXTURE_MAG_FILTER, gl::NEAREST);
+    let (s, rgba, ub) = (TEX_SIDE, gl::RGBA, gl::UNSIGNED_BYTE);
+    g.tex_image_2d(t2, 0, rgba, s, s, 0, rgba, ub, &CHECKER);
+    let modulate = gl::MODULATE as Fx;
+    g.tex_env(gl::TEXTURE_ENV, gl::TEXTURE_ENV_MODE, &[modulate]);
+    g.enable(gl::TEXTURE_2D);
+}
+
+/// The checker as an earlier frame left it in `room` (#1433), bound as
+/// `g`'s texture with nothing uploaded: the lighting modulating it, on.
+pub fn kept<'a>(g: &mut Gl<'a>, room: &'a mut [u32], bus: u32) {
+    g.texture_room_kept(room, bus);
+    g.bind_texture(gl::TEXTURE_2D, 1);
+    let modulate = gl::MODULATE as Fx;
+    g.tex_env(gl::TEXTURE_ENV, gl::TEXTURE_ENV_MODE, &[modulate]);
+    g.enable(gl::TEXTURE_2D);
 }

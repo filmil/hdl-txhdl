@@ -142,14 +142,73 @@ fn texel_bytes(format: u32, type_: u32) -> Option<usize> {
 
 impl<'a> Store<'a> {
     /// A store over `mem`, which Razboj reads at `bus`, with no objects.
+    /// The descriptor table is cleared, so that a store reopened over the
+    /// same room later finds only what this one published.
     pub fn new(mem: &'a mut [u32], bus: u32) -> Self {
         let used = TABLE_WORDS.min(mem.len());
+        mem[..used].fill(0);
         Store {
             mem,
             bus,
             used,
             objects: [Object::NEW; MAX_TEXTURES],
         }
+    }
+
+    /// A store over a room an earlier store filled (#1433), at the same
+    /// bus address: each object whose descriptor it published is live
+    /// again, with the sides, levels, filters, wrap modes and format the
+    /// descriptor says and every level defined, and its texels where they
+    /// were. So a program that makes a context a frame uploads its
+    /// textures once, and later contexts only reopen the room.
+    pub fn reopen(mem: &'a mut [u32], bus: u32) -> Self {
+        let mut s = Store {
+            used: TABLE_WORDS.min(mem.len()),
+            mem,
+            bus,
+            objects: [Object::NEW; MAX_TEXTURES],
+        };
+        if s.mem.len() < TABLE_WORDS {
+            return s;
+        }
+        let filter = |f: u32| match f {
+            tex::NEAREST => gl::NEAREST,
+            tex::LINEAR => gl::LINEAR,
+            f => f - tex::NEAREST_MIPMAP_NEAREST + gl::NEAREST_MIPMAP_NEAREST,
+        };
+        let wrap = |c: bool| if c { gl::CLAMP_TO_EDGE } else { gl::REPEAT };
+        for k in 0..MAX_TEXTURES {
+            let mut w = [0u32; DESC_WORDS];
+            w.copy_from_slice(&s.mem[k * DESC_WORDS..(k + 1) * DESC_WORDS]);
+            if w[0] == 0 {
+                continue;
+            }
+            let d = tex::decode(&w);
+            let at = (d.base.wrapping_sub(bus) / 4) as usize;
+            let words: usize = (0..chain(d.log_w, d.log_h))
+                .map(|l| level_words(d.log_w, d.log_h, l))
+                .sum();
+            s.used = s.used.max(at + words);
+            s.objects[k] = Object {
+                live: true,
+                size: Some((d.log_w, d.log_h)),
+                defined: (1 << chain(d.log_w, d.log_h)) - 1,
+                format: match d.class {
+                    tex::RGB => gl::RGB,
+                    tex::ALPHA => gl::ALPHA,
+                    tex::LUMINANCE => gl::LUMINANCE,
+                    tex::LUMINANCE_ALPHA => gl::LUMINANCE_ALPHA,
+                    _ => gl::RGBA,
+                },
+                at,
+                min: filter(d.min),
+                mag: filter(d.mag),
+                wrap_s: wrap(d.clamp_s),
+                wrap_t: wrap(d.clamp_t),
+                generate: false,
+            };
+        }
+        s
     }
 
     /// The descriptor table's bus address, which Razboj is told.
