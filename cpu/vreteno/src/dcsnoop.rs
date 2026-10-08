@@ -14,6 +14,12 @@
 //! by its index alone, which may take out a line of another page:
 //! harmless, and it keeps the compare out of the snoop.
 //!
+//! With a second hart on port `P1` (issue 1408), every write into the
+//! DDR3 is noted, the first hart's too, and each line is named to each
+//! hart that did not write it: on `inv` unless the writer was port 0,
+//! on `inv1` unless it was `P1`. With `P1` zero there is one hart,
+//! its own writes are not noted, and `inv1` names nothing.
+//!
 //! Four bursts may be noted at once; a fifth waits at its address
 //! phase. Each host's identifiers are its own and none is reused while
 //! its burst is out, so a response is matched by its identifier alone.
@@ -23,7 +29,7 @@ use txhdl::{lower, with, Trace};
 use txhdl_parts::bus::axi::{Aw, B, W};
 
 #[derive(Trace, Default)]
-pub struct DcSnoop {
+pub struct DcSnoop<const P1: usize = 0> {
     /// The four bursts noted: whether each slot holds one, its
     /// identifier, its first line and its count of lines.
     pub v0: Reg<Bit>,
@@ -42,6 +48,12 @@ pub struct DcSnoop {
     pub cnt1: Reg<U<7>>,
     pub cnt2: Reg<U<7>>,
     pub cnt3: Reg<U<7>>,
+    /// The port each noted burst came from, and the walk's.
+    pub pt0: Reg<U<3>>,
+    pub pt1: Reg<U<3>>,
+    pub pt2: Reg<U<3>>,
+    pub pt3: Reg<U<3>>,
+    pub wport: Reg<U<3>>,
     /// The walk over a burst's lines: whether one is on, the next line,
     /// how many are left, and the slot it empties at the end; and the
     /// cycle after it, in which the response still waits.
@@ -53,14 +65,15 @@ pub struct DcSnoop {
 }
 
 #[lower]
-impl Unit for DcSnoop {
+impl<const P1: usize> Unit for DcSnoop<P1> {
     async fn run(
         &mut self,
         (aw_in, w_in, b_in): (Rx<Aw<32, 5>>, Rx<W<32, 4>>, Rx<B<5>>),
-        (aw_out, w_out, b_out, inv): (
+        (aw_out, w_out, b_out, inv, inv1): (
             Tx<Aw<32, 5>>,
             Tx<W<32, 4>>,
             Tx<B<5>>,
+            Out<U<9>>,
             Out<U<9>>,
         ),
     ) {
@@ -73,7 +86,8 @@ impl Unit for DcSnoop {
             // The arbiter puts the host's port above its own two bits of
             // identifier, and the core is port 0.
             let aw = aw_in.head();
-            let note = Bit::from(aw.id.slice::<2, 3>() != 0)
+            let port = aw.id.slice::<2, 3>();
+            let note = (Bit::from(port != 0) | Bit::from(P1 != 0))
                 & Bit::from(aw.addr.slice::<30, 2>() == 1);
             let full = v0 & v1 & v2 & v3;
             let aw_go =
@@ -132,6 +146,15 @@ impl Unit for DcSnoop {
                     mux(m2, self.cnt2.get(), self.cnt3.get()),
                 ),
             );
+            let from = mux(
+                m0,
+                self.pt0.get(),
+                mux(
+                    m1,
+                    self.pt1.get(),
+                    mux(m2, self.pt2.get(), self.pt3.get()),
+                ),
+            );
             let slot = mux(
                 m0,
                 U::<2>::from(0u8),
@@ -145,10 +168,15 @@ impl Unit for DcSnoop {
             // with the last.
             let wslot = self.wslot.get();
             let last = walking & Bit::from(self.wleft.get() == 1);
-            inv.set(mux(
-                walking,
-                U::<1>::from(1u8).concat::<_, 9>(self.wline.get()),
-                U::<9>::from(0u16),
+            // Each hart is told of the lines the other hosts wrote.
+            let wport = self.wport.get();
+            let named = U::<1>::from(1u8).concat::<_, 9>(self.wline.get());
+            let none = U::<9>::from(0u16);
+            inv.set(mux(walking & Bit::from(wport != 0), named, none));
+            inv1.set(mux(
+                walking & Bit::from(wport != P1) & Bit::from(P1 != 0),
+                named,
+                none,
             ));
             let e0 = last & Bit::from(wslot == 0);
             let e1 = last & Bit::from(wslot == 1);
@@ -159,15 +187,16 @@ impl Unit for DcSnoop {
                 v1: mux(s1, Bit::One, mux(e1, Bit::Zero, v1)),
                 v2: mux(s2, Bit::One, mux(e2, Bit::Zero, v2)),
                 v3: mux(s3, Bit::One, mux(e3, Bit::Zero, v3)),
-                s0 ? { id0: aw.id, line0: line, cnt0: cnt },
-                s1 ? { id1: aw.id, line1: line, cnt1: cnt },
-                s2 ? { id2: aw.id, line2: line, cnt2: cnt },
-                s3 ? { id3: aw.id, line3: line, cnt3: cnt },
+                s0 ? { id0: aw.id, line0: line, cnt0: cnt, pt0: port },
+                s1 ? { id1: aw.id, line1: line, cnt1: cnt, pt1: port },
+                s2 ? { id2: aw.id, line2: line, cnt2: cnt, pt2: port },
+                s3 ? { id3: aw.id, line3: line, cnt3: cnt, pt3: port },
                 start ? {
                     walking: Bit::One,
                     wline: first,
                     wleft: count,
-                    wslot: slot
+                    wslot: slot,
+                    wport: from
                 },
                 walking ? {
                     wline: self.wline.get() + 1,
@@ -177,5 +206,71 @@ impl Unit for DcSnoop {
                 settle: last,
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DcSnoop;
+    use txhdl::comp::{chan, signal, DefaultClock, Running, Unit};
+    use txhdl::types::{Bit, U};
+    use txhdl_parts::bus::axi::{Addr, Resp, B, W};
+
+    /// With a second hart on port 7 (issue 1408), ports 0, 7 and 3 each
+    /// write one word of a line of their own: hart 0 is told of the
+    /// lines ports 7 and 3 wrote, hart 1 of those ports 0 and 3 wrote,
+    /// and each answer passes once its lines are told.
+    #[test]
+    fn each_hart_is_told_of_the_others_writes() {
+        let mut s = DcSnoop::<7>::default();
+        let (aw_tx, aw_in) = chan::<Addr<32, 5>, DefaultClock>();
+        let (w_tx, w_in) = chan::<W<32, 4>, DefaultClock>();
+        let (b_tx, b_in) = chan::<B<5>, DefaultClock>();
+        let (aw_out, aw_rx) = chan();
+        let (w_out, w_rx) = chan();
+        let (b_out, b_rx) = chan();
+        let (inv, inv_rx) = signal::<U<9>, DefaultClock>();
+        let (inv1, inv1_rx) = signal::<U<9>, DefaultClock>();
+        let mut sim = Running::new(
+            s.run((aw_in, w_in, b_in), (aw_out, w_out, b_out, inv, inv1)),
+        );
+        let (mut told0, mut told1, mut answers) = (vec![], vec![], 0);
+        for (port, line) in [(0u8, 0x10u32), (7, 0x20), (3, 0x30)] {
+            let id = U::<5>::from(port << 2);
+            aw_tx.send(Addr {
+                id,
+                addr: U::from(0x4000_0000 + line * 16),
+                ..Addr::default()
+            });
+            w_tx.send(W {
+                data: U::from(1u32),
+                strb: U::from(0xfu8),
+                last: Bit::One,
+            });
+            for _ in 0..12 {
+                sim.cycle();
+                // The DDR3: it answers a write once its address passed.
+                if aw_rx.recv().is_some() {
+                    b_tx.send(B {
+                        id,
+                        resp: Resp::Okay,
+                    });
+                }
+                let _ = w_rx.recv();
+                if b_rx.recv().is_some() {
+                    answers += 1;
+                }
+                let (a, b) = (inv_rx.get(), inv1_rx.get());
+                if a.bit(8).to_bool() {
+                    told0.push(a.slice::<0, 8>().raw());
+                }
+                if b.bit(8).to_bool() {
+                    told1.push(b.slice::<0, 8>().raw());
+                }
+            }
+        }
+        assert_eq!(told0, vec![0x20, 0x30], "hart 0: ports 7 and 3");
+        assert_eq!(told1, vec![0x10, 0x30], "hart 1: ports 0 and 3");
+        assert_eq!(answers, 3, "every answer passed");
     }
 }
