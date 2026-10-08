@@ -5,6 +5,7 @@
 #   bazel test //cpu/vreteno/act:vreteno_tests            # every test
 #   bazel test //cpu/vreteno/act:vreteno_cached_tests     # at 0x4000_0000
 #   bazel test //cpu/vreteno/act:vreteno_uncached_tests   # at 0x8000_0000
+#   bazel test //cpu/vreteno/act:vreteno_excl_tests       # A, exclusive
 #
 # The same tests run on the core's netlist every day in
 # vreteno-conformance, whose selection this is.
@@ -56,6 +57,12 @@ VRETENO_EXCLUDED = {
 
 act_suite(
     name = "vreteno",
+    # The A extension's tests again on the board's hart, whose lr.w,
+    # sc.w and AMOs on the DDR3 are exclusive pairs (issue 1408).
+    excl_suites = [
+        "Zaamo",
+        "Zalrsc",
+    ],
     known_failures = VRETENO_KNOWN_FAILURES,
     tests = select_tests(
         TESTS,

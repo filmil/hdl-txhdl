@@ -248,13 +248,14 @@ def _act_test_impl(ctx):
         content = """#!/usr/bin/env bash
 # Runs {name} on the core and checks the verdict (issue 1442).
 set -u
-exec "{runner}" --elf "{elf}" --name "{name}" --max-cycles {cycles} --expect {expect}
+exec "{runner}" --elf "{elf}" --name "{name}" --max-cycles {cycles} --expect {expect}{excl}
 """.format(
             runner = runner.short_path,
             elf = elf.short_path,
             name = ctx.attr.test_name,
             cycles = ctx.attr.max_cycles,
             expect = ctx.attr.expect,
+            excl = " --excl" if ctx.attr.excl else "",
         ),
     )
     return [DefaultInfo(
@@ -288,6 +289,12 @@ act_test = rule(
         "max_cycles": attr.int(
             default = 20000000,
             doc = "The cycles after which a run is a timeout.",
+        ),
+        "excl": attr.bool(
+            default = False,
+            doc = "Run on the board's hart, whose A instructions on the " +
+                  "DDR3 are exclusive pairs, with the exclusive monitor " +
+                  "behind it (issue 1408).",
         ),
         "_runner": attr.label(
             executable = True,
@@ -358,12 +365,20 @@ PLACEMENTS = {
     "uncached": "//cpu/vreteno/act/config:link_uncached.ld",
 }
 
-def act_suite(name, tests, known_failures = {}, placements = PLACEMENTS.keys()):
+def act_suite(
+        name,
+        tests,
+        known_failures = {},
+        placements = PLACEMENTS.keys(),
+        excl_suites = []):
     """Makes the targets for every test in `tests`, at each placement.
 
     For each test `T` and placement `P`: `T_P` is the self-checking
     ELF and `T_P_test` runs it on the core. `<name>_P_tests` is a test
-    suite of a placement's tests, and `<name>_tests` of all of them.
+    suite of a placement's tests, and `<name>_tests` of all of them. A
+    test of a suite in `excl_suites` runs again as `T_P_excl_test`, on
+    the board's hart with the exclusive monitor behind it, and
+    `<name>_excl_tests` is those (issue 1408).
 
     Args:
       name: the suite's name.
@@ -373,7 +388,18 @@ def act_suite(name, tests, known_failures = {}, placements = PLACEMENTS.keys()):
         test passes while the run fails, and fails once the run passes,
         so that the entry is removed with the fix.
       placements: the placements to build and run, from PLACEMENTS.
+      excl_suites: the suites, by the name a test's header gives, to
+        run again with exclusive pairs.
     """
+    excl = [t for t in tests if t["suite"] in excl_suites]
+    native.test_suite(
+        name = "%s_excl_tests" % name,
+        tests = [
+            "%s_%s_excl_test" % (t["name"], p)
+            for t in excl
+            for p in placements
+        ],
+    )
     for p in placements:
         native.test_suite(
             name = "%s_%s_tests" % (name, p),
@@ -394,6 +420,14 @@ def act_suite(name, tests, known_failures = {}, placements = PLACEMENTS.keys()):
                 test_name = "%s_%s" % (t["name"], p),
                 expect = "fail" if "%s_%s" % (t["name"], p) in known_failures else "pass",
             )
+            if t in excl:
+                act_test(
+                    name = "%s_%s_excl_test" % (t["name"], p),
+                    size = "medium",
+                    elf = ":%s_%s" % (t["name"], p),
+                    test_name = "%s_%s_excl" % (t["name"], p),
+                    excl = True,
+                )
     native.test_suite(
         name = "%s_tests" % name,
         tests = ["%s_%s_tests" % (name, p) for p in placements],

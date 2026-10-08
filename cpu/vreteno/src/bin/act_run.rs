@@ -21,18 +21,30 @@
 //! otherwise pass unseen.
 //!
 //! ```text
-//! act_run --elf T.elf --name T [--max-cycles N] [--expect pass|fail]
+//! act_run --elf T.elf --name T [--max-cycles N] [--expect pass|fail] [--excl]
 //! ```
 //!
 //! It prints one line, `name=T status=PASS|FAIL|TIMEOUT cycles=...
 //! retired=... code=...`, then what the test printed, and exits zero
 //! when the status is the one `--expect` names.
+//!
+//! With `--excl` the hart is the board's, whose `lr.w`, `sc.w` and
+//! AMOs on the DDR3 are exclusive pairs, and the exclusive monitor stands
+//! between its tracker and the memory as it does on the board, so the
+//! A extension's tests run against the pairs the board keeps (issue
+//! 1408). With one host nothing else writes, so the arbiter's hold has
+//! nothing to hold and is left out.
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::rc::Rc;
-use txhdl::comp::{join2, signal, DefaultClock, Running, Unit};
+use txhdl::comp::{chan, join2, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
-use txhdl_parts::bus::axi::{axi_units, per_end, AxiHost, AxiPer, Per, Xact};
+use txhdl_parts::bus::axi::{
+    axi_units, per_end, Ar, Aw, AxiHost, AxiPer, Per, Xact, B, W,
+};
+use txhdl_parts::bus::exmon::ExMon;
 use vreteno32::core::Writeback;
 use vreteno32::hart::Hart;
 
@@ -174,27 +186,19 @@ async fn memory(
     }
 }
 
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    let arg = |k: &str| -> Option<String> {
-        args.iter()
-            .position(|a| a == k)
-            .map(|i| args[i + 1].clone())
-    };
-    let elf = arg("--elf").expect("--elf T.elf");
-    let name = arg("--name").unwrap_or_else(|| elf.clone());
-    let max_cycles: u64 =
-        arg("--max-cycles").map_or(20_000_000, |s| s.parse().unwrap());
-    let expect = arg("--expect").unwrap_or_else(|| "pass".into());
-    let img = load(&elf);
-    // `lui t0, %hi(entry)` and `jr t0`: the entry is page aligned.
-    assert_eq!(img.entry & 0xfff, 0, "the entry point is not page aligned");
-    let boot = [img.entry | 0x2b7, 0x0002_8067];
-    let mut hart = Hart::<2>::with(&boot);
+/// The run, on the hart `EXCL` builds (issue 1408): what the test said,
+/// the cycles, the instructions retired, and the illegal instructions
+/// taken outside the test's code.
+fn simulate<const EXCL: usize>(
+    img: &Image,
+    boot: &[u32],
+    max_cycles: u64,
+) -> (Htif, u64, u128, Vec<u32>) {
+    let mut hart = Hart::<2, 16384, 1, 0, EXCL>::with(boot);
     let cpu = &hart.core;
     let (mcause, mepc, minstret, halted) =
         (cpu.mcause, cpu.mepc, cpu.minstret, cpu.halted);
-    let words = Rc::new(RefCell::new(img.words));
+    let words = Rc::new(RefCell::new(img.words.clone()));
     let htif = Rc::new(RefCell::new(Htif::default()));
     let (rst_out, rst) = signal::<Bit, DefaultClock>();
     let (_irq_out, irq) = signal::<Bit, DefaultClock>();
@@ -220,6 +224,42 @@ fn main() {
     let per = per_end(link.per_client);
     let mut axi_host = AxiHost::<32, 32, 4, IW, NIDS>::default();
     let mut axi_per = AxiPer::<32, 32, 4, IW>::default();
+    let mut exmon = ExMon::<IW, IW, 0, 1, 0x4000_0000, 0xc000_0000>::default();
+    let mem = memory(per, words, img.tohost, htif.clone());
+    // The tracker straight to the memory's unit, or with the monitor
+    // between them.
+    let hardware: Pin<Box<dyn Future<Output = ()> + '_>> = if EXCL != 0 {
+        let (aw_rx, ar_rx, w_rx, ans_rx, rb_rx) = link.per_in;
+        let (req_tx, wd_tx, b_tx, r_tx) = link.per_out;
+        let (maw_tx, maw_rx) = chan::<Aw<32, IW>, DefaultClock>();
+        let (mar_tx, mar_rx) = chan::<Ar<32, IW>, DefaultClock>();
+        let (mw_tx, mw_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (mb_tx, mb_rx) = chan::<B<IW>, DefaultClock>();
+        Box::pin(join2(
+            join2(
+                axi_host.run(link.host_in, link.host_out),
+                join2(
+                    exmon.run(
+                        (aw_rx, ar_rx, w_rx, mb_rx),
+                        (maw_tx, mar_tx, mw_tx, b_tx),
+                    ),
+                    axi_per.run(
+                        (maw_rx, mar_rx, mw_rx, ans_rx, rb_rx),
+                        (req_tx, wd_tx, mb_tx, r_tx),
+                    ),
+                ),
+            ),
+            mem,
+        ))
+    } else {
+        Box::pin(join2(
+            join2(
+                axi_host.run(link.host_in, link.host_out),
+                axi_per.run(link.per_in, link.per_out),
+            ),
+            mem,
+        ))
+    };
     let mut sim = Running::new(join2(
         hart.run(
             (
@@ -237,13 +277,7 @@ fn main() {
                 dbg_rdata_o,
             ),
         ),
-        join2(
-            join2(
-                axi_host.run(link.host_in, link.host_out),
-                axi_per.run(link.per_in, link.per_out),
-            ),
-            memory(per, words, img.tohost, htif.clone()),
-        ),
+        hardware,
     ));
     rst_out.set(Bit::One);
     sim.cycle();
@@ -269,7 +303,32 @@ fn main() {
             }
         }
     }
-    let h = htif.borrow();
+    let h = std::mem::take(&mut *htif.borrow_mut());
+    (h, cycles, minstret.get().raw(), boot_traps)
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let arg = |k: &str| -> Option<String> {
+        args.iter()
+            .position(|a| a == k)
+            .map(|i| args[i + 1].clone())
+    };
+    let elf = arg("--elf").expect("--elf T.elf");
+    let name = arg("--name").unwrap_or_else(|| elf.clone());
+    let max_cycles: u64 =
+        arg("--max-cycles").map_or(20_000_000, |s| s.parse().unwrap());
+    let expect = arg("--expect").unwrap_or_else(|| "pass".into());
+    let img = load(&elf);
+    // `lui t0, %hi(entry)` and `jr t0`: the entry is page aligned.
+    assert_eq!(img.entry & 0xfff, 0, "the entry point is not page aligned");
+    let boot = [img.entry | 0x2b7, 0x0002_8067];
+    let (h, cycles, retired, boot_traps) = if args.iter().any(|a| a == "--excl")
+    {
+        simulate::<1>(&img, &boot, max_cycles)
+    } else {
+        simulate::<0>(&img, &boot, max_cycles)
+    };
     let status = match h.exit {
         None => "TIMEOUT",
         Some(1) if boot_traps.is_empty() => "PASS",
@@ -278,7 +337,7 @@ fn main() {
     let code = h.exit.map_or(0, |c| c >> 1);
     println!(
         "name={name} status={status} cycles={cycles} retired={} code={code}",
-        minstret.get().raw()
+        retired
     );
     if !boot_traps.is_empty() {
         println!(
