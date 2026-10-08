@@ -239,14 +239,17 @@ fn covers(
     whole && plain && depth
 }
 
-/// A depth plane's slot for an entry clipped `i` pixels right and `j`
-/// rows down of where its box began: its start stepped there, as a
-/// shaded triangle's planes are.
+/// A second slot for an entry clipped `i` pixels right and `j` rows
+/// down of where its box began: the start of its depth plane, and of its
+/// fog's in words 6 to 8 (Razboj's #998), stepped there, as a shaded
+/// triangle's planes are.
 pub fn step_depth(ext: &[u32; WORDS], i: u32, j: u32) -> [u32; WORDS] {
     let mut out = *ext;
-    out[0] = ext[0]
-        .wrapping_add(ext[1].wrapping_mul(i))
-        .wrapping_add(ext[2].wrapping_mul(j));
+    for at in [0, 6] {
+        out[at] = ext[at]
+            .wrapping_add(ext[at + 1].wrapping_mul(i))
+            .wrapping_add(ext[at + 2].wrapping_mul(j));
+    }
     out
 }
 
@@ -497,6 +500,16 @@ mod tests {
             .wrapping_add(dx.wrapping_mul(14))
             .wrapping_add(dy.wrapping_mul(4));
         assert_eq!((got[6], got[7], got[8]), (want, dx, dy));
+        // A second slot's depth plane and fog's (Razboj's #998) the same.
+        let mut x = [0u32; WORDS];
+        (x[0], x[1], x[2]) = (start, dx, dy);
+        (x[6], x[7], x[8], x[9]) = (dy, start, dx, 0x12_3401);
+        let s = step_depth(&x, 14, 4);
+        assert_eq!((s[0], s[1], s[2]), (want, dx, dy));
+        let fog = dy
+            .wrapping_add(start.wrapping_mul(14))
+            .wrapping_add(dx.wrapping_mul(4));
+        assert_eq!((s[6], s[7], s[8], s[9]), (fog, start, dx, 0x12_3401));
     }
 
     /// Each tile takes the entries that touch it, in the list's order,

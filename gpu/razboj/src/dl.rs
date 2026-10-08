@@ -52,6 +52,8 @@
 //!   slot word 4  [0] alpha test   [3:1] its comparison   [15:8] its
 //!                reference   [19:16] the colour mask, a bit a byte
 //!   slot word 5  [0] the logic operation   [4:1] which (issue 998)
+//!   slot word 6  f0      word 7  fdx      word 8  fdy  (issue 998)
+//!   slot word 9  [0] fog   [31:8] its colour, 0xRRGGBB
 //! ```
 //!
 //! Like depth, these hold only in a tiled list.
@@ -109,7 +111,8 @@ pub fn encode(i: &Insn) -> [u32; WORDS] {
 /// The second slot of an entry that tests depth (issue 992) or carries
 /// the pixel's state (issue 993): its depth plane, the value at the
 /// box's first pixel and the two steps, in its first three words, and
-/// the blend, the alpha test and the colour mask in words 3 and 4.
+/// the blend, the alpha test and the colour mask in words 3 and 4, the
+/// logic operation in word 5, and fog in words 6 to 9 (issue 998).
 /// `None` for an entry with neither, which takes one slot.
 pub fn encode_ext(i: &Insn) -> Option<[u32; WORDS]> {
     if !i.depth.to_bool() && !i.state.to_bool() && !i.tex.to_bool() {
@@ -128,6 +131,8 @@ pub fn encode_ext(i: &Insn) -> Option<[u32; WORDS]> {
         | (lo(i.aref.raw()) << 8)
         | (lo(i.cmask.raw()) << 16);
     w[5] = (i.logic.to_bool() as u32) | (lo(i.lop.raw()) << 1);
+    (w[6], w[7], w[8]) = (lo(i.f0.raw()), lo(i.fdx.raw()), lo(i.fdy.raw()));
+    w[9] = (i.fog.to_bool() as u32) | (lo(i.fcol.raw()) << 8);
     Some(w)
 }
 
@@ -216,6 +221,9 @@ pub fn decode_ext(i: &mut Insn, e: &[u32]) {
     i.cmask = U::from((e[4] >> 16) & 0xf);
     i.logic = bit(e[5]);
     i.lop = U::from((e[5] >> 1) & 0xf);
+    (i.f0, i.fdx, i.fdy) = (U::from(e[6]), U::from(e[7]), U::from(e[8]));
+    i.fog = bit(e[9]);
+    i.fcol = U::from(e[9] >> 8);
 }
 
 /// A textured entry's two slots read back into it (issue 997).

@@ -116,6 +116,10 @@ pub enum Op {
     /// the blend, or not with `None` (issue 998): `op` is GL's `GL_CLEAR`
     /// to `GL_SET` less `0x1500`, see [`logic`]. Tiled lists only.
     LogicOp(Option<u32>),
+    /// From here on, fog every entry but a clear as `fog` says, or none
+    /// with `None` (issue 998): after its texture and before the alpha
+    /// test, as GL orders it. Tiled lists only.
+    Fog(Option<Fog>),
     /// From here on, texture the entries that carry texture coordinates
     /// as `mode` says, or not at all with `None` (issue 997). Tiled lists
     /// only.
@@ -195,6 +199,17 @@ pub fn logic(op: u32, s: u32, d: u32) -> u32 {
         | (take(2) & !s & d)
         | (take(1) & s & !d)
         | (take(0) & s & d)
+}
+
+/// Fog (issue 998): its colour, `0xRRGGBB`, and GL's fog factor `f` at
+/// each vertex of the entries it fogs, as a byte, 255 for GL's one, no
+/// fog, and nought for all fog. A rectangle takes the first. Each of red,
+/// green and blue becomes `f c + (255 - f) fog` over 255, and the alpha
+/// is kept.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Fog {
+    pub colour: u32,
+    pub f: [u32; 3],
 }
 
 /// An alpha test (issue 993): a pixel is kept when its alpha passes the
@@ -314,6 +329,14 @@ pub struct Insn {
     /// blend, and which of GL's sixteen, as [`logic`] reads it.
     pub logic: Bit,
     pub lop: U<4>,
+    /// Fog (issue 998): whether the entry is fogged, the fog's colour as
+    /// `0xRRGGBB`, and the plane of its factor, as a channel's, with
+    /// sixteen bits of fraction. An entry with fog has the pixel's state.
+    pub fog: Bit,
+    pub fcol: U<24>,
+    pub f0: U<32>,
+    pub fdx: U<32>,
+    pub fdy: U<32>,
     /// Texturing (issue 997): whether the entry is textured, which gives
     /// it two slots more; its texture's descriptor's byte address, its
     /// environment and environment colour; the planes `u q`, `v q` and
@@ -516,6 +539,7 @@ impl Op {
             | Op::AlphaTest(_)
             | Op::ColourMask(_)
             | Op::LogicOp(_)
+            | Op::Fog(_)
             | Op::Texture(_) => None,
         }
     }
@@ -797,9 +821,11 @@ pub fn assemble(ops: &[Op], sw: usize, sh: usize) -> Vec<Insn> {
     let mut depth = None;
     let mut pixel = Pixel::default();
     let mut texture = None;
+    let mut fog = None;
     let mut out = Vec::new();
     for op in ops {
         match *op {
+            Op::Fog(f) => fog = f,
             Op::Scissor { x, y, w, h } => {
                 within = clip(x, y, x + w - 1, y + h - 1, screen(sw, sh))
             }
@@ -814,6 +840,11 @@ pub fn assemble(ops: &[Op], sw: usize, sh: usize) -> Vec<Insn> {
                     within.and_then(|b| op.encode_with(b, depth, sw, sh))
                 {
                     pixel.apply(&mut insn);
+                    if let Some(f) =
+                        fog.filter(|_| !matches!(op, Op::Clear { .. }))
+                    {
+                        fogged(&mut insn, op, f, pixel.mask);
+                    }
                     if let (Some(t), Op::TexTri { .. }) = (texture, op) {
                         insn.tex = Bit::One;
                         insn.tdesc = U::from(t.desc);
@@ -826,6 +857,48 @@ pub fn assemble(ops: &[Op], sw: usize, sh: usize) -> Vec<Insn> {
         }
     }
     out
+}
+
+/// `insn`, encoded from `op`, fogged as `f` says (issue 998), with the
+/// pixel's state and `mask` its channels: the factor's plane across a
+/// triangle, its vertices' factors turned with them when the encoder
+/// winds it the other way, or the first factor everywhere.
+fn fogged(insn: &mut Insn, op: &Op, f: Fog, mask: u32) {
+    let v = match *op {
+        Op::Tri { a, b, c, .. } => {
+            Some([a, b, c].map(|p| (p.0 * SUB, p.1 * SUB)))
+        }
+        Op::TriQ4 { a, b, c, .. }
+        | Op::Gouraud { a, b, c, .. }
+        | Op::TriZ { a, b, c, .. }
+        | Op::GouraudZ { a, b, c, .. }
+        | Op::TexTri { a, b, c, .. } => Some([a, b, c]),
+        _ => None,
+    };
+    let fs = f.f.map(|f| (f & 0xff) as i64);
+    (insn.f0, insn.fdx, insn.fdy) = match v {
+        Some([a, b, c]) => {
+            let swap = area2(a, b, c) < 0;
+            let (b, c, fs) = if swap {
+                (c, b, [fs[0], fs[2], fs[1]])
+            } else {
+                (b, c, fs)
+            };
+            let (x0, y0) = (insn.x0.raw() as i32, insn.y0.raw() as i32);
+            let first = (x0 * SUB + SUB / 2, y0 * SUB + SUB / 2);
+            plane(a, b, c, fs, first, 16)
+        }
+        None => {
+            let z = U::from(0u8);
+            (U::from(((fs[0] as u32) << 16) + (1 << 15)), z, z)
+        }
+    };
+    if !insn.state.to_bool() {
+        insn.state = Bit::One;
+        insn.cmask = U::from(mask);
+    }
+    insn.fog = Bit::One;
+    insn.fcol = U::from(f.colour & 0xff_ffff);
 }
 
 /// What happens to each pixel an entry draws after its coverage and
@@ -904,6 +977,46 @@ mod tests {
                 assert_eq!(got, want, "the vertex at {p:?}");
             }
         }
+    }
+
+    /// Fog's factor gives back each vertex's at the pixel whose centre the
+    /// vertex is, wound either way, and a rectangle's is its first
+    /// everywhere (issue 998).
+    #[test]
+    fn a_fogged_triangle_has_its_factors_at_its_vertices() {
+        let (a, b, c) = ((24, 24), (232, 40), (56, 232));
+        let colours = [0xff00_0000; 3];
+        for (b, c, f) in [(b, c, [10, 128, 250]), (c, b, [10, 250, 128])] {
+            let fog = super::Fog { colour: 0, f };
+            let ops = [Op::Fog(Some(fog)), Op::Gouraud { a, b, c, colours }];
+            let i = super::assemble(&ops, 16, 16)[0];
+            let (x0, y0) = (i.x0.raw() as i32, i.y0.raw() as i32);
+            let raw = |u: U<32>| u.raw() as u32;
+            for (p, want) in [(a, f[0]), (b, f[1]), (c, f[2])] {
+                let (di, dj) = (p.0 / 16 - x0, p.1 / 16 - y0);
+                let got = channel(raw(i.f0), raw(i.fdx), raw(i.fdy), di, dj);
+                assert_eq!(got, want, "the vertex at {p:?}");
+            }
+        }
+        let fog = super::Fog {
+            colour: 0x12_3456,
+            f: [77, 0, 0],
+        };
+        let rect = Op::Rect {
+            colour: 0,
+            x: 2,
+            y: 3,
+            w: 4,
+            h: 5,
+        };
+        let i = super::assemble(&[Op::Fog(Some(fog)), rect], 16, 16)[0];
+        assert!(i.state.to_bool() && i.fog.to_bool());
+        assert_eq!((i.cmask.raw(), i.fcol.raw()), (0xf, 0x12_3456));
+        let raw = |u: U<32>| u.raw() as u32;
+        assert_eq!(channel(raw(i.f0), raw(i.fdx), raw(i.fdy), 3, 4), 77);
+        let clear = Op::Clear { colour: 0 };
+        let i = super::assemble(&[Op::Fog(Some(fog)), clear], 16, 16)[0];
+        assert!(!i.fog.to_bool(), "a clear is not fogged");
     }
 
     /// A texture's plane from the area's reciprocal is within two units
