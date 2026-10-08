@@ -247,6 +247,12 @@ impl Gl<'_> {
             // Polygon offset (#998).
             // The logic operation (#998).
             gl::LOGIC_OP_MODE => i(&[(gl::CLEAR + self.logic) as i64]),
+            // Fog (#998).
+            gl::FOG_MODE => i(&[self.fog_mode as i64]),
+            gl::FOG_DENSITY => f(&[self.fog_density]),
+            gl::FOG_START => f(&[self.fog_start]),
+            gl::FOG_END => f(&[self.fog_end]),
+            gl::FOG_COLOR => u(&self.fog_colour),
             // The scissor and the hints (#1490).
             SCISSOR_BOX => {
                 let (x, y, w, h) = self.scissor;

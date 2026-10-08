@@ -52,6 +52,16 @@ pub const LOGIC_OP_MODE: u32 = 0x0BF0;
 pub const CLEAR: u32 = 0x1500;
 pub const COPY: u32 = 0x1503;
 pub const SET: u32 = 0x150F;
+/// Fog (#998): the switch, its parameters and colour, and the two modes
+/// besides `GL_LINEAR`.
+pub const FOG: u32 = 0x0B60;
+pub const FOG_DENSITY: u32 = 0x0B62;
+pub const FOG_START: u32 = 0x0B63;
+pub const FOG_END: u32 = 0x0B64;
+pub const FOG_MODE: u32 = 0x0B65;
+pub const FOG_COLOR: u32 = 0x0B66;
+pub const EXP: u32 = 0x0800;
+pub const EXP2: u32 = 0x0801;
 pub const SCISSOR_TEST: u32 = 0x0C11;
 /// The hints (#1490): GL ES 1.1's targets, and the three modes.
 pub const PERSPECTIVE_CORRECTION_HINT: u32 = 0x0C50;

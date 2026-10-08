@@ -123,6 +123,39 @@ pub fn state(w: &mut [u32; WORDS], slot: &mut [u32; WORDS], p: Pixel) {
     slot[5] = p.logic.map_or(0, |op| 1 | (op & 0xf) << 1);
 }
 
+/// Fog's words in a second slot (Razboj's #998), its words 6 to 9: the
+/// plane of the factor, a byte at each vertex of the triangle `v` in
+/// sixteenths, 255 for no fog, wound as [`triangle`] winds it, on the box
+/// `w`'s words 1 and 2 hold; and the fog on, in its colour `0x..RRGGBB`.
+pub fn fog(
+    w: &[u32; WORDS],
+    v: [(i32, i32); 3],
+    f: [u32; 3],
+    colour: u32,
+) -> [u32; 4] {
+    let [a, b, c] = v;
+    let swap = area2(a, b, c) < 0;
+    let f = f.map(|f| (f & 0xff) as i64);
+    let (b, c, f) = if swap {
+        (c, b, [f[0], f[2], f[1]])
+    } else {
+        (b, c, f)
+    };
+    let first = (
+        (w[1] & 0xffff) as i32 * 16 + 8,
+        (w[1] >> 16) as i32 * 16 + 8,
+    );
+    let (f0, dx, dy) = plane(a, b, c, f, first, 16);
+    [f0, dx, dy, 1 | (colour & 0xff_ffff) << 8]
+}
+
+/// The same for a rectangle or a point: the factor `f` everywhere, half
+/// a unit up as a triangle's start is.
+pub fn flat_fog(f: u32, colour: u32) -> [u32; 4] {
+    let f0 = ((f & 0xff) << 16) + (1 << 15);
+    [f0, 0, 0, 1 | (colour & 0xff_ffff) << 8]
+}
+
 /// A depth plane's slot for a depth `z` everywhere, of sixteen bits:
 /// the plane of a clear, a rectangle or a point, half a unit up as a
 /// triangle's start is.
