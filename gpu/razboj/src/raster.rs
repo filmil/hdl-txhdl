@@ -330,17 +330,37 @@ pub struct Raster<
     pub tqdx: Reg<U<64>>,
     pub tqdy: Reg<U<64>>,
     pub tlo: Reg<U<32>>,
-    /// The texture: its descriptor's address and environment, and from
-    /// the descriptor its base level's address and sides, its two wrap
-    /// modes and how its texels are read.
+    /// The texture: its descriptor's address, its environment and the
+    /// environment's colour, and from the descriptor its base level's
+    /// sides, its levels, its two filters, its two wrap modes, how its
+    /// texels are read, and each level's address.
     pub tdesc: Reg<U<32>>,
     pub tenv: Reg<U<3>>,
-    pub tbase: Reg<U<32>>,
+    pub tenvc: Reg<U<32>>,
     pub tlogw: Reg<U<4>>,
     pub tlogh: Reg<U<4>>,
+    pub tlevels: Reg<U<4>>,
+    pub tmin: Reg<U<3>>,
+    pub tmag: Reg<Bit>,
     pub tcs: Reg<Bit>,
     pub tct: Reg<Bit>,
     pub tclass: Reg<U<3>>,
+    pub tlvl: Mem<U<32>, 16>,
+    /// The level of detail's numerators (issue 997), as a channel's
+    /// planes: the two that step down at this row, the two that step
+    /// across at this pixel and at the start of the row, their steps,
+    /// and the shift they were taken by.
+    pub tlodk: Reg<U<8>>,
+    pub tnux: Reg<U<32>>,
+    pub tnuxd: Reg<U<32>>,
+    pub tnvx: Reg<U<32>>,
+    pub tnvxd: Reg<U<32>>,
+    pub tnuy: Reg<U<32>>,
+    pub tnuy0: Reg<U<32>>,
+    pub tnuyd: Reg<U<32>>,
+    pub tnvy: Reg<U<32>>,
+    pub tnvy0: Reg<U<32>>,
+    pub tnvyd: Reg<U<32>>,
     /// A textured pixel's turns, as `tex::texel_uv` has them: `q`'s
     /// leading zeros and its top 32 bits from its leading one; the
     /// reciprocal's first guess, its Newton step's error, and the
@@ -386,7 +406,61 @@ pub struct Raster<
     pub tmg: Reg<U<17>>,
     #[use_dsp("no")]
     pub tmb: Reg<U<17>>,
+    /// `BLEND`'s and `DECAL`'s sums before their divide, three colour
+    /// channels each: the fragment and the environment's colour by the
+    /// texel, and the fragment and the texel by the texel's alpha.
+    pub mbl: Reg<U<51>>,
+    pub mdc: Reg<U<51>>,
     pub tcol: Reg<U<32>>,
+    /// The level of detail (issue 997), as `tex::lod` has it: the
+    /// largest numerator's magnitude, its leading zeros and its top 32
+    /// bits from its leading one; the lines' products for its `log2`
+    /// and for `q`'s; and the level of detail, in 8.8.
+    pub mlm: Reg<U<32>>,
+    pub mlz: Reg<U<7>>,
+    pub mlx: Reg<U<32>>,
+    pub mpq: Reg<U<22>>,
+    pub mpm: Reg<U<22>>,
+    pub mlod: Reg<U<32>>,
+    /// What `tex::sample` makes of it: the level sampled, and the next
+    /// when two are blended; whether two are; whether a level is
+    /// filtered linearly; the fraction two are blended by; and how many
+    /// texels the pixel reads, one or four a level.
+    pub mlev1: Reg<U<4>>,
+    pub mlev2: Reg<U<4>>,
+    pub mtwo: Reg<Bit>,
+    pub mlin: Reg<Bit>,
+    pub mfr: Reg<U<8>>,
+    pub mnt: Reg<U<4>>,
+    /// A texel's turns: which of the pixel's it is, its level, its pass
+    /// and its place among the four; the coordinates at its level and
+    /// that level's sides and address; the texel's column and row,
+    /// wrapped; its weight; the weight times each channel; and each
+    /// pass's sums of those.
+    pub mk: Reg<U<4>>,
+    pub mpass: Reg<Bit>,
+    pub mt: Reg<U<2>>,
+    pub mus: Reg<U<32>>,
+    pub mvs: Reg<U<32>>,
+    pub mlw: Reg<U<4>>,
+    pub mlh: Reg<U<4>>,
+    pub mbase: Reg<U<32>>,
+    pub mii: Reg<U<32>>,
+    pub mjj: Reg<U<32>>,
+    pub mw: Reg<U<17>>,
+    /// The weight times each channel, which takes the cache's word, so
+    /// in logic and not in DSP slices (#1343); and each pass's sums of
+    /// those, 25 bits a channel, alpha highest.
+    #[use_dsp("no")]
+    pub mpp: Reg<U<100>>,
+    pub msum1: Reg<U<100>>,
+    pub msum2: Reg<U<100>>,
+    /// Each pass's sample, the two levels' blend before its shift, 17
+    /// bits a channel, and the texel the environment takes.
+    pub ms1: Reg<U<32>>,
+    pub ms2: Reg<U<32>>,
+    pub mkk: Reg<U<68>>,
+    pub mtx: Reg<U<32>>,
     /// The texture cache: 64 lines, each a block of four by four texels,
     /// one burst of 64 bytes, direct mapped by the block's address. The
     /// words, a block RAM of one write, the refill's, and one read, the
@@ -745,24 +819,250 @@ fn texel_at(i: U<32>, j: U<32>, log_w: U<4>) -> U<32> {
     (block << 6usize) + (within << 2usize)
 }
 
-/// A textured pixel's colour (issue 997): the fragment's `f` through the
-/// environment `env` with the texel `t`, whose class says which of its
-/// channels it has, as `tex::env` has it for `REPLACE`, and for every
-/// other environment as for `MODULATE`, whose products over 255 are `m`.
-/// `RGB` and `LUMINANCE` texels give no alpha and `ALPHA` texels no
-/// colour, so the fragment's goes through.
+/// The largest magnitude of four numerators in two's complement, as
+/// `tex::lod` takes it (issue 997).
 #[lower]
-fn tex_env(f: U<32>, t: U<32>, m: U<32>, class: U<3>, env: U<3>) -> U<32> {
-    let modulate = Bit::from(env != 0);
-    let colour = Bit::from(class != 2);
-    let alpha =
-        Bit::from(class == 0) | Bit::from(class == 2) | Bit::from(class == 4);
-    let from = mux(modulate, m, t);
-    let rgb = mux(colour, from.slice::<0, 24>(), f.slice::<0, 24>());
-    let a = mux(alpha, from.slice::<24, 8>(), f.slice::<24, 8>());
-    a.concat::<24, 32>(rgb)
+fn biggest(a: U<32>, b: U<32>, c: U<32>, d: U<32>) -> U<32> {
+    let z = U::<32>::from(0u8);
+    let ma = mux(a.bit(31), z - a, a);
+    let mb = mux(b.bit(31), z - b, b);
+    let mc = mux(c.bit(31), z - c, c);
+    let md = mux(d.bit(31), z - d, d);
+    let ab = mux(ma < mb, mb, ma);
+    let cd = mux(mc < md, md, mc);
+    mux(ab < cd, cd, ab)
 }
 
+/// A pixel's level of detail in 8.8, as `tex::lod` has it: `log2` of
+/// the largest numerator, from its leading zeros `lz` and its line's
+/// fraction `fm`, plus the numerators' shift `k`, less the 80 bits of
+/// the planes' units and twice `log2 q`, from `q`'s leading zeros `n`
+/// and its fraction `fq`; and below every level when every numerator is
+/// nought.
+#[lower]
+fn lod_of(
+    lz: U<7>,
+    fm: U<32>,
+    k: U<8>,
+    n: U<7>,
+    fq: U<32>,
+    none: Bit,
+) -> U<32> {
+    let m = ((U::<32>::from(31u8) - lz.resize::<32>()) << 8usize) + fm;
+    let q = ((U::<32>::from(15u8) - n.resize::<32>()) << 8usize) + fq;
+    let s = (k.resize::<32>() << 8usize) - U::<32>::from(80u32 << 8);
+    let low = U::<32>::from(0u8) - U::<32>::from(1u32 << 20);
+    mux(none, low, m + s - (q << 1usize))
+}
+
+/// What `tex::sample` reads for the level of detail `lod` under the
+/// filters `min` and `mag` of a texture of `levels`: bits 3 to 0 the
+/// level, 7 to 4 the next, 8 whether the two are blended, 9 whether a
+/// level is filtered linearly, 17 to 10 the fraction they are blended
+/// by, and 21 to 18 how many texels that is, one or four a level.
+#[lower]
+fn pick_level(lod: U<32>, min: U<3>, mag: Bit, levels: U<4>) -> U<22> {
+    let z = U::<32>::from(0u8);
+    let one = U::<32>::from(1u8);
+    let half = U::<32>::from(128u8);
+    let nmn = Bit::from(min == 2);
+    let nml = Bit::from(min == 4);
+    // At `c` or below the texture is magnified.
+    let c = mux(mag & (nmn | nml), half, z);
+    let magnify = !lt_signed(c, lod);
+    let top4 = mux(levels == 0, U::<4>::from(0u8), levels - U::<4>::from(1u8));
+    let top = top4.resize::<32>();
+    // The `_MIPMAP_NEAREST` filters: GL's `ceil(λ + 1/2) - 1`.
+    let up = ((lod + U::<32>::from(383u32)) >> 8usize) - one;
+    let ln = mux(lt_signed(half, lod), up, z);
+    let near = mux(top < ln, top, ln);
+    // The `_MIPMAP_LINEAR` filters: `λ`'s whole part and the next.
+    let whole = lod >> 8usize;
+    let two = Bit::from(whole < top);
+    let l1 = mux(two, whole, top);
+    let flat = Bit::from(min < 2);
+    let nearest = Bit::from(min < 4) & !flat;
+    let mip_lin = mux(nearest, Bit::from(min == 3), !nml);
+    let min_lin = mux(flat, Bit::from(min == 1), mip_lin);
+    let lin = mux(magnify, mag, min_lin);
+    let lev = mux(magnify | flat, z, mux(nearest, near, l1));
+    let twice = !magnify & !flat & !nearest & two;
+    let passes = mux(twice, U::<4>::from(2u8), U::<4>::from(1u8));
+    let n = mux(lin, passes << 2usize, passes);
+    let next = (l1 + one).slice::<0, 4>();
+    n.concat::<8, 12>(lod.slice::<0, 8>())
+        .concat::<1, 13>(lin.zext::<1>())
+        .concat::<1, 14>(twice.zext::<1>())
+        .concat::<4, 18>(next)
+        .concat::<4, 22>(lev.slice::<0, 4>())
+}
+
+/// `ADD`'s channel: the fragment's and the texel's, at most 255.
+#[lower]
+fn add255(f: U<8>, t: U<8>) -> U<8> {
+    let s = f.resize::<9>() + t.resize::<9>();
+    mux(s.bit(8), U::<8>::from(255u8), s.slice::<0, 8>())
+}
+
+/// A texel's weight times each of its four channels, 25 bits a channel,
+/// alpha highest: a linear filter's terms (issue 997).
+#[lower]
+fn weigh(w: U<17>, t: U<32>) -> U<100> {
+    let w25 = w.resize::<25>();
+    let a = w25.mul::<25>(t.slice::<24, 8>().resize::<25>());
+    let r = w25.mul::<25>(t.slice::<16, 8>().resize::<25>());
+    let g = w25.mul::<25>(t.slice::<8, 8>().resize::<25>());
+    let b = w25.mul::<25>(t.slice::<0, 8>().resize::<25>());
+    a.concat::<25, 50>(r)
+        .concat::<25, 75>(g)
+        .concat::<25, 100>(b)
+}
+
+/// The sums of a filter's terms, a channel each: `p` added to `acc`, or
+/// to nought for a level's first texel.
+#[lower]
+fn add_terms(first: Bit, acc: U<100>, p: U<100>) -> U<100> {
+    let s = mux(first, U::<100>::from(0u8), acc);
+    let a = s.slice::<75, 25>() + p.slice::<75, 25>();
+    let r = s.slice::<50, 25>() + p.slice::<50, 25>();
+    let g = s.slice::<25, 25>() + p.slice::<25, 25>();
+    let b = s.slice::<0, 25>() + p.slice::<0, 25>();
+    a.concat::<25, 50>(r)
+        .concat::<25, 75>(g)
+        .concat::<25, 100>(b)
+}
+
+/// A level's sample from its sums, each over `2^16`, rounded, as
+/// `tex::sample_level` has it.
+#[lower]
+fn sum_texel(acc: U<100>) -> U<32> {
+    let h = U::<25>::from(1u32 << 15);
+    let a = ((acc.slice::<75, 25>() + h) >> 16usize).slice::<0, 8>();
+    let r = ((acc.slice::<50, 25>() + h) >> 16usize).slice::<0, 8>();
+    let g = ((acc.slice::<25, 25>() + h) >> 16usize).slice::<0, 8>();
+    let b = ((acc.slice::<0, 25>() + h) >> 16usize).slice::<0, 8>();
+    a.concat::<8, 16>(r).concat::<8, 24>(g).concat::<8, 32>(b)
+}
+
+/// Two levels' samples `s1` and `s2` blended by `fr`, a channel each, 17
+/// bits before the shift: `(256 - fr) s1 + fr s2`.
+#[lower]
+fn mix_levels(s1: U<32>, s2: U<32>, fr: U<8>) -> U<68> {
+    let f = fr.resize::<17>();
+    let g = U::<17>::from(256u32) - f;
+    let a = s1.slice::<24, 8>().resize::<17>().mul::<17>(g)
+        + s2.slice::<24, 8>().resize::<17>().mul::<17>(f);
+    let r = s1.slice::<16, 8>().resize::<17>().mul::<17>(g)
+        + s2.slice::<16, 8>().resize::<17>().mul::<17>(f);
+    let gr = s1.slice::<8, 8>().resize::<17>().mul::<17>(g)
+        + s2.slice::<8, 8>().resize::<17>().mul::<17>(f);
+    let b = s1.slice::<0, 8>().resize::<17>().mul::<17>(g)
+        + s2.slice::<0, 8>().resize::<17>().mul::<17>(f);
+    a.concat::<17, 34>(r)
+        .concat::<17, 51>(gr)
+        .concat::<17, 68>(b)
+}
+
+/// That blend shifted back, rounded, as `tex::sample` has it.
+#[lower]
+fn mixed_texel(m: U<68>) -> U<32> {
+    let h = U::<17>::from(128u8);
+    let a = ((m.slice::<51, 17>() + h) >> 8usize).slice::<0, 8>();
+    let r = ((m.slice::<34, 17>() + h) >> 8usize).slice::<0, 8>();
+    let g = ((m.slice::<17, 17>() + h) >> 8usize).slice::<0, 8>();
+    let b = ((m.slice::<0, 17>() + h) >> 8usize).slice::<0, 8>();
+    a.concat::<8, 16>(r).concat::<8, 24>(g).concat::<8, 32>(b)
+}
+
+/// Three colour channels' sums `x u + y v` before their divide, 17 bits
+/// each: `BLEND`'s with `x` the fragment, `y` the environment's colour,
+/// `v` the texel and `u` 255 less it; and `DECAL`'s with `y` the texel,
+/// `v` the texel's alpha in each channel and `u` 255 less that.
+#[lower]
+fn sums3(x: U<32>, y: U<32>, u: U<32>, v: U<32>) -> U<51> {
+    let xr = x.slice::<16, 8>().resize::<17>();
+    let xg = x.slice::<8, 8>().resize::<17>();
+    let xb = x.slice::<0, 8>().resize::<17>();
+    let yr = y.slice::<16, 8>().resize::<17>();
+    let yg = y.slice::<8, 8>().resize::<17>();
+    let yb = y.slice::<0, 8>().resize::<17>();
+    let ur = u.slice::<16, 8>().resize::<17>();
+    let ug = u.slice::<8, 8>().resize::<17>();
+    let ub = u.slice::<0, 8>().resize::<17>();
+    let vr = v.slice::<16, 8>().resize::<17>();
+    let vg = v.slice::<8, 8>().resize::<17>();
+    let vb = v.slice::<0, 8>().resize::<17>();
+    let r = xr.mul::<17>(ur) + yr.mul::<17>(vr);
+    let g = xg.mul::<17>(ug) + yg.mul::<17>(vg);
+    let b = xb.mul::<17>(ub) + yb.mul::<17>(vb);
+    r.concat::<17, 34>(g).concat::<17, 51>(b)
+}
+
+/// Those three sums each over 255, rounded and at most 255, as
+/// [`over255`] has it, in a word with nought for alpha.
+#[lower]
+fn over255x3(s: U<51>) -> U<32> {
+    let h = U::<17>::from(128u32);
+    let full = U::<17>::from(255u32);
+    let yr = s.slice::<34, 17>() + h;
+    let yg = s.slice::<17, 17>() + h;
+    let yb = s.slice::<0, 17>() + h;
+    let rr = (yr + (yr >> 8usize)) >> 8usize;
+    let rg = (yg + (yg >> 8usize)) >> 8usize;
+    let rb = (yb + (yb >> 8usize)) >> 8usize;
+    let r = mux(full < rr, full, rr).slice::<0, 8>();
+    let g = mux(full < rg, full, rg).slice::<0, 8>();
+    let b = mux(full < rb, full, rb).slice::<0, 8>();
+    U::<8>::from(0u8)
+        .concat::<8, 16>(r)
+        .concat::<8, 24>(g)
+        .concat::<8, 32>(b)
+}
+
+/// A textured pixel's colour (issue 997): the fragment's `f` through the
+/// environment with the texel `t`, as `tex::env` has it. `how` is the
+/// texel's class, which says which of its channels it has, above the
+/// environment, three bits each. `m` is the four products of the
+/// fragment and the texel over 255; `l` the colour `BLEND` makes, the
+/// fragment and the environment's colour by the texel; `d` the one
+/// `DECAL` makes, the fragment and the texel by the texel's alpha; and
+/// `a` the one `ADD` makes.
+#[lower]
+fn tex_env(
+    f: U<32>,
+    t: U<32>,
+    m: U<32>,
+    l: U<32>,
+    d: U<32>,
+    a: U<32>,
+    how: U<6>,
+) -> U<32> {
+    let env = how.slice::<0, 3>();
+    let class = how.slice::<3, 3>();
+    let replace = Bit::from(env == 0);
+    let modulate = Bit::from(env == 1);
+    let decal = Bit::from(env == 2);
+    let blend = Bit::from(env == 3);
+    let alpha_only = Bit::from(class == 2);
+    let lum = Bit::from(class == 3);
+    let colour_only = Bit::from(class == 1) | lum;
+    let la = Bit::from(class == 4);
+    let f24 = f.slice::<0, 24>();
+    let t24 = t.slice::<0, 24>();
+    let rest = mux(blend, l.slice::<0, 24>(), a.slice::<0, 24>());
+    let made = mux(decal, d.slice::<0, 24>(), rest);
+    let picked = mux(replace, t24, mux(modulate, m.slice::<0, 24>(), made));
+    // A class with no colour, or `DECAL` where GL leaves it undefined,
+    // passes the fragment's through.
+    let lum_decal = mux(lum, f24, t24);
+    let shown = mux(colour_only & decal, lum_decal, picked);
+    let rgb = mux(alpha_only | (la & decal), f24, shown);
+    // A class with no alpha passes the fragment's through.
+    let ta = t.slice::<24, 8>();
+    let fa = f.slice::<24, 8>();
+    let some = mux(replace, ta, mux(decal, fa, m.slice::<24, 8>()));
+    mux(colour_only, fa, some).concat::<24, 32>(rgb)
+}
 /// Whether a read's beat is taken this cycle: one is offered, the
 /// release has room for its identifier, and no write response is
 /// ahead of it.
@@ -1383,12 +1683,19 @@ impl<
                                           if sat == 11 {
                                               self.tvdy.set(sa64);
                                           }
+                                          if sat == 12 {
+                                              let sak = sa.slice::<0, 8>();
+                                              self.tlodk.set(sak);
+                                          }
                                           if sat == 13 {
                                               self.tdesc.set(sa);
                                           }
                                           if sat == 14 {
                                               let sae = sa.slice::<0, 3>();
                                               self.tenv.set(sae);
+                                          }
+                                          if sat == 15 {
+                                              self.tenvc.set(sa);
                                           }
                                       }
                                       until(DefaultClock::rising, || {
@@ -1402,7 +1709,7 @@ impl<
                                               + ((self.insn.get() + 3)
                                                   .resize::<A>()
                                                   << SHIFT),
-                                          len: U::<8>::from(5u8),
+                                          len: U::<8>::from(13u8),
                                           size: U::<3>::from(2u8),
                                           burst: BurstKind::Incr,
                                           lock: Bit::Zero,
@@ -1412,7 +1719,7 @@ impl<
                                           region: U::<4>::from(0u8),
                                       });
                                       self.word.set(U::<5>::from(0u8));
-                                      for _ in 0..6 {
+                                      for _ in 0..14 {
                                           until(DefaultClock::rising, || {
                                               landing(
                                                   rdata.peek().is_some(),
@@ -1440,10 +1747,38 @@ impl<
                                           if sbt == 5 {
                                               self.tqdy.set(sb64);
                                           }
+                                          // The numerators: the first two step
+                                          // down, the others across.
+                                          if sbt == 6 {
+                                              self.tnux.set(sb);
+                                          }
+                                          if sbt == 7 {
+                                              self.tnuxd.set(sb);
+                                          }
+                                          if sbt == 8 {
+                                              self.tnvx.set(sb);
+                                          }
+                                          if sbt == 9 {
+                                              self.tnvxd.set(sb);
+                                          }
+                                          if sbt == 10 {
+                                              self.tnuy0.set(sb);
+                                              self.tnuy.set(sb);
+                                          }
+                                          if sbt == 11 {
+                                              self.tnuyd.set(sb);
+                                          }
+                                          if sbt == 12 {
+                                              self.tnvy0.set(sb);
+                                              self.tnvy.set(sb);
+                                          }
+                                          if sbt == 13 {
+                                              self.tnvyd.set(sb);
+                                          }
                                       }
-                                      // The descriptor's first two words: the
-                                      // sides, wrap modes and class, then the
-                                      // base level's address.
+                                      // The descriptor's twelve words: the
+                                      // sides, levels, filters, wrap modes and
+                                      // class, then each level's address.
                                       until(DefaultClock::rising, || {
                                           issue.ready().to_bool()
                                       })
@@ -1453,7 +1788,7 @@ impl<
                                       issue.send(Issue {
                                           read: Bit::One,
                                           addr: tdq,
-                                          len: U::<8>::from(1u8),
+                                          len: U::<8>::from(11u8),
                                           size: U::<3>::from(2u8),
                                           burst: BurstKind::Incr,
                                           lock: Bit::Zero,
@@ -1462,33 +1797,38 @@ impl<
                                           qos: U::<4>::from(0u8),
                                           region: U::<4>::from(0u8),
                                       });
-                                      until(DefaultClock::rising, || {
-                                          landing(
-                                              rdata.peek().is_some(),
-                                              release.ready(),
-                                              done.peek().is_some(),
-                                          )
-                                          .to_bool()
-                                      })
-                                      .await;
-                                      let dw = rdata.head().data;
-                                      with!(self <= {
-                                          tlogw: dw.slice::<0, 4>(),
-                                          tlogh: dw.slice::<4, 4>(),
-                                          tcs: dw.bit(12),
-                                          tct: dw.bit(13),
-                                          tclass: dw.slice::<20, 3>(),
-                                      });
-                                      until(DefaultClock::rising, || {
-                                          landing(
-                                              rdata.peek().is_some(),
-                                              release.ready(),
-                                              done.peek().is_some(),
-                                          )
-                                          .to_bool()
-                                      })
-                                      .await;
-                                      self.tbase.set(rdata.head().data);
+                                      self.word.set(U::<5>::from(0u8));
+                                      for _ in 0..12 {
+                                          until(DefaultClock::rising, || {
+                                              landing(
+                                                  rdata.peek().is_some(),
+                                                  release.ready(),
+                                                  done.peek().is_some(),
+                                              )
+                                              .to_bool()
+                                          })
+                                          .await;
+                                          let dw = rdata.head().data;
+                                          let dk = self.word.get();
+                                          self.word.set(dk + 1);
+                                          if dk == 0 {
+                                              with!(self <= {
+                                                  tlogw: dw.slice::<0, 4>(),
+                                                  tlogh: dw.slice::<4, 4>(),
+                                                  tlevels: dw.slice::<8, 4>(),
+                                                  tcs: dw.bit(12),
+                                                  tct: dw.bit(13),
+                                                  tmin: dw.slice::<16, 3>(),
+                                                  tmag: dw.bit(19),
+                                                  tclass: dw.slice::<20, 3>(),
+                                              });
+                                          }
+                                          let dl = (dk - 1).slice::<0, 4>();
+                                          let dput = Bit::from(dk != 0);
+                                          with!(self <= {
+                                              dput ? { tlvl.at(dl): dw },
+                                          });
+                                      }
                                   }
                                   self.insn.set(
                                       self.insn.get()
@@ -1641,25 +1981,44 @@ impl<
                                     .await;
                                     // A textured pixel (issue 997) takes
                                     // its texel first, a turn for each
-                                    // step of `tex::texel_uv` and the
-                                    // nearest texel of the base level: q
-                                    // normalised; the reciprocal's first
-                                    // guess; its Newton step's error; the
-                                    // reciprocal; `u q` and `v q` times
-                                    // it; the shift back and the clamp;
-                                    // the wrap and the texel's address;
-                                    // the cache read, and a refill on a
-                                    // miss; and the environment, its
-                                    // products and then their divide.
+                                    // step of `tex::texel_uv`, `tex::lod`
+                                    // and `tex::sample`: q normalised,
+                                    // and the numerators' largest; the
+                                    // reciprocal's first guess, and the
+                                    // largest normalised; its Newton
+                                    // step's error, and the two lines'
+                                    // products for `log2`; the
+                                    // reciprocal, and the level of
+                                    // detail; `u q` and `v q` times it,
+                                    // and the levels and filter it picks;
+                                    // the shift back and the clamp. Then
+                                    // each texel the filters read, one or
+                                    // four a level and one level or two,
+                                    // its own turns: its level's
+                                    // coordinates; its column and row,
+                                    // wrapped, and its weight; its
+                                    // address; the cache read, and a
+                                    // refill on a miss; the weight times
+                                    // each channel; and the sum. Then
+                                    // the two levels' blend, and the
+                                    // environment, its products and
+                                    // then their divide.
                                     if (self.tex_on.get() & self.hit.get())
                                         .to_bool()
                                     {
                                         let tq = self.tqc.get();
                                         let one64 = U::<64>::from(1u8);
                                         let tq1 = mux(tq == 0, one64, tq);
+                                        let nm = biggest(
+                                            self.tnux.get(),
+                                            self.tnvx.get(),
+                                            self.tnuy.get(),
+                                            self.tnvy.get(),
+                                        );
                                         with!(self <= {
                                             tn: lz64(tq1),
                                             tx: norm64(tq1).slice::<32, 32>(),
+                                            mlm: nm,
                                         });
                                         DefaultClock::rising().await;
                                         let tx0 = self.tx.get();
@@ -1670,20 +2029,74 @@ impl<
                                         let tf = tf0.mul::<22>(tt);
                                         let tf12 = tf.slice::<10, 12>();
                                         let tfs = tf12.resize::<17>();
-                                        self.tr0.set(seed_start(tk) - tfs);
+                                        let mlw = self.mlm.get().resize::<64>();
+                                        let mlo = U::<64>::from(1u64 << 32);
+                                        let mlz0 = mlw == 0;
+                                        let mls = mlw << 32usize;
+                                        let mlu = mux(mlz0, mlo, mls);
+                                        with!(self <= {
+                                            tr0: seed_start(tk) - tfs,
+                                            mlz: lz64(mlu),
+                                            mlx: norm64(mlu).slice::<32, 32>(),
+                                        });
                                         DefaultClock::rising().await;
                                         let tr0v = self.tr0.get();
                                         let tx50 = self.tx.get().resize::<50>();
                                         let r050 = tr0v.resize::<50>();
                                         let tp = tx50.mul::<50>(r050);
                                         let one49 = U::<50>::from(1u64 << 49);
-                                        self.te.set(one49 - tp);
+                                        let lqx = self.tx.get();
+                                        let lqk = lqx.slice::<26, 5>();
+                                        let lqb = log_rise(lqk);
+                                        let lqt = lqx.slice::<16, 10>();
+                                        let lmx = self.mlx.get();
+                                        let lmk = lmx.slice::<26, 5>();
+                                        let lmb = log_rise(lmk);
+                                        let lmt = lmx.slice::<16, 10>();
+                                        let lqb22 = lqb.resize::<22>();
+                                        let lmb22 = lmb.resize::<22>();
+                                        let lqt22 = lqt.resize::<22>();
+                                        let lmt22 = lmt.resize::<22>();
+                                        with!(self <= {
+                                            te: one49 - tp,
+                                            mpq: lqb22.mul::<22>(lqt22),
+                                            mpm: lmb22.mul::<22>(lmt22),
+                                        });
                                         DefaultClock::rising().await;
                                         let tr0w = self.tr0.get();
                                         let r068 = tr0w.resize::<68>();
                                         let te68 = self.te.get().resize::<68>();
                                         let tre = r068.mul::<68>(te68);
-                                        self.trc.set(tre.slice::<40, 28>());
+                                        // Each line's fraction: its start
+                                        // and its product, rounded.
+                                        let fqx = self.tx.get();
+                                        let fqk = fqx.slice::<26, 5>();
+                                        let fqa = log_start(fqk).resize::<32>();
+                                        let fqp = self.mpq.get();
+                                        let fqb = fqp.slice::<10, 12>();
+                                        let fq0 = fqa + fqb.resize::<32>();
+                                        let fq = (fq0 + 128) >> 8usize;
+                                        let fmx = self.mlx.get();
+                                        let fmk = fmx.slice::<26, 5>();
+                                        let fma = log_start(fmk).resize::<32>();
+                                        let fmp = self.mpm.get();
+                                        let fmb = fmp.slice::<10, 12>();
+                                        let fm0 = fma + fmb.resize::<32>();
+                                        let fm = (fm0 + 128) >> 8usize;
+                                        let lmv = self.mlm.get();
+                                        let lnone = Bit::from(lmv == 0);
+                                        let lod = lod_of(
+                                            self.mlz.get(),
+                                            fm,
+                                            self.tlodk.get(),
+                                            self.tn.get(),
+                                            fq,
+                                            lnone,
+                                        );
+                                        with!(self <= {
+                                            trc: tre.slice::<40, 28>(),
+                                            mlod: lod,
+                                        });
                                         DefaultClock::rising().await;
                                         // A signed plane times the reciprocal:
                                         // each 32-bit half of its bits times
@@ -1703,11 +2116,23 @@ impl<
                                         let uh = uh32.resize::<64>();
                                         let vl = vl32.resize::<64>();
                                         let vh = vh32.resize::<64>();
+                                        let pick = pick_level(
+                                            self.mlod.get(),
+                                            self.tmin.get(),
+                                            self.tmag.get(),
+                                            self.tlevels.get(),
+                                        );
                                         with!(self <= {
                                             tpul: ul.mul::<64>(r64),
                                             tpuh: uh.mul::<64>(r64),
                                             tpvl: vl.mul::<64>(r64),
                                             tpvh: vh.mul::<64>(r64),
+                                            mlev1: pick.slice::<0, 4>(),
+                                            mlev2: pick.slice::<4, 4>(),
+                                            mtwo: pick.bit(8),
+                                            mlin: pick.bit(9),
+                                            mfr: pick.slice::<10, 8>(),
+                                            mnt: pick.slice::<18, 4>(),
                                         });
                                         DefaultClock::rising().await;
                                         let rcs = self.trc.get().resize::<96>();
@@ -1735,17 +2160,81 @@ impl<
                                         let tsh = tsh7.raw() as usize;
                                         let pu = sra(self.tpu.get(), tsh);
                                         let pv = sra(self.tpv.get(), tsh);
-                                        self.tiu.set(clamp30(pu));
-                                        self.tiv.set(clamp30(pv));
+                                        with!(self <= {
+                                            tiu: clamp30(pu),
+                                            tiv: clamp30(pv),
+                                            mk: U::<4>::from(0u8),
+                                        });
                                         DefaultClock::rising().await;
-                                        let si = sra(self.tiu.get(), 8);
-                                        let sj = sra(self.tiv.get(), 8);
-                                        let tlw = self.tlogw.get();
-                                        let tlh = self.tlogh.get();
-                                        let ti = wrap(si, tlw, self.tcs.get());
-                                        let tj = wrap(sj, tlh, self.tct.get());
-                                        let toff = texel_at(ti, tj, tlw);
-                                        let tan = self.tbase.get() + toff;
+                                    }
+                                    // Each texel the filters read, none
+                                    // for a pixel that is not textured.
+                                    for _ in 0..self.mnt.get().raw() as usize {
+                                        // Which texel this is: its pass,
+                                        // the level, and its place among
+                                        // the four; and its level's
+                                        // coordinates, sides and address.
+                                        let ik = self.mk.get();
+                                        let il = self.mlin.get();
+                                        let ip = mux(il, ik.bit(2), ik.bit(0));
+                                        let z2 = U::<2>::from(0u8);
+                                        let ik2 = ik.slice::<0, 2>();
+                                        let it = mux(il, ik2, z2);
+                                        let iv2 = self.mlev2.get();
+                                        let iv1 = self.mlev1.get();
+                                        let lev = mux(ip, iv2, iv1);
+                                        let lsh = lev.raw() as usize;
+                                        let lw = self.tlogw.get();
+                                        let lh = self.tlogh.get();
+                                        let z4 = U::<4>::from(0u8);
+                                        with!(self <= {
+                                            mpass: ip,
+                                            mt: it,
+                                            mus: sra(self.tiu.get(), lsh),
+                                            mvs: sra(self.tiv.get(), lsh),
+                                            mlw: mux(lw < lev, z4, lw - lev),
+                                            mlh: mux(lh < lev, z4, lh - lev),
+                                            mbase: self.tlvl.read(lev),
+                                        });
+                                        DefaultClock::rising().await;
+                                        // Linear takes the texels about the
+                                        // point half a texel back, weighted
+                                        // by the fraction past it.
+                                        let jl = self.mlin.get();
+                                        let z32 = U::<32>::from(0u8);
+                                        let h32 = U::<32>::from(128u8);
+                                        let back = mux(jl, h32, z32);
+                                        let ju = self.mus.get() - back;
+                                        let jv = self.mvs.get() - back;
+                                        let jt = self.mt.get();
+                                        let z8 = U::<8>::from(0u8);
+                                        let ua = ju.slice::<0, 8>();
+                                        let va = jv.slice::<0, 8>();
+                                        let fa = mux(jl, ua, z8).resize::<9>();
+                                        let fb = mux(jl, va, z8).resize::<9>();
+                                        let j256 = U::<9>::from(256u32);
+                                        let wa = mux(jt.bit(0), fa, j256 - fa);
+                                        let wb = mux(jt.bit(1), fb, j256 - fb);
+                                        let di = jt.bit(0).zext::<32>();
+                                        let dj = jt.bit(1).zext::<32>();
+                                        let ci = sra(ju, 8) + di;
+                                        let cj = sra(jv, 8) + dj;
+                                        let ws = self.tcs.get();
+                                        let wt = self.tct.get();
+                                        let wa17 = wa.resize::<17>();
+                                        let wb17 = wb.resize::<17>();
+                                        with!(self <= {
+                                            mii: wrap(ci, self.mlw.get(), ws),
+                                            mjj: wrap(cj, self.mlh.get(), wt),
+                                            mw: wa17.mul::<17>(wb17),
+                                        });
+                                        DefaultClock::rising().await;
+                                        let toff = texel_at(
+                                            self.mii.get(),
+                                            self.mjj.get(),
+                                            self.mlw.get(),
+                                        );
+                                        let tan = self.mbase.get() + toff;
                                         let tln = tan.slice::<6, 6>();
                                         let twn = tan.slice::<2, 4>();
                                         with!(self <= {
@@ -1831,14 +2320,71 @@ impl<
                                             }
                                         }
                                         DefaultClock::rising().await;
+                                        // The texel's weight times each of
+                                        // its channels, then its pass's
+                                        // sums, which the pass's first
+                                        // texel starts.
+                                        let pt0 = self.tdat.get();
+                                        let pt1 = self.tfil.get();
+                                        let ptm = self.tmiss.get();
+                                        let pt = mux(ptm, pt1, pt0);
+                                        self.mpp.set(weigh(self.mw.get(), pt));
+                                        DefaultClock::rising().await;
+                                        let s2 = self.mpass.get();
+                                        let s1 = !s2;
+                                        let sf = Bit::from(self.mt.get() == 0);
+                                        let sm1 = self.msum1.get();
+                                        let sm2 = self.msum2.get();
+                                        let sacc = mux(s2, sm2, sm1);
+                                        let sp = self.mpp.get();
+                                        let sum = add_terms(sf, sacc, sp);
+                                        with!(self <= {
+                                            mk: self.mk.get() + 1,
+                                            s1 ? msum1: sum,
+                                            s2 ? msum2: sum,
+                                        });
+                                        DefaultClock::rising().await;
+                                    }
+                                    // Each pass's sample; the two levels
+                                    // blended by the level of detail's
+                                    // fraction; and the environment, its
+                                    // products and then their divide.
+                                    if (self.tex_on.get() & self.hit.get())
+                                        .to_bool()
+                                    {
+                                        with!(self <= {
+                                            ms1: sum_texel(self.msum1.get()),
+                                            ms2: sum_texel(self.msum2.get()),
+                                            mnt: U::<4>::from(0u8),
+                                        });
+                                        DefaultClock::rising().await;
+                                        let k1 = self.ms1.get();
+                                        let k2 = self.ms2.get();
+                                        let kf = self.mfr.get();
+                                        self.mkk.set(mix_levels(k1, k2, kf));
+                                        DefaultClock::rising().await;
+                                        let xm = mixed_texel(self.mkk.get());
+                                        let xs = self.ms1.get();
+                                        let xt = mux(self.mtwo.get(), xm, xs);
+                                        self.mtx.set(xt);
+                                        DefaultClock::rising().await;
+                                        // The fragment by the texel; the
+                                        // fragment and the environment's
+                                        // colour by the texel; and the
+                                        // fragment and the texel by the
+                                        // texel's alpha.
                                         let ef = self.rgb.get();
-                                        let et0 = self.tdat.get();
-                                        let et1 = self.tfil.get();
-                                        let etm = self.tmiss.get();
-                                        let et = mux(etm, et1, et0);
+                                        let et = self.mtx.get();
+                                        let ec = self.tenvc.get();
+                                        let w32 = U::<32>::from(0xff_ffffu32);
+                                        let nt = w32 - et;
+                                        let ta8 = et.slice::<24, 8>();
+                                        let ta16 = ta8.concat::<8, 16>(ta8);
+                                        let ta24 = ta16.concat::<8, 24>(ta8);
+                                        let ta32 = ta24.resize::<32>();
+                                        let na32 = w32 - ta32;
                                         let z8 = U::<8>::from(0u8);
                                         let fa8 = ef.slice::<24, 8>();
-                                        let ta8 = et.slice::<24, 8>();
                                         let fr8 = ef.slice::<16, 8>();
                                         let tr8 = et.slice::<16, 8>();
                                         let fg8 = ef.slice::<8, 8>();
@@ -1850,6 +2396,8 @@ impl<
                                             tmr: blend_sum(fr8, z8, tr8, z8),
                                             tmg: blend_sum(fg8, z8, tg8, z8),
                                             tmb: blend_sum(fb8, z8, tb8, z8),
+                                            mbl: sums3(ef, ec, nt, et),
+                                            mdc: sums3(ef, et, na32, ta32),
                                         });
                                         DefaultClock::rising().await;
                                         let ea = over255(self.tma.get());
@@ -1859,14 +2407,33 @@ impl<
                                         let ear = ea.concat::<8, 16>(er);
                                         let earg = ear.concat::<8, 24>(eg);
                                         let em = earg.concat::<8, 32>(eb);
+                                        let el = over255x3(self.mbl.get());
+                                        let ed = over255x3(self.mdc.get());
                                         let f2 = self.rgb.get();
-                                        let t20 = self.tdat.get();
-                                        let t21 = self.tfil.get();
-                                        let t2m = self.tmiss.get();
-                                        let t2 = mux(t2m, t21, t20);
+                                        let t2 = self.mtx.get();
+                                        let ar = add255(
+                                            f2.slice::<16, 8>(),
+                                            t2.slice::<16, 8>(),
+                                        );
+                                        let ag = add255(
+                                            f2.slice::<8, 8>(),
+                                            t2.slice::<8, 8>(),
+                                        );
+                                        let ab = add255(
+                                            f2.slice::<0, 8>(),
+                                            t2.slice::<0, 8>(),
+                                        );
+                                        let ez = U::<8>::from(0u8);
+                                        let ad = ez
+                                            .concat::<8, 16>(ar)
+                                            .concat::<8, 24>(ag)
+                                            .concat::<8, 32>(ab);
                                         let tcl = self.tclass.get();
                                         let tev = self.tenv.get();
-                                        let te0 = tex_env(f2, t2, em, tcl, tev);
+                                        let how = tcl.concat::<3, 6>(tev);
+                                        let te0 = tex_env(
+                                            f2, t2, em, el, ed, ad, how,
+                                        );
                                         self.tcol.set(te0);
                                         DefaultClock::rising().await;
                                     }
@@ -2157,6 +2724,11 @@ impl<
                                     // and each channel takes its column
                                     // step, and a burst under way owes
                                     // one beat fewer.
+                                    let nu = self.tnuy.get();
+                                    let nud = self.tnuyd.get();
+                                    let nv = self.tnvy.get();
+                                    let nvd = self.tnvyd.get();
+                                    let (nuy, nvy) = (nu + nud, nv + nvd);
                                     with!(self <= {
                                         beats: mux(
                                             on,
@@ -2174,6 +2746,8 @@ impl<
                                         tuc: self.tuc.get() + self.tudx.get(),
                                         tvc: self.tvc.get() + self.tvdx.get(),
                                         tqc: self.tqc.get() + self.tqdx.get(),
+                                        tnuy: nuy,
+                                        tnvy: nvy,
                                         pa: py.slice::<0, 6>().concat::<6, 12>(
                                             (px + 1).slice::<0, 6>(),
                                         ),
@@ -2200,6 +2774,10 @@ impl<
                                     tuc: qu, tur: qu,
                                     tvc: qv, tvr: qv,
                                     tqc: qq, tqr: qq,
+                                    tnux: self.tnux.get() + self.tnuxd.get(),
+                                    tnvx: self.tnvx.get() + self.tnvxd.get(),
+                                    tnuy: self.tnuy0.get(),
+                                    tnvy: self.tnvy0.get(),
                                     pa: (self.y.get() + 1)
                                         .slice::<0, 6>()
                                         .concat::<6, 12>(
