@@ -73,6 +73,19 @@ rust_test(
     ],
 )
 
+# The queries (#1484): what each setter leaves, read back through
+# glGetIntegerv, glGetFixedv and glGetBooleanv and converted as GL ES
+# 1.1 says, and the limits the library states.
+rust_test(
+    name = "get_test",
+    srcs = ["tests/get.rs"],
+    edition = "2021",
+    deps = [
+        ":gles",
+        "//gpu/razboj:tile",
+    ],
+)
+
 # Textures (#997): a quad in perspective, uploaded with its levels
 # generated, through Razboj's model, against GL in floating point; and
 # the formats an upload takes.

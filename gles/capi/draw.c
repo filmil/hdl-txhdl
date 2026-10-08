@@ -92,5 +92,26 @@ int main(void) {
   glAlphaFunc(GL_LESS, 0.5f);
   printf("unimplemented %04x\n", glGetError());
   printf("version %s\n", (const char *)glGetString(GL_VERSION));
+  // The queries (#1484), of state set above: the library's, and the
+  // client arrays' the C API keeps.
+  GLint v[4];
+  glGetIntegerv(GL_VIEWPORT, v);
+  printf("viewport %d %d %d %d\n", v[0], v[1], v[2], v[3]);
+  glGetIntegerv(GL_DEPTH_FUNC, v);
+  printf("depth func %04x\n", v[0]);
+  GLboolean mask[4];
+  glGetBooleanv(GL_COLOR_WRITEMASK, mask);
+  printf("colour mask %d%d%d%d\n", mask[0], mask[1], mask[2], mask[3]);
+  GLfixed range[2];
+  glGetFixedv(GL_DEPTH_RANGE, range);
+  printf("depth range %d %d\n", range[0], range[1]);
+  glGetIntegerv(GL_VERTEX_ARRAY_SIZE, v);
+  glGetIntegerv(GL_VERTEX_ARRAY_TYPE, v + 1);
+  glGetIntegerv(GL_VERTEX_ARRAY_STRIDE, v + 2);
+  printf("vertex array %d %04x %d\n", v[0], v[1], v[2]);
+  void *at = 0;
+  glGetPointerv(GL_VERTEX_ARRAY_POINTER, &at);
+  printf("vertex pointer %d\n", at == (void *)fan);
+  printf("error %04x\n", glGetError());
   return 0;
 }
