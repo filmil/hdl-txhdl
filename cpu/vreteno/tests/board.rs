@@ -3239,11 +3239,12 @@ fn the_cache_loop_is_timed_by_the_core() {
 /// the write swept over three hundred cycles, it meets the fills in
 /// both orders: answered before a fill asks, and while one is out.
 ///
-/// The model's memory reads a word when it sends it, so a fill that is
-/// out when the write lands brings the new word, and the core's drop of
-/// a fill whose line the snoop names is not reached here; the
-/// controller can read the old word and answer after the write, which
-/// is why the core drops it (issue 1424).
+/// The model's memory takes a read's words when it takes the read's
+/// address, as the controller may (issue 1424), so a fill that is out
+/// when the write lands brings the old word, and the core must not keep
+/// it. Without that drop the second program reads the old word at the
+/// write at 100; with the drop taken only on a beat, and not while the
+/// fill waits for its first, it did too (issue 1429).
 #[test]
 fn the_data_cache_sees_another_hosts_write() {
     use vreteno32::isa::{addi, beq, bne, halt, lui, lw};

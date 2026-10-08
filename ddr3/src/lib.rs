@@ -264,7 +264,9 @@ impl Unit<CtlIn, CtlOut> for Ddr3 {
         // The memory: the whole gigabyte, its address the link's taken
         // modulo the memory's size as the port's thirty bits take it,
         // not ready until calibrated, and answering after the
-        // controller's latency.
+        // controller's latency. A read takes its words when its address
+        // is taken, so a write that lands while it waits is not in them,
+        // as the controller may answer (issue 1424).
         let mem = PinRam::<32, 32, 4, 5>::on(
             PinRamIn {
                 awid,
@@ -298,6 +300,7 @@ impl Unit<CtlIn, CtlOut> for Ddr3 {
             1 << AW,
         )
         .wrapping()
+        .reading_at_address()
         .timed(
             MODEL_READ_LATENCY as u64,
             MODEL_WRITE_LATENCY as u64,
