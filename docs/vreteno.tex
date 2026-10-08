@@ -417,6 +417,39 @@ machine above is its first reader: a test boots a packed image there
 and checks the shim's registers and every part's address before an
 image ever reaches the board.
 
+The kernel is \code{tinyconfig} with \code{linux/vreteno.config} over
+it (issue~1074): only what the machine has and what the BusyBox
+initramfs needs. A fuller system asks for more, and the fragment now
+turns it on (issue~1441): loadable modules, packet sockets, which a
+DHCP client needs, IPv6, a root file system over NFS with the kernel's
+own DHCP to find it, a console on a simple framebuffer, and the calls
+an ssh server's daemons use, pseudo-terminals, epoll, eventfd,
+signalfd, timerfd and inotify. Each was built alone over the old
+fragment and booted on the model in its timing mode, to the line
+\code{/init} says when userspace is up; \code{--until} stops the
+machine there and gives the count.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lrr@{}}
+\toprule
+over the old fragment & Image, bytes & to userspace \\
+\midrule
+nothing & 3\,066\,880 & 9.650~s \\
+modules & +172\,544 & +31~ms \\
+packet sockets & +25\,088 & none \\
+IPv6 & +267\,264 & +144~ms \\
+NFS root & +272\,896 & +100~ms \\
+framebuffer console & +50\,688 & +7~ms \\
+the daemons' calls & +49\,152 & +8~ms \\
+all of them & +845\,824 & +320~ms \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent The times are the model's cycles at 100~MHz, within ten
+thousand instructions; the board adds the transfer, which the larger
+kernel lengthens by its bytes over fastboot.
+
 Linux reaches the network through its own LiteEth driver,
 \code{litex\_liteeth}, on the Ethernet port (issue~\#1203). The
 port's registers are LiteEth's at LiteX's offsets, and its two
