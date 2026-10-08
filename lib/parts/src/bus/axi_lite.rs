@@ -628,4 +628,80 @@ mod tests {
         assert_eq!(*served0.borrow(), 10, "one transaction per beat");
         assert_eq!(*served1.borrow(), 2, "the second peripheral's");
     }
+
+    /// The same two peripherals, the second taking single beats only.
+    struct SingleMap;
+    impl AddrMap<2> for SingleMap {
+        const RANGES: [(usize, usize); 2] = TwoMap::RANGES;
+        const SINGLE: [bool; 2] = [false, true];
+    }
+
+    /// A burst of more than one beat to a range that takes single beats
+    /// only is answered `SlvErr` by the bridge, in as many beats as it
+    /// asked for, and the peripheral sees none of it; a single beat
+    /// there goes through, and so does a burst to the other range
+    /// (issue 1436).
+    #[test]
+    fn a_burst_to_a_single_beat_range_is_refused() {
+        let Link {
+            host,
+            host_in,
+            host_out,
+            per_in,
+            per_out,
+            ..
+        } = axi::<16, 32, 4, 2, 4>();
+        let l0 = axi_lite::<16, 32, 4>();
+        let l1 = axi_lite::<16, 32, 4>();
+        let (aw0, ar0, w0, b0, r0) = l0.host;
+        let (aw1, ar1, w1, b1, r1) = l1.host;
+        let words = Rc::new(RefCell::new(HashMap::new()));
+        let served0 = Rc::new(RefCell::new(0usize));
+        let served1 = Rc::new(RefCell::new(0usize));
+        let out = Rc::new(RefCell::new(Vec::<String>::new()));
+        let o = out.clone();
+        let client = async move {
+            let two = [U::from(1u32), U::from(2u32)];
+            // A burst of two to the single-beat range, each way.
+            let wr = host.write(Wr::at(0x2000u32), &two).await;
+            assert_eq!(wr.done().await.resp, Resp::SlvErr);
+            let got = host.read(Rd::at(0x2000u32, 2)).await.done().await;
+            assert_eq!(got.resp, Resp::SlvErr);
+            assert_eq!(got.data.len(), 2, "refused, in beats");
+            // A single beat there goes through.
+            let wr = host.write(Wr::at(0x2000u32), &[U::from(7u32)]).await;
+            assert_eq!(wr.done().await.resp, Resp::Okay);
+            let got = host.read(Rd::at(0x2000u32, 1)).await.done().await;
+            assert_eq!((got.resp, got.data[0].raw()), (Resp::Okay, 7));
+            // And a burst to the other range.
+            let wr = host.write(Wr::at(0x1000u32), &two).await;
+            assert_eq!(wr.done().await.resp, Resp::Okay);
+            o.borrow_mut().push("done".to_string());
+        };
+        let mut h = Host::default();
+        let mut bridge = LiteBridge::<2, SingleMap, 16, 32, 4, 2>::default();
+        let (s0, s1) = (served0.clone(), served1.clone());
+        let mut sim = Running::new(join2(
+            join2(
+                h.run(host_in, host_out),
+                bridge.run(
+                    (per_in.0, per_in.1, per_in.2, [b0, b1], [r0, r1]),
+                    ([aw0, aw1], [ar0, ar1], [w0, w1], per_out.2, per_out.3),
+                ),
+            ),
+            join2(
+                client,
+                join2(
+                    memory(l0.per, words.clone(), s0),
+                    memory(l1.per, words.clone(), s1),
+                ),
+            ),
+        ));
+        for _ in 0..400 {
+            sim.cycle();
+        }
+        assert_eq!(*out.borrow(), vec!["done".to_string()], "the run ended");
+        assert_eq!(*served1.borrow(), 2, "only the single beats arrived");
+        assert_eq!(*served0.borrow(), 2, "the burst to the other range");
+    }
 }
