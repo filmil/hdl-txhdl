@@ -900,6 +900,24 @@ pub struct Vreteno<
     pub dc_word: Reg<U<32>>,
     pub dc_tagr: Reg<U<20>>,
     pub dc_vr: Reg<Bit>,
+    /// What the cache took in the cycle before, which execute's reads
+    /// in that cycle did not see (issue 1431): the word written and its
+    /// address; a line kept and its tag; the lines taken out by another
+    /// host's write, by an AMO, lr.w or sc.w, and by a miss or a fill
+    /// not kept; and whether all were.
+    pub dc_fd_v: Reg<Bit>,
+    pub dc_fd_a: Reg<U<10>>,
+    pub dc_fd: Reg<U<32>>,
+    pub dc_fk_v: Reg<Bit>,
+    pub dc_fk_line: Reg<U<8>>,
+    pub dc_fk_tag: Reg<U<20>>,
+    pub dc_fs_v: Reg<Bit>,
+    pub dc_fs_line: Reg<U<8>>,
+    pub dc_fo_v: Reg<Bit>,
+    pub dc_fo_line: Reg<U<8>>,
+    pub dc_fm_v: Reg<Bit>,
+    pub dc_fm_line: Reg<U<8>>,
+    pub dc_fall: Reg<Bit>,
     /// Whether the load in writeback may be the cache's; where its miss
     /// is: 0 the lookup, 1 waiting to ask, 2 the answer's beats coming;
     /// the next beat; whether the fill is not to be kept; and whether
@@ -2426,8 +2444,25 @@ impl<const IW: usize, const DW: usize, const IC: usize> Unit
             // a store of the core's came to it meanwhile.
             let wb_line = wb_pa.slice::<4, 8>();
             let dc_in = Bit::from(wb_pa.slice::<30, 2>() == 1);
-            let dc_tag_hit = self.dc_vr
-                & Bit::from(self.dc_tagr.get() == wb_pa.slice::<12, 20>());
+            // What execute read, with what the cache took in the same
+            // cycle over it, each compare of two registers (issue 1431).
+            let dc_kept =
+                self.dc_fk_v & Bit::from(self.dc_fk_line.get() == wb_line);
+            let dc_gone = (self.dc_fs_v
+                & Bit::from(self.dc_fs_line.get() == wb_line))
+                | (self.dc_fo_v & Bit::from(self.dc_fo_line.get() == wb_line))
+                | (self.dc_fm_v & Bit::from(self.dc_fm_line.get() == wb_line));
+            let dc_vr_now = !self.dc_fall & ((self.dc_vr & !dc_gone) | dc_kept);
+            let dc_tag_now =
+                mux(dc_kept, self.dc_fk_tag.get(), self.dc_tagr.get());
+            let dc_word_now = mux(
+                self.dc_fd_v
+                    & Bit::from(self.dc_fd_a.get() == wb_pa.slice::<2, 10>()),
+                self.dc_fd.get(),
+                self.dc_word.get(),
+            );
+            let dc_tag_hit =
+                dc_vr_now & Bit::from(dc_tag_now == wb_pa.slice::<12, 20>());
             let dc_look = self.dev_wait & self.wb_dc & Bit::from(dc_st == 0);
             let dc_hit = dc_look & dc_in & dc_tag_hit;
             let dc_miss = dc_look & !dc_hit;
@@ -2457,7 +2492,7 @@ impl<const IW: usize, const DW: usize, const IC: usize> Unit
             let st_mask = lane_mask(self.wb_en.get());
             let dc_dd = mux(
                 dc_st_up,
-                (self.dc_word.get() & !st_mask) | (self.wb_sd.get() & st_mask),
+                (dc_word_now & !st_mask) | (self.wb_sd.get() & st_mask),
                 resp_data,
             );
             when!(dc_dwe => self { dc_data.at(dc_da): dc_dd });
@@ -2538,7 +2573,7 @@ impl<const IW: usize, const DW: usize, const IC: usize> Unit
             when!(tag_go => self { ic_tag.at(tag_at): tag_val });
             let d_word = d_resp & (!dc_fill | dc_want);
             when!(d_word => self { wb_dev: resp_data });
-            when!(dc_hit => self { wb_dev: self.dc_word.get() });
+            when!(dc_hit => self { wb_dev: dc_word_now });
             // A load from the data RAM is never refused, so it clears
             // what a refused load before it left (issue 1275); a local
             // AMO's word is captured in its first cycle in writeback.
@@ -2766,6 +2801,19 @@ impl<const IW: usize, const DW: usize, const IC: usize> Unit
                 dc_vr: dc_vget(self.dc_v0.get(), self.dc_v1.get(), dc_line_x),
                 dc_v0: dc_v0n,
                 dc_v1: dc_v1n,
+                dc_fd_v: dc_dwe,
+                dc_fd_a: dc_da,
+                dc_fd: dc_dd,
+                dc_fk_v: dc_keep,
+                dc_fk_line: wb_line,
+                dc_fk_tag: wb_pa.slice::<12, 20>(),
+                dc_fs_v: snoop_v,
+                dc_fs_line: snoop_line,
+                dc_fo_v: dc_own_x,
+                dc_fo_line: dc_line_x,
+                dc_fm_v: dc_miss_in | dc_drop,
+                dc_fm_line: wb_line,
+                dc_fall: dc_all,
                 dc_miss ? {
                     dc_st: U::<2>::from(1u8),
                     dc_one: !dc_in,
