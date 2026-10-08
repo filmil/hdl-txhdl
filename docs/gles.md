@@ -50,7 +50,7 @@ A later issue means the entry point is accepted from the start but does what tha
 | Textures | `glGenTextures`, `glDeleteTextures`, `glBindTexture`, `glTexImage2D`, `glTexParameteri`, `glTexParameterx`, `glTexEnvi`, `glTexEnvx`, `glTexEnvxv`, `glTexCoordPointer`, `glMultiTexCoord4x`, `glActiveTexture`, `glClientActiveTexture`, `glPixelStorei`; `GL_TEXTURE_2D` and `GL_TEXTURE_COORD_ARRAY` | From #997, one unit, drawn in a tile table; the rasteriser samples under every filter, mipmapped, and every environment but `GL_COMBINE`, as Razboj's model does |
 | Points and lines | `glPointSizex`, `glLineWidthx`, and the point and line modes of the draw calls | Now, from issue 994 |
 | Switches | `glEnable`, `glDisable`, `glIsEnabled` for `GL_LIGHTING`, `GL_LIGHT0` to `GL_LIGHT7`, `GL_CULL_FACE`, `GL_NORMALIZE`, `GL_RESCALE_NORMAL`, `GL_COLOR_MATERIAL`, `GL_CLIP_PLANE0`, `GL_DEPTH_TEST`, `GL_BLEND`, `GL_ALPHA_TEST`; and the rest as the issues above land | Now, and growing |
-| Queries and errors | `glGetError`, `glGetIntegerv`, `glGetFixedv`, `glGetBooleanv`, `glGetString`, `glGetPointerv` | Now |
+| Queries and errors | `glGetError`, `glGetIntegerv`, `glGetFixedv`, `glGetBooleanv`, `glGetString`, `glGetPointerv` | Now, the queries from #1484 (section 10) |
 | Completion | `glFlush`, `glFinish` | Now (section 7) |
 | Hints | `glHint` | Accepted and ignored, as the specification allows |
 
@@ -337,6 +337,14 @@ Blending, the alpha test and the colour mask are issue 993's, on the same tile b
 With any of them on, a primitive carries the pixel's state in its second slot, and the frame is binned into a tile table as one that tests depth is.
 `glClear` writes the channels the colour mask allows and the depth when the depth mask does, as GL says.
 `//gles:blend_test` holds a scene for each of the 72 pairs of factors GL ES 1.1 allows to a reference that blends in f64, pixel by pixel, through Razboj's model.
+
+The queries are issue 1484's.
+`glGetIntegerv`, `glGetFixedv` and `glGetBooleanv` answer every name the library keeps state for: the viewport and the depth range, the matrix mode, the three matrices and their stacks' depths, the current colour, normal and texture coordinates, the clears, the depth, blend, alpha test and colour mask settings, the faces and the shading, the point size and the line width, the bound texture, the unpack alignment, the light model, and every switch `glIsEnabled` knows.
+They also give the limits: the stacks, 8 lights, 1 clip plane, textures to 1024, 1 texture unit, 4 bits under the pixel, 8 bits a channel and 16 of depth, no stencil, and sizes from 1 to 64.
+Each finds its values once, in the kind GL keeps them in, and each call converts them as GL ES 1.1's section 6.1.2 says.
+A boolean is one or nought; a fixed value asked for as an integer is rounded; a colour, a normal, a depth range, the depth's clear value and the alpha reference asked for as integers map minus one to one onto the integers' whole range; an integer asked for as fixed is that many ones; and anything not nought is true.
+The C entry points add the client arrays' own state, each array's switch, size, type and stride, and `glGetPointerv` gives back each array's pointer.
+`//gles:get_test` reads back what each setter leaves, the conversions and the limits, and `//gles:capi_test` asks the same through the C entry points.
 
 Textures are issue 997's, one texture unit, in the layout `razboj_tile::tex` gives Razboj.
 The machine gives the context room for them at `eglMakeCurrent`, words of DDR3 with the bus address Razboj reads them at, through `Machine::textures`.
