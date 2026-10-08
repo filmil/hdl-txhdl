@@ -27,6 +27,7 @@ rust_library(
         "src/bus/axi/sim.rs",
         "src/bus/mod.rs",
         "src/bus/arbiter.rs",
+        "src/bus/exmon.rs",
         "src/bus/router.rs",
         "src/bus/wb.rs",
         "src/bus/wb/sim.rs",

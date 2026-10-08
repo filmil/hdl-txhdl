@@ -2503,6 +2503,20 @@ three shapes, shows them through the scanout, and says on the serial
 port whether the pixels it read back are the list's
 (issue~\#1169).
 
+Two harts on one memory need their atomics atomic against each other,
+and the board is built for it before it has the second
+(issue~\#1408). The arbiter is built with its exclusive hold, and the
+exclusive monitor stands between it and the router, watching the
+harts' ports, 0 and 7: the hold keeps other hosts' writes out of a
+pair, and the monitor answers each exclusive write \code{ExOkay} or
+\code{Okay}, as \code{//docs:axi} describes. Both are idle while no
+host sets \code{lock}. The monitor takes the arbiter's link through its
+registers and hands it on to the router in the cycle, so no path
+gained a register: the DDR3 path test times the same with it. The
+snoop has an output for the second hart beside the first's, which
+names a line to each hart that did not write it; the board leaves it
+unread until it has that hart.
+
 The cost of a host is its share of the bus when every host is busy.
 For the scanout, a line of 640 words, 2560 bytes, must arrive within
 the 31.8\,$\mu$s of the line before it, about 80\,MB/s. The link
