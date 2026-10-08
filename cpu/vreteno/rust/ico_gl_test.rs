@@ -8,6 +8,9 @@
 //! channel; and every pixel where the two pictures differ by more than
 //! that lies on an edge in both, one pixel from a pixel of another
 //! colour.
+// Shared with the board program and ico_tex_frame, which use parts of
+// it these tests do not.
+#[allow(dead_code)]
 mod ico_gl;
 mod ico_list;
 
@@ -60,7 +63,8 @@ fn lists(
     let (n, _) = ico_list::frame(s, ay, ax, dy, Box::SCREEN, &mut out);
     let hand = insns(&out[..n]);
     let mut out = [[0u32; WORDS]; ico_gl::MOST];
-    let (n, _) = ico_gl::frame(m, ay, ax, dy, Box::SCREEN, false, &mut out);
+    let (n, _) =
+        ico_gl::frame(m, ay, ax, dy, Box::SCREEN, false, None, &mut out);
     (hand, insns(&out[..n]))
 }
 
@@ -126,8 +130,16 @@ fn the_depth_test_draws_the_culled_picture() {
         for dy in [0, SECOND] {
             let draw = |depth: bool| {
                 let mut out = [[0u32; WORDS]; ico_gl::MOST];
-                let (n, _) =
-                    ico_gl::frame(&m, ay, ax, dy, Box::SCREEN, depth, &mut out);
+                let (n, _) = ico_gl::frame(
+                    &m,
+                    ay,
+                    ax,
+                    dy,
+                    Box::SCREEN,
+                    depth,
+                    None,
+                    &mut out,
+                );
                 let deep = out[..n].iter().any(|w| (w[15] >> 8) & 1 == 1);
                 assert_eq!(deep, depth, "depth tested only when asked");
                 render(&insns(&out[..n]), FW, FH)
@@ -164,8 +176,16 @@ fn the_gl_frame_box_covers_its_faces() {
             [(0, false), (SECOND, false), (0, true), (SECOND, true)]
         {
             let mut out = [[0u32; WORDS]; ico_gl::MOST];
-            let (n, b) =
-                ico_gl::frame(&m, ay, ax, dy, Box::SCREEN, depth, &mut out);
+            let (n, b) = ico_gl::frame(
+                &m,
+                ay,
+                ax,
+                dy,
+                Box::SCREEN,
+                depth,
+                None,
+                &mut out,
+            );
             let drawn = render(&insns(&out[1..n]), FW, FH);
             for y in 0..FH {
                 for x in 0..FW {
@@ -186,4 +206,62 @@ fn the_gl_frame_box_covers_its_faces() {
             );
         }
     }
+}
+
+/// The textured frame (#997) drawn by the rasteriser itself, through the
+/// AXI link into a framebuffer of the board's rows of 1024, as a tile
+/// table of the board's 640 by 480 with the texture in the same memory,
+/// is the model's, byte for byte: what the board will show.
+#[test]
+fn the_textured_frame_on_the_rasteriser_is_the_models() {
+    use razboj::model::{render_textured, Textures};
+    use razboj::sim::{run_works_at, Work};
+    const A: usize = 24;
+    const LOGW: usize = 10;
+    const RH: usize = 480;
+    const N: usize = 1 << 20;
+    const DL: usize = 0x20_0000;
+    const CTRL: usize = 0x3f_fffc;
+    const TEX: u32 = 0x38_0000;
+    let m = Model::new(&Solid::new());
+    let mut room = vec![0u32; ico_gl::TEX_ROOM];
+    let mut out = [[0u32; WORDS]; ico_gl::MOST];
+    let (n, _) = ico_gl::frame(
+        &m,
+        80,
+        40,
+        0,
+        Box::SCREEN,
+        true,
+        Some((&mut room, TEX)),
+        &mut out,
+    );
+    let list = insns(&out[..n]);
+    assert_eq!(list.iter().filter(|i| i.tex.to_bool()).count(), 20);
+    let more: Vec<(usize, u32)> = room
+        .iter()
+        .enumerate()
+        .map(|(k, w)| (TEX as usize + 4 * k, *w))
+        .collect();
+    let work = Work {
+        more,
+        ..Work::tiled(&list, W as usize, RH)
+    };
+    let runs = run_works_at::<A, LOGW, RH, N, DL, CTRL>(&[work], false, false);
+    let read = |a: u32| room[((a - TEX) / 4) as usize];
+    let t = Textures { mem: &read };
+    let want = render_textured(&list, FW, RH, vec![0; FW * RH], Some(&t));
+    let at = want.iter().zip(&runs[0].fb).position(|(p, q)| p != q);
+    assert_eq!(
+        at,
+        None,
+        "pixel {:?}: {:08x} not {:08x}",
+        at.map(|a| (a % FW, a / FW)),
+        at.map_or(0, |a| runs[0].fb[a]),
+        at.map_or(0, |a| want[a])
+    );
+    println!(
+        "{} cycles, {} read bursts, {} slots",
+        runs[0].cycles, runs[0].reads.0, n
+    );
 }

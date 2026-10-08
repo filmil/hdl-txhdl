@@ -44,10 +44,18 @@
 //! 512 to 991. The backdrop's rectangle at the head of the list is
 //! `ico_list`'s own, since a GL clear is the whole screen and would
 //! take the other frame and the logo with it.
+//!
+//! ## Textured
+//!
+//! With a texture's room given, each face is textured as well (#997): a
+//! checker of 32 by 32 texels, uploaded into the room each frame, since
+//! a frame's context is new each time, at the nearest texel and repeated,
+//! twice across each face, the lighting's colour modulating it.
+//! Razboj textures only in a tile, as it tests depth only in one.
 
 use crate::ico_list::{rect, Box, Solid, BACKDROP, BODY, FACES, H, W, WORDS};
 use gles::fixed::{Fx, ONE};
-use gles::{gl, Gl};
+use gles::{gl, Gl, Vertex};
 
 /// `ico_list`'s fixed point, ten bits of fraction, and the shift to
 /// GL's sixteen.
@@ -69,8 +77,41 @@ const SHININESS: Fx = 57114;
 pub const VERTS: usize = 3 * FACES;
 
 /// The most a frame's list holds: the backdrop's rectangle, and every
-/// face with its depth plane's slot when the depth test is on.
-pub const MOST: usize = 1 + 2 * FACES;
+/// face with its second slot when the depth test is on and its two
+/// texture slots when it is textured.
+pub const MOST: usize = 1 + 4 * FACES;
+
+/// The texture's side, in texels, and the side of one of its squares.
+pub const TEX_SIDE: u32 = 32;
+const SQUARE: u32 = 8;
+
+/// The words a texture's room takes: the library's table of
+/// descriptors, and the texture with its levels, rounded up.
+pub const TEX_ROOM: usize = 4096;
+
+/// The checker, RGBA bytes: squares of white and of a dark teal.
+const fn checker() -> [u8; (TEX_SIDE * TEX_SIDE * 4) as usize] {
+    let mut p = [0u8; (TEX_SIDE * TEX_SIDE * 4) as usize];
+    let mut k = 0;
+    while k < (TEX_SIDE * TEX_SIDE) as usize {
+        let (i, j) = (k as u32 % TEX_SIDE, k as u32 / TEX_SIDE);
+        let light = (i / SQUARE + j / SQUARE) & 1 == 0;
+        let c: [u8; 4] = if light {
+            [0xff, 0xff, 0xff, 0xff]
+        } else {
+            [0x20, 0x70, 0x80, 0xff]
+        };
+        p[4 * k] = c[0];
+        p[4 * k + 1] = c[1];
+        p[4 * k + 2] = c[2];
+        p[4 * k + 3] = c[3];
+        k += 1;
+    }
+    p
+}
+
+/// The checker's texels.
+static CHECKER: [u8; (TEX_SIDE * TEX_SIDE * 4) as usize] = checker();
 
 /// The solid as GL takes it: each face's three corners, each with the
 /// face's normal, and the indices that draw them.
@@ -78,6 +119,9 @@ pub struct Model {
     pub positions: [[Fx; 4]; VERTS],
     pub normals: [[Fx; 3]; VERTS],
     pub indices: [u16; VERTS],
+    /// Each corner's texture coordinates: the texture twice across a
+    /// face, so its edges repeat it.
+    pub texcoords: [[Fx; 4]; VERTS],
 }
 
 impl Model {
@@ -86,7 +130,9 @@ impl Model {
             positions: [[0; 4]; VERTS],
             normals: [[0; 3]; VERTS],
             indices: [0; VERTS],
+            texcoords: [[0; 4]; VERTS],
         };
+        let corners = [[0, 0], [2 * ONE, 0], [ONE, 2 * ONE]];
         let mut f = 0;
         while f < solid.found {
             let n = solid.normal[f];
@@ -97,6 +143,8 @@ impl Model {
                 m.positions[v] = [p[0] << UP, p[1] << UP, p[2] << UP, ONE];
                 m.normals[v] = [n[0] << UP, n[1] << UP, n[2] << UP];
                 m.indices[v] = v as u16;
+                let [s, t] = corners[c];
+                m.texcoords[v] = [s, t, 0, ONE];
                 c += 1;
             }
             f += 1;
@@ -123,16 +171,19 @@ fn degrees(a: i32) -> Fx {
 /// One frame's list, as `ico_list::frame` writes it: into `out`, for the
 /// frame `dy` rows down, the solid turned by `ay` and `ax`, the backdrop
 /// first over `clear`, the back faces culled or, with `depth`, hidden by
-/// the depth test. Returns the slots written and the box the faces fill
-/// now.
-pub fn frame(
+/// the depth test, and with `tex`, a texture's room and the bus address
+/// Razboj reads it at, textured. Returns the slots written and the box
+/// the faces fill now.
+#[allow(clippy::too_many_arguments)] // The frame's own parameters.
+pub fn frame<'a>(
     model: &Model,
     ay: i32,
     ax: i32,
     dy: i32,
     clear: Box,
     depth: bool,
-    out: &mut [[u32; WORDS]; MOST],
+    tex: Option<(&'a mut [u32], u32)>,
+    out: &'a mut [[u32; WORDS]; MOST],
 ) -> (usize, Box) {
     out[0] = rect(BACKDROP, clear, dy);
     let (_, rest) = out.split_at_mut(1);
@@ -166,22 +217,47 @@ pub fn frame(
         g.enable(gl::CULL_FACE);
     }
     g.shade_model(gl::FLAT);
+    let textured = tex.is_some();
+    if let Some((room, bus)) = tex {
+        g.texture_room(room, bus);
+        let mut name = [0u32];
+        g.gen_textures(&mut name);
+        g.bind_texture(gl::TEXTURE_2D, name[0]);
+        let t2 = gl::TEXTURE_2D;
+        g.tex_parameter(t2, gl::TEXTURE_MIN_FILTER, gl::NEAREST);
+        g.tex_parameter(t2, gl::TEXTURE_MAG_FILTER, gl::NEAREST);
+        let (s, rgba, ub) = (TEX_SIDE, gl::RGBA, gl::UNSIGNED_BYTE);
+        g.tex_image_2d(t2, 0, rgba, s, s, 0, rgba, ub, &CHECKER);
+        let modulate = gl::MODULATE as Fx;
+        g.tex_env(gl::TEXTURE_ENV, gl::TEXTURE_ENV_MODE, &[modulate]);
+        g.enable(gl::TEXTURE_2D);
+    }
 
     // `ico_list` turns about y and then about x.
     g.translate(0, 0, -D);
     g.rotate(degrees(ax), ONE, 0, 0);
     g.rotate(degrees(ay), 0, ONE, 0);
-    g.draw_elements(
-        gl::TRIANGLES,
-        &model.indices,
-        &model.positions,
-        None,
-        Some(&model.normals),
-    );
+    if textured {
+        g.draw_vertices(gl::TRIANGLES, VERTS, |k| Vertex {
+            position: model.positions[k],
+            colour: None,
+            normal: Some(model.normals[k]),
+            tex: Some(model.texcoords[k]),
+        });
+    } else {
+        g.draw_elements(
+            gl::TRIANGLES,
+            &model.indices,
+            &model.positions,
+            None,
+            Some(&model.normals),
+        );
+    }
 
     // The box the faces fill: each triangle's box, as Razboj walks it,
     // back in the frame's own rows. A triangle that tests depth, bit 8
-    // of its word 15, has its depth plane's slot after it.
+    // of its word 15, or is textured, bit 14, has its second slot after
+    // it, and a textured one two texture slots after that.
     let drawn = g.frame();
     let mut b = Box {
         x0: W,
@@ -196,7 +272,9 @@ pub fn frame(
         b.y0 = b.y0.min((w[1] >> 16) as i32 - dy);
         b.x1 = b.x1.max((w[2] & 0xffff) as i32);
         b.y1 = b.y1.max((w[2] >> 16) as i32 - dy);
-        k += 1 + ((w[15] >> 8) & 1) as usize;
+        let second = ((w[15] >> 8) | (w[15] >> 13) | (w[15] >> 14)) & 1;
+        let texture = 2 * ((w[15] >> 14) & 1);
+        k += 1 + (second + texture) as usize;
     }
     (1 + drawn.len(), b)
 }

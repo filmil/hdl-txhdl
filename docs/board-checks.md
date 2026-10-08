@@ -691,6 +691,30 @@ Pass:
 The `draw` count of `ico gl list` now includes the tile buffer's write-out; set it beside `ico razboj list`'s.
 Put both logs on #1273.
 
+### The textured icosahedron, #997
+
+A flagship with Razboj's texture cache, from a `main` that holds #1391 (2b8ee847 or later), programmed over JTAG, with a monitor on the HDMI connector.
+On an older flagship Razboj passes over the texture slots and the faces come out plain.
+Nothing is written to flash.
+
+`ico_tex_hdmi` is `ico_gl_hdmi` with each face textured: a checker of 32 by 32 texels, white and dark teal, at the nearest texel, twice across each face, the lighting's colour modulating it.
+Its texture's room is two megabytes into Razboj's list memory, and each frame uploads the texture there and draws as a tile table:
+
+```sh
+bazel build //cpu/vreteno/rust:ico_tex_hdmi_bin
+bazel run //flagship:flagship_prog -- "${PROG[@]}"
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/cpu/vreteno/rust/ico_tex_hdmi_bin.bin --seconds=60 \
+    2>&1 | tee board-997-tex.log
+```
+
+Pass:
+* The run says `ico 20 faces`, then `ico gl tex list` cycles lines, and no `trap` and no `ico bin refused`.
+* The icosahedron turns with the checker on every face, straight in perspective, and no back face shows through a front one.
+* A still of the recording looks as `bazel run //cpu/vreteno/rust:ico_tex_frame -- <n> $PWD/f.png` draws frame `n` through Razboj's model; `//cpu/vreteno/rust:ico_gl_test` holds the rasteriser's own frame to the model's, byte for byte.
+
+Set the `draw` count of `ico gl tex list` beside `ico gl list`'s, and put the log and the recording on #997.
+
 ### Ethernet throughput, #1038
 
 The Ethernet half of #151: the port's throughput through the slots and the DMA engines, against the core's own copy of each frame.

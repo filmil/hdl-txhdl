@@ -12,7 +12,8 @@
 //! its last. A beat writes only the bytes its strobes name, so a beat
 //! with none writes nothing. The word address is the byte address
 //! shifted by two and masked to the memory, so a stray address wraps
-//! instead of ending the run.
+//! instead of ending the run. The word address has 24 bits, so the
+//! memory can be the board's framebuffer of rows of 1024 and more.
 use txhdl::comp::{mux, Clock, DefaultClock, Mem, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
@@ -30,13 +31,13 @@ pub struct Fb<const A: usize, const I: usize, const N: usize> {
     /// A write taken and waiting for its beats: where the next goes and
     /// which identifier answers it.
     pub pend: Reg<U<1>>,
-    pub paddr: Reg<U<16>>,
+    pub paddr: Reg<U<24>>,
     pub pid: Reg<U<I>>,
     /// A read burst being answered after its first beat: the beats
     /// still to send, the word the next one reads, and the identifier
     /// every beat carries.
     pub rleft: Reg<U<8>>,
-    pub raddr: Reg<U<16>>,
+    pub raddr: Reg<U<24>>,
     pub rid: Reg<U<I>>,
     /// Read bursts taken and read beats sent, for a run to count what
     /// the rasteriser asked of the memory.
@@ -74,11 +75,11 @@ impl<const A: usize, const I: usize, const N: usize> Unit for Fb<A, I, N> {
             // than the index keeps its high bits until they are
             // masked away.
             let at =
-                (q.addr >> WORD).resize::<16>() & U::<16>::from((N - 1) as u32);
+                (q.addr >> WORD).resize::<24>() & U::<24>::from((N - 1) as u32);
             // A read's first beat is answered at once and the rest a
             // beat a cycle, one burst at a time; a write is held while
             // its beats arrive, and only one is held at a time.
-            let mask = U::<16>::from((N - 1) as u32);
+            let mask = U::<24>::from((N - 1) as u32);
             let reading = Bit::from(self.rleft.get() != 0);
             let more = reading & bus.r.ready();
             let take_read = qoff & q.read & bus.r.ready() & !held & !reading;
