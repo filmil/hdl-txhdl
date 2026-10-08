@@ -98,9 +98,17 @@ pub struct Move {
     pub len: u32,
 }
 
-/// Words the shim takes for `moves` parts: twelve a part, and the rest.
+/// The scanout's registers: the third slot's upper half, `0x3280`, the
+/// base at its first word and the control, whose bit 0 shows the
+/// scanout, at its second (`txhdl_parts::scanout`'s `scan` map).
+pub const SCAN: u32 = 0x3280;
+pub const SCAN_BASE: u32 = 0;
+pub const SCAN_CTRL: u32 = 4;
+
+/// Words the shim takes for `moves` parts: twelve a part, and the rest,
+/// which is the same with a scanout to start or without.
 pub fn shim_words(moves: usize) -> usize {
-    12 * moves + shim(&[]).len()
+    12 * moves + shim(&[], None).len()
 }
 
 /// The shim's instructions. First each part of the packed image is
@@ -112,10 +120,15 @@ pub fn shim_words(moves: usize) -> usize {
 /// and the controller drained: each source at priority one and
 /// enabled, the threshold zero, then a claim read and written back
 /// until one reads zero, then each source disabled and at priority
-/// zero again. Then `a0 = 0`, `a1 = DTB`, `t0 = OPENSBI`, and a jump to
-/// `t0`. Every address it names has low twelve bits of zero, or is
-/// within twelve bits of one that has, so a `lui` loads each.
-pub fn shim(moves: &[Move]) -> Vec<u32> {
+/// zero again. With `scanout`, the scanout's base is written that
+/// address and its control bit set, so the screen shows the frame there
+/// before Linux starts, as a simple-framebuffer console expects of the
+/// firmware (issue 1440); without, the same six words do nothing, so the
+/// shim is one length either way. Then `a0 = 0`, `a1 = DTB`,
+/// `t0 = OPENSBI`, and a jump to `t0`. Every address it names has low
+/// twelve bits of zero, or is within twelve bits of one that has, so a
+/// `lui` loads each.
+pub fn shim(moves: &[Move], scanout: Option<u32>) -> Vec<u32> {
     let lui = |rd: u32, imm: u32| (imm & 0xffff_f000) | (rd << 7) | 0x37;
     let addi = |rd: u32, rs: u32, imm: i32| {
         ((imm as u32 & 0xfff) << 20) | (rs << 15) | (rd << 7) | 0x13
@@ -198,6 +211,18 @@ pub fn shim(moves: &[Move]) -> Vec<u32> {
     for s in 1..=PLIC_SOURCES {
         w.push(sw(0, t0, 4 * s)); // priority 0, as reset leaves it
     }
+    match scanout {
+        Some(base) => {
+            w.push(lui(t0, SCAN)); // t0 = the scanout's page
+            w.extend(li(t1, base));
+            w.extend([
+                sw(t1, t0, (SCAN & 0xfff) + SCAN_BASE), // base
+                addi(t1, 0, 1),
+                sw(t1, t0, (SCAN & 0xfff) + SCAN_CTRL), // shown
+            ]);
+        }
+        None => w.extend([addi(0, 0, 0); 6]),
+    }
     w.extend([
         addi(10, 0, 0),    // a0 = 0
         lui(11, DTB),      // a1 = DTB
@@ -259,6 +284,7 @@ pub fn pack(
     kernel: &[u8],
     initramfs: &[u8],
     layout: &Layout,
+    scanout: Option<u32>,
 ) -> Result<Vec<u8>, String> {
     let words = |len: usize| len.div_ceil(4) * 4;
     let fits = |what: &str, at: u32, len: usize, next: u32| {
@@ -303,8 +329,10 @@ pub fn pack(
     // The last part first, so that no part is moved over one still to
     // move.
     let order: Vec<Move> = moves.iter().rev().copied().collect();
-    let mut img: Vec<u8> =
-        shim(&order).iter().flat_map(|w| w.to_le_bytes()).collect();
+    let mut img: Vec<u8> = shim(&order, scanout)
+        .iter()
+        .flat_map(|w| w.to_le_bytes())
+        .collect();
     for ((_, bytes, _), m) in parts.iter().zip(&moves) {
         assert_eq!(BASE + img.len() as u32, m.from, "packed in order");
         img.extend_from_slice(bytes);
@@ -346,6 +374,16 @@ fn main() {
                 &read(&get("--kernel")),
                 &initramfs,
                 &lay,
+                // `--scanout ADDR`: start the scanout over a framebuffer
+                // there (issue 1440).
+                args.iter().position(|a| a == "--scanout").map(|_| {
+                    let h = get("--scanout");
+                    u32::from_str_radix(
+                        h.trim_start_matches("0x").replace('_', "").as_str(),
+                        16,
+                    )
+                    .unwrap_or_else(|_| panic!("not hex: {h}"))
+                }),
             )
             .unwrap_or_else(|e| {
                 eprintln!("bootimg: {e}");
@@ -441,7 +479,7 @@ mod tests {
         let kernel = vec![0x4bu8; 0x1000];
         let initramfs = vec![0x1au8; 0x200];
         let l = layout(&map(0x2_0000), initramfs.len() as u32).unwrap();
-        let img = pack(&opensbi, &dtb, &kernel, &initramfs, &l).unwrap();
+        let img = pack(&opensbi, &dtb, &kernel, &initramfs, &l, None).unwrap();
         let mut m = Machine::new();
         m.load(BASE, &img);
         m.model.pc = BASE;
@@ -457,6 +495,36 @@ mod tests {
         assert_eq!(b.load(DTB), Some(0xd0d0_d0d0));
         assert_eq!(b.load(KERNEL), Some(0x4b4b_4b4b));
         assert_eq!(b.load(l.initrd.0), Some(0x1a1a_1a1a));
+    }
+
+    /// With a scanout to start, the shim shows the frame at that address
+    /// before it jumps, and the image is as long as without (issue 1440).
+    #[test]
+    fn the_shim_starts_the_scanout_when_asked() {
+        let mhalt =
+            ((0x7c0u32 << 20) | (1 << 15) | (5 << 12) | 0x73).to_le_bytes();
+        let opensbi: Vec<u8> =
+            mhalt.iter().copied().chain([0xaa; 60]).collect();
+        let (dtb, kernel, initramfs) =
+            (vec![0xd0u8; 100], vec![0x4bu8; 0x1000], vec![0x1au8; 0x200]);
+        let l = layout(&map(0x2_0000), initramfs.len() as u32).unwrap();
+        let shown =
+            pack(&opensbi, &dtb, &kernel, &initramfs, &l, Some(0x4200_0000))
+                .unwrap();
+        let plain =
+            pack(&opensbi, &dtb, &kernel, &initramfs, &l, None).unwrap();
+        assert_eq!(shown.len(), plain.len(), "one length either way");
+        let run = |img: &[u8]| {
+            let mut m = Machine::new();
+            m.load(BASE, img);
+            m.model.pc = BASE;
+            m.run(1_000_000);
+            assert!(m.model.halted.is_some(), "the stand-in halted");
+            let d = m.board.0.borrow();
+            d.scanout()
+        };
+        assert_eq!(run(&shown), Some(0x4200_0000), "shown at the frame");
+        assert_eq!(run(&plain), None, "left alone");
     }
 
     /// A packed image is the parts and the shim, nothing between them,
@@ -487,7 +555,7 @@ mod tests {
         let kernel = bytes(0x2_2001);
         let initramfs = bytes(0x1_0102);
         let l = layout(&map(0x30_0000), initramfs.len() as u32).unwrap();
-        let img = pack(&opensbi, &dtb, &kernel, &initramfs, &l).unwrap();
+        let img = pack(&opensbi, &dtb, &kernel, &initramfs, &l, None).unwrap();
         let parts = opensbi.len() + dtb.len() + kernel.len() + initramfs.len();
         assert!(
             img.len() < parts + 4 * shim_words(4) + 16,
@@ -543,8 +611,8 @@ mod tests {
             ((0x7c0u32 << 20) | (1 << 15) | (5 << 12) | 0x73).to_le_bytes();
         let opensbi: Vec<u8> = mhalt.to_vec();
         let l = layout(&map(0x2_0000), 0x200).unwrap();
-        let img =
-            pack(&opensbi, &[0xd0; 4], &[0x4b; 4], &[0x1a; 4], &l).unwrap();
+        let img = pack(&opensbi, &[0xd0; 4], &[0x4b; 4], &[0x1a; 4], &l, None)
+            .unwrap();
         let mut m = Machine::new();
         m.load(BASE, &img);
         m.boot(BASE, DTB);

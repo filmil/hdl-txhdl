@@ -29,7 +29,11 @@ def boot_image(
         initramfs,
         bootargs = BOOTARGS,
         model = False,
+        framebuffer = None,
         **kwargs):
+    """A boot image. `framebuffer`, an address in the DDR3 as hex text,
+    puts a simple-framebuffer node over the scanout's frame there in the
+    tree and has the shim show it, for a console on HDMI (issue 1440)."""
     if model:
         bootargs = bootargs + " mem=64M"
     # Every step carries the image's tags, so that an image of manual
@@ -60,7 +64,9 @@ def boot_image(
         srcs = [name + ".layout"],
         outs = [name + ".dts"],
         cmd = "$(location //tools/devtree) --initrd $$(cat $(location " +
-              name + ".layout)) --bootargs '" + bootargs + "' > $@",
+              name + ".layout)) --bootargs '" + bootargs + "'" +
+              (" --framebuffer " + framebuffer if framebuffer else "") +
+              " > $@",
         tools = ["//tools/devtree"],
         tags = tags,
     )
@@ -83,7 +89,9 @@ def boot_image(
               " --dtb $(location " + name + ".dtb)" +
               " --kernel $(location " + kernel + ")" +
               " --system-map $(location " + system_map + ")" +
-              " --initramfs $(location " + initramfs + ") -o $@",
+              " --initramfs $(location " + initramfs + ")" +
+              (" --scanout " + framebuffer if framebuffer else "") +
+              " -o $@",
         tools = ["//tools/bootimg"],
         **kwargs
     )
