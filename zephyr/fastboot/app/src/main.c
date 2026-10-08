@@ -304,7 +304,10 @@ int main(void)
 	uint32_t staged = 0;
 
 	for (;;) {
-		static uint8_t buf[1500];
+		/* Room for more than one segment, so a call takes what is
+		 * queued rather than a segment at a time: recv costs per call
+		 * as much as it costs per byte (issue 1434). */
+		static uint8_t buf[8192];
 		enum fb_result r = FB_MORE;
 
 		b.fd = zsock_accept(ls, NULL, NULL);
