@@ -2156,21 +2156,21 @@ fn mcycle_steps_steadily_between_two_reads() {
 
 /// The path into DDR3 timed by the core (issue 1023): sixteen loads,
 /// then sixteen stores and a fence, from the data memory, against the
-/// DDR3 and against the data memory, four times each. Every run of a
-/// kind takes the same cycles.
+/// DDR3 and against the data memory, four times each.
 ///
-/// A load waits for its word, so the loads' difference is what a word
-/// costs the DDR3's path over the block RAM's: the controller's read
-/// latency, which the model has. It was that less two cycles, since the
-/// pins part and the controller's port took two cycles fewer than the
-/// data memory's tracker and block RAM; the tracker hands the request
-/// and the read beat on in the cycle (issue 1291), and the two paths
-/// take the same. On the board it is the controller's own latency,
-/// which is what the board run is for.
+/// The DDR3's loads go through the core's data cache (issue 1275). The
+/// first run misses on the four lines the sixteen words are in, and
+/// fills each with a burst, so it pays at least the controller's
+/// latency four times; the runs after it hit, take the same cycles
+/// each, and are faster than the data memory's, which pays the bus's
+/// way there and back on every load. Before the cache every run paid
+/// the controller's latency on every load, sixteen of them, which is
+/// what `ddr3bw_ram_bin` measured on the board.
 ///
-/// The stores into the DDR3 take seven cycles more than into the data
-/// memory, over sixteen. Before the instruction cache (issue 1021) the
-/// two were equal: the core issued stores no faster than it fetched the
+/// The stores into the DDR3 take nine cycles more than into the data
+/// memory, over sixteen; seven before the cache's snoop, which holds
+/// each write's answer on the DDR3's port a registered cycle longer.
+/// Before the instruction cache (issue 1021) the two were equal: the core issued stores no faster than it fetched the
 /// routine over the bus, so they showed that the core could not fill
 /// the path. From the cache it issues them faster than the DDR3's path
 /// takes them, and the difference is the path's. It was eight with the
@@ -2197,19 +2197,23 @@ fn the_ddr3_path_is_timed_by_the_core() {
     ] {
         assert_eq!(v.len(), 4, "four runs of {what}: {}", ran.said);
         // The first run of each fills the instruction cache with the
-        // routine's lines (issue 1021), so the runs after it are the
-        // steady ones.
+        // routine's lines (issue 1021), and the data cache with the
+        // DDR3's (issue 1275), so the runs after it are the steady ones.
         assert!(v[1..].iter().all(|&c| c == v[1]), "{what} steady: {v:?}");
     }
+    let ld_cold = ld[0] as i64;
     let (ld, lm, sd, sm) =
         (ld[1] as i64, lm[1] as i64, sd[1] as i64, sm[1] as i64);
     let latency = ddr3::MODEL_READ_LATENCY as i64;
-    assert_eq!(
-        ld - lm,
-        16 * latency,
-        "a load costs the DDR3 the controller's latency"
+    assert!(
+        ld < lm,
+        "the cache's hits, {ld}, are faster than the data memory, {lm}"
     );
-    assert_eq!(sd - sm, 7, "the stores into the DDR3 wait on its path");
+    assert!(
+        ld_cold >= ld + 4 * latency,
+        "the first run, {ld_cold}, fills four lines from the DDR3"
+    );
+    assert_eq!(sd - sm, 9, "the stores into the DDR3 wait on its path");
 }
 
 /// The DDR3's writes, reads and strobes, by the program the loader
@@ -3208,6 +3212,69 @@ fn the_cache_loop_is_timed_by_the_core() {
             "{what}: warm, {} cycles for {} instructions",
             warm.0,
             warm.1
+        );
+    }
+}
+
+/// The data cache stays true when another host writes the DDR3 (issue
+/// 1275). The JTAG host writes a word of the DDR3, then a flag in the
+/// data memory, which no cache holds; the second write starts after the
+/// first is answered, and the snoop holds that answer until the core's
+/// copy of the line is gone.
+///
+/// In the first program the core reads the word until it is the new
+/// value, and halts; the word is cached after the first read, so the
+/// write lands on a line the cache holds. In the second the core reads
+/// a word of another page in the same line, then the word, then the
+/// flag, round and round, so that every read of the word fills the line
+/// again; once it sees the flag it reads the word once more, from the
+/// line it last filled, and halts only if that is the new value. With
+/// the write swept over three hundred cycles, it meets the fills in
+/// both orders: answered before a fill asks, and while one is out.
+///
+/// The model's memory reads a word when it sends it, so a fill that is
+/// out when the write lands brings the new word, and the core's drop of
+/// a fill whose line the snoop names is not reached here; the
+/// controller can read the old word and answer after the write, which
+/// is why the core drops it (issue 1424).
+#[test]
+fn the_data_cache_sees_another_hosts_write() {
+    use vreteno32::isa::{addi, beq, bne, halt, lui, lw};
+    const WORD: u32 = 0x4000_0000;
+    const FLAG: u32 = 0x1100;
+    const NEW: u32 = 0x123;
+    let held = [
+        lui(5, WORD >> 12),
+        addi(7, 0, NEW as i32),
+        lw(6, 5, 0),
+        bne(6, 7, -4),
+        halt(),
+    ];
+    let filled = [
+        lui(5, WORD >> 12),
+        lui(9, (WORD + 0x1000) >> 12), // the same line, another page
+        addi(7, 0, NEW as i32),
+        lui(11, FLAG >> 12),
+        lw(8, 9, 0),
+        lw(6, 5, 0),
+        lw(10, 11, (FLAG & 0xfff) as i32),
+        beq(10, 0, -12),
+        lw(6, 5, 0),
+        bne(6, 7, 0), // the old word: round here until the limit
+        halt(),
+    ];
+    let mut runs: Vec<(&[u32], u64)> = vec![(&held, 300), (&held, 2000)];
+    for wait in (100..400).step_by(3) {
+        runs.push((&filled, wait));
+    }
+    for (text, wait) in runs {
+        let plan = [Op::Wait(wait), Op::Write(WORD, NEW), Op::Write(FLAG, 1)];
+        let ran = run_debugged(text, &[], wait + 6000, &plan);
+        assert!(
+            ran.halted_at.is_some(),
+            "the core read the old word, the write at {wait} \
+             (program of {} words)",
+            text.len()
         );
     }
 }
