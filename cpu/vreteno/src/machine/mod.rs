@@ -237,6 +237,14 @@ impl Bus for Board {
 pub struct Machine {
     pub model: Model,
     pub board: Rc<Board>,
+    /// When set, what each address the hart ran at cost: the cycles, or
+    /// the steps outside the timing mode, and how many times it ran
+    /// (issue 1434). A function's first address counts its calls.
+    pub profile: Option<std::collections::HashMap<u32, (u64, u64)>>,
+    /// An address to watch, and for each caller that reached it, by the
+    /// return address in `ra`, how many times and the sum of `a2`, a
+    /// copy's length (issue 1434).
+    pub watch: Option<(u32, std::collections::HashMap<u32, (u64, u64)>)>,
 }
 
 impl Machine {
@@ -264,7 +272,12 @@ impl Machine {
             bus: Some(board.clone() as Rc<dyn Bus>),
             ..Model::default()
         };
-        Machine { model, board }
+        Machine {
+            model,
+            board,
+            profile: None,
+            watch: None,
+        }
     }
 
     /// Bytes laid down in the DDR3 at `addr`, as a loader does.
@@ -339,6 +352,14 @@ impl Machine {
         }
         let interrupt = self.model.interrupt();
         let was = self.model.cycles;
+        let pc = self.model.pc;
+        if let Some((at, callers)) = &mut self.watch {
+            if pc == *at && interrupt.is_none() {
+                let e = callers.entry(self.model.x[1]).or_insert((0, 0));
+                e.0 += 1;
+                e.1 += self.model.x[12] as u64;
+            }
+        }
         self.model.step(&[], interrupt);
         // The timer counts the core's cycles: one a step, or in the
         // timing mode what the step was charged (issue 1392), so that a
@@ -348,6 +369,11 @@ impl Machine {
         } else {
             1
         };
+        if let Some(p) = &mut self.profile {
+            let e = p.entry(pc).or_insert((0, 0));
+            e.0 += n;
+            e.1 += 1;
+        }
         let mut d = self.board.0.borrow_mut();
         d.clint.tick(n);
         d.elapsed = n;
