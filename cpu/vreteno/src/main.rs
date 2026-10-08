@@ -105,6 +105,8 @@ fn main() {
     // The supervisor's external line, which no controller here drives
     // (issue 1094).
     let (_seirq_out, seirq) = signal::<Bit, DefaultClock>();
+    // No other host writes the DDR3 here, so nothing is snooped (issue 1275).
+    let (_dc_snoop_out, dc_snoop) = signal::<U<9>, DefaultClock>();
     let (tx_out, tx) = signal::<Bit, DefaultClock>();
     let (rx_out, rx) = signal::<Bit, DefaultClock>();
     let (uirq_out, uirq) = signal::<Bit, DefaultClock>();
@@ -160,6 +162,7 @@ fn main() {
         // The timer's count, a port of both lowered units (issue 1012).
         w.add("time", &time);
         w.add("seirq", &seirq);
+        w.add("dc_snoop", &dc_snoop);
         w.add("tx", &tx);
         w.add("rx", &rx);
         w.add("uirq", &uirq);
@@ -254,6 +257,7 @@ fn main() {
                     (
                         rst, irq, tirq, sirq, crdata, cdone, grant, haltreq,
                         resumereq, dbg_regno, dbg_wdata, dbg_we, time, seirq,
+                        dc_snoop,
                     ),
                     (
                         halt_out,

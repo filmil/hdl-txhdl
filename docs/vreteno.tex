@@ -2018,7 +2018,7 @@ a program already in the instruction memory and the data memory,
 since nothing on the machine loads them at run time.
 A program loaded into the DDR3 keeps its stack in 64~KiB at
 \code{0x1\_0000} rather than at the top of its region, since the DDR3
-is not cached for data and a stack there paid the controller's latency
+was not then cached for data and a stack there paid the controller's latency
 on every spill and reload (issue~\#1278). That window was at first a
 memory on the router's ninth port, the data memory's unit made larger:
 a frame of the GL icosahedron's list in \code{board\_test} took 5.42
@@ -2051,6 +2051,32 @@ has no RAM and 64~KiB of flip-flops would be most of the layout; the
 board's is 16384. For the same reason that netlist has no instruction
 cache (issue~\#1323): no fetch goes to it there and its arrays are
 never written, so the synthesis folds them away.
+
+The core caches its loads from the DDR3 as well (issue~\#1275): four
+kilobytes, 256 lines of four words, one way, written through and
+filled by loads only. Booting Linux on the model, 91.3\% of the loads
+that reached the DDR3 hit a cache of that size. A load whose base
+register points into the DDR3 reads the line's tag and the word in
+execute, at the address the window's adder gives, and writeback looks
+them up a cycle later. A hit answers there; a miss asks for the line as
+one burst, writes each beat into it, answers from the beat it wanted
+and keeps the line when the last comes. A store of the core's own
+writes its word into a line it holds and goes to the DDR3 as before;
+\code{lr.w}, \code{sc.w} and the AMOs go round the cache and drop the
+line, so the controller stays the one place they meet another host.
+Another host's write is the cache's to notice: a unit on the router's
+port to the DDR3 notes each such burst as its address goes by, and
+when the controller answers it names the burst's lines to the core,
+one a cycle, and holds the answer until it has named them all. A host
+that has its answer therefore knows the core holds no old copy, and a
+fill that was out when its line was named is not kept, since the
+controller may have read it before the write landed.
+\code{//cpu/vreteno:board\_test} times sixteen loads from the DDR3 at
+245 cycles the first time and 41 after, against 177 from the data
+memory, and races a write by the cable's bus host against the core's
+fills.
+In the netlist the documents simulate the cache is folded away, as
+the instruction cache is.
 
 The data memory's tracker hands a request to the memory, and a read
 beat to the router, over unregistered channels (issue~\#1291), so each

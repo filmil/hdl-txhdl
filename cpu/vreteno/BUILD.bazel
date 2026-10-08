@@ -21,6 +21,7 @@ rust_library(
     srcs = [
         "src/board.rs",
         "src/core.rs",
+        "src/dcsnoop.rs",
         "src/debug.rs",
         "src/dmem.rs",
         "src/hart.rs",
@@ -64,6 +65,7 @@ rust_library(
     srcs = [
         "src/board.rs",
         "src/core.rs",
+        "src/dcsnoop.rs",
         "src/debug.rs",
         "src/dmem.rs",
         "src/hart.rs",

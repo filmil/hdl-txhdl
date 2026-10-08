@@ -64,6 +64,8 @@ fn pair_says(program: &[u32], cycles: usize, fault: &[usize]) -> (bool, bool) {
     let (sirq_out, sirq) = signal::<Bit, DefaultClock>();
     let (time_out, time) = signal::<U<64>, DefaultClock>();
     let (_seirq_out, seirq) = signal::<Bit, DefaultClock>();
+    // No other host writes the DDR3 here, so nothing is snooped (issue 1275).
+    let (_dc_snoop_out, dc_snoop) = signal::<U<9>, DefaultClock>();
     let (fault_out, fault_in) = signal::<Bit, DefaultClock>();
     let (tx_out, _tx) = signal::<Bit, DefaultClock>();
     let (rx_out, rx) = signal::<Bit, DefaultClock>();
@@ -98,8 +100,8 @@ fn pair_says(program: &[u32], cycles: usize, fault: &[usize]) -> (bool, bool) {
                 dmem.run(dbus, ()),
                 pair.run(
                     (
-                        rst, irq, tirq, sirq, time, seirq, fault_in, crdata,
-                        cdone, grant,
+                        rst, irq, tirq, sirq, time, seirq, dc_snoop, fault_in,
+                        crdata, cdone, grant,
                     ),
                     (
                         halt_out,

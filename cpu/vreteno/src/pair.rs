@@ -142,13 +142,26 @@ pub struct Pair<const IW: usize> {
 impl<const IW: usize> Unit for Pair<IW> {
     async fn run(
         &mut self,
-        (rst, irq, tirq, sirq, time, seirq, fault, rdata, done, grant): (
+        (
+            rst,
+            irq,
+            tirq,
+            sirq,
+            time,
+            seirq,
+            dc_snoop,
+            fault,
+            rdata,
+            done,
+            grant,
+        ): (
             In<Bit>,
             In<Bit>,
             In<Bit>,
             In<Bit>,
             In<U<64>>,
             In<Bit>,
+            In<U<9>>,
             In<Bit>,
             Rx<R<32, IW>>,
             Rx<Done<IW>>,
@@ -176,6 +189,7 @@ impl<const IW: usize> Unit for Pair<IW> {
         let sirq_two = sirq.clone();
         let time_two = time.clone();
         let seirq_two = seirq.clone();
+        let dc_snoop_two = dc_snoop.clone();
         // What the tees hand to each core.
         let (rd1_tx, rd1_rx) = chan::<R<32, IW>, DefaultClock>();
         let (rd2_tx, rd2_rx) = chan::<R<32, IW>, DefaultClock>();
@@ -235,7 +249,7 @@ impl<const IW: usize> Unit for Pair<IW> {
                         (
                             rst_one, irq_one, tirq, sirq, rd1_rx, dn1_rx,
                             gr1_rx, hr1_i, rr1_i, rn1_i, wd1_i, we1_i, time,
-                            seirq,
+                            seirq, dc_snoop,
                         ),
                         (
                             halt1_o, instr1_o, wb1_o, is1_tx, beat1_tx, rl1_tx,
@@ -244,9 +258,21 @@ impl<const IW: usize> Unit for Pair<IW> {
                     ),
                     self.two.run(
                         (
-                            rst2_i, irq2, tirq_two, sirq_two, rd2_rx, dn2_rx,
-                            gr2_rx, hr2_i, rr2_i, rn2_i, wd2_i, we2_i,
-                            time_two, seirq_two,
+                            rst2_i,
+                            irq2,
+                            tirq_two,
+                            sirq_two,
+                            rd2_rx,
+                            dn2_rx,
+                            gr2_rx,
+                            hr2_i,
+                            rr2_i,
+                            rn2_i,
+                            wd2_i,
+                            we2_i,
+                            time_two,
+                            seirq_two,
+                            dc_snoop_two,
                         ),
                         (
                             halt2_o, instr2_o, wb2_o, is2_tx, beat2_tx, rl2_tx,
