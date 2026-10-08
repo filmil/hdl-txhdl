@@ -127,6 +127,22 @@ int main(void) {
   glGetFixedv(GL_FOG_DENSITY, got + 1);
   glGetIntegerv(GL_FOG_MODE, v);
   printf("fog %04x end %d density %d\n", v[0], got[0], got[1]);
+  /* The stencil's state (#998), through its four entry points. */
+  glStencilFunc(GL_GEQUAL, 5, 0x0f);
+  glStencilOp(GL_INCR, GL_DECR, GL_INVERT);
+  glStencilMask(0x3c);
+  glClearStencil(3);
+  GLint s[8];
+  glGetIntegerv(GL_STENCIL_FUNC, s);
+  glGetIntegerv(GL_STENCIL_REF, s + 1);
+  glGetIntegerv(GL_STENCIL_VALUE_MASK, s + 2);
+  glGetIntegerv(GL_STENCIL_FAIL, s + 3);
+  glGetIntegerv(GL_STENCIL_PASS_DEPTH_FAIL, s + 4);
+  glGetIntegerv(GL_STENCIL_PASS_DEPTH_PASS, s + 5);
+  glGetIntegerv(GL_STENCIL_WRITEMASK, s + 6);
+  glGetIntegerv(GL_STENCIL_CLEAR_VALUE, s + 7);
+  printf("stencil %04x %d %d ops %04x %04x %04x mask %d clear %d\n", s[0],
+         s[1], s[2], s[3], s[4], s[5], s[6], s[7]);
 
 
   /* Buffer objects (#1488): a new context with room for their stores,

@@ -87,6 +87,20 @@ rust_test(
     ],
 )
 
+# The stencil (#998), through Razboj's model, against a reference that
+# keeps its own: every comparison and operation, the masks, a depth test
+# that fails some pixels, the clears, and its state.
+rust_test(
+    name = "stencil_test",
+    srcs = ["tests/stencil.rs"],
+    edition = "2021",
+    deps = [
+        ":gles",
+        "//gpu/razboj",
+        "//gpu/razboj:tile",
+    ],
+)
+
 # The queries (#1484): what each setter leaves, read back through
 # glGetIntegerv, glGetFixedv and glGetBooleanv and converted as GL ES
 # 1.1 says, and the limits the library states.
