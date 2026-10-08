@@ -1014,7 +1014,12 @@ fn main() {
     };
     let hwidth = width.div_ceil(4);
     let mut packages = String::new();
-    let chunks: Vec<&[String]> = frames.chunks(256).collect();
+    // What a package holds is set by its text, not its frames: 256
+    // frames of a wide design overran nvc's analysis heap of 16 MiB at
+    // 356 KB a package (#1467), so a package holds 192 KB of frames,
+    // and never more than 256 of them.
+    let per = (192 * 1024 / hwidth.max(1)).clamp(1, 256);
+    let chunks: Vec<&[String]> = frames.chunks(per).collect();
     for (c, chunk) in chunks.iter().enumerate() {
         packages.push_str(&format!(
             "package {entity}_tb_frames{c} is\n  type frame_array is array \
