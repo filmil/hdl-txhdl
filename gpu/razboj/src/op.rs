@@ -613,11 +613,12 @@ fn triangle(
         (insn.z0, insn.zdx, insn.zdy) = plane(a, b, c, v, first, ZFRAC);
     }
     if let Some(t) = uvq {
-        // The texture's planes, exact in 64 bits: no fraction is dropped,
-        // so no half is added (issue 997).
+        // The texture's planes in 64 bits, each rounded to the nearest, so
+        // no half is added (issue 997).
         let first = (x0 as i32 * SUB + SUB / 2, y0 as i32 * SUB + SUB / 2);
         let w = |p: [i128; 3]| p.map(|v| U::<64>::from(v as i64 as u64));
-        let pl = |v: [i128; 3]| plane64(a, b, c, v, first);
+        let r = recip(a, b, c);
+        let pl = |v: [i128; 3]| plane64(a, b, c, v, first, r);
         let (u, v, q) = (
             pl(t.map(|t| t.0 as i128)),
             pl(t.map(|t| t.1 as i128)),
@@ -664,29 +665,54 @@ fn triangle(
 
 /// A plane in 64 bits for a texture (issue 997): its value at `first` and
 /// its two steps, in the units the values `v` at the vertices are in,
-/// rounded to the nearest, with nothing dropped below them.
+/// rounded to the nearest.
+///
+/// Nothing is divided (#1433), since the core that writes a list does a
+/// division of 128 bits in software: `r` is the reciprocal of the area,
+/// which [`recip`] works out once for the three planes, and the
+/// differences between the vertices keep their top 46 bits, so that the
+/// products with the vertices' offsets fit 64 bits.
 fn plane64(
     a: (i32, i32),
     b: (i32, i32),
     c: (i32, i32),
     v: [i128; 3],
     first: (i32, i32),
+    r: (i128, u32),
 ) -> [i128; 3] {
-    let d = |p: (i32, i32), q: (i32, i32)| {
-        ((q.0 - p.0) as i128, (q.1 - p.1) as i128)
-    };
+    let d =
+        |p: (i32, i32), q: (i32, i32)| ((q.0 - p.0) as i64, (q.1 - p.1) as i64);
     let ((ux, uy), (vx, vy)) = (d(a, b), d(a, c));
-    let area = ux * vy - uy * vx;
     let (db, dc) = (v[1] - v[0], v[2] - v[0]);
+    let big = db.unsigned_abs().max(dc.unsigned_abs());
+    let s = (128 - big.leading_zeros()).saturating_sub(46);
+    let (db, dc) = ((db >> s) as i64, (dc >> s) as i64);
     let nx = db * vy - dc * uy;
     let ny = dc * ux - db * vx;
-    let round = |n: i128| (n + area / 2).div_euclid(area);
+    // A pixel's steps with sixteen more bits of fraction, for the start.
+    let (m, sh) = r;
+    let step = |n: i64| shr(n as i128 * m, sh - SUB_BITS - 16);
+    let (fx, fy) = (step(nx), step(ny));
     let (px, py) = d(a, first);
-    [
-        v[0] + round(nx * px + ny * py),
-        round(nx * SUB as i128),
-        round(ny * SUB as i128),
-    ]
+    let at = shr(fx * px as i128 + fy * py as i128, SUB_BITS + 16);
+    [v[0] + (at << s), shr(fx, 16) << s, shr(fy, 16) << s]
+}
+
+/// The reciprocal of a triangle's area, twice it in sixteenths squared,
+/// for [`plane64`]: `m` over two to the `sh` is within one part in
+/// `2^62` of one over the area, and `m` is at most `2^63`. Two divisions
+/// of 64 bits, the first of the top and the second of what is left.
+fn recip(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> (i128, u32) {
+    let area = area2(a, b, c) as u64;
+    let l = 64 - area.leading_zeros();
+    let top = 1u64 << (30 + l);
+    let (q, rest) = (top / area, top % area);
+    (((q << 32) + (rest << 32) / area) as i128, 62 + l)
+}
+
+/// `x` over two to the `k`, rounded to the nearest, a half up.
+fn shr(x: i128, k: u32) -> i128 {
+    (x + (1 << (k - 1))) >> k
 }
 // end{encode}
 
@@ -835,5 +861,78 @@ mod tests {
                 assert_eq!(got, want, "the vertex at {p:?}");
             }
         }
+    }
+
+    /// A texture's plane from the area's reciprocal is within two units
+    /// of the plane divided out exactly, rounded to the nearest, when the
+    /// vertices' values differ by under `2^46`. Past that the differences
+    /// lose `s` bits, and each number may be out by what they lost, times
+    /// the triangle's sides over its area for the start (#1433).
+    #[test]
+    fn a_texture_plane_is_within_two_units_of_exact() {
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut next = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        let mut tried = 0;
+        while tried < 4000 {
+            let [ax, ay, bx, by, cx, cy] =
+                [0; 6].map(|_| next(1 << 15) as i32 + super::VMIN);
+            let (a, b, c) = ((ax, ay), (bx, by), (cx, cy));
+            let area = super::area2(a, b, c) as i128;
+            if area <= 0 {
+                continue;
+            }
+            tried += 1;
+            let bits: u32 = [20, 40, 45, 52, 63][tried % 5];
+            let v = [0, 1, 2].map(|_| {
+                (next(1 << bits) as i128 - (1 << (bits - 1))) as i64 as i128
+            });
+            let first = (a.0 + next(256) as i32, a.1 + next(256) as i32);
+            let got = super::plane64(a, b, c, v, first, super::recip(a, b, c));
+            let want = exact(a, b, c, v, first);
+            let big = (v[1] - v[0]).abs().max((v[2] - v[0]).abs());
+            let s = (128 - big.leading_zeros()).saturating_sub(46);
+            let m = |p: (i32, i32), q: (i32, i32)| {
+                ((q.0 - p.0).abs() + (q.1 - p.1).abs()) as i128
+            };
+            let sides = (m(a, b) + m(a, c)) * (m(a, first) + 16) / area;
+            let off = if s == 0 { 2 } else { 2 + ((2 + sides) << s) };
+            for (g, w) in got.iter().zip(want) {
+                assert!(
+                    (g - w).abs() <= off,
+                    "{a:?} {b:?} {c:?} {v:?} {first:?}: {got:?}, {want:?}"
+                );
+            }
+        }
+    }
+
+    /// The plane as it was worked out before #1433, with a division by
+    /// the area for each of its three numbers.
+    fn exact(
+        a: (i32, i32),
+        b: (i32, i32),
+        c: (i32, i32),
+        v: [i128; 3],
+        first: (i32, i32),
+    ) -> [i128; 3] {
+        let d = |p: (i32, i32), q: (i32, i32)| {
+            ((q.0 - p.0) as i128, (q.1 - p.1) as i128)
+        };
+        let ((ux, uy), (vx, vy)) = (d(a, b), d(a, c));
+        let area = ux * vy - uy * vx;
+        let (db, dc) = (v[1] - v[0], v[2] - v[0]);
+        let nx = db * vy - dc * uy;
+        let ny = dc * ux - db * vx;
+        let round = |n: i128| (n + area / 2).div_euclid(area);
+        let (px, py) = d(a, first);
+        [
+            v[0] + round(nx * px + ny * py),
+            round(nx * super::SUB as i128),
+            round(ny * super::SUB as i128),
+        ]
     }
 }

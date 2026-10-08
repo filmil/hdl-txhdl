@@ -22,6 +22,7 @@ pub const VMAX: i32 = 1024 * 16 - 1;
 
 /// Sixteenths of a pixel.
 const SUB: i64 = 16;
+const SUB_BITS: u32 = SUB.trailing_zeros();
 
 /// Twice the signed area of `a`, `b`, `c`: positive when they are wound
 /// the way the rasteriser wants, clockwise on a screen whose y grows
@@ -239,8 +240,9 @@ pub fn textured(
     let (x0, y0, x1, y1) =
         clip(lo(|p| p.0), lo(|p| p.1), hi(|p| p.0), hi(|p| p.1), within)?;
     let first = (x0 as i32 * 16 + 8, y0 as i32 * 16 + 8);
+    let r = recip(a, b, c);
     let pl =
-        |v: [i128; 3]| plane64(a, b, c, v, first).map(|v| v as i64 as i128);
+        |v: [i128; 3]| plane64(a, b, c, v, first, r).map(|v| v as i64 as i128);
     let u = pl(t.map(|t| t.0 as i128));
     let w = pl(t.map(|t| t.1 as i128));
     let q = pl(t.map(|t| t.2 as i128));
@@ -279,28 +281,52 @@ pub fn textured(
 /// A plane in 64 bits for a texture: its value at `first` and its two
 /// steps, in the units of the values `v` at the vertices, rounded to the
 /// nearest, as `razboj::op`'s `plane64`.
+///
+/// Nothing is divided (#1433): `r` is the reciprocal of the area, which
+/// [`recip`] works out once for the three planes, and the differences
+/// between the vertices keep their top 46 bits, so that the products
+/// with the vertices' offsets fit 64 bits.
 fn plane64(
     a: (i32, i32),
     b: (i32, i32),
     c: (i32, i32),
     v: [i128; 3],
     first: (i32, i32),
+    r: (i128, u32),
 ) -> [i128; 3] {
-    let d = |p: (i32, i32), q: (i32, i32)| {
-        ((q.0 - p.0) as i128, (q.1 - p.1) as i128)
-    };
+    let d =
+        |p: (i32, i32), q: (i32, i32)| ((q.0 - p.0) as i64, (q.1 - p.1) as i64);
     let ((ux, uy), (vx, vy)) = (d(a, b), d(a, c));
-    let area = ux * vy - uy * vx;
     let (db, dc) = (v[1] - v[0], v[2] - v[0]);
+    let big = db.unsigned_abs().max(dc.unsigned_abs());
+    let s = (128 - big.leading_zeros()).saturating_sub(46);
+    let (db, dc) = ((db >> s) as i64, (dc >> s) as i64);
     let nx = db * vy - dc * uy;
     let ny = dc * ux - db * vx;
-    let round = |n: i128| (n + area / 2).div_euclid(area);
+    // A pixel's steps with sixteen more bits of fraction, for the start.
+    let (m, sh) = r;
+    let step = |n: i64| shr(n as i128 * m, sh - SUB_BITS - 16);
+    let (fx, fy) = (step(nx), step(ny));
     let (px, py) = d(a, first);
-    [
-        v[0] + round(nx * px + ny * py),
-        round(nx * SUB as i128),
-        round(ny * SUB as i128),
-    ]
+    let at = shr(fx * px as i128 + fy * py as i128, SUB_BITS + 16);
+    [v[0] + (at << s), shr(fx, 16) << s, shr(fy, 16) << s]
+}
+
+/// The reciprocal of a triangle's area, twice it in sixteenths squared,
+/// for [`plane64`]: `m` over two to the `sh` is within one part in
+/// `2^62` of one over the area, and `m` is at most `2^63`. Two divisions
+/// of 64 bits, the first of the top and the second of what is left.
+fn recip(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> (i128, u32) {
+    let area = area2(a, b, c) as u64;
+    let l = 64 - area.leading_zeros();
+    let top = 1u64 << (30 + l);
+    let (q, rest) = (top / area, top % area);
+    (((q << 32) + (rest << 32) / area) as i128, 62 + l)
+}
+
+/// `x` over two to the `k`, rounded to the nearest, a half up.
+fn shr(x: i128, k: u32) -> i128 {
+    (x + (1 << (k - 1))) >> k
 }
 
 /// An instruction's word 15 told it is textured, which gives it its
