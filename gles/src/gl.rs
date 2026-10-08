@@ -40,6 +40,9 @@ pub const DEPTH_BUFFER_BIT: u32 = 0x0000_0100;
 /// Depth (#1273): the test's switch, and its comparisons, whose order
 /// from `NEVER` is Razboj's (#992).
 pub const DEPTH_TEST: u32 = 0x0B71;
+pub const POLYGON_OFFSET_FILL: u32 = 0x8037;
+pub const POLYGON_OFFSET_FACTOR: u32 = 0x8038;
+pub const POLYGON_OFFSET_UNITS: u32 = 0x2A00;
 pub const NEVER: u32 = 0x0200;
 pub const LESS: u32 = 0x0201;
 pub const EQUAL: u32 = 0x0202;

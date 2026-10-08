@@ -519,6 +519,11 @@ pub extern "C" fn glDepthFunc(func: u32) {
 }
 
 #[no_mangle]
+pub extern "C" fn glPolygonOffsetx(factor: Fx, units: Fx) {
+    with(|g| g.polygon_offset(factor, units));
+}
+
+#[no_mangle]
 pub extern "C" fn glDepthMask(flag: u8) {
     with(|g| g.depth_mask(flag != 0));
 }

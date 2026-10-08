@@ -123,6 +123,10 @@ pub struct Gl<'a> {
     depth_mask: bool,
     clear_depth: Fx,
     depth_range: (Fx, Fx),
+    /// Polygon offset (#998): its switch for filled polygons, and its
+    /// factor and units, in 16.16.
+    offset_on: bool,
+    offset: (Fx, Fx),
     /// Whether the frame holds an entry that tests depth, which Razboj
     /// draws only from a tile table.
     deep: bool,
@@ -189,6 +193,8 @@ impl<'a> Gl<'a> {
             colour_material: false,
             depth_test: false,
             depth_func: gl::LESS - gl::NEVER,
+            offset_on: false,
+            offset: (0, 0),
             depth_mask: true,
             clear_depth: ONE,
             depth_range: (0, ONE),
@@ -379,6 +385,7 @@ impl<'a> Gl<'a> {
             gl::RESCALE_NORMAL => self.rescale = on,
             gl::COLOR_MATERIAL => self.colour_material = on,
             gl::DEPTH_TEST => self.depth_test = on,
+            gl::POLYGON_OFFSET_FILL => self.offset_on = on,
             gl::BLEND => self.blend_on = on,
             gl::ALPHA_TEST => self.alpha_on = on,
             gl::TEXTURE_2D => self.texture_on = on,
@@ -406,6 +413,7 @@ impl<'a> Gl<'a> {
             gl::RESCALE_NORMAL => self.rescale,
             gl::COLOR_MATERIAL => self.colour_material,
             gl::DEPTH_TEST => self.depth_test,
+            gl::POLYGON_OFFSET_FILL => self.offset_on,
             gl::BLEND => self.blend_on,
             gl::ALPHA_TEST => self.alpha_on,
             gl::TEXTURE_2D => self.texture_on,
@@ -590,6 +598,13 @@ impl<'a> Gl<'a> {
             gl::NEVER..=gl::ALWAYS => self.depth_func = func - gl::NEVER,
             _ => self.fail(gl::INVALID_ENUM),
         }
+    }
+
+    /// `glPolygonOffsetx` (#998): what filled polygons add to their depth
+    /// while `GL_POLYGON_OFFSET_FILL` is on, `factor` times the depth's
+    /// largest slope plus `units` times its least step, in 16.16.
+    pub fn polygon_offset(&mut self, factor: Fx, units: Fx) {
+        self.offset = (factor, units);
     }
 
     /// `glBlendFunc`: the source's factor and the destination's (#993),
@@ -1444,6 +1459,7 @@ impl<'a> Gl<'a> {
             } else {
                 emit::triangle(flat, a, b, c, None, z, screen)
             };
+            let w = w.map(|(w, s)| (w, s.map(|s| self.offset_depth(s))));
             let tex = texture.and_then(|(lw, lh)| {
                 let t = uvq([&poly[0], &poly[k], &poly[k + 1]], lw, lh)?;
                 emit::textured([a, b, c], t, screen)
@@ -1452,6 +1468,23 @@ impl<'a> Gl<'a> {
                 self.push_textured(w, slot, tex);
             }
         }
+    }
+
+    /// A depth slot with the polygon offset added (#998) while it is on:
+    /// to the plane's start, since the offset is the same at every pixel.
+    /// The slope is the larger of the plane's two steps, in its own units,
+    /// and the least step is one of the depth's 65535, `1 << ZFRAC` of
+    /// them.
+    fn offset_depth(&self, mut s: [u32; WORDS]) -> [u32; WORDS] {
+        if !self.offset_on {
+            return s;
+        }
+        let (dx, dy) = (s[1] as i32 as i64, s[2] as i32 as i64);
+        let slope = dx.abs().max(dy.abs());
+        let (factor, units) = (self.offset.0 as i64, self.offset.1 as i64);
+        let o = (factor * slope + (units << emit::ZFRAC)) >> 16;
+        s[0] = (s[0] as i32 as i64 + o) as i32 as u32;
+        s
     }
 
     /// The bound texture's log2 sides, when texturing is on and the
