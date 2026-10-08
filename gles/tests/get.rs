@@ -167,3 +167,17 @@ fn the_compressed_formats_are_the_paletted_ones() {
         .collect();
     assert_eq!(ints(&mut g, name::COMPRESSED_TEXTURE_FORMATS, 10), want);
 }
+
+/// Polygon offset's switch, factor and units read back (#998).
+#[test]
+fn polygon_offset_reads_back() {
+    let mut frame = vec![[0u32; WORDS]; 16];
+    let mut g = context(&mut frame);
+    assert_eq!(bools(&mut g, gl::POLYGON_OFFSET_FILL, 1), [false]);
+    g.enable(gl::POLYGON_OFFSET_FILL);
+    g.polygon_offset(-ONE, 3 * ONE / 2);
+    assert_eq!(bools(&mut g, gl::POLYGON_OFFSET_FILL, 1), [true]);
+    assert_eq!(fixed(&mut g, gl::POLYGON_OFFSET_FACTOR, 1), [-ONE]);
+    assert_eq!(fixed(&mut g, gl::POLYGON_OFFSET_UNITS, 1), [3 * ONE / 2]);
+    assert_eq!(ints(&mut g, gl::POLYGON_OFFSET_UNITS, 1), [2], "rounded");
+}

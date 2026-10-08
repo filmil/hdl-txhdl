@@ -243,6 +243,9 @@ impl Gl<'_> {
             }
             gl::LIGHT_MODEL_AMBIENT => u(&self.scene_ambient),
             gl::LIGHT_MODEL_TWO_SIDE => b(&[self.two_side]),
+            // Polygon offset (#998).
+            gl::POLYGON_OFFSET_FACTOR => f(&[self.offset.0]),
+            gl::POLYGON_OFFSET_UNITS => f(&[self.offset.1]),
             cap => self.enabled(cap).and_then(|on| b(&[on])),
         }
     }
