@@ -74,10 +74,10 @@ Table~\ref{tab:w-units} details the hardware units lowered to Verilog and VHDL,
 while Table~\ref{tab:w-systems} catalogues the integrated systems composed from
 them. These tables reflect the documented corpus baseline; ongoing peripheral
 development is tracked via active repository issues. In aggregate, the
-implementation spans 94\,581 physical lines of Rust: 18\,484 across runtime
-abstractions and procedural macros, 26\,512 in reusable subsystem parts,
-18\,113 distributed across 121 compiled examples, 25\,927 comprising the
-Vreteno processor and its FPGA board envelope, and 5\,545 spanning the Razboj
+implementation spans 109\,038 physical lines of Rust: 19\,734 across runtime
+abstractions and procedural macros, 27\,826 in reusable subsystem parts,
+19\,149 distributed across 123 compiled examples, 30\,939 comprising the
+Vreteno processor and its FPGA board envelope, and 11\,390 spanning the Razboj
 GPU, DDR3 controller, Ethernet MAC, HDMI rasterizer, PCIe bridge, and unified
 SoC.
 
@@ -334,7 +334,9 @@ the software model that produced the reference render. Within the flagship SoC,
 the rasteriser operates as a second bus-mastering host: software populates a
 display list in DDR3 memory, asserts a doorbell register on the control page,
 and Razboj autonomously paints the frame buffer scanned out to the physical
-display.
+display. From a tile table it also tests depth, blends, and textures through a
+cache of 64 lines under GL's filters, mipmaps and environments, byte for
+byte the model's.
 
 \section{Parts}
 
@@ -438,17 +440,17 @@ divergence between text and reality. Each lowered module in
 Table~\ref{tab:w-units} is verified twice in parallel: as VHDL under \code{nvc}
 and as Verilog under Verilator, with port transitions asserted against the
 golden trace captured during native Rust simulation. Running \code{bazel test
-//...} invokes 462 automated targets, including 246 co-simulated netlists, the
+//...} invokes 493 automated targets, including 262 co-simulated netlists, the
 golden ISA CPU model, bare-metal software test programs, in-circuit debug
 sessions linking OpenOCD and GDB over the JTAG transport, Razboj graphics
 regressions, peripheral unit tests, full SoC integration runs, ten formal
 property proofs, automated diagram boundary checks, and compiler toolchains.
-Fifteen long-running targets are reserved for manual or nightly qualification:
+Seventeen long-running targets are reserved for manual or nightly qualification:
 optimized board simulations, DDR3 memory controller verification under the
 Vivado simulator, standalone and root-port PCIe endpoint regressions, randomized
 AXI link fuzzing, datasheet completeness audits, bitstream flash preservation
-checks, and four end-to-end Linux boots verifying networking and interactive
-shell responsiveness.
+checks, and six Linux runs: four boots verifying networking and interactive
+shell responsiveness, the initramfs, and the root on NFS.
 
 Simulation tests validate targeted input stimuli; formal verification proves
 invariant properties across all reachable states. Hardware modules declare
@@ -478,8 +480,8 @@ resides on the AXI bus as read-only memory; however, off-chip instruction cache
 misses stall the execution pipeline until the read completes. The
 network-on-chip fabric refuses wrapping AXI burst transfers, decomposing
 incrementing bursts into single-beat transactions across the mesh. In graphics,
-the Razboj rasteriser lacks depth buffering, barycentric perspective
-interpolation, and texture filtering. Each of these architectural boundaries is
+Razboj draws one pixel at a time, with one texture unit and no
+\code{COMBINE}, and tests depth, blends and textures only in tiles. Each of these architectural boundaries is
 tracked as an active issue in the repository rather than deferred in prose.
 
 \end{document}
