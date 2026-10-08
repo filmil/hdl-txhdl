@@ -49,6 +49,8 @@ type TestBoard = Board<4>;
 /// core halted on.
 struct Ran {
     said: String,
+    /// The cycle each byte of `said` was finished on (issue 1412).
+    said_at: Vec<u64>,
     /// How many bytes of the stream the terminal managed to type, the
     /// cycle the last one went out on, and how long the run was.
     typed: usize,
@@ -822,6 +824,7 @@ fn run_all_in<const LO: usize, const HI: usize>(
     rst_o.set(Bit::Zero);
     irq_o.set(Bit::Zero);
     rx_o.set(Bit::One);
+    let mut said_at: Vec<u64> = Vec::new();
     let mut term = if blocks.is_empty() {
         Terminal::new(reply)
     } else {
@@ -912,6 +915,9 @@ fn run_all_in<const LO: usize, const HI: usize>(
             card.dat_out()
         }));
         term.see(tx.get().to_bool());
+        while said_at.len() < term.said.len() {
+            said_at.push(cycle);
+        }
         rx_o.set(Bit::from_bool(term.level()));
         ran_for = cycle;
         if term.typed() != typed_was {
@@ -1044,6 +1050,7 @@ fn run_all_in<const LO: usize, const HI: usize>(
     }
     Ran {
         said: term.said.clone(),
+        said_at,
         typed: term.typed(),
         typed_at,
         ran_for,
@@ -3277,4 +3284,69 @@ fn the_data_cache_sees_another_hosts_write() {
             text.len()
         );
     }
+}
+
+/// A scanout burst over the remote peripheral holds the serial port
+/// for as long as the remote waits (issue 1412). On the board, a stale
+/// base sent the scanout's lines into the peripheral page, and the
+/// core's printing stopped for 62 s (#1317). A line there is ten bursts
+/// of 64 beats over `0x3000` to `0x39ff`, the whole page; `LiteBridge`
+/// takes one burst at a time, reads and writes alike; and the remote
+/// peripheral, at `0x3300`, waits `REMOTE_WAIT`, a second, for a program
+/// on the network before it answers a beat itself, so the burst over it
+/// holds the page for 64 of them. Here the line is given at `0x3000`
+/// with the pair's window opened to the whole address space, which
+/// puts the same bursts on the bus as the stale base did, and the third
+/// slot answers as the flagship's does. With no program serving the
+/// remote, the printing stops once the line is asked and does not come
+/// back; with one, every line comes and the printing goes on.
+#[test]
+fn a_burst_over_the_unserved_remote_holds_the_serial_port() {
+    let frame = 6 * SCAN_LINE;
+    let run = |serve: bool| {
+        let net = Net {
+            scan: Some(Scan {
+                base: 0x3000,
+                show_at: frame,
+            }),
+            video: true,
+            serve,
+            ..Net::default()
+        };
+        run_all_in::<0, 0x1_0000_0000>(
+            chatter_program::TEXT,
+            chatter_program::DATA,
+            b"",
+            &[],
+            5 * frame,
+            net,
+            &[],
+        )
+    };
+    let alone = run(false);
+    let asked_at = alone.scan.lines[0].1;
+    let last = *alone.said_at.last().expect("it printed");
+    assert_eq!(alone.scan.lines[0].0, 0x3000, "the line asked");
+    assert!(
+        last > asked_at && last < asked_at + 2_000,
+        "the printing stops once the line is asked, at {asked_at}: \
+         the last byte at {last}"
+    );
+    assert!(
+        alone.ran_for > last + 2 * frame,
+        "and stays stopped for frames: ran to {}",
+        alone.ran_for
+    );
+    assert_eq!(alone.sent.len(), 1, "the remote's one request went out");
+    assert_eq!(alone.scan.stuck.map(|(_, at)| at), Some(0x3000));
+
+    let served = run(true);
+    let last = *served.said_at.last().expect("it printed");
+    assert!(
+        last + SCAN_LINE > served.ran_for,
+        "with the remote served the printing goes on: the last byte at \
+         {last} of {}",
+        served.ran_for
+    );
+    assert_eq!(served.scan.stuck, None, "every line comes");
 }

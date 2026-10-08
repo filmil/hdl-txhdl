@@ -176,6 +176,7 @@ rust_test(
         "//cpu/vreteno/rust:phyregs_program",
         "//cpu/vreteno/rust:sdprobe_program",
         "//cpu/vreteno/rust:hello_program",
+        "//cpu/vreteno/rust:chatter_program",
         "//cpu/vreteno/rust:irq_program",
         "//cpu/vreteno/rust:ddr3bw_program",
         "//cpu/vreteno/rust:cpi_program",
