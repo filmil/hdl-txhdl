@@ -34,6 +34,12 @@
 //! high and the interrupt controller has the request before the image
 //! runs.
 //!
+//! `--until TEXT` stops the run once the console has said `TEXT`, and
+//! the count it gives on standard error, of instructions and in the
+//! timing mode of cycles, is then how long the run took to say it,
+//! within ten thousand instructions (issue 1441). A boot timed to
+//! `/init`'s marker is a boot's time to userspace.
+//!
 //! It stops when the hart halts, or after `--steps` instructions, and
 //! says which, with the program counter, on standard error.
 use std::io::{Read, Write};
@@ -70,6 +76,7 @@ fn main() {
     let mut peer = false;
     let mut timing = false;
     let mut fastboot = None;
+    let mut until: Option<String> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         let mut val =
@@ -84,6 +91,10 @@ fn main() {
             "--eth-peer" => peer = true,
             "--timing" => timing = true,
             "--fastboot-peer" => fastboot = Some(number(&val()) as usize),
+            // Stop once the console has said this, and say how far the
+            // run got, which times a boot to a line of its log (issue
+            // 1441).
+            "--until" => until = Some(val()),
             _ => panic!("unknown argument {a}"),
         }
     }
@@ -140,11 +151,20 @@ fn main() {
             )
         })
     };
-    while ran < steps && m.model.halted.is_none() && !done(&m) {
+    let said = |m: &Machine| {
+        until.as_ref().is_some_and(|t| {
+            let sent = &m.board.0.borrow().uart.sent;
+            sent.windows(t.len()).any(|w| w == t.as_bytes())
+        })
+    };
+    // Finer slices when stopping at a line, so the count is close to
+    // where the line was said.
+    let slice = if until.is_some() { 10_000 } else { 100_000 };
+    while ran < steps && m.model.halted.is_none() && !done(&m) && !said(&m) {
         while let Ok(bytes) = typed.try_recv() {
             m.type_bytes(&bytes);
         }
-        ran += m.run((steps - ran).min(100_000));
+        ran += m.run((steps - ran).min(slice));
         let sent = &m.board.0.borrow().uart.sent;
         if sent.len() > shown {
             out.write_all(&sent[shown..]).ok();
@@ -155,6 +175,12 @@ fn main() {
     let how = match m.model.halted {
         Some(h) => format!("halted ({h:?})"),
         None if done(&m) => "stopped when the download ended".to_string(),
+        None if said(&m) => {
+            format!(
+                "stopped once the console said {:?}",
+                until.as_ref().unwrap()
+            )
+        }
         None => "stopped at the step limit".to_string(),
     };
     eprintln!("\n{how} after {ran} instructions, pc {:#010x}", m.model.pc);
