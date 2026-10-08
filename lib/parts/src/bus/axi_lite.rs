@@ -234,6 +234,10 @@ pub struct LiteBridge<
     pub sent: Reg<Bit>,
     /// A write burst's response so far: its first error, or `Okay`.
     pub wresp: Reg<Resp>,
+    /// The burst was refused, a burst of more than one beat to a range
+    /// the map says takes single beats only: it is answered here, as a
+    /// hole is, but `SlvErr` rather than `DecErr` (issue 1436).
+    pub refused: Reg<Bit>,
 }
 // end{state}
 
@@ -260,6 +264,7 @@ impl<
             sel: Reg::default(),
             sent: Reg::default(),
             wresp: Reg::default(),
+            refused: Reg::default(),
         }
     }
 }
@@ -318,6 +323,9 @@ impl<
             let mut ar_any = Bit::Zero;
             let mut aw_sel = U::<N>::from(0u8);
             let mut aw_any = Bit::Zero;
+            // Whether the range it decoded to takes single beats only.
+            let mut ar_single = Bit::Zero;
+            let mut aw_single = Bit::Zero;
             for i in 0..N {
                 let one = U::<N>::from(1u8) << i;
                 let ar_hit = Bit::from(
@@ -326,14 +334,25 @@ impl<
                 ) & !ar_any;
                 ar_sel = mux(ar_hit, one, ar_sel);
                 ar_any = ar_any | ar_hit;
+                ar_single = ar_single | (ar_hit & Bit::from(M::SINGLE[i]));
                 let aw_hit = Bit::from(
                     (awh.addr.raw() as usize & M::RANGES[i].1)
                         == M::RANGES[i].0,
                 ) & !aw_any;
                 aw_sel = mux(aw_hit, one, aw_sel);
                 aw_any = aw_any | aw_hit;
+                aw_single = aw_single | (aw_hit & Bit::from(M::SINGLE[i]));
             }
-            let new_sel = mux(take_ar, ar_sel, aw_sel);
+            // A burst of more than one beat to such a range is refused:
+            // it goes to no peripheral, as a hole does, and is answered
+            // here at once, so a peripheral that waits long on each
+            // access cannot hold the bridge for a burst's worth of
+            // waits (issue 1436).
+            let ar_refuse = ar_single & Bit::from(arh.len != U::<8>::from(0u8));
+            let aw_refuse = aw_single & Bit::from(awh.len != U::<8>::from(0u8));
+            let refuse = mux(take_ar, ar_refuse, aw_refuse);
+            let new_sel =
+                mux(refuse, U::<N>::from(0u8), mux(take_ar, ar_sel, aw_sel));
             // How far the address moves per beat: a beat's width, or
             // nothing for a fixed burst.
             let size = mux(take_ar, arh.size, awh.size);
@@ -384,12 +403,14 @@ impl<
             // end{requests}
             // begin{answers}
             // The answer to the beat, from that peripheral, or the
-            // bridge's own `DecErr` for a hole, there at once.
+            // bridge's own for a hole, there at once: `DecErr`, or
+            // `SlvErr` for a burst it refused.
+            let own = mux(self.refused.get(), Resp::SlvErr, Resp::DecErr);
             let mut b_off = Bit::One;
-            let mut b_resp = Resp::DecErr;
+            let mut b_resp = own;
             let mut r_off = Bit::One;
             let mut r_data = U::<D>::from(0u8);
-            let mut r_resp = Resp::DecErr;
+            let mut r_resp = own;
             for i in 0..N {
                 let me = cur.bit(i);
                 b_off = mux(me, Bit::from(bs[i].peek().is_some()), b_off);
@@ -445,6 +466,7 @@ impl<
                     sel: new_sel,
                     sent: Bit::Zero,
                     wresp: Resp::Okay,
+                    refused: refuse,
                 },
                 (w_go | ar_go) ? { sent: Bit::One },
                 done ? {
