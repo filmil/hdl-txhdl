@@ -2604,6 +2604,24 @@ take 29. A test wakes the second hart on either side of the cycle a
 write to a word it had cached is answered, and it reads the new word
 every time; without the forgetting it reads the old one for ever.
 
+The first program to use the second hart is the flagship's
+icosahedron built through GL (issue~\#1408). A frame's work on the
+core is its list, built through the GL library, and the list binned
+into Razboj's tile table. On the machine's timing, \code{ico\_split}
+measures a textured frame at 1.73 million cycles for the list and 0.38
+million for the binning, 2.11 million on one hart. With the second
+hart building every list while the first bins them, a frame takes as
+long as its list, and binning from a list in the DDR3 costs 0.86
+million against 0.38 from the data memory. With each hart building
+and binning every other frame in its own memory, a frame takes 1.05
+million: half of one hart's, and under the 1.67 million cycles of a
+frame at 60\,Hz. \code{ico\_hdmi} does the second. Hart 1 draws the
+odd frames into the second framebuffer and bins them into the second
+half of the room; hart 0 does the even ones, and still rings every
+frame in order and moves the scanout. The machine has no contention on
+the DDR3 path, and with both harts storing the stores above took 29
+cycles more, so the board's frame will be somewhat longer.
+
 The cost of a host is its share of the bus when every host is busy.
 For the scanout, a line of 640 words, 2560 bytes, must arrive within
 the 31.8\,$\mu$s of the line before it, about 80\,MB/s. The link
