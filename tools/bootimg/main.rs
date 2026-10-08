@@ -56,10 +56,14 @@ pub const OPENSBI: u32 = 0x4008_0000;
 pub const DTB: u32 = 0x4030_0000;
 /// The kernel, OpenSBI's `FW_JUMP_ADDR`.
 pub const KERNEL: u32 = 0x4040_0000;
-/// What the board's fastboot server takes, its `max-download-size`:
-/// the staging area of 16 MiB less the page `jump.S` runs from
-/// (`zephyr/fastboot/app/src/main.c`, `MAX_DOWNLOAD`). A test reads
-/// both from the server's sources.
+/// The most of a download a boot image may take: 16 MiB less a page.
+/// The board's memory map sets it, not the server: an image is unpacked
+/// at `BASE` and the Ethernet buffers start at `0x4100_0000`, so an
+/// image cannot pass 16 MiB however much the server stages. It must fit
+/// the server's own `max-download-size`, its staging area less the page
+/// `jump.S` runs from (`zephyr/fastboot/app/src/main.c`,
+/// `MAX_DOWNLOAD`), which a test reads from the server's sources; that
+/// is 48 MiB less a page since the stage grew for Doom (#1459).
 pub const MAX_DOWNLOAD: u32 = 0x0100_0000 - 0x1000;
 /// The header stock `fastboot boot` puts in front of a plain file: one
 /// page of a version 0 Android boot image, at the tool's default page
@@ -392,10 +396,12 @@ mod tests {
         assert!(layout(&map(0x2_0000), room + 1).is_err());
     }
 
-    /// `MAX_DOWNLOAD` is what the server's sources make it: the
-    /// staging area's size in the overlay, less `JUMP_PAGE`.
+    /// `MAX_DOWNLOAD` fits what the server's sources make its limit:
+    /// the staging area's size in the overlay, less `JUMP_PAGE`. Not
+    /// equal: the server may stage more than a boot image may take
+    /// (#1459).
     #[test]
-    fn max_download_is_the_servers() {
+    fn max_download_fits_the_servers() {
         let text = |p: &str| {
             let r = std::env::var("TEST_SRCDIR").unwrap();
             std::fs::read_to_string(format!("{r}/_main/{p}"))
@@ -424,7 +430,11 @@ mod tests {
             main.contains("#define MAX_DOWNLOAD (STAGE_SIZE - JUMP_PAGE)"),
             "the server's limit is computed as this test computes it"
         );
-        assert_eq!(MAX_DOWNLOAD, stage - jump);
+        assert!(
+            MAX_DOWNLOAD <= stage - jump,
+            "an image of {MAX_DOWNLOAD} bytes fits the server's {}",
+            stage - jump
+        );
     }
 
     /// The shim's words are the instructions they claim to be: run in
