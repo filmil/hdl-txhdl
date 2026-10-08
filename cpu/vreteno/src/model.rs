@@ -173,6 +173,8 @@ pub struct Model {
     /// Whether the bus refused that load: the answer came back as an
     /// error, and the load traps instead of writing (issue 417).
     pub dev_err: bool,
+    /// The hart's number, which `mhartid` reads (issue 1408).
+    pub hartid: u32,
     pub mtimecmp: u64,
     /// Instructions retired. The core counts the same thing in
     /// `minstret`, and this model counts it by stepping, so the two
@@ -298,6 +300,7 @@ impl Default for Model {
             csr: Csr::default(),
             dev_word: 0,
             dev_err: false,
+            hartid: 0,
             // All ones, as the timer's reset leaves it: a compare of zero
             // beside a count of zero is an interrupt pending from the
             // first cycle (issue 419).
@@ -712,9 +715,10 @@ impl Model {
             // supervisor and user modes; the four
             // machine information registers say that the vendor, the
             // architecture and the implementation are unassigned and
-            // that this is hart zero.
+            // that `mhartid` is the hart's number (issue 1408).
             CSR_MISA => MISA,
-            CSR_MVENDORID | CSR_MARCHID | CSR_MIMPID | CSR_MHARTID => 0,
+            CSR_MVENDORID | CSR_MARCHID | CSR_MIMPID => 0,
+            CSR_MHARTID => self.hartid,
             // The counters are legal here, so that a program reading
             // one traps in neither the core nor the model. What they
             // read is another matter: this model steps on a
