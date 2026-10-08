@@ -1401,8 +1401,11 @@ impl<
             // A refused load retires as a trap: nothing is written, the
             // instruction behind it is squashed, and the fetch restarts
             // at the handler. Its address is what the ALU computed.
-            let wb_fault =
-                wb_here & self.wb_load & self.wb_err & !self.busquiet;
+            let wb_fault = wb_here
+                & self.wb_load
+                & self.wb_err
+                & !self.busquiet
+                & !self.wb_scx;
             let wb_write = wb_here & (wb_rd != 0) & !wb_fault;
             // The fetch stage: the instruction at the program counter,
             // into the instruction register unless the execute stage
@@ -2257,6 +2260,9 @@ impl<
             // nothing else of the core's is out (issue 1408).
             let amo_rd_go =
                 (amo_ph == 4) & !self.f_wait & !self.p_wait & issue.ready();
+            // From when it is to go until its answer, no other read of
+            // the core's goes out, so the answer is its own.
+            let amo_rd_busy = (amo_ph == 4) | (amo_ph == 5);
             let amo_loc_go = amo_go & self.wb_loc;
             let st_go = send_store | (amo_go & !self.wb_loc);
             // A store into the data RAM, and an AMO's store there, write
@@ -2316,7 +2322,7 @@ impl<
                 & !send_load
                 & !send_store
                 & !amo_go
-                & !amo_rd_go
+                & !amo_rd_busy
                 & issue.ready();
             let f_ffill = f_want & vm & f_th & f_tf & !self.f_wait;
             // The instruction cache (issue 1021). A fetch from the data
@@ -2393,7 +2399,7 @@ impl<
                 & !self.dev_wait
                 & !send_load
                 & !st_go
-                & !amo_rd_go
+                & !amo_rd_busy
                 & issue.ready();
             let line_base = ic_pa & U::<32>::from(0xffff_fff0u32);
             // A walk's read goes out when nothing else of the core's is
@@ -2407,7 +2413,7 @@ impl<
                 & !st_go
                 & !f_send
                 & !r_go
-                & !amo_rd_go
+                & !amo_rd_busy
                 & Bit::from(self.stores_out.get() == 0)
                 & issue.ready();
             let p_addr = ptw.head();
@@ -2991,6 +2997,9 @@ impl<
                 ),
                 x_ans ? amo_ph: mux(x_said, U::<3>::from(0u8), U::<3>::from(4u8)),
                 amo_rd_go ? amo_ph: U::<3>::from(5u8),
+                // A read again that the bus refused ends the AMO, which
+                // retires as a refused load does: its error is taken.
+                (amo_ph == 5) & d_resp & resp_bad ? amo_ph: U::<3>::from(0u8),
                 scx_go ? scx_wait: Bit::One,
                 (take_done & scx_wait) ? {
                     scx_wait: Bit::Zero,
@@ -3349,7 +3358,11 @@ impl<
                     // Only a load that went out waits for an answer, and
                     // only it can be refused: one that trapped in
                     // execute went nowhere (issue 1084).
-                    self.wb_load <= send_load | ld_loc | dc_try;
+                    // An exclusive `sc.w`'s result is its answer, so it is
+                    // a load to whatever uses it next: that waits for it
+                    // to retire (issue 1408).
+                    self.wb_load <=
+                        send_load | ld_loc | dc_try | (send_store & is_sc & xd);
                     self.wb_amo <= is_rmw & (send_load | ld_loc);
                     self.wb_x <= is_rmw & send_load & xd;
                     self.wb_scx <= send_store & is_sc & xd;
