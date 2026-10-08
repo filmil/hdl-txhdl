@@ -1442,28 +1442,46 @@ fn depth_units(d: Fx) -> u32 {
 
 /// A triangle's `u q`, `v q` and `q` at its three vertices (#997), with
 /// 32, 32 and 48 bits of fraction, for a texture `2^lw` by `2^lh`: `q` is
-/// the texture's `q` over the clip `w`, scaled so that the largest of the
-/// three is one, and `u q` is `s / q` in texels times that, so that
-/// `(u q) / q` across the window is perspective-correct, as GL's
-/// interpolation of `s / w`, `t / w` and `q / w` is. `None` when a
-/// vertex's texture `q` is not above nought, which leaves it untextured.
+/// the texture's `q` over the clip `w`, scaled by a power of two so that
+/// the largest of the three is at least a half and below one, and `u q`
+/// is `s / q` in texels times that, so that `(u q) / q` across the window
+/// is perspective-correct, as GL's interpolation of `s / w`, `t / w` and
+/// `q / w` is. `None` when a vertex's texture `q` is not above nought,
+/// which leaves it untextured.
+///
+/// Nothing is divided, and nothing is wider than 64 bits (#1433): a
+/// vertex's `1 / w` is taken as the product of the other two vertices'
+/// `w`, which is the same up to the scale the power of two then sets,
+/// and the three products keep their top 31 bits. On the core a division
+/// here is a 128-bit one in software.
 fn uvq(v: [&Vert; 3], lw: u32, lh: u32) -> Option<[(i64, i64, u64); 3]> {
-    let w = v.map(|v| v.clip[3] as i128);
-    let q = v.map(|v| v.tex[3] as i128);
+    let w = v.map(|v| v.clip[3] as i64);
+    let q = v.map(|v| v.tex[3] as i64);
     if q.iter().chain(w.iter()).any(|&x| x <= 0) {
         return None;
     }
-    // The vertex whose q / w is largest.
-    let m = (0..3)
-        .reduce(|a, b| if q[b] * w[a] > q[a] * w[b] { b } else { a })
-        .unwrap_or(0);
-    let div = |n: i128, d: i128| (2 * n + d).div_euclid(2 * d);
+    let o = [w[1] * w[2], w[0] * w[2], w[0] * w[1]];
+    let big = o.iter().copied().max().unwrap_or(1);
+    let g = (64 - big.leading_zeros()).saturating_sub(31);
+    let o = o.map(|o| o >> g);
+    let x = core::array::from_fn::<_, 3, _>(|k| q[k] * o[k]);
+    let top = x.iter().copied().max().unwrap_or(1);
+    // How far right the largest goes to have 48 bits. `s` and `t` have 16
+    // bits of fraction in and 32 out, so they go 16 further, less the
+    // texture's sides.
+    let e = 16 - top.leading_zeros() as i32;
+    let at = |n: i64, by: i32| {
+        if by > 0 {
+            (n + (1 << (by - 1))) >> by
+        } else {
+            n << -by
+        }
+    };
     Some(core::array::from_fn(|k| {
-        let den = w[k] * q[m];
-        let s = (v[k].tex[0] as i128 * (1 << lw) * w[m]) << 32;
-        let t = (v[k].tex[1] as i128 * (1 << lh) * w[m]) << 32;
-        let qq = (q[k] * w[m]) << 48;
-        (div(s, den) as i64, div(t, den) as i64, div(qq, den) as u64)
+        let s = v[k].tex[0] as i64 * o[k];
+        let t = v[k].tex[1] as i64 * o[k];
+        let (bu, bv) = (e + 16 - lw as i32, e + 16 - lh as i32);
+        (at(s, bu), at(t, bv), at(x[k], e) as u64)
     }))
 }
 
