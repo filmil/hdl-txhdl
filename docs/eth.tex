@@ -186,6 +186,11 @@ frame takes longer than the next one takes to arrive.
 With room for one frame, the second of every such pair was lost: a
 server whose network card sends a window of two as one burst lost
 about four frames in ten, and a download crawled on the retransmits.
+The store is a block RAM, read a byte ahead into a register,
+\code{rq}, at one address (issue~1421).
+A read straight onto the channel is not a block RAM's, whose read is a
+register, and on the flagship it had left the store in LUT RAM: about
+384 LUTs for one frame, and 768 for two.
 
 Counter \code{dropped} records discarded frames across three distinct
 error conditions. First, frames failing the CRC residue check are dropped
