@@ -692,6 +692,21 @@ posted, so \code{aq} and \code{rl} need nothing more. The cost is
 time, not clock: an AMO on the data memory takes about forty cycles,
 most of them the wait for the previous one's store.
 
+On the board, where the arbiter keeps exclusive pairs and a monitor
+answers them (issue~\#1408), the A instructions on the DDR3 are such
+pairs, which the core's \code{EXCL} parameter turns on; everywhere
+else it is zero and they are as above. \code{lr.w} and an AMO's load
+go out with \code{lock} set, and so do \code{sc.w} and the AMO's store.
+An exclusive store waits in writeback for its answer: \code{sc.w}'s
+result is that answer, zero for \code{ExOkay} and one otherwise, and an
+AMO whose store the monitor failed reads its word again from writeback
+and computes again, until a store holds. The arbiter keeps every other
+host's writes out of a pair, so a second try is rare and a third rarer;
+\code{//cpu/vreteno:board\_test} counts them, with the other host
+writing into the AMO's line over a sweep of offsets, and checks that no
+add is lost and no hold runs out. A \code{sc.w} whose reservation the
+core already knows is gone fails in the core and never reaches the bus.
+
 User and supervisor mode (issue~1012) are a two-bit privilege register
 and the supervisor's registers beside the machine's, and they are
 built so that a trap's destination is decided the way its cause is:
