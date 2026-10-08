@@ -354,6 +354,12 @@ pub struct Raster<
     pub trc: Reg<U<28>>,
     pub tpu: Reg<U<96>>,
     pub tpv: Reg<U<96>>,
+    /// Each plane's two halves times the reciprocal, low and high,
+    /// before they are added.
+    pub tpul: Reg<U<64>>,
+    pub tpuh: Reg<U<64>>,
+    pub tpvl: Reg<U<64>>,
+    pub tpvh: Reg<U<64>>,
     pub tiu: Reg<U<32>>,
     pub tiv: Reg<U<32>>,
     pub taddr: Reg<U<32>>,
@@ -1597,16 +1603,29 @@ impl<
                                         self.trc.set(tre.slice::<40, 28>());
                                         DefaultClock::rising().await;
                                         // A signed plane times the reciprocal:
-                                        // the product of its bits as unsigned,
-                                        // and a turn later less the reciprocal
-                                        // where the sign bit stood for 2^64
-                                        // rather than -2^64. One turn held both
-                                        // and missed the clock.
-                                        let r96 = self.trc.get().resize::<96>();
-                                        let u96 = self.tuc.get().resize::<96>();
-                                        let v96 = self.tvc.get().resize::<96>();
-                                        self.tpu.set(u96.mul::<96>(r96));
-                                        self.tpv.set(v96.mul::<96>(r96));
+                                        // each 32-bit half of its bits times
+                                        // it, as unsigned; and a turn later the
+                                        // two added, less the reciprocal where
+                                        // the sign bit stood for 2^64 rather
+                                        // than -2^64. One product of 64 bits in
+                                        // a turn missed the clock.
+                                        let r64 = self.trc.get().resize::<64>();
+                                        let tuv = self.tuc.get();
+                                        let tvv = self.tvc.get();
+                                        let ul32 = tuv.slice::<0, 32>();
+                                        let uh32 = tuv.slice::<32, 32>();
+                                        let vl32 = tvv.slice::<0, 32>();
+                                        let vh32 = tvv.slice::<32, 32>();
+                                        let ul = ul32.resize::<64>();
+                                        let uh = uh32.resize::<64>();
+                                        let vl = vl32.resize::<64>();
+                                        let vh = vh32.resize::<64>();
+                                        with!(self <= {
+                                            tpul: ul.mul::<64>(r64),
+                                            tpuh: uh.mul::<64>(r64),
+                                            tpvl: vl.mul::<64>(r64),
+                                            tpvh: vh.mul::<64>(r64),
+                                        });
                                         DefaultClock::rising().await;
                                         let rcs = self.trc.get().resize::<96>();
                                         let rc = rcs << 64usize;
@@ -1615,8 +1634,18 @@ impl<
                                         let sv = self.tvc.get().bit(63);
                                         let cu = mux(su, rc, n96);
                                         let cv = mux(sv, rc, n96);
-                                        self.tpu.set(self.tpu.get() - cu);
-                                        self.tpv.set(self.tpv.get() - cv);
+                                        let pul = self.tpul.get();
+                                        let puh = self.tpuh.get();
+                                        let pvl = self.tpvl.get();
+                                        let pvh = self.tpvh.get();
+                                        let pu96 = pul.resize::<96>() - cu;
+                                        let pv96 = pvl.resize::<96>() - cv;
+                                        let puh96 = puh.resize::<96>();
+                                        let pvh96 = pvh.resize::<96>();
+                                        let ph96 = puh96 << 32usize;
+                                        let pw96 = pvh96 << 32usize;
+                                        self.tpu.set(pu96 + ph96);
+                                        self.tpv.set(pv96 + pw96);
                                         DefaultClock::rising().await;
                                         let tnz = self.tn.get();
                                         let tsh7 = U::<7>::from(64u8) - tnz;
