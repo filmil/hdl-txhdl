@@ -888,7 +888,7 @@ for an address that is not its own, writes the lanes a write covers
 into its word, counts from the reset one a cycle, and raises its
 line while the count has reached the compare; the reset puts the
 compare at all ones, since a compare of zero beside a count of zero
-is a line raised from the first cycle (issue 419). Its five words are
+is a line raised from the first cycle (issue 419). Its words are
 declared once, with \code{regmap!}, which writes the read mux, the
 write enables and the offsets the model and the tests address by; a
 word the map does not name reads zero and takes no write (issues 668
@@ -1513,11 +1513,16 @@ requirements that an operating system port asks of a platform, providing
 \toprule
 Offset & Name & What it is \\
 \midrule
-\code{0x0000} & \code{msip} & bit 0 raises the software interrupt \\
-\code{0x4000} & \code{mtimecmp} & the compare, low half \\
+\code{0x0000} & \code{msip} & bit 0 raises hart 0's software interrupt \\
+\code{0x0004} & & the same for hart 1 \\
+\code{0x4000} & \code{mtimecmp} & hart 0's compare, low half \\
 \code{0x4004} & & its high half \\
+\code{0x4008} & & hart 1's compare, low half \\
+\code{0x400c} & & its high half \\
 \code{0xbff8} & \code{mtime} & the count, low half \\
 \code{0xbffc} & & its high half \\
+\code{0xc000} & mailbox & where hart 1 starts \\
+\code{0xc004} & & what it starts with \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -1525,8 +1530,16 @@ Offset & Name & What it is \\
 The window is 64~KiB, which those offsets need, so the controller has
 a range of its own in the address map rather than the nibble the timer
 had. The offsets are far apart, so the decode is on the offset and not
-on two bits of it, and a word in the window that is none of the five
+on two bits of it, and a word in the window that is none of these
 reads as zero.
+
+Hart 1 has a software interrupt and a compare of its own, at the next
+offsets, as every RISC-V platform with more than one hart places them,
+and a timer line and a software line of its own; the count is the two
+harts' one. The mailbox is two words a program writes and the other
+hart reads: hart 0 puts an address and an argument there and raises
+hart 1's software interrupt, which wakes it to start at that address
+(issue~\#1408). The board with one hart leaves hart 1's lines unread.
 
 \code{msip} is a register and a line: a program writes one to raise
 its own interrupt and zero to clear it, and the line is the register
