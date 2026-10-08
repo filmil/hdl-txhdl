@@ -102,7 +102,21 @@ fn lockstep_with(
     reset_at: Option<u64>,
     seip: Option<fn(u64) -> bool>,
 ) -> Model {
-    let mut hart = Hart::<2>::with(program);
+    lockstep_hart::<0>(program, data, what, seed, dbg, reset_at, seip)
+}
+
+/// The same, on the hart numbered `HID`, against a model that says it is
+/// that hart (issue 1408).
+fn lockstep_hart<const HID: usize>(
+    program: &[u32],
+    data: &[u32],
+    what: &str,
+    seed: Option<u64>,
+    dbg: Option<&DebugPlan>,
+    reset_at: Option<u64>,
+    seip: Option<fn(u64) -> bool>,
+) -> Model {
+    let mut hart = Hart::<2, 16384, 1, HID>::with(program);
     let cpu = &hart.core;
     let (pc, ir_pc, valid, regs, halted) =
         (cpu.pc, cpu.ir_pc, cpu.valid, cpu.regs.clone(), cpu.halted);
@@ -322,7 +336,10 @@ fn lockstep_with(
     rst_out.set(Bit::One);
     sim.cycle();
     rst_out.set(Bit::Zero);
-    let mut model = Model::default();
+    let mut model = Model {
+        hartid: HID as u32,
+        ..Model::default()
+    };
     for (i, &w) in data.iter().enumerate() {
         model.mem[i] = w;
     }
@@ -785,7 +802,7 @@ fn a_program_reads_what_the_machine_says_it_is() {
     // compares every cycle rather than only at the end.
     let m = lockstep(&machine_info(), &[], "machine info", None, None, None);
     assert_eq!(m.halted, Some(Halt::Break));
-    assert_eq!(m.mem[0], 0, "mhartid, this machine's one hart");
+    assert_eq!(m.mem[0], 0, "mhartid, hart zero");
     assert_eq!(m.mem[1], MISA, "misa: RV32IMAC");
     assert_eq!(
         m.mem[2], 1,
@@ -800,6 +817,25 @@ fn a_program_reads_what_the_machine_says_it_is() {
     for (bit, letter) in [(5, 'F'), (3, 'D')] {
         assert!(m.mem[1] & (1 << bit) == 0, "misa should not have {letter}");
     }
+}
+
+/// The second hart (issue 1408): the same program on a core built as
+/// hart one reads one from `mhartid`, and the model, told it is hart one,
+/// agrees every cycle.
+#[test]
+fn the_second_hart_reads_its_number() {
+    let m = lockstep_hart::<1>(
+        &machine_info(),
+        &[],
+        "machine info, hart one",
+        None,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.mem[0], 1, "mhartid, hart one");
+    assert_eq!(m.mem[1], MISA, "misa, as hart zero's");
 }
 
 #[test]
