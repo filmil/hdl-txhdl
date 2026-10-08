@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+# The Sail reference model's build file, for `@sail_riscv` in
+# MODULE.bazel (issue 1442).
+exports_files(["BUILD.sail"])

@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# Formats a Sail signature as the expected results an architectural
+# test includes (issue 1442; from vreteno-conformance).
+rust_binary(
+    name = "sigfmt",
+    srcs = ["main.rs"],
+    edition = "2021",
+)
+
+rust_test(
+    name = "sigfmt_test",
+    size = "small",
+    crate = ":sigfmt",
+)

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+# The ACT4 configuration of the core (issue 1442): the macros the tests
+# leave to a device, what the core implements, the memory map of each
+# placement, and the Sail configuration that describes the same machine.
+exports_files([
+    "link.ld",
+    "link_uncached.ld",
+    "rvmodel_macros.h",
+    "rvtest_config.h",
+    "sail.json",
+])

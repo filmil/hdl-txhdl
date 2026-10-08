@@ -1636,6 +1636,66 @@ fn user_and_supervisor_modes_trap_where_they_are_sent() {
     assert_eq!([m.x[13], m.x[14]], [0, 0], "mstatush holds nothing");
 }
 
+/// The counters that count nothing here (issue 1460): machine mode
+/// writes ones to the first and the last of `mhpmevent`, `mhpmcounter`
+/// and its upper halves, and to `mcountinhibit`, then reads each back
+/// as zero, with the user's copies, and none of it traps. User mode
+/// then reads `hpmcounter3`, whose bit in `mcounteren` stays zero, and
+/// that is an illegal instruction; its `ecall` ends the run.
+#[test]
+fn the_counters_that_count_nothing_read_zero() {
+    use vreteno32::isa::*;
+    use vreteno32::program::Asm;
+    let mut a = Asm::default();
+    let (mh, u_code, done) = (a.label(), a.label(), a.label());
+    a.wide(addi(8, 0, 0)); // x8 counts the traps
+    a.abs(mh, |h| addi(31, 0, h as i32));
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    a.wide(addi(5, 0, -1));
+    let csrs = [0x320, 0x323, 0x33f, 0xb03, 0xb1f, 0xb83, 0xb9f];
+    for (i, csr) in csrs.iter().enumerate() {
+        a.wide(csrrw(0, *csr, 5));
+        a.wide(csrrs(10 + i as u32, *csr, 0));
+    }
+    a.wide(csrrs(17, 0xc03, 0));
+    a.wide(csrrs(18, 0xc9f, 0));
+    a.wide(csrrwi(0, CSR_MCOUNTEREN, 7)); // every bit that holds anything
+    a.wide(csrrw(0, CSR_MSTATUS, 0)); // MPP = user
+    a.abs(u_code, |u| addi(31, 0, u as i32));
+    a.wide(csrrw(0, CSR_MEPC, 31));
+    a.wide(mret());
+    // User mode.
+    a.place(u_code);
+    a.wide(addi(19, 0, 7));
+    a.wide(csrrs(19, 0xc03, 0)); // illegal: x19 keeps its 7
+    a.wide(ecall());
+    // Never reached.
+    a.wide(halt());
+    // Machine mode's handler: an ecall ends the run, anything else is
+    // counted and stepped past.
+    a.align();
+    a.place(mh);
+    a.wide(csrrs(21, CSR_MCAUSE, 0));
+    a.wide(addi(22, 0, 8));
+    a.to(done, |o| beq(21, 22, o));
+    a.wide(addi(8, 8, 1));
+    a.wide(csrrs(24, CSR_MEPC, 0));
+    a.wide(addi(24, 24, 4));
+    a.wide(csrrw(0, CSR_MEPC, 24));
+    a.wide(mret());
+    a.place(done);
+    a.wide(halt());
+    let m = lockstep(&a.words(), &[], "hpm", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[21], 8, "the run ends on user mode's ecall");
+    assert_eq!(m.x[8], 1, "one trap: hpmcounter3 from user mode");
+    for (i, csr) in csrs.iter().enumerate() {
+        assert_eq!(m.x[10 + i], 0, "CSR {csr:#x} reads zero");
+    }
+    assert_eq!([m.x[17], m.x[18]], [0, 0], "the user's copies, read in M");
+    assert_eq!(m.x[19], 7, "the illegal read wrote nothing");
+}
+
 /// mstatus.TVM, TW and TSR (issue 1347): machine mode sets all three
 /// with MPP, reads mstatus back, reads satp itself, which TVM leaves
 /// legal in machine mode, and returns into supervisor mode. There a

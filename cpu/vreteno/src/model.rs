@@ -692,7 +692,31 @@ impl Model {
                 return false;
             }
         }
+        // `hpmcounter3` to `hpmcounter31` and their upper halves: their
+        // bits in `mcounteren` are zero for good, so below machine mode
+        // they are illegal (issue 1460).
+        if matches!(addr, 0xc03..=0xc1f | 0xc83..=0xc9f) && self.prv < 3 {
+            return false;
+        }
         true
+    }
+
+    /// Whether a CSR is one of the counters that count nothing here,
+    /// which the privileged specification has a machine-mode hart hold
+    /// all the same: `mcountinhibit`, `mhpmevent3` to `mhpmevent31`,
+    /// `mhpmcounter3` to `mhpmcounter31` with their upper halves, and
+    /// the user's copies. Each reads as zero and a write changes
+    /// nothing (issue 1460).
+    fn hpm_zero(addr: u32) -> bool {
+        matches!(
+            addr,
+            0x320
+                | 0x323..=0x33f
+                | 0xb03..=0xb1f
+                | 0xb83..=0xb9f
+                | 0xc03..=0xc1f
+                | 0xc83..=0xc9f
+        )
     }
 
     fn csr_read(&self, addr: u32) -> Option<u32> {
@@ -762,6 +786,7 @@ impl Model {
             CSR_TIMEH => (self.time >> 32) as u32,
             CSR_INSTRET => self.minstret as u32,
             CSR_INSTRETH => (self.minstret >> 32) as u32,
+            a if Self::hpm_zero(a) => 0,
             _ => return None,
         })
     }

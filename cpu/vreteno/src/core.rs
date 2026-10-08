@@ -640,6 +640,13 @@ fn csr_known(f12: U<12>) -> Bit {
         | 0x100 | 0x104 | 0x105 | 0x106 | 0x140 | 0x141 | 0x142 | 0x143
         | 0x144 | 0x180 | 0xc00 | 0xc01 | 0xc02 | 0xc80 | 0xc81
         | 0xc82 | 0x30a | 0x31a | 0x10a => Bit::One,
+        // The counters that count nothing here, which the privileged
+        // specification has a hart hold all the same, each reading as
+        // zero (issue 1460): `mcountinhibit`, `mhpmevent3` to `31`,
+        // `mhpmcounter3` to `31` and their upper halves, and the
+        // user's copies.
+        0x320 | 0x323..=0x33f | 0xb03..=0xb1f | 0xb83..=0xb9f
+        | 0xc03..=0xc1f | 0xc83..=0xc9f => Bit::One,
         _ => Bit::Zero,
     })
 }
@@ -1859,10 +1866,17 @@ impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize> Unit
                 & (f12.slice::<0, 2>() != 3);
             let cen = self.counteren.get();
             let ctr_i = f12.slice::<0, 2>();
-            let ctr_ok = !is_ctr
+            // `hpmcounter3` to `31` and their upper halves: their bits
+            // in `mcounteren` are zero for good, so only machine mode
+            // reaches them (issue 1460).
+            let is_hpm = (f12.slice::<8, 4>() == 0xc)
+                & (f12.slice::<5, 2>() == 0)
+                & (f12.slice::<0, 5>() >= 3);
+            let ctr_ok = (!is_ctr
                 | (((prv == 3) | bit_of(cen.zext::<32>(), ctr_i.zext::<5>()))
                     & ((prv != 0)
-                        | bit_of(cen.zext::<32>(), ctr_i.zext::<5>() + 3)));
+                        | bit_of(cen.zext::<32>(), ctr_i.zext::<5>() + 3))))
+                & (!is_hpm | (prv == 3));
             let priv_ok = (prv >= f12.slice::<8, 2>()) & ctr_ok;
             // In supervisor mode, `mstatus.TVM` makes `satp` and
             // `sfence.vma` illegal, `TW` `wfi`, and `TSR` `sret`, so that
