@@ -38,7 +38,7 @@ A later issue means the entry point is accepted from the start but does what tha
 | Viewport | `glViewport`, `glDepthRangex` | Now; the depth range places a vertex's window depth, from #1273 |
 | Matrices | `glMatrixMode`, `glLoadIdentity`, `glLoadMatrixx`, `glMultMatrixx`, `glPushMatrix`, `glPopMatrix`, `glTranslatex`, `glRotatex`, `glScalex`, `glFrustumx`, `glOrthox` | Now |
 | Vertex arrays | `glVertexPointer`, `glColorPointer`, `glNormalPointer`, `glEnableClientState`, `glDisableClientState`, `glDrawArrays`, `glDrawElements` | Now, for points, lines, line strips and loops, triangles, strips and fans |
-| Buffer objects | `glGenBuffers`, `glBindBuffer`, `glBufferData`, `glBufferSubData`, `glDeleteBuffers` | Now; they are core in 1.1, and here they are memory the library owns |
+| Buffer objects | `glGenBuffers`, `glBindBuffer`, `glBufferData`, `glBufferSubData`, `glDeleteBuffers`, `glIsBuffer`, `glGetBufferParameteriv` | Now, from #1488; they are core in 1.1, and their stores live in room the machine gives at `eglMakeCurrent` |
 | Current values | `glColor4x`, `glColor4ub`, `glNormal3x` | Now |
 | Shading and faces | `glShadeModel`, `glFrontFace`, `glCullFace` | Now |
 | Lighting | `glLightx`, `glLightxv`, `glLightModelx`, `glLightModelxv`, `glMaterialx`, `glMaterialxv` | Now |
@@ -278,13 +278,16 @@ Each step is a pull request, checked before the next.
    The cycles on the board wait for a board session.
 6. **The C ABI.**
    The user chose Rust inside with C at the edge (section 9), and this is the edge, issue 1224, which EGL (issue 996) needs.
-   `gles/capi/lib.rs` has `extern "C"` functions with the names and types of Khronos's `GLES/gl.h` for the 64 entry points the library implements, over a current context and its client arrays.
+   `gles/capi/lib.rs` has `extern "C"` functions with the names and types of Khronos's `GLES/gl.h` for the entry points the library implements, over a current context, its client arrays and its buffer objects.
    The client arrays are read a vertex at a time, in the types Common-Lite allows, through `Gl::draw_vertices`, so nothing is copied or allocated.
+   Buffer objects are the C API's too (#1488): up to 64 names, each a store in room the machine gives at `eglMakeCurrent` through `Machine::buffers`, as it gives the textures', handed out in order and never given back; a machine that gives none leaves `glBufferData` failing with `GL_OUT_OF_MEMORY`, and the board's gives none yet, as it gives no textures.
+   An array given while a buffer is bound to `GL_ARRAY_BUFFER` reads that buffer's store, its pointer an offset into it, and `glDrawElements` reads its indices from the buffer bound to `GL_ELEMENT_ARRAY_BUFFER` the same way; binding a name not yet in use makes an object of it, and deleting one unbinds it everywhere, as GL ES 1.1 says.
    `GLES/gl.h`, `GLES/glplatform.h` and `KHR/khrplatform.h` are not copied into the tree: `MODULE.bazel` fetches them from Khronos's OpenGL-Registry and EGL-Registry at pinned commits, by their sha256, and `//third_party/khronos:gles1` lays them out for `#include <GLES/gl.h>`.
-   The other 81 entry points gl.h declares, the floating-point ones among them, are C that `gles/capi/stubs.sh` writes from gl.h itself, leaving out every name `lib.rs` defines; each sets `GL_INVALID_OPERATION`, so every GL ES 1.1 program links and is told what it asked for is not there.
+   The other entry points gl.h declares, the floating-point ones among them, are C that `gles/capi/stubs.sh` writes from gl.h itself, leaving out every name `lib.rs` defines; each sets `GL_INVALID_OPERATION`, so every GL ES 1.1 program links and is told what it asked for is not there.
    `glGetString(GL_VERSION)` says "OpenGL ES-CL 1.1 TxHDL, Common-Lite, one texture unit, not conformant", which answers the last question of section 11 for now.
    It departs from the plan in one place: making a context current is EGL's, so until issue 996 lands `gles_make_current` does it over a frame its caller owns, and `glFlush` and `glFinish` leave the frame for EGL to hand to Razboj.
    `//gles:capi_test` draws one scene in C through `:gles_c` and through the Rust API, and holds the two frames to each other word for word, with what an unimplemented entry point and `glGetString` say.
+   It then draws the quad again in C from a vertex buffer, its colours at an offset into the same store, and an element buffer, against the same quad drawn from Rust's arrays.
 7. **EGL, in the model.**
    Issue 996: `gles/egl/lib.rs` has Khronos's `EGL/egl.h` calls a GL ES 1.1 program makes, as `extern "C"` functions over the C entry points, Rust inside as the library is.
    There is one display, one configuration and one window of 640 by 480, double buffered in Razboj's framebuffer at rows 0 and 512, as issue 986's icosahedron is.
