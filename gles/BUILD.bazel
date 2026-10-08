@@ -15,6 +15,7 @@ rust_library(
     srcs = [
         "src/emit.rs",
         "src/fixed.rs",
+        "src/get.rs",
         "src/gl.rs",
         "src/lib.rs",
         "src/light.rs",

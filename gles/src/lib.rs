@@ -27,6 +27,7 @@
 
 pub mod emit;
 pub mod fixed;
+pub mod get;
 pub mod gl;
 pub mod light;
 pub mod matrix;
@@ -210,6 +211,31 @@ impl<'a> Gl<'a> {
         }
     }
 
+    /// `glGetIntegerv` (#1484): `pname`'s values as integers into `out`,
+    /// as many as it has; `GL_INVALID_ENUM` for a name it does not know.
+    pub fn get_integer(&mut self, pname: u32, out: &mut [i32]) {
+        match self.get(pname) {
+            Some(g) => g.integers(out),
+            None => self.fail(gl::INVALID_ENUM),
+        }
+    }
+
+    /// `glGetFixedv` (#1484), the same in 16.16.
+    pub fn get_fixed(&mut self, pname: u32, out: &mut [Fx]) {
+        match self.get(pname) {
+            Some(g) => g.fixed(out),
+            None => self.fail(gl::INVALID_ENUM),
+        }
+    }
+
+    /// `glGetBooleanv` (#1484), the same as booleans.
+    pub fn get_boolean(&mut self, pname: u32, out: &mut [bool]) {
+        match self.get(pname) {
+            Some(g) => g.booleans(out),
+            None => self.fail(gl::INVALID_ENUM),
+        }
+    }
+
     /// `glGetError`: the first error since the last call, then none.
     pub fn get_error(&mut self) -> u32 {
         core::mem::replace(&mut self.error, gl::NO_ERROR)
@@ -366,7 +392,13 @@ impl<'a> Gl<'a> {
     }
 
     pub fn is_enabled(&self, cap: u32) -> bool {
-        match cap {
+        self.enabled(cap).unwrap_or(false)
+    }
+
+    /// Whether `cap` is on, or `None` for a switch GL ES 1.1 does not have
+    /// or this library does not keep.
+    pub(crate) fn enabled(&self, cap: u32) -> Option<bool> {
+        Some(match cap {
             gl::CULL_FACE => self.cull_on,
             gl::CLIP_PLANE0 => self.plane_on,
             gl::LIGHTING => self.lighting,
@@ -382,8 +414,8 @@ impl<'a> Gl<'a> {
             {
                 self.lights[(l - gl::LIGHT0) as usize].on
             }
-            _ => false,
-        }
+            _ => return None,
+        })
     }
 
     pub fn front_face(&mut self, mode: u32) {

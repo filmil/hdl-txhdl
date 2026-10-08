@@ -280,8 +280,114 @@ pub extern "C" fn glIsEnabled(cap: u32) -> u8 {
         VERTEX_ARRAY => c.arrays.vertex.on as u8,
         COLOR_ARRAY => c.arrays.colour.on as u8,
         NORMAL_ARRAY => c.arrays.normal.on as u8,
+        gl::TEXTURE_COORD_ARRAY => c.arrays.texcoord.on as u8,
         _ => c.gl.is_enabled(cap) as u8,
     })
+}
+
+/// The client arrays' state, which the C API keeps rather than the
+/// library (#1484): each array's switch, and its size, type and stride as
+/// given, by GL ES 1.1's names for them; `None` for any other name.
+fn array_state(a: &Arrays, pname: u32) -> Option<i64> {
+    let size = |x: &Array| x.size as i64;
+    let kind = |x: &Array| x.kind as i64;
+    let stride = |x: &Array| x.stride as i64;
+    Some(match pname {
+        VERTEX_ARRAY => a.vertex.on as i64,
+        NORMAL_ARRAY => a.normal.on as i64,
+        COLOR_ARRAY => a.colour.on as i64,
+        gl::TEXTURE_COORD_ARRAY => a.texcoord.on as i64,
+        0x807A => size(&a.vertex),
+        0x807B => kind(&a.vertex),
+        0x807C => stride(&a.vertex),
+        0x807E => kind(&a.normal),
+        0x807F => stride(&a.normal),
+        0x8081 => size(&a.colour),
+        0x8082 => kind(&a.colour),
+        0x8083 => stride(&a.colour),
+        0x8088 => size(&a.texcoord),
+        0x8089 => kind(&a.texcoord),
+        0x808A => stride(&a.texcoord),
+        // GL_CLIENT_ACTIVE_TEXTURE: the one unit's.
+        0x84E1 => 0x84C0,
+        _ => return None,
+    })
+}
+
+/// A query (#1484): the client arrays' own state, or the library's.
+/// `put` writes the values; an unknown name is `GL_INVALID_ENUM`.
+unsafe fn query(pname: u32, put: impl FnOnce(&gles::get::Got)) {
+    let Some(c) = current() else {
+        return;
+    };
+    if let Some(v) = array_state(&c.arrays, pname) {
+        let kind = gles::get::Kind::Integer;
+        let mut values = [0i64; 16];
+        values[0] = v;
+        return put(&gles::get::Got {
+            kind,
+            values,
+            len: 1,
+        });
+    }
+    match c.gl.get(pname) {
+        Some(g) => put(&g),
+        None => c.gl.record_error(gl::INVALID_ENUM),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn glGetIntegerv(pname: u32, out: *mut i32) {
+    if out.is_null() {
+        return;
+    }
+    query(pname, |g| {
+        g.integers(core::slice::from_raw_parts_mut(out, g.len))
+    });
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn glGetFixedv(pname: u32, out: *mut Fx) {
+    if out.is_null() {
+        return;
+    }
+    query(pname, |g| {
+        g.fixed(core::slice::from_raw_parts_mut(out, g.len))
+    });
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn glGetBooleanv(pname: u32, out: *mut u8) {
+    if out.is_null() {
+        return;
+    }
+    query(pname, |g| {
+        let mut b = [false; 16];
+        g.booleans(&mut b[..g.len]);
+        for (k, &v) in b[..g.len].iter().enumerate() {
+            *out.add(k) = v as u8;
+        }
+    });
+}
+
+/// `glGetPointerv` (#1484): where each client array points, as given.
+#[no_mangle]
+pub unsafe extern "C" fn glGetPointerv(pname: u32, out: *mut *mut c_void) {
+    let Some(c) = current() else {
+        return;
+    };
+    if out.is_null() {
+        return;
+    }
+    let a = &c.arrays;
+    let at = match pname {
+        0x808E => a.vertex.at,
+        0x808F => a.normal.at,
+        0x8090 => a.colour.at,
+        0x8092 => a.texcoord.at,
+        _ => return c.gl.record_error(gl::INVALID_ENUM),
+    };
+    *out = at as *mut c_void;
 }
 
 #[no_mangle]
