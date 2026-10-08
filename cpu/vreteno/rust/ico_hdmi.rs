@@ -65,6 +65,8 @@
 #![no_main]
 
 #[cfg(gl)]
+// Untextured, the texture's room is not used.
+#[cfg_attr(not(tex), allow(dead_code))]
 mod ico_gl;
 // Through GL the hand-written list is not drawn, only its solid and
 // its rectangle are used.
@@ -133,45 +135,82 @@ fn draw(list: &[[u32; WORDS]], n: usize) {
 }
 
 /// The slots of entries a binned frame may take at the list, past its
-/// tile table: a megabyte of the list's four.
+/// tile table: a megabyte of the list's four, in two halves, one for the
+/// frame Razboj draws and one for the frame the core builds (#1433).
 #[cfg(gl)]
 const ROOM: usize = 16384;
+#[cfg(gl)]
+const HALF: usize = ROOM / 2;
+
+/// A frame binned and not yet rung: its tiles' records and how many.
+#[cfg(gl)]
+struct Binned {
+    tiles: [[u32; razboj_tile::TILE_WORDS]; razboj_tile::MAX_TILES],
+    count: usize,
+    last: usize,
+}
 
 /// The first `n` slots of `list`, a frame that tests depth on a screen
-/// `sh` rows high, binned into a tile table where the rasteriser reads
-/// one (#1273): the entries straight to `ENTRIES_AT` past the list, the
-/// records at it, then the count with the bit that says it is a tile
-/// table. Razboj tests depth only in a tile table.
+/// `sh` rows high, binned into the half `half` of the entries' room past
+/// the list (#1273), and its records kept to be written when the frame
+/// before is drawn: each record's first entry is counted from the room's
+/// start, so it is moved by the half's place. Razboj reads nothing of
+/// this half while it draws from the other.
 #[cfg(gl)]
-fn draw_tiled(list: &[[u32; WORDS]], n: usize, sh: u32) {
-    use razboj_tile::{bin, ENTRIES_AT, MAX_TILES, TILED, TILE_WORDS};
-    while Razboj::count() != 0 {}
-    let at = Razboj::LIST as usize + ENTRIES_AT;
-    // SAFETY: the list's memory is Razboj's, and it reads none of it
-    // until it is rung.
+fn bin_tiled(list: &[[u32; WORDS]], n: usize, sh: u32, half: usize) -> Binned {
+    use razboj_tile::{bin, ENTRIES_AT, MAX_TILES, TILE_WORDS};
+    let off = half * HALF;
+    let at = Razboj::LIST as usize + ENTRIES_AT + off * WORDS * 4;
+    // SAFETY: the list's memory is Razboj's, and it reads none of this
+    // half until it is rung with it.
     let room = unsafe {
-        core::slice::from_raw_parts_mut(at as *mut [u32; WORDS], ROOM)
+        core::slice::from_raw_parts_mut(at as *mut [u32; WORDS], HALF)
     };
-    let mut tiles = [[0u32; TILE_WORDS]; MAX_TILES];
-    let Ok(b) = bin(&list[..n], ico_list::W as u32, sh, room, &mut tiles)
+    let mut b = Binned {
+        tiles: [[0u32; TILE_WORDS]; MAX_TILES],
+        count: 0,
+        last: at,
+    };
+    let Ok(r) = bin(&list[..n], ico_list::W as u32, sh, room, &mut b.tiles)
     else {
         Uart::say(b"ico bin refused\n");
-        return;
+        return b;
     };
+    let mut t = 0;
+    while t < r.tiles {
+        b.tiles[t][0] += off as u32;
+        t += 1;
+    }
+    b.count = r.tiles;
+    b.last = at + r.entries * WORDS * 4 - 4;
+    b
+}
+
+/// A binned frame's records at the list, then the count with the bit
+/// that says it is a tile table. The last entry is read back first, so
+/// that the posted stores have landed before the count says it is there.
+/// It does not wait for the drawing.
+#[cfg(gl)]
+fn ring_tiled(b: &Binned) {
+    use razboj_tile::{TILED, TILE_WORDS};
     let base = Razboj::LIST as *mut u32;
     let mut t = 0;
-    while t < b.tiles {
+    while t < b.count {
         let mut w = 0;
         while w < TILE_WORDS {
-            let v = tiles[t][w];
+            let v = b.tiles[t][w];
             unsafe { write_volatile(base.add(t * TILE_WORDS + w), v) };
             w += 1;
         }
         t += 1;
     }
-    let last = (at + b.entries * WORDS * 4 - 4) as *const u32;
-    let _ = unsafe { read_volatile(last) };
-    Razboj::ring(b.tiles as u32 | TILED);
+    let _ = unsafe { read_volatile(b.last as *const u32) };
+    Razboj::ring(b.count as u32 | TILED);
+}
+
+/// Wait for Razboj to have drawn what it was rung with.
+#[cfg(gl)]
+fn wait_drawn() {
     while Razboj::count() != 0 || !Razboj::idle() {}
 }
 
@@ -242,16 +281,48 @@ fn main() -> ! {
     let (mut ay, mut ax) = (0i32, 0i32);
     let mut frames = 0u32;
     let mut which = 1usize;
+    // By hand the frame is serial: its list, its drawing, its showing.
+    #[cfg(not(gl))]
     loop {
         let start = mcycle();
         let dy = which as i32 * SECOND;
-        #[cfg(not(gl))]
         let (n, filled) =
             ico_list::frame(&solid, ay, ax, dy, last[which], &mut list);
-        #[cfg(all(gl, not(tex)))]
+        last[which] = filled;
+        let listed = mcycle();
+        draw(&list, n);
+        let drawn = mcycle();
+        Scan::base(Razboj::FRAME + (dy as u32) * Scan::STRIDE);
+        wait_blanking();
+        let shown = mcycle();
+        if frames & 63 == 0 {
+            Uart::say(SAYS);
+            Uart::put_decimal(listed.wrapping_sub(start));
+            Uart::say(b" draw ");
+            Uart::put_decimal(drawn.wrapping_sub(listed));
+            Uart::say(b" frame ");
+            Uart::put_decimal(shown.wrapping_sub(start));
+            Uart::put(b'\n');
+        }
+        frames = frames.wrapping_add(1);
+        which ^= 1;
+        ay = (ay + 2) & 255;
+        ax = (ax + 1) & 255;
+    }
+    // Through GL a frame's list is built and binned while Razboj draws
+    // the frame before (#1433). Then the core waits for that drawing,
+    // shows it from the next blanking, which frees the buffer this frame
+    // draws into, and rings this one. The cycles line says what the list
+    // and its binning took, what was left of the drawing to wait for,
+    // and the whole frame, blanking included.
+    #[cfg(gl)]
+    loop {
+        let start = mcycle();
+        let dy = which as i32 * SECOND;
+        #[cfg(not(tex))]
         let tex = None;
-        // SAFETY: the room is DDR3 nothing else uses, and Razboj reads it
-        // only while it draws, which this waits for.
+        // SAFETY: the room is DDR3 nothing else uses. Razboj reads it
+        // while it draws, and after the first frame nothing writes it.
         #[cfg(tex)]
         let tex = Some((
             unsafe {
@@ -265,7 +336,6 @@ fn main() -> ! {
             // finds it where it is (#1433).
             frames == 0,
         ));
-        #[cfg(gl)]
         let (n, filled) = ico_gl::frame(
             &model,
             ay,
@@ -277,20 +347,23 @@ fn main() -> ! {
             &mut list,
         );
         last[which] = filled;
+        let sh = (ico_list::H + dy) as u32;
+        let binned = bin_tiled(&list, n, sh, (frames & 1) as usize);
         let listed = mcycle();
-        #[cfg(not(gl))]
-        draw(&list, n);
-        #[cfg(gl)]
-        draw_tiled(&list, n, (ico_list::H + dy) as u32);
+        // The frame before: drawn, then shown from the next blanking.
+        wait_drawn();
         let drawn = mcycle();
-        Scan::base(Razboj::FRAME + (dy as u32) * Scan::STRIDE);
-        wait_blanking();
+        if frames != 0 {
+            let before = (which ^ 1) as u32 * SECOND as u32;
+            Scan::base(Razboj::FRAME + before * Scan::STRIDE);
+            wait_blanking();
+        }
+        ring_tiled(&binned);
         let shown = mcycle();
-
         if frames & 63 == 0 {
             Uart::say(SAYS);
             Uart::put_decimal(listed.wrapping_sub(start));
-            Uart::say(b" draw ");
+            Uart::say(b" wait ");
             Uart::put_decimal(drawn.wrapping_sub(listed));
             Uart::say(b" frame ");
             Uart::put_decimal(shown.wrapping_sub(start));
