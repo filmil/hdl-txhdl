@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: Apache-2.0
+# The RISC-V architectural tests that apply to the core, run on its
+# cycle simulation (issue 1442).
+#
+#   bazel test //cpu/vreteno/act:vreteno_tests            # every test
+#   bazel test //cpu/vreteno/act:vreteno_cached_tests     # at 0x4000_0000
+#   bazel test //cpu/vreteno/act:vreteno_uncached_tests   # at 0x8000_0000
+#
+# The same tests run on the core's netlist every day in
+# vreteno-conformance, whose selection this is.
+load("@riscv_arch_test//:tests.bzl", "TESTS")
+load(":defs.bzl", "act_suite", "select_tests")
+
+# What the core implements, by the names the tests' headers use. It
+# must agree with config/rvtest_config.h and config/sail.json.
+VRETENO_EXTENSIONS = [
+    "I",
+    "M",
+    "Zmmul",
+    "A",
+    "Zaamo",
+    "Zalrsc",
+    "C",
+    "Zca",
+    "Zicsr",
+    "Zifencei",
+    "Zicntr",
+    "Zihintpause",
+    "Zihintntl",
+    "Sm",
+    "S",
+    "U",
+    "Sv32",
+    "Svbare",
+    "Svade",
+]
+
+VRETENO_PARAMS = {
+    "MXLEN": 32,
+    "MISALIGNED_LDST": False,
+    "NUM_PMP_ENTRIES": 0,
+}
+
+# Tests the core is known to fail, `<test>_<placement>` mapped to the
+# issue that tracks each.
+VRETENO_KNOWN_FAILURES = {}
+
+# Suites left out by hand, with the reason.
+VRETENO_EXCLUDED = {
+    # The Svade tests clear menvcfgh.ADUE first, and menvcfgh exists
+    # only from privileged version 1.12, which is not how the core is
+    # described (see config/rvtest_config.h). Svade's behaviour, a page
+    # fault on a clear A or D bit, is still checked by the Sv suite.
+    "Svade": "https://git.hdlfactory.com/HDL/txhdl/issues/1348",
+}
+
+act_suite(
+    name = "vreteno",
+    known_failures = VRETENO_KNOWN_FAILURES,
+    tests = select_tests(
+        TESTS,
+        VRETENO_EXTENSIONS,
+        VRETENO_PARAMS,
+        exclude_suites = list(VRETENO_EXCLUDED.keys()),
+    ),
+)
