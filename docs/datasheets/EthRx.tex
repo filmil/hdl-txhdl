@@ -11,7 +11,11 @@
 \code{rx\_dv} and \code{rx\_er}. It stores the whole frame and checks
 its CRC-32 frame check sequence. Only then does it offer the frame's
 bytes on the channel \code{rx}, each an \code{EthByte}, without the
-preamble and the check sequence. It drops a frame whose check fails.
+preamble and the check sequence. It holds two frames, so it takes the
+next frame off the wire while it still offers the last (issue 1409).
+It drops a frame whose check fails, and counts every frame it drops
+by cause; the counts leave on \code{rx\_counts} in Gray code, for
+another clock to read (issue 1404).
 While it offers a frame, \code{rx\_len} says how many bytes the frame
 has, so a consumer that must know the length before it has taken the
 frame can read it; \code{EthSlots} does.
@@ -20,8 +24,11 @@ clock the PHY recovers from the line.
 
 \subsection*{Parameters}
 
-\code{EthRx} has no type parameters. Its frame memory holds
-\code{FRAME\_MAX} bytes, 2048, a constant of the module.
+\code{EthRx} has no type parameters. Its store holds
+\code{RX\_STORE} bytes, 4096: two frames of \code{FRAME\_MAX}, 2048,
+the second from byte 2048. The store says
+\code{ram\_style("block")}, and is read only into the register
+\code{rq}, so it is one block RAM (issue 1421).
 
 \dstables{EthRx}
 
@@ -36,31 +43,52 @@ keeps its loop's count in \code{for0}, and holds \code{rx\_len} between
 states in \code{rx\_len\_held}; all are in the tables above.
 
 \begin{itemize}
-\item While hunting, that is while it is neither receiving, holding a
-full frame nor skipping, the receiver starts a frame on \code{rx\_dv}
-high with \code{0xd5} on \code{rxd}: it sets \code{receiving}, clears
-\code{len} and \code{bad}, and sets the CRC register to
-\code{CRC\_INIT}. It passes over \code{0x55}.
+\item The receiver stores into the frame \code{wsel} names, and the
+offerer offers the frame \code{rsel} names; \code{full0} and
+\code{full1} say which hold a good frame, and \code{len0} and
+\code{len1} their lengths. \code{olen} is the length of the frame
+whose turn it is to be offered, which the receiver keeps.
+\item While hunting, that is while it is not receiving, the frame
+\code{wsel} names is not full, and it is not skipping, the receiver
+starts a frame on \code{rx\_dv} high with \code{0xd5} on \code{rxd}:
+it sets \code{receiving}, clears \code{len}, \code{bad} and
+\code{long}, and sets the CRC register to \code{CRC\_INIT}. It passes
+over \code{0x55}.
 \item Any other byte with \code{rx\_dv} high while hunting is the middle
 of a frame whose start the unit missed. The receiver sets \code{skip}
 and ignores the line until \code{rx\_dv} falls.
 \item While receiving, the receiver stores a byte per cycle for as long
-as \code{rx\_dv} stays high. The CRC register runs over every byte, the
-check sequence included. \code{bad} records any cycle with
-\code{rx\_er} high.
-\item When \code{rx\_dv} falls, the frame is good if \code{bad} is low,
-the register holds \code{CRC\_RESIDUE}, and \code{len} is more than
-four. A good frame sets \code{full}. The receiver drops any other frame
-and adds one to \code{dropped}.
-\item A full frame starts the offerer. \code{rx\_len} reads the frame's
-length without the check sequence while it is offered, and zero at
-every other time. The offerer sends \code{len} less four bytes on
-\code{rx}, each held until \code{rx} takes it, and marks the last. Then
-\code{given} is up for one cycle, which adds one to \code{frames} and
-clears \code{full}, and the receiver hunts again.
-\item A frame that arrives while a frame is full is dropped: the
-receiver sets \code{skip} and adds one to \code{dropped}, once for that
-frame.
+as \code{rx\_dv} stays high, into the frame \code{wsel} names. The
+CRC register runs over every byte, the check sequence included.
+\code{bad} records any cycle with \code{rx\_er} high, and \code{long}
+a byte past the frame's 2048th.
+\item When \code{rx\_dv} falls, the frame is good if \code{bad} and
+\code{long} are low, the register holds \code{CRC\_RESIDUE}, and
+\code{len} is more than four. A good frame sets its full bit and its
+length, and \code{wsel} turns to the other frame. The receiver drops
+any other frame and adds one to \code{dropped}, and to
+\code{drop\_size} if it was four bytes or fewer or long, or else to
+\code{drop\_check}.
+\item The full frame \code{rsel} names starts the offerer.
+\code{rx\_len} reads the frame's length without the check sequence
+while it is offered, and zero at every other time. The offerer sets
+\code{ri} one before the frame's first byte; each step then moves
+\code{ri} on and reads the byte there into \code{rq}, and offers
+\code{rq} on \code{rx} until \code{rx} takes it, marking the last of
+\code{olen} less four. The step comes at the edge a byte is taken, so
+a frame leaves a byte a cycle to a consumer that takes one each cycle.
+Then \code{given} is up for one cycle, which adds one to
+\code{frames}, clears that frame's full bit, and turns \code{rsel} to
+the other frame.
+\item A frame that arrives while both frames are full is dropped: the
+receiver sets \code{skip} and adds one to \code{dropped} and to
+\code{drop\_room}, once for that frame.
+\item \code{counts} holds \code{drop\_room}, \code{drop\_check} and
+\code{drop\_size} in Gray code, sixteen bits each, room highest, as
+\code{gray16} writes them, and \code{rx\_counts} reads it. A register,
+so each count changes in one bit at an edge, and a clock unrelated to
+this one can sample it through two flip-flops; \code{ungray16} decodes
+it there.
 \end{itemize}
 
 \subsection*{Verification}
@@ -78,10 +106,31 @@ and 61 bytes.
 of three frames. It checks that the other two come back and that one
 frame is counted dropped.
 \item \code{a\_frame\_on\_a\_busy\_receiver\_is\_dropped} holds the
-client off. It checks that the second frame is dropped and counted, and
-that the first is intact.
+client off. It checks that the third of three frames is dropped and
+counted, and that the first two are intact.
+\item The tests below drive the receiver's wire directly, as a sender
+puts frames on it, with twelve idle bytes between them, and read at
+the board's pace, four bytes in five cycles, unless they say
+otherwise.
+\item \code{two\_full\_frames\_at\_the\_minimum\_gap\_both\_come\_through}
+sends two frames of 1514 bytes and checks that both come out and none
+is dropped (issue 1409).
+\item \code{a\_train\_at\_the\_minimum\_gap\_loses\_nothing\_uncounted}
+sends six, and checks that every frame comes out whole and in order or
+is counted.
+\item \code{the\_drops\_are\_counted\_by\_cause} breaks frames on the wire
+and holds the reader off, and checks the three counts both in their
+registers and decoded from \code{rx\_counts} (issue 1404).
+\item \code{a\_count\_survives\_gray\_code} takes every sixteen-bit
+count through \code{gray16} and \code{ungray16} and checks that each
+step changes one bit.
+\item \code{the\_receivers\_store\_is\_read\_as\_a\_block\_ram} checks
+that the netlist marks the store a block RAM, reads it into \code{rq},
+and reads none of it straight onto \code{rx}; the lowering refuses such
+a memory reached at more ports than a block RAM has (issue 1421).
 \item \code{ex\_eth} runs the unit with one byte of the second frame
-flipped on the wire, and asserts that the receiver dropped one frame.
+flipped on the wire, and asserts that the receiver dropped one frame,
+for its check.
 The build simulates the netlist of \code{EthRx} against that run under
 nvc and Verilator: \code{//docs:eth\_sim\_eth\_rx\_eth\_rx\_tb\_test}
 and \code{//docs:eth\_vsim\_eth\_rx\_test}.
@@ -89,7 +138,14 @@ and \code{//docs:eth\_vsim\_eth\_rx\_test}.
 
 \subsection*{Used by}
 
-The example \code{ex\_eth}. The echo design for the AX7A200B:
+The example \code{ex\_eth}, and \code{ex\_ethdma} and \code{ex\_remote}
+ahead of their receiving sides. The flagship: \code{//eth:mac\_v} writes
+the Verilog of \code{eth\_rx}, and \code{flagship/board/flagship.v}
+instantiates it on the PHY's receive clock, crosses its bytes to the
+core's clock through \code{chan\_cdc}, and samples \code{rx\_counts}
+there through two flip-flops into the board's \code{mac\_drops}, which
+\code{EthSlots} reads at words 14 and 15. The echo design for the
+AX7A200B:
 \code{//eth:netlist} writes the Verilog of \code{eth\_rx}, and
 \code{eth/board/eth\_echo.v} instantiates it on the PHY's receive
 clock. \code{eth/board/eth\_cdc.v} takes its bytes across to the
@@ -99,9 +155,12 @@ that it has not yet run on the board.
 
 \subsection*{Limits}
 
-The unit holds one frame. A client that has not yet taken a frame
-loses the next one. \code{len} stops at 2047, so the unit stores any
-further bytes of a longer frame in the last slot. Only gigabit works:
+The unit holds two frames. A client that has taken neither loses the
+next one, which is counted. A consumer slower than the wire cannot keep
+up with an unbroken train of frames, since two frames are all the room
+there is. \code{len} stops at 2047, so the unit stores any further
+bytes of a longer frame at the frame's last byte, and drops the frame
+for its size. The counts are sixteen bits and wrap. Only gigabit works:
 at 100 or 10~Mbit a PHY sends a nibble per cycle, and the unit does not
 take a byte over two cycles. The unit reads \code{rx\_er} only while
 receiving.

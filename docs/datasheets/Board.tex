@@ -185,7 +185,12 @@ them into a receive slot. The slots are in the DDR3 memory from
 \code{0x4100\_0000}. Frames the driver has not acknowledged wait in
 order, at most one a slot, and while both slots hold one \code{eth}
 tells \code{fin}, which drops the next frame and counts it for
-\code{rx\_errors} (issue 1313). \code{NoBeats} and \code{NoReads} hold the
+\code{rx\_errors} (issue 1313). The frames the MAC drops ahead of the
+unit, which runs outside it on the PHY's clock, come in on the input
+\code{mac\_drops}: three sixteen-bit counts in Gray code, sampled onto
+the core's clock by the top, which \code{eth} reads at words 14 and 15
+(issue 1404). The flagship drives it; the other tops tie it to zero.
+\code{NoBeats} and \code{NoReads} hold the
 direction of each engine's host that the engine never uses.
 \item \textbf{The wire is shared by EtherType.} \code{share}, an
 \code{EthShare<0x88b5>}, sends the remote peripheral's frames to its

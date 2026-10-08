@@ -17,10 +17,11 @@ a driver that already works rather than a design nobody has driven.
 
 Its AXI-Lite side is one port, \code{bus}, a \code{LitePort} with
 32-bit addresses and words: \code{bus\_aw}, \code{bus\_ar} and
-\code{bus\_w} in, and \code{bus\_b} and \code{bus\_r} out. Ten
+\code{bus\_w} in, and \code{bus\_b} and \code{bus\_r} out. Eleven
 further ports face the engines that move the bytes and the unit that
 receives them: \code{tx\_busy}, \code{rx\_busy}, \code{rx\_len},
-\code{rx\_which} and \code{rx\_drops} in, and \code{tx\_base},
+\code{rx\_which}, \code{rx\_drops} and \code{rx\_mac} in, and
+\code{tx\_base},
 \code{tx\_bytes}, \code{tx\_start}, \code{rx\_base} and
 \code{rx\_full} out. \code{irq} is high while a received frame is
 unacknowledged and the receive interrupt is enabled.
@@ -67,8 +68,15 @@ them at \code{0x3400}, which \code{isa::ETH\_BASE} states.
 
 \dsregs{EthSlots}
 
-The fourteen words are LiteX's, in LiteX's order, and words 14 and
-15 are named by no register. Three words exist for the drivers and
+The first fourteen words are LiteX's, in LiteX's order. Words 14 and
+15, which LiteX names by no register, read the drops ahead of the
+slots, in the MAC (issue 1404): \code{rx\_mac\_check}, the frames that
+failed their check or had a receive error, and \code{rx\_mac\_drops},
+those that found both of the MAC's frames held in its low half and
+those too short or too long in its high half. \code{rx\_mac} brings
+them, sixteen bits each in Gray code from \code{EthRx}'s
+\code{rx\_counts}, sampled onto this clock by the top; the block decodes
+them with \code{ungray16} as it answers. Three words exist for the drivers and
 hold nothing here: \code{tx\_level} reads zero, since one transmit
 runs at a time, and \code{tx\_ev\_status} reads zero, since the
 transmit raises no event. \code{rx\_errors} reads \code{rx\_drops},
@@ -80,7 +88,7 @@ the behaviour below says, and \code{tx\_ev\_enable} is kept so the
 driver can write it.
 
 The write-only words, \code{tx\_start}, \code{tx\_slot} and
-\code{tx\_length}, and the unnamed 14 and 15 read zero. They once
+\code{tx\_length}, read zero. They once
 read as \code{tx\_ev\_enable}, the read path's fall-through, so a
 driver that wrote \code{tx\_length} and read it back got an unrelated
 bit (issue 454); every word the read names now, and the rest are
@@ -173,6 +181,8 @@ being a serialisation point.
 \item \code{only\_word\_13\_reads\_tx\_ev\_enable}, in
 \code{//lib/parts:parts\_test}, sets \code{tx\_ev\_enable} and reads
 every word, so a word that mirrored it again would fail (issue 454).
+It gives \code{rx\_mac} room 3, check 5 and size 7 in Gray code, and
+reads them back decoded from words 14 and 15 (issue 1404).
 \item \code{ex\_ethslots} drives the map as
 \code{eth\_litex\_liteeth.c} will, in the order that driver does it:
 \code{tx\_ready} one while idle and zero while a frame is going, no
@@ -186,7 +196,9 @@ at that test passed against the faulty order.
 \item It lands a third frame while the second waits, and checks that
 it waits behind it, that \code{rx\_full} is up, that
 \code{rx\_errors} reads the receiving side's count, and that two
-acknowledgements take the two frames off in order (issue 1313).
+acknowledgements take the two frames off in order (issue 1313). It
+gives \code{rx\_mac} room 1, check 4 and size 2, and reads them back
+from words 14 and 15 through the bridge.
 \item The build simulates the netlist against that run under nvc and
 Verilator: \code{//docs:ethslots\_sim\_ethslots\_tb\_test} and
 \code{//docs:ethslots\_vsim\_test}.
@@ -209,7 +221,12 @@ The board, at \code{cpu/vreteno/src/board.rs}, on the fifth AXI-Lite
 slot at \code{0x3400}, with its arrival as the third source of
 \code{Plic3}. Its engine-facing ports go to the fetch engine and
 \code{FrameOut} on the way out, and to \code{FrameIn} and the store
-engine on the way in (issue 151). The example \code{ex\_ethslots}.
+engine on the way in (issue 151). Its \code{rx\_mac} is the board's
+input \code{mac\_drops}, which the flagship's top drives from the
+MAC's counts; the other tops tie it to zero. The example
+\code{ex\_ethslots}. Zephyr's \code{eth\_vreteno.c} reads words 14 and
+15 in \code{eth\_vreteno\_mac\_drops}, and the fastboot profile prints
+them.
 
 \subsection*{Limits}
 
@@ -226,3 +243,8 @@ states the same three values \code{tx\_slot}, \code{tx\_length} and
 
 The unit checks no more of the address than the word, because the
 bridge in front of it sends it only its own range.
+
+The MAC's counts are sixteen bits and wrap. The top's constraints
+group the receive clock apart from the core's, so nothing bounds the
+skew between the bits of a count as they cross; skew past a cycle could
+show one read wrong.
