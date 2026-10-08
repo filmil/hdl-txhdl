@@ -606,6 +606,17 @@ http_archive(
     urls = ["https://busybox.net/downloads/busybox-1.37.0.tar.bz2"],
 )
 
+# Dropbear, the ssh server of Linux's userspace on the board (issue
+# 1439), built against musl's shared library. The checksum is the one
+# its author publishes in SHA256SUM.asc.
+http_archive(
+    name = "dropbear",
+    build_file = "//third_party/linux:source.BUILD.bazel",
+    sha256 = "783f50ea27b17c16da89578fafdb6decfa44bb8f6590e5698a4e4d3672dc53d4",
+    strip_prefix = "dropbear-2025.88",
+    urls = ["https://matt.ucc.asn.au/dropbear/releases/dropbear-2025.88.tar.bz2"],
+)
+
 deb_tree(
     name = "kbuild_tree",
     locks = ["//third_party/kbuild:trixie.lock.tsv"],

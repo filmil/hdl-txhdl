@@ -49,6 +49,20 @@ if [ -c /dev/tty1 ]; then
 	/bin/busybox setsid /bin/busybox sh -c \
 		'exec /bin/busybox sh </dev/tty1 >/dev/tty1 2>&1' &
 fi
+# A dynamic program, when the root has musl's shared library (issue
+# 1439): it loads through /lib/ld-musl-riscv32-sf.so.1 and says so.
+if [ -x /bin/dynhello ]; then
+	/bin/dynhello
+fi
+# The ssh server, when the root has one (issue 1439): its sessions need
+# pseudo-terminals, and it makes its host keys on the first connection
+# and keeps them in /etc/dropbear, which persists on an NFS root. Keys
+# go in /root/.ssh/authorized_keys; no password is set.
+if [ -x /usr/sbin/dropbear ]; then
+	/bin/busybox mkdir -p /dev/pts /etc/dropbear
+	/bin/busybox mount -t devpts devpts /dev/pts
+	/usr/sbin/dropbear -R && echo "txhdl: dropbear is listening on 22"
+fi
 # The shell takes the console as its controlling tty, so that Ctrl-C
 # reaches the command in the foreground: with a plain exec it had none,
 # said "can't access tty", and a command that hung at the board's

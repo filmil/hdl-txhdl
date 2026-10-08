@@ -117,6 +117,45 @@ genrule(
     tools = _TOOLS,
 )
 
+# Dropbear, the ssh server, and a program that shows a dynamic link
+# works, both against musl's shared library, which the root carries at
+# /lib/libc.so with the loader's name linked to it (issue 1439).
+genrule(
+    name = "dropbear",
+    srcs = [
+        ":rv32_sysroot",
+        "@dropbear//:src",
+    ],
+    outs = ["bin/dropbearmulti"],
+    cmd = _ENV + " $(execpath userspace.sh) dropbear " +
+          "$(execpath :rv32_sysroot) $(execpath @dropbear//:src) $@",
+    tags = ["manual"],
+    tools = _TOOLS,
+)
+
+genrule(
+    name = "dynhello",
+    srcs = [
+        ":rv32_sysroot",
+        "dynhello.c",
+    ],
+    outs = ["bin/dynhello"],
+    cmd = _ENV + " $(execpath userspace.sh) dynprog " +
+          "$(execpath :rv32_sysroot) $(execpath dynhello.c) $@",
+    tags = ["manual"],
+    tools = _TOOLS,
+)
+
+genrule(
+    name = "musl_so",
+    srcs = [":rv32_sysroot"],
+    outs = ["lib/libc.so"],
+    cmd = _ENV + " $(execpath userspace.sh) musl_so " +
+          "$(execpath :rv32_sysroot) $@",
+    tags = ["manual"],
+    tools = _TOOLS,
+)
+
 # The initramfs: BusyBox, /bin/sh linked to it, the console and null
 # devices, and `init`, packed by the kernel's own gen_init_cpio.
 genrule(
@@ -210,11 +249,20 @@ genrule(
     name = "nfs_root_tar",
     srcs = [
         "bin/busybox",
+        "bin/dropbearmulti",
+        "bin/dynhello",
         "init",
+        "lib/libc.so",
     ],
-    outs = ["nfs_root.tar"],
+    outs = [
+        "nfs_root.tar",
+        "root.cpio",
+    ],
     cmd = _ENV + " $(execpath userspace.sh) roottar " +
-          "$(execpath bin/busybox) $(execpath init) $@",
+          "$(execpath bin/busybox) $(execpath init) " +
+          "$(execpath lib/libc.so) $(execpath bin/dropbearmulti) " +
+          "$(execpath bin/dynhello) $(execpath nfs_root.tar) " +
+          "$(execpath root.cpio)",
     tags = ["manual"],
     tools = _TOOLS,
 )
@@ -313,6 +361,39 @@ sh_test(
     env = {
         "EXPECT": "txhdl: network is up",
         "STEPS": "500000000",
+    },
+    tags = ["manual"],
+)
+
+# The root the board mounts over NFS, as an initramfs for the model,
+# which has no NFS server (issue 1439): musl's shared library, a dynamic
+# program that says it ran, and Dropbear listening. A login over ssh is
+# the board's check, since the model's peer speaks no ssh.
+boot_image(
+    name = "model_root_boot",
+    initramfs = "root.cpio",
+    kernel = "Image",
+    model = True,
+    opensbi = "fw_jump.bin",
+    system_map = "System.map",
+    tags = ["manual"],
+)
+
+sh_test(
+    name = "boot_root_test",
+    size = "large",
+    srcs = ["boot_test.sh"],
+    args = [
+        "$(rootpath //cpu/vreteno:machine)",
+        "$(rootpath :model_root_boot)",
+    ],
+    data = [
+        ":model_root_boot",
+        "//cpu/vreteno:machine",
+    ],
+    env = {
+        "EXPECT": "txhdl: a dynamic program ran",
+        "EXPECT_ALSO": "txhdl: dropbear is listening on 22",
     },
     tags = ["manual"],
 )
