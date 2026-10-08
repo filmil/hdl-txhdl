@@ -275,3 +275,116 @@ fn a_clear_writes_depth_only_when_it_has_to() {
     g.clear(0x0400);
     assert_eq!(g.get_error(), gl::INVALID_VALUE);
 }
+
+/// Polygon offset (#998) as GL ES 1.1 states it: a filled polygon's
+/// depth gains `factor` times its largest slope plus `units` times the
+/// least step, one of 65535. Over triangles in perspective, the depth
+/// plane's start moves by that, worked out from the window depths in
+/// `f64`, within a unit, and its steps do not move.
+#[test]
+fn polygon_offset_is_gls_formula() {
+    let mut r = Rng(0x0ff5_e998);
+    let mut base = vec![[0u32; WORDS]; 64];
+    let mut moved = vec![[0u32; WORDS]; 64];
+    for round in 0..40 {
+        let s = scene(&mut r, 1);
+        let (factor, units) = (r.real(-4.0, 4.0), r.real(-8.0, 8.0));
+        let draw = |frame: &mut [[u32; WORDS]], on: bool| {
+            let mut g = Gl::new(frame, W, H);
+            let [l, rt, b, t, n, f] = FRUSTUM.map(fx);
+            g.matrix_mode(gl::PROJECTION);
+            g.frustum(l, rt, b, t, n, f);
+            g.matrix_mode(gl::MODELVIEW);
+            g.enable(gl::DEPTH_TEST);
+            g.depth_range(fx(s.range.0), fx(s.range.1));
+            g.polygon_offset(fx(factor), fx(units));
+            if on {
+                g.enable(gl::POLYGON_OFFSET_FILL);
+            }
+            assert_eq!(g.is_enabled(gl::POLYGON_OFFSET_FILL), on);
+            let (v, c) = &s.tris[0];
+            let p = v.map(|v| [fx(v[0]), fx(v[1]), fx(v[2]), ONE]);
+            let col = [fx(c[0]), fx(c[1]), fx(c[2]), ONE];
+            g.draw_arrays(gl::TRIANGLES, &p, Some(&[col; 3]), None);
+            assert_eq!(g.get_error(), gl::NO_ERROR);
+            g.frame().len()
+        };
+        let (n0, n1) = (draw(&mut base, false), draw(&mut moved, true));
+        assert_eq!(n0, n1);
+        if n0 < 2 {
+            continue;
+        }
+        // The depth plane is the entry's second slot.
+        let (a, b) = (base[1], moved[1]);
+        assert_eq!((a[1], a[2]), (b[1], b[2]), "round {round}: the steps");
+        // The largest slope of the depth as the plane steps it, in units a
+        // pixel, which is within a tenth and a thousandth of the window
+        // depth's in `f64`:
+        // GL's m is the slope of the polygon as it is rasterised.
+        let [p, q, w] = s.tris[0].0.map(|v| window(&s, v));
+        let (ux, uy, uz) = (q.0 - p.0, q.1 - p.1, q.2 - p.2);
+        let (vx, vy, vz) = (w.0 - p.0, w.1 - p.1, w.2 - p.2);
+        let area = ux * vy - uy * vx;
+        let dzdx = (uz * vy - vz * uy) / area;
+        let dzdy = (vz * ux - uz * vx) / area;
+        let step = |k: usize| a[k] as i32 as f64 / 4096.0;
+        let m = step(1).abs().max(step(2).abs());
+        let mf = dzdx.abs().max(dzdy.abs());
+        assert!(
+            (m - mf).abs() < 0.1 + mf / 1000.0,
+            "round {round}: slope {m}, f64 {mf}"
+        );
+        // The factor and the units as the library holds them, in 16.16.
+        let held = |v: f64| fx(v) as f64 / 65536.0;
+        let want = (held(factor) * m + held(units)) * 4096.0;
+        let got = (b[0] as i32 as f64) - (a[0] as i32 as f64);
+        assert!(
+            (got - want).abs() <= 1.0,
+            "round {round}: moved {got}, GL says {want}"
+        );
+    }
+}
+
+/// The use polygon offset is for: a polygon drawn again over itself,
+/// under `GL_LESS`, loses every pixel to the first at the same depth,
+/// and with an offset of minus one and minus one wins every pixel.
+#[test]
+fn an_offset_polygon_wins_over_its_own_depth() {
+    let tri = [[-0.6, -0.5, -3.0], [0.7, -0.3, -5.0], [0.0, 0.6, -2.5]];
+    let draw = |offset: bool| {
+        let mut frame = vec![[0u32; WORDS]; 64];
+        let mut g = Gl::new(&mut frame, W, H);
+        let [l, r, b, t, n, f] = FRUSTUM.map(fx);
+        g.matrix_mode(gl::PROJECTION);
+        g.frustum(l, r, b, t, n, f);
+        g.matrix_mode(gl::MODELVIEW);
+        g.enable(gl::DEPTH_TEST);
+        g.clear_color(0, 0, 0, ONE);
+        g.clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+        let p = tri.map(|v| [fx(v[0]), fx(v[1]), fx(v[2]), ONE]);
+        let red = [ONE, 0, 0, ONE];
+        let green = [0, ONE, 0, ONE];
+        g.draw_arrays(gl::TRIANGLES, &p, Some(&[red; 3]), None);
+        if offset {
+            g.enable(gl::POLYGON_OFFSET_FILL);
+            g.polygon_offset(-ONE, -ONE);
+        }
+        g.draw_arrays(gl::TRIANGLES, &p, Some(&[green; 3]), None);
+        let n = g.frame().len();
+        let fb = render(&decode_list(&frame[..n]), W as usize, H as usize);
+        let count = |c: [Fx; 4]| {
+            let w = colour_word(&c);
+            fb.iter()
+                .filter(|&&p| p & 0xff_ffff == w & 0xff_ffff)
+                .count()
+        };
+        (count(red), count(green))
+    };
+    let (red, green) = draw(false);
+    assert!(
+        red > 100 && green == 0,
+        "no offset: {red} red, {green} green"
+    );
+    let (red, green) = draw(true);
+    assert!(green > 100 && red == 0, "offset: {red} red, {green} green");
+}
