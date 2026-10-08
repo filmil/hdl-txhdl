@@ -608,6 +608,14 @@ impl<'a> Gl<'a> {
         self.store = Some(texture::Store::new(mem, bus));
     }
 
+    /// The same room as an earlier context filled, its textures kept
+    /// (#1433): every texture it published is there again by its name,
+    /// with nothing uploaded. Not a GL call: a program's, for a context
+    /// it makes again each frame.
+    pub fn texture_room_kept(&mut self, mem: &'a mut [u32], bus: u32) {
+        self.store = Some(texture::Store::reopen(mem, bus));
+    }
+
     /// The textures' room, for EGL and for tests.
     pub fn textures(&self) -> Option<&texture::Store<'a>> {
         self.store.as_ref()
