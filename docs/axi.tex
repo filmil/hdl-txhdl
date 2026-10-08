@@ -759,6 +759,50 @@ evaluate configurations with 2 and 4 hosts, asserting proper response
 routing, non-interleaved write bursts, and balanced throughput under
 saturation.
 
+\subsection{The Exclusive Hold}
+
+An atomic operation of two harts on one memory is a pair: a read with
+\code{lock} set, then a write with \code{lock} set, which stores only
+if nothing wrote the line between. With its last parameter,
+\code{HOLD}, not zero, the arbiter keeps such a pair whole
+(issue~\#1408). When it grants a host's exclusive read it takes a hold
+for that host, and grants no other host's write address phase until it
+grants that host's exclusive write, or for 128 cycles. The hold is on
+the grant, before the link, and never on the link itself: a write
+already granted keeps its beats, and the holder's own write is never
+behind one held. A host whose exclusive read comes while another holds
+goes without the hold, and takes it with its next. With \code{HOLD}
+zero the hold never starts, and synthesis folds it away. The unit
+tests show a pair kept with the hold and broken without it, and a hold
+whose write never comes running out after its 128 cycles.
+
+\section{The Exclusive Monitor}
+\label{sec:a-exmon}
+
+The hold keeps other hosts' writes out of a pair; the monitor decides
+whether the pair stored. \code{ExMon} stands on the link after the
+arbiter, where every write passes in the order the peripherals take
+them, and watches two ports, the two harts'. An exclusive read from
+one of them makes a reservation of the sixteen-byte line it reads; a
+write that passes clears every reservation its burst covers. An
+exclusive write of one beat whose port's reservation stands for its
+line passes, and its answer goes back as \code{ExOkay}; any other is
+taken, written nowhere, and answered \code{Okay} by the monitor
+itself. The host reads the answer as \code{sc.w}'s result.
+
+Two orders matter. An exclusive read waits until every write the
+monitor has passed is answered, so it reads what they wrote and no
+write in flight can land after it; the hold means nothing new joins
+them, so the wait ends. A failed write's answer waits the same way,
+so it never overtakes an answer to an earlier write of its host.
+The unit tests in \code{lib/parts/src/bus/exmon.rs} run two hosts, an
+arbiter and the monitor before a memory that takes a read's words at
+its address: a pair with nothing between stores; a write between, with
+the hold not built, breaks it; a read that comes while a burst over
+its line is still writing reads the burst's word, and does not when
+the wait is removed; and the failed write's answer comes after the
+earlier one.
+
 \section{AXI-Lite and the Bridge}
 \label{sec:a-lite}
 
