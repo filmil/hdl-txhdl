@@ -357,6 +357,7 @@ pub mod sim {
         mem: Rc<RefCell<HashMap<u128, U<D>>>>,
         words: u128,
         wraps: bool,
+        early: bool,
         read_latency: u64,
         write_latency: u64,
         warmup: u64,
@@ -378,6 +379,7 @@ pub mod sim {
                 mem: Rc::new(RefCell::new(HashMap::new())),
                 words,
                 wraps: false,
+                early: false,
                 read_latency: 0,
                 write_latency: 0,
                 warmup: 0,
@@ -400,6 +402,17 @@ pub mod sim {
         /// narrower than the link's takes it.
         pub fn wrapping(mut self) -> Self {
             self.wraps = true;
+            self
+        }
+
+        /// The same memory, taking a read's words when it takes the
+        /// read's address rather than when it offers each beat, as a
+        /// controller that reads the memory before it answers does. A
+        /// write that lands between the two is then not in the read's
+        /// words, which the link allows, since it orders a read against
+        /// nothing written on the other channel (issue 1424).
+        pub fn reading_at_address(mut self) -> Self {
+            self.early = true;
             self
         }
 
@@ -439,7 +452,10 @@ pub mod sim {
             let mut beats: VecDeque<(U<D>, U<S>, Bit)> = VecDeque::new();
             // Answers, each with the step it may be offered from.
             let mut bq: VecDeque<(U<I>, u8, u64)> = VecDeque::new();
-            let mut rq: VecDeque<(U<I>, u128, bool, u64)> = VecDeque::new();
+            // A read's beat carries its word when it was taken at the
+            // address phase.
+            let mut rq: VecDeque<(U<I>, u128, bool, u64, Option<U<D>>)> =
+                VecDeque::new();
             let (mut b_offered, mut r_offered) = (false, false);
             let mut ready = false;
             let mut now: u64 = 0;
@@ -465,11 +481,14 @@ pub mod sim {
                     let n = inp.arlen.get().raw() + 1;
                     let due = now + self.read_latency;
                     for k in 0..n {
+                        let (at, ok) = self.index(first + k);
+                        let early = (self.early && ok).then(|| self.word(at));
                         rq.push_back((
                             inp.arid.get(),
                             first + k,
                             k + 1 == n,
                             due,
+                            early,
                         ));
                     }
                 }
@@ -517,11 +536,14 @@ pub mod sim {
                     out.bresp.set(U::<2>::from(resp));
                 }
                 out.bvalid.set(Bit::from_bool(b_offered));
-                r_offered =
-                    matches!(rq.front(), Some(&(_, _, _, due)) if due <= now);
-                if let Some(&(id, at, last, _)) = rq.front() {
+                r_offered = matches!(rq.front(), Some(&(_, _, _, due, _)) if due <= now);
+                if let Some(&(id, at, last, _, early)) = rq.front() {
                     let (at, ok) = self.index(at);
-                    let data = if ok { self.word(at) } else { U::<D>::new(0) };
+                    let data = match early {
+                        Some(word) => word,
+                        None if ok => self.word(at),
+                        None => U::<D>::new(0),
+                    };
                     out.rid.set(id);
                     out.rdata.set(data);
                     out.rresp.set(U::<2>::from(if ok { 0u8 } else { 2u8 }));
@@ -791,5 +813,56 @@ mod tests {
         assert_eq!(w2, w0 + 3, "a write is three cycles later");
         let (_, r3) = timed(10, 3, 0, 16);
         assert_eq!(r3 - r2, 8, "eight more beats, a cycle each");
+    }
+
+    /// What a read that waits twenty cycles finds when a write to its
+    /// word is sent after it and lands while it waits: the word before
+    /// the write when the memory reads at the address, the word after
+    /// it otherwise.
+    fn passed(early: bool) -> u32 {
+        let Link {
+            host,
+            host_in,
+            host_out,
+            per_in,
+            per_out,
+            ..
+        } = axi::<16, 32, 4, 2, 4>();
+        let (aw, ar, w, _, _) = per_in;
+        let (_, _, b, r) = per_out;
+        let (ram, inp, outp) = pins::<16, 32, 4, 2>(aw, ar, w, b, r, 64);
+        let ram = ram.timed(20, 0, 0);
+        let ram = if early { ram.reading_at_address() } else { ram };
+        let got = Rc::new(RefCell::new(None));
+        let g = got.clone();
+        let client = async move {
+            let old = [U::<32>::from(5u32)];
+            host.write(Wr::at(0x0u32), &old).await.done().await;
+            let rd = host.read(Rd::at(0x0u32, 1)).await;
+            let new = [U::<32>::from(9u32)];
+            let wr = host.write(Wr::at(0x0u32), &new).await;
+            assert_eq!(wr.done().await.resp, Resp::Okay);
+            *g.borrow_mut() = Some(rd.done().await.data[0].raw() as u32);
+        };
+        let mut tracker = AxiHost::<16, 32, 4, 2, 4>::default();
+        let mut pinned = AxiPerPins::<16, 32, 4, 2>::default();
+        let mut sim = Running::new(join2(
+            client,
+            join2(
+                tracker.run(host_in, host_out),
+                join2(ram.serve(), pinned.run(inp, outp)),
+            ),
+        ));
+        for _ in 0..1000 {
+            sim.cycle();
+        }
+        let got = *got.borrow();
+        got.expect("the read was answered")
+    }
+
+    #[test]
+    fn a_memory_reading_at_the_address_lets_a_read_pass_a_write() {
+        assert_eq!(passed(false), 9, "read at the beat: the new word");
+        assert_eq!(passed(true), 5, "read at the address: the old word");
     }
 }

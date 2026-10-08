@@ -3239,11 +3239,12 @@ fn the_cache_loop_is_timed_by_the_core() {
 /// the write swept over three hundred cycles, it meets the fills in
 /// both orders: answered before a fill asks, and while one is out.
 ///
-/// The model's memory reads a word when it sends it, so a fill that is
-/// out when the write lands brings the new word, and the core's drop of
-/// a fill whose line the snoop names is not reached here; the
-/// controller can read the old word and answer after the write, which
-/// is why the core drops it (issue 1424).
+/// The model's memory takes a read's words when it takes the read's
+/// address, as the controller may (issue 1424), so a fill that is out
+/// when the write lands brings the old word, and the core must not keep
+/// it. Without that drop the second program reads the old word at the
+/// write at 100; with the drop taken only on a beat, and not while the
+/// fill waits for its first, it did too (issue 1429).
 #[test]
 fn the_data_cache_sees_another_hosts_write() {
     use vreteno32::isa::{addi, beq, bne, halt, lui, lw};
@@ -3346,5 +3347,201 @@ fn a_burst_over_the_unserved_remote_does_not_hold_the_serial_port() {
             .unwrap_or(0);
         assert!(worst < 2 * SCAN_LINE, "served {serve}: a gap of {worst}");
         assert_eq!(ran.sent.len(), 0, "served {serve}: no request for a burst");
+    }
+}
+
+/// The data cache keeps the core's own order (issue 1431). Execute
+/// reads a line's word, tag and valid bit a cycle before writeback uses
+/// them, in the cycle writeback may be writing them, so writeback takes
+/// that cycle's writes over what was read. Each case runs right behind
+/// the write it must see, on a line a load has just filled: a load
+/// behind a store to its word; byte and halfword stores behind one to
+/// the same word, whose merge takes the word; and a store behind the
+/// load whose fill keeps its line, which must find the line there and
+/// write into it.
+#[test]
+fn the_data_cache_keeps_the_cores_own_order() {
+    use vreteno32::isa::{addi, bne, halt, jal, lui, lw, sb, sh, sw};
+    let cases: [(&str, Vec<u32>, u32, u32); 4] = [
+        (
+            "a load behind a store",
+            vec![addi(8, 0, 0x222), sw(8, 5, 0), lw(9, 5, 0)],
+            9,
+            8,
+        ),
+        (
+            "sb, sb at +1, lw",
+            vec![
+                addi(10, 0, 0x33),
+                addi(11, 0, 0x44),
+                sb(10, 5, 0),
+                sb(11, 5, 1),
+                lw(12, 5, 0),
+                lui(13, 0x4000 >> 12),
+                addi(13, 13, 0x433),
+            ],
+            12,
+            13,
+        ),
+        (
+            "sh, sb at +3, lw",
+            vec![
+                addi(10, 0, 0x55),
+                addi(11, 0, 0x66),
+                sh(10, 5, 0),
+                sb(11, 5, 3),
+                lw(12, 5, 0),
+                lui(13, 0x6600_0000 >> 12),
+                addi(13, 13, 0x55),
+            ],
+            12,
+            13,
+        ),
+        (
+            "a store behind its line's fill",
+            vec![
+                addi(8, 0, 0x222),
+                lw(14, 5, 16),
+                sw(8, 5, 16),
+                lw(15, 5, 16),
+            ],
+            15,
+            8,
+        ),
+    ];
+    for (what, body, got, want) in cases {
+        // The word at 0x4000_0000 is 0x111, and its line in the cache.
+        let mut p = vec![lui(5, 0x4000_0000 >> 12), addi(6, 0, 0x111)];
+        p.extend([sw(6, 5, 0), lw(7, 5, 0)]);
+        p.extend(body);
+        // A wrong word: round the last instruction until the limit.
+        p.extend([bne(got, want, 8), halt(), jal(0, 0)]);
+        let ran = run_debugged(&p, &[], 6000, &[]);
+        assert!(ran.halted_at.is_some(), "{what}: a word from before");
+    }
+}
+
+/// A random mix of loads and stores of every width over two lines of
+/// the DDR3 and the same two lines a page on, which share their places
+/// in the data cache, so lines are filled, hit, written into and put
+/// out by each other (issue 1431). Rust keeps the memory as the program
+/// should see it, and the program checks every load against it,
+/// rounding a last instruction until the limit on a wrong word. Half
+/// the stores have a load of their word right behind them, and half the
+/// narrow ones another narrow store to the same word right behind them.
+#[test]
+fn random_loads_and_stores_through_the_data_cache() {
+    use std::collections::HashMap;
+    use vreteno32::isa::{
+        addi, bne, halt, jal, lb, lbu, lh, lhu, lui, lw, sb, sh, sw,
+    };
+    let li = |rd: u32, v: u32| {
+        let hi = v.wrapping_add(0x800) >> 12;
+        let lo = v.wrapping_sub(hi << 12) as i32;
+        [lui(rd, hi), addi(rd, rd, lo)]
+    };
+    for seed in 0..8u64 {
+        let mut s = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+        let mut rnd = move |n: u32| {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            (s % n as u64) as u32
+        };
+        let mut mem: HashMap<u32, u8> = HashMap::new();
+        let mut p = vec![];
+        p.extend(li(5, 0x4000_0000));
+        p.extend(li(9, 0x4000_1000));
+        let mut checks = vec![];
+        // A width of 1, 2 or 4 bytes, and an address aligned to it.
+        let mut place = |rnd: &mut dyn FnMut(u32) -> u32| {
+            let w = [1u32, 2, 4][rnd(3) as usize];
+            let base = [5u32, 9][rnd(2) as usize];
+            (w, base, rnd(32 / w) * w)
+        };
+        let st = |w: u32, rs: u32, base: u32, off: u32| match w {
+            1 => sb(rs, base, off as i32),
+            2 => sh(rs, base, off as i32),
+            _ => sw(rs, base, off as i32),
+        };
+        let mut put = |mem: &mut HashMap<u32, u8>, a: u32, w: u32, v: u32| {
+            for i in 0..w {
+                mem.insert(a + i, (v >> (8 * i)) as u8);
+            }
+        };
+        let at = |base: u32, off: u32| {
+            if base == 5 {
+                0x4000_0000 + off
+            } else {
+                0x4000_1000 + off
+            }
+        };
+        while p.len() < 900 {
+            let (w, base, off) = place(&mut rnd);
+            let v = rnd(u32::MAX);
+            if rnd(2) == 0 {
+                // A store, perhaps a narrow one behind it in its word,
+                // perhaps a load of its word behind them.
+                p.extend(li(6, v));
+                let pair = w < 4 && rnd(2) == 0;
+                let (w2, off2, v2) =
+                    ([1u32, 2][rnd(2) as usize], off & !3, rnd(u32::MAX));
+                let off2 = off2 + rnd(4 / w2) * w2;
+                if pair {
+                    p.extend(li(8, v2));
+                }
+                p.push(st(w, 6, base, off));
+                put(&mut mem, at(base, off), w, v);
+                if pair {
+                    p.push(st(w2, 8, base, off2));
+                    put(&mut mem, at(base, off2), w2, v2);
+                }
+                if rnd(2) == 0 {
+                    p.push(lw(7, base, (off & !3) as i32));
+                    let a = at(base, off & !3);
+                    let want = (0..4).fold(0u32, |x, i| {
+                        x | (*mem.get(&(a + i)).unwrap_or(&0) as u32) << (8 * i)
+                    });
+                    p.extend(li(20, want));
+                    checks.push(p.len());
+                    p.push(bne(7, 20, 0));
+                }
+            } else {
+                // A load of any width, signed or not.
+                let signed = rnd(2) == 0;
+                let a = at(base, off);
+                let raw = (0..w).fold(0u32, |x, i| {
+                    x | (*mem.get(&(a + i)).unwrap_or(&0) as u32) << (8 * i)
+                });
+                let (ld, want) = match (w, signed) {
+                    (1, true) => {
+                        (lb(7, base, off as i32), raw as u8 as i8 as u32)
+                    }
+                    (1, false) => (lbu(7, base, off as i32), raw),
+                    (2, true) => {
+                        (lh(7, base, off as i32), raw as u16 as i16 as u32)
+                    }
+                    (2, false) => (lhu(7, base, off as i32), raw),
+                    _ => (lw(7, base, off as i32), raw),
+                };
+                p.push(ld);
+                p.extend(li(20, want));
+                checks.push(p.len());
+                p.push(bne(7, 20, 0));
+            }
+        }
+        p.push(halt());
+        let fail = p.len();
+        p.push(jal(0, 0));
+        for at in &checks {
+            let (rs1, rs2) = (7, 20);
+            p[*at] = bne(rs1, rs2, ((fail - at) * 4) as i32);
+        }
+        let ran = run_debugged(&p, &[], 200_000, &[]);
+        assert!(
+            ran.halted_at.is_some(),
+            "seed {seed}: a load read a wrong word ({} checks)",
+            checks.len()
+        );
     }
 }
