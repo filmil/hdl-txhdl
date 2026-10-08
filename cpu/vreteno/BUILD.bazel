@@ -139,9 +139,13 @@ rust_test(
 # The whole board, several programs and a card identified at 400 kHz,
 # run built optimised with its checks on (issue 1250): at the build's
 # default of opt-level 0 it took 670 to 1100 s, and some 35 s so.
+# Large, so 900 s (issue 1416): it grows with every board-level test,
+# and on this shared host its time depends on who else is building. It
+# took 58 s alone and 293.6 s of medium's 300 on 2026-10-08, and timed
+# out once at 300 the day before, on a branch that was green.
 opt_test(
     name = "board_test",
-    size = "medium",
+    size = "large",
     test = ":board_test_rust",
 )
 
