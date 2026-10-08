@@ -101,6 +101,10 @@ fn main() {
     // takes forty.
     let (tirq_out, tirq) = signal::<Bit, DefaultClock>();
     let (sirq_out, sirq) = signal::<Bit, DefaultClock>();
+    // Hart 1's lines, which nothing here reads; they are in the trace
+    // because they are ports of the timer (issue 1408).
+    let (tirq1_out, tirq1) = signal::<Bit, DefaultClock>();
+    let (sirq1_out, sirq1) = signal::<Bit, DefaultClock>();
     let (time_out, time) = signal::<U<64>, DefaultClock>();
     // The supervisor's external line, which no controller here drives
     // (issue 1094).
@@ -161,6 +165,9 @@ fn main() {
         w.add("sirq", &sirq);
         // The timer's count, a port of both lowered units (issue 1012).
         w.add("time", &time);
+        // Hart 1's lines, ports of the timer too (issue 1408).
+        w.add("tirq1", &tirq1);
+        w.add("sirq1", &sirq1);
         w.add("seirq", &seirq);
         w.add("dc_snoop", &dc_snoop);
         w.add("tx", &tx);
@@ -248,7 +255,10 @@ fn main() {
     let mut sim = Running::new(join2(
         join2(
             join2(
-                timer.run(tbus, (rst_t, tirq_out, sirq_out, time_out)),
+                timer.run(
+                    tbus,
+                    (rst_t, tirq_out, sirq_out, time_out, tirq1_out, sirq1_out),
+                ),
                 uart.run(ubus, (rst_u, rx, tx_out, uirq_out)),
             ),
             join2(
