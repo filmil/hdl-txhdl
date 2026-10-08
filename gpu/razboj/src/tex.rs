@@ -11,7 +11,7 @@
 //! twice `log2 q`, both through a table of 256 for the fraction. Then
 //! GL's filters, wrap modes and environments.
 use crate::model::div255;
-use crate::raster::{seed_fall, seed_start};
+use crate::raster::{log_rise, log_start, seed_fall, seed_start};
 use razboj_tile::tex::{
     level_base, side, texel_offset, Desc, ADD, ALPHA, BLEND, DECAL, LINEAR,
     LINEAR_MIPMAP_NEAREST, LUMINANCE, LUMINANCE_ALPHA, MODULATE, NEAREST,
@@ -48,12 +48,33 @@ pub fn seed(x: u64) -> u64 {
     a - ((b * ((x >> 16) & 1023)) >> 10)
 }
 
-/// The fraction of `log2` for a mantissa whose eight bits below its
-/// leading one are `idx`, in 8 bits: `256 log2(1 + (idx + 1/2) / 256)`,
-/// rounded.
-pub fn log_table(idx: u32) -> i32 {
-    let m = 1.0 + (idx as f64 + 0.5) / 256.0;
-    (256.0 * m.log2()).round() as i32
+/// The line a segment of `log2`'s fraction follows, for the segment `k`
+/// of 32 between one and two: its value at the segment's start, `a`, and
+/// its rise over the segment's 1024 steps, `b`, both with 16 bits of
+/// fraction. It is the chord of `65536 log2 m` over the segment, raised
+/// by half the most it lies below the curve, so that it errs as far each
+/// way.
+pub fn log_line(k: u32) -> (u32, u32) {
+    let f = |t: f64| 65536.0 * (1.0 + (k as f64 + t / 1024.0) / 32.0).log2();
+    let s = (f(1024.0) - f(0.0)) / 1024.0;
+    let under = (0..=1024)
+        .map(|t| f(t as f64) - f(0.0) - s * t as f64)
+        .fold(0f64, f64::max);
+    (
+        (f(0.0) + under / 2.0).round() as u32,
+        (s * 1024.0).round() as u32,
+    )
+}
+
+/// The fraction of `log2` for the mantissa `x`, its leading one at bit
+/// 31, in 8 bits: the line of the segment its five bits below the
+/// leading one name, at the ten bits below those, rounded. The lines are
+/// the rasteriser's own, which a test holds to [`log_line`].
+pub fn log_frac(x: u32) -> i32 {
+    let k = U::<5>::from((x >> 26) & 31);
+    let (a, b) = (log_start(k).raw() as u32, log_rise(k).raw() as u32);
+    let t = (x >> 16) & 1023;
+    ((a + ((b * t) >> 10) + 128) >> 8) as i32
 }
 
 /// `q`, with 48 bits of fraction and at least one, normalised: its
@@ -89,16 +110,16 @@ pub fn texel_uv(uq: u64, vq: u64, q: u64) -> (i32, i32) {
 }
 
 /// `log2` of `q`'s value, `q` with 48 bits of fraction, in 8.8: its
-/// exponent from its leading zeros, and the fraction from the table.
+/// exponent from its leading zeros, and the fraction from its line.
 pub fn log2q(q: u64) -> i32 {
     let (n, x) = normal(q);
-    (15 - n as i32) * 256 + log_table(((x >> 23) & 255) as u32)
+    (15 - n as i32) * 256 + log_frac(x as u32)
 }
 
-/// `log2` of a magnitude of 32 bits, in 8.8, through the same table.
+/// `log2` of a magnitude of 32 bits, in 8.8, through the same lines.
 pub fn log2u32(v: u32) -> i32 {
     let n = v.max(1).leading_zeros();
-    (31 - n as i32) * 256 + log_table(((v.max(1) << n) >> 23) & 255)
+    (31 - n as i32) * 256 + log_frac(v.max(1) << n)
 }
 
 /// The level of detail below every level, for a pixel whose derivatives
@@ -309,6 +330,16 @@ mod tests {
         }
         assert!(first < 1.0 / (1 << 12) as f64, "guess {first:e}");
         assert!(worst < 1.0 / (1 << 23) as f64, "worst {worst:e}");
+    }
+
+    /// The rasteriser's lines for `log2`'s fraction are the formula's.
+    #[test]
+    fn the_log_lines_are_the_formula() {
+        for k in 0..32u32 {
+            let at = U::<5>::from(k);
+            let have = (log_start(at).raw() as u32, log_rise(at).raw() as u32);
+            assert_eq!(have, log_line(k), "segment {k}");
+        }
     }
 
     /// The rasteriser's lines for the first guess are the formula's.

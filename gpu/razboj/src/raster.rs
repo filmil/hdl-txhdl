@@ -589,6 +589,89 @@ pub(crate) fn seed_fall(k: U<5>) -> U<12> {
     })
 }
 
+/// The fraction of `log2` (#997), for the level of detail, follows a
+/// line in each of 32 segments of a mantissa between one and two: this
+/// is the line's value at the start of the segment `k`, `65536 log2 m`,
+/// and [`log_rise`] how far it rises over the segment. `tex::log_line`
+/// is the formula, which a test holds both to.
+#[lower]
+pub(crate) fn log_start(k: U<5>) -> U<16> {
+    select!(k.raw() => {
+        0 => U::<16>::from(6u32),
+        1 => U::<16>::from(2915u32),
+        2 => U::<16>::from(5737u32),
+        3 => U::<16>::from(8477u32),
+        4 => U::<16>::from(11141u32),
+        5 => U::<16>::from(13731u32),
+        6 => U::<16>::from(16252u32),
+        7 => U::<16>::from(18708u32),
+        8 => U::<16>::from(21101u32),
+        9 => U::<16>::from(23436u32),
+        10 => U::<16>::from(25714u32),
+        11 => U::<16>::from(27939u32),
+        12 => U::<16>::from(30112u32),
+        13 => U::<16>::from(32237u32),
+        14 => U::<16>::from(34315u32),
+        15 => U::<16>::from(36348u32),
+        16 => U::<16>::from(38339u32),
+        17 => U::<16>::from(40288u32),
+        18 => U::<16>::from(42198u32),
+        19 => U::<16>::from(44070u32),
+        20 => U::<16>::from(45906u32),
+        21 => U::<16>::from(47707u32),
+        22 => U::<16>::from(49474u32),
+        23 => U::<16>::from(51209u32),
+        24 => U::<16>::from(52913u32),
+        25 => U::<16>::from(54586u32),
+        26 => U::<16>::from(56230u32),
+        27 => U::<16>::from(57847u32),
+        28 => U::<16>::from(59436u32),
+        29 => U::<16>::from(60998u32),
+        30 => U::<16>::from(62536u32),
+        _ => U::<16>::from(64048u32),
+    })
+}
+
+/// The rise of the segment `k`'s line over its 1024 steps: see
+/// [`log_start`].
+#[lower]
+pub(crate) fn log_rise(k: U<5>) -> U<12> {
+    select!(k.raw() => {
+        0 => U::<12>::from(2909u32),
+        1 => U::<12>::from(2823u32),
+        2 => U::<12>::from(2741u32),
+        3 => U::<12>::from(2664u32),
+        4 => U::<12>::from(2591u32),
+        5 => U::<12>::from(2521u32),
+        6 => U::<12>::from(2456u32),
+        7 => U::<12>::from(2394u32),
+        8 => U::<12>::from(2335u32),
+        9 => U::<12>::from(2278u32),
+        10 => U::<12>::from(2225u32),
+        11 => U::<12>::from(2174u32),
+        12 => U::<12>::from(2125u32),
+        13 => U::<12>::from(2078u32),
+        14 => U::<12>::from(2033u32),
+        15 => U::<12>::from(1991u32),
+        16 => U::<12>::from(1950u32),
+        17 => U::<12>::from(1910u32),
+        18 => U::<12>::from(1872u32),
+        19 => U::<12>::from(1836u32),
+        20 => U::<12>::from(1801u32),
+        21 => U::<12>::from(1767u32),
+        22 => U::<12>::from(1735u32),
+        23 => U::<12>::from(1704u32),
+        24 => U::<12>::from(1673u32),
+        25 => U::<12>::from(1644u32),
+        26 => U::<12>::from(1616u32),
+        27 => U::<12>::from(1589u32),
+        28 => U::<12>::from(1563u32),
+        29 => U::<12>::from(1537u32),
+        30 => U::<12>::from(1513u32),
+        _ => U::<12>::from(1489u32),
+    })
+}
+
 /// The leading zeros of `v`, which is not nought: how far `tex::normal`
 /// shifts `q` (issue 997), found a half at a time.
 #[lower]
