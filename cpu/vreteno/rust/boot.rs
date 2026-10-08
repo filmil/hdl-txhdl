@@ -155,6 +155,41 @@ fn in_ram(addr: u32, len: u32) -> bool {
 }
 
 #[no_mangle]
+/// The last trap that brought a loaded program back to the loader, kept
+/// where a debugger reads it by system bus access (issue 1411): at
+/// `0x1000`, the start of the data memory, the words [`KEPT_MAGIC`], how
+/// many traps since the magic was written, and the last one's `mcause`,
+/// `mepc` and `mtval`. The loader clears `mcause` and `mepc` once it has
+/// said them, so without this a trap nobody saw on the serial line read
+/// afterwards exactly as a jump to zero would (issue 1317). The section
+/// is neither loaded nor cleared by `_start`, so the record outlives the
+/// restart; a power-on leaves no magic, and the count starts again.
+#[link_section = ".keep"]
+static mut KEPT: [u32; 5] = [0; 5];
+
+/// "TRAP", read as a word: says the record behind it is the loader's.
+const KEPT_MAGIC: u32 = 0x5041_5254;
+
+/// Keep a trap in [`KEPT`].
+fn keep(mcause: u32, mepc: u32, mtval: u32) {
+    // Volatile, so that the writes happen though nothing here reads
+    // them back.
+    unsafe {
+        let kept = core::ptr::addr_of_mut!(KEPT) as *mut u32;
+        let fresh = core::ptr::read_volatile(kept) != KEPT_MAGIC;
+        let count = if fresh {
+            0
+        } else {
+            core::ptr::read_volatile(kept.add(1))
+        };
+        core::ptr::write_volatile(kept, KEPT_MAGIC);
+        core::ptr::write_volatile(kept.add(1), count.wrapping_add(1));
+        core::ptr::write_volatile(kept.add(2), mcause);
+        core::ptr::write_volatile(kept.add(3), mepc);
+        core::ptr::write_volatile(kept.add(4), mtval);
+    }
+}
+
 extern "C" fn main() -> ! {
     // The loader never sets `mtvec`, so a trap taken by a loaded
     // program before it has set its own comes to address zero, which
@@ -162,16 +197,21 @@ extern "C" fn main() -> ! {
     // leaves `mcause` and `mepc` zero and a trap does not, so the
     // loader says which it was, with the cause and the address, before
     // the greeting (issue 413).
-    let (mcause, mepc): (u32, u32);
+    let (mcause, mepc, mtval): (u32, u32, u32);
     unsafe {
         core::arch::asm!(
             "csrr {0}, mcause",
             "csrr {1}, mepc",
+            "csrr {2}, mtval",
             out(reg) mcause,
             out(reg) mepc,
+            out(reg) mtval,
         );
     }
     if mcause != 0 {
+        // Kept before it is said: the line may be the part that never
+        // arrives (issue 1411).
+        keep(mcause, mepc, mtval);
         say(b"trap ");
         say_hex(mcause);
         say(b" at ");
