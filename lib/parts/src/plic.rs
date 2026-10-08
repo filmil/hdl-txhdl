@@ -3,9 +3,9 @@
 //! for every count of sources, with `Plic1` to `Plic8` naming the
 //! counts.
 //!
-//! It is the RISC-V PLIC with two targets, the hart's machine mode and
-//! its supervisor mode (issue 1013), an AXI-Lite peripheral at the
-//! standard offsets from its base:
+//! It is the RISC-V PLIC with four targets, the machine mode and the
+//! supervisor mode of each of two harts (issues 1013 and 1408), an
+//! AXI-Lite peripheral at the standard offsets from its base:
 //!
 //! | offset      | word                                             |
 //! |-------------|--------------------------------------------------|
@@ -17,8 +17,12 @@
 //! | `0x20_0004` | its claim on a read, complete on a write         |
 //! | `0x20_1000` | the supervisor target's threshold                |
 //! | `0x20_1004` | its claim and complete                           |
+//! | `0x2100`    | hart 1's machine target's enable bits            |
+//! | `0x2180`    | hart 1's supervisor target's enable bits         |
+//! | `0x20_2000` | hart 1's machine target's threshold, then claim  |
+//! | `0x20_3000` | hart 1's supervisor target's, the same           |
 //!
-//! The two targets share the sources, their gateways and the pending
+//! The targets share the sources, their gateways and the pending
 //! bits; each has its own enables, threshold and line. A claim by
 //! either takes the source's request, and a complete by either ends its
 //! service, so a source enabled for both is served by whichever claims
@@ -85,6 +89,19 @@ pub struct Plic<const N: usize, const EDGE: usize> {
     pub asserted: Reg<Bit>,
     /// The supervisor target's line.
     pub sasserted: Reg<Bit>,
+    /// Hart 1's machine target (issue 1408): its enables, threshold
+    /// and line.
+    pub enable1: Reg<U<32>>,
+    /// Its threshold.
+    pub threshold1: Reg<U<3>>,
+    /// Its line.
+    pub asserted1: Reg<Bit>,
+    /// Hart 1's supervisor target: its enables.
+    pub senable1: Reg<U<32>>,
+    /// Its threshold.
+    pub sthreshold1: Reg<U<3>>,
+    /// Its line.
+    pub sasserted1: Reg<Bit>,
 }
 // end{state}
 
@@ -114,7 +131,14 @@ impl<const N: usize, const EDGE: usize> Unit for Plic<N, EDGE> {
     async fn run(
         &mut self,
         bus: LitePort<32, 32, 4>,
-        (rst, srcs, irq, sirq): (In<Bit>, [In<Bit>; N], Out<Bit>, Out<Bit>),
+        (rst, srcs, irq, sirq, irq1, sirq1): (
+            In<Bit>,
+            [In<Bit>; N],
+            Out<Bit>,
+            Out<Bit>,
+            Out<Bit>,
+            Out<Bit>,
+        ),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -138,6 +162,10 @@ impl<const N: usize, const EDGE: usize> Unit for Plic<N, EDGE> {
             let threshold = self.threshold.get();
             let senable = self.senable.get();
             let sthreshold = self.sthreshold.get();
+            let (enable1, threshold1) =
+                (self.enable1.get(), self.threshold1.get());
+            let (senable1, sthreshold1) =
+                (self.senable1.get(), self.sthreshold1.get());
             // A level source asks while its line is high; an edge
             // source asks on a rising edge, or on one it holds. A
             // request goes forward when its source is not active.
@@ -156,6 +184,10 @@ impl<const N: usize, const EDGE: usize> Unit for Plic<N, EDGE> {
             let mut best_pr = U::<3>::from(0u8);
             let mut sbest = U::<5>::from(0u8);
             let mut sbest_pr = U::<3>::from(0u8);
+            let mut best1 = U::<5>::from(0u8);
+            let mut best1_pr = U::<3>::from(0u8);
+            let mut sbest1 = U::<5>::from(0u8);
+            let mut sbest1_pr = U::<3>::from(0u8);
             for i in 0..N {
                 let p = self.prio[i].get();
                 let cand = pending.bit(i + 1)
@@ -170,6 +202,18 @@ impl<const N: usize, const EDGE: usize> Unit for Plic<N, EDGE> {
                 let stake = scand & Bit::from(p > sbest_pr);
                 sbest = mux(stake, U::<5>::from(i + 1), sbest);
                 sbest_pr = mux(stake, p, sbest_pr);
+                let cand1 = pending.bit(i + 1)
+                    & enable1.bit(i + 1)
+                    & Bit::from(p > threshold1);
+                let take1 = cand1 & Bit::from(p > best1_pr);
+                best1 = mux(take1, U::<5>::from(i + 1), best1);
+                best1_pr = mux(take1, p, best1_pr);
+                let scand1 = pending.bit(i + 1)
+                    & senable1.bit(i + 1)
+                    & Bit::from(p > sthreshold1);
+                let stake1 = scand1 & Bit::from(p > sbest1_pr);
+                sbest1 = mux(stake1, U::<5>::from(i + 1), sbest1);
+                sbest1_pr = mux(stake1, p, sbest1_pr);
             }
             // end{choice}
             // begin{bus}
@@ -194,21 +238,60 @@ impl<const N: usize, const EDGE: usize> Unit for Plic<N, EDGE> {
             let wnum = wdata.slice::<0, 5>();
             // A claim takes its target's best source's request; a
             // complete of a number in range ends that source's service,
-            // from either target. One read and one write a cycle, so
-            // the two targets never claim, or complete, together.
+            // from any target. One read and one write a cycle, so no two
+            // targets claim, or complete, together.
             let claim = take_read & Bit::from(roff == 0x20_0004);
             let sclaim = take_read & Bit::from(roff == 0x20_1004);
+            let claim1 = take_read & Bit::from(roff == 0x20_2004);
+            let sclaim1 = take_read & Bit::from(roff == 0x20_3004);
             let in_range = Bit::from(wdata <= N as u32);
-            let complete = wgo
-                & Bit::from((woff == 0x20_0004) | (woff == 0x20_1004))
-                & in_range;
+            let complete =
+                wgo & Bit::from(
+                    (woff == 0x20_0004)
+                        | (woff == 0x20_1004)
+                        | (woff == 0x20_2004)
+                        | (woff == 0x20_3004),
+                ) & in_range;
             let claimed = mux(
                 claim,
                 one << (best.raw() as usize),
-                mux(sclaim, one << (sbest.raw() as usize), none),
+                mux(
+                    sclaim,
+                    one << (sbest.raw() as usize),
+                    mux(
+                        claim1,
+                        one << (best1.raw() as usize),
+                        mux(sclaim1, one << (sbest1.raw() as usize), none),
+                    ),
+                ),
             );
             let completed = mux(complete, one << (wnum.raw() as usize), none);
-            // What a read answers, by the offset.
+            // What a read answers, by the offset: hart 1's words first.
+            let hart1_word = mux(
+                roff == 0x2100,
+                enable1,
+                mux(
+                    roff == 0x20_2000,
+                    threshold1.zext::<32>(),
+                    mux(
+                        roff == 0x20_2004,
+                        best1.zext::<32>(),
+                        mux(
+                            roff == 0x2180,
+                            senable1,
+                            mux(
+                                roff == 0x20_3000,
+                                sthreshold1.zext::<32>(),
+                                mux(
+                                    roff == 0x20_3004,
+                                    sbest1.zext::<32>(),
+                                    none,
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            );
             let mut word = mux(
                 roff == 0x1000,
                 pending,
@@ -230,7 +313,7 @@ impl<const N: usize, const EDGE: usize> Unit for Plic<N, EDGE> {
                                     mux(
                                         roff == 0x20_1004,
                                         sbest.zext::<32>(),
-                                        none,
+                                        hart1_word,
                                     ),
                                 ),
                             ),
@@ -272,18 +355,32 @@ impl<const N: usize, const EDGE: usize> Unit for Plic<N, EDGE> {
                 wgo & (woff == 0x20_0000) ? threshold: wprio,
                 wgo & (woff == 0x2080) ? senable: wenable,
                 wgo & (woff == 0x20_1000) ? sthreshold: wprio,
+                wgo & (woff == 0x2100) ? enable1: wenable,
+                wgo & (woff == 0x20_2000) ? threshold1: wprio,
+                wgo & (woff == 0x2180) ? senable1: wenable,
+                wgo & (woff == 0x20_3000) ? sthreshold1: wprio,
                 rst ? {
                     enable: none,
                     threshold: U::<3>::from(0u8),
                     senable: none,
                     sthreshold: U::<3>::from(0u8),
+                    enable1: none,
+                    threshold1: U::<3>::from(0u8),
+                    senable1: none,
+                    sthreshold1: U::<3>::from(0u8),
                 },
             });
             self.asserted.set(mux(rst, Bit::Zero, Bit::from(best != 0)));
             self.sasserted
                 .set(mux(rst, Bit::Zero, Bit::from(sbest != 0)));
+            self.asserted1
+                .set(mux(rst, Bit::Zero, Bit::from(best1 != 0)));
+            self.sasserted1
+                .set(mux(rst, Bit::Zero, Bit::from(sbest1 != 0)));
             irq.set(self.asserted);
             sirq.set(self.sasserted);
+            irq1.set(self.asserted1);
+            sirq1.set(self.sasserted1);
             // end{drives}
         }
     }
@@ -305,6 +402,20 @@ pub const S_ENABLE: u32 = 0x2080;
 pub const S_THRESHOLD: u32 = 0x20_1000;
 /// The offset of its claim and complete word.
 pub const S_CLAIM: u32 = 0x20_1004;
+
+/// Hart 1's machine target's enable bits, the third context's,
+/// `0x2000 + 2 * 0x80` (issue 1408).
+pub const ENABLE1: u32 = 0x2100;
+/// Its threshold, `0x20_0000 + 2 * 0x1000`.
+pub const THRESHOLD1: u32 = 0x20_2000;
+/// Its claim and complete word.
+pub const CLAIM1: u32 = 0x20_2004;
+/// Hart 1's supervisor target's enable bits, the fourth context's.
+pub const S_ENABLE1: u32 = 0x2180;
+/// Its threshold.
+pub const S_THRESHOLD1: u32 = 0x20_3000;
+/// Its claim and complete word.
+pub const S_CLAIM1: u32 = 0x20_3004;
 
 /// The offset of source `i`'s priority.
 pub const fn priority(i: u32) -> u32 {
@@ -377,6 +488,8 @@ mod tests {
         let (s3_o, s3) = signal::<Bit, DefaultClock>();
         let (irq_o, irq) = signal::<Bit, DefaultClock>();
         let (sirq_o, sirq) = signal::<Bit, DefaultClock>();
+        let (irq1_o, irq1) = signal::<Bit, DefaultClock>();
+        let (sirq1_o, sirq1) = signal::<Bit, DefaultClock>();
         let done = Rc::new(RefCell::new(false));
         let d = done.clone();
         let rig = Rig {
@@ -384,11 +497,13 @@ mod tests {
             lines: [s1_o, s2_o, s3_o],
             irq,
             sirq,
+            irq1,
+            sirq1,
         };
         let body = client(rig);
         let mut plic = Plic3::<EDGE>::default();
         let mut sim = Running::new(join2(
-            plic.run(bus, (rst, [s1, s2, s3], irq_o, sirq_o)),
+            plic.run(bus, (rst, [s1, s2, s3], irq_o, sirq_o, irq1_o, sirq1_o)),
             async move {
                 body.await;
                 *d.borrow_mut() = true;
@@ -407,12 +522,14 @@ mod tests {
     }
 
     /// What a test holds: the link's host end, a line per source, and
-    /// the two targets' interrupt lines.
+    /// the four targets' interrupt lines.
     struct Rig {
         host: Host,
         lines: [Out<Bit>; 3],
         irq: txhdl::comp::In<Bit>,
         sirq: txhdl::comp::In<Bit>,
+        irq1: txhdl::comp::In<Bit>,
+        sirq1: txhdl::comp::In<Bit>,
     }
 
     impl Rig {
@@ -425,6 +542,50 @@ mod tests {
         fn sirq(&self) -> bool {
             self.sirq.get().to_bool()
         }
+        fn irq1(&self) -> bool {
+            self.irq1.get().to_bool()
+        }
+        fn sirq1(&self) -> bool {
+            self.sirq1.get().to_bool()
+        }
+    }
+
+    /// Hart 1's two targets (issue 1408): each takes the sources its
+    /// own enables name above its own threshold, raises its own line,
+    /// and claims and completes at its own words; a source enabled for
+    /// hart 1's machine target alone leaves hart 0's lines low.
+    #[test]
+    fn hart_ones_targets_take_their_own_sources() {
+        run3::<0, _>(|rig| async move {
+            let h = &rig.host;
+            for i in 1..=3 {
+                write(h, priority(i), 2).await;
+            }
+            write(h, ENABLE1, 1 << 2).await;
+            write(h, S_ENABLE1, 1 << 3).await;
+            assert_eq!(read(h, ENABLE1).await, 1 << 2);
+            assert_eq!(read(h, S_ENABLE1).await, 1 << 3);
+            rig.line(2, true);
+            cycles(3).await;
+            assert!(rig.irq1(), "source 2 to hart 1's machine target");
+            assert!(!rig.irq() && !rig.sirq(), "hart 0's lines stay low");
+            assert!(!rig.sirq1(), "and hart 1's supervisor's");
+            assert_eq!(read(h, CLAIM1).await, 2);
+            rig.line(2, false);
+            write(h, CLAIM1, 2).await;
+            rig.line(3, true);
+            cycles(3).await;
+            assert!(rig.sirq1(), "source 3 to its supervisor target");
+            assert!(!rig.irq1(), "the machine target's line went down");
+            // A threshold at the priority holds it back.
+            write(h, S_THRESHOLD1, 2).await;
+            cycles(3).await;
+            assert!(!rig.sirq1(), "held back by its threshold");
+            write(h, S_THRESHOLD1, 0).await;
+            cycles(3).await;
+            assert_eq!(read(h, S_CLAIM1).await, 3);
+            write(h, S_CLAIM1, 3).await;
+        });
     }
 
     #[test]

@@ -75,6 +75,9 @@ fn main() {
     let (src3_o, src3) = signal::<Bit, DefaultClock>();
     let (irq_o, irq) = signal::<Bit, DefaultClock>();
     let (sirq_o, sirq) = signal::<Bit, DefaultClock>();
+    // A second hart's two targets, which this run leaves alone.
+    let (irq1_o, irq1) = signal::<Bit, DefaultClock>();
+    let (sirq1_o, sirq1) = signal::<Bit, DefaultClock>();
     let mut plic = Plic::default();
 
     if let Some(mut wave) = Wave::from_env() {
@@ -90,6 +93,8 @@ fn main() {
         wave.add("bus_r", &bus.r);
         wave.add("irq", &irq);
         wave.add("sirq", &sirq);
+        wave.add("irq1", &irq1);
+        wave.add("sirq1", &sirq1);
         wave.add("plic", &plic);
         wave.start();
     }
@@ -191,7 +196,10 @@ fn main() {
 
     // The client first: it drives the source lines, which are wires,
     // and the controller reads them in the same step.
-    let hardware = plic.run(bus, (rst, [src1, src2, src3], irq_o, sirq_o));
+    let hardware = plic.run(
+        bus,
+        (rst, [src1, src2, src3], irq_o, sirq_o, irq1_o, sirq1_o),
+    );
     let mut sim = Running::new(join2(client, hardware));
     rst_o.set(Bit::One);
     sim.cycle();
