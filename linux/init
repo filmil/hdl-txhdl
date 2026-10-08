@@ -41,6 +41,14 @@ if [ -n "$addr" ] && [ -n "$peer" ]; then
 	*"3 packets received"*) echo "txhdl: network is up" ;;
 	esac
 fi
+# A shell on the screen too, when there is one (issue 1440): the
+# framebuffer console's first terminal, so a prompt shows on HDMI. Its
+# input waits for a keyboard, or for ssh; the serial port's shell below
+# is the one to type at.
+if [ -c /dev/tty1 ]; then
+	/bin/busybox setsid /bin/busybox sh -c \
+		'exec /bin/busybox sh </dev/tty1 >/dev/tty1 2>&1' &
+fi
 # The shell takes the console as its controlling tty, so that Ctrl-C
 # reaches the command in the foreground: with a plain exec it had none,
 # said "can't access tty", and a command that hung at the board's

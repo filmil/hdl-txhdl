@@ -153,6 +153,10 @@ rust_test(
 #   bazel test //linux:boot_test
 boot_image(
     name = "model_boot",
+    bootargs = "earlycon console=tty0 console=ttySIF0",
+    # As the board's: the console on the scanout's frame too, which
+    # the machine's --screen shows (issue 1440).
+    framebuffer = "0x42000000",
     initramfs = "initramfs.cpio",
     kernel = "Image",
     model = True,
@@ -171,7 +175,11 @@ boot_image(
 #   fastboot -s tcp:192.168.1.50 boot bazel-bin/linux/board_boot.bin
 boot_image(
     name = "board_boot",
-    bootargs = "earlycon console=ttySIF0 txhdl.ip=192.168.1.50/24",
+    # The log on HDMI as well, through the simple framebuffer the shim
+    # shows (issue 1440); /dev/console, the last named, stays the serial
+    # port, where the input is.
+    bootargs = "earlycon console=tty0 console=ttySIF0 txhdl.ip=192.168.1.50/24",
+    framebuffer = "0x42000000",
     initramfs = "initramfs.cpio",
     kernel = "Image",
     opensbi = "fw_jump.bin",
