@@ -324,36 +324,47 @@ applies the five environments of GL ES~1.1 but \code{COMBINE}, before
 the alpha test. Over a floor in perspective it is within a fiftieth of a
 level of the level of detail in floating point.
 
-In a tile the rasteriser samples as the model does, byte for byte, so
-far at the nearest texel of the base level, under \code{REPLACE} and
-\code{MODULATE}. It reads the two slots and the descriptor's first two
-words with the entry, and steps the three planes with the walk. A
-textured pixel then takes a turn for each step of the model's
+In a tile the rasteriser samples as the model does, byte for byte,
+under both magnification filters, all six minification filters and the
+five environments. It reads the two slots and the descriptor's sides,
+levels, filters, wrap modes, class and the address of each level with
+the entry, and steps the three planes and the four numerators with the
+walk. A textured pixel then takes a turn for each step of the model's
 arithmetic: $q$'s leading zeros, the reciprocal's first guess from two
 \code{select!}s of 32 constants rather than a ROM, its Newton step in
-two turns, $uq$ and $vq$ times it, the shift back, and the wrap and the
-texel's address. The texel comes from a cache of 64 lines, each a block
-of four by four, direct mapped: a block RAM of 1024 words with one
-write, the refill's, and one read, the pixel's. A miss refills its line
-with one burst of sixteen beats and keeps its own word as it passes.
-Every line is forgotten when a list starts, since a program may change
-its textures between lists. The environment takes two turns more, its
-products and then their divide, and the colour goes on to the depth
-test and the blend as an untextured pixel's does. A textured pixel
-takes eleven cycles more than an untextured one when its texel is
-cached, and thirty when it refills, as
-\code{what\_a\_textured\_pixel\_costs} measures. A refill holds the link
-for sixteen beats at most once in thirty cycles, where a tile's
-write-out holds it for 64 beats a row, back to back, so texturing asks
-less of the DDR3 than the write-out Razboj already does; the scanout
-fetches its line in 1200 cycles of the 1587 it has with Razboj drawing
-(issue~\#1209), and a burst of sixteen ahead of one of its own delays it
-less than a write-out's burst of 64 does. A flat list has no
-texturing, as it has no depth, and draws a textured entry untextured.
-Scenes under every class of texel, both environments and both wrap
-modes are drawn in tiles as the model draws them, byte for byte, and
-\code{//docs:razboj\_tex} replays the netlist's texturing under both
-simulators.
+two turns, $uq$ and $vq$ times it, and the shift back. Beside them, in
+the same turns, the largest numerator and its leading zeros, the two
+lines of $\log_2$ from \code{select!}s of their own, the level of
+detail, and from it the level or the two levels to read and whether
+each is filtered linearly. Then each texel the filters read, one or four
+a level and one level or two, takes seven turns: its level's
+coordinates, its column and row wrapped with its weight, its address,
+the cache read, a refill on a miss, the weight times each channel, and
+the sum. The texel comes from a cache of 64 lines, each a block of four
+by four, direct mapped: a block RAM of 1024 words with one write, the
+refill's, and one read, the texel's. A miss refills its line with one
+burst of sixteen beats and keeps its own word as it passes. Every line
+is forgotten when a list starts, since a program may change its
+textures between lists. Each level's sums are shifted back, two levels
+are blended by the level of detail's fraction, and the environment
+takes two turns more, its products and then their divide; the colour
+goes on to the depth test and the blend as an untextured pixel's does.
+A textured pixel at the nearest texel of one level takes 18 cycles more
+than an untextured one when its texel is cached, and 37 when it
+refills, as \code{what\_a\_textured\_pixel\_costs} measures; a pixel
+under \code{LINEAR\_MIPMAP\_LINEAR} reads eight texels and takes 76,
+its refills included. A refill holds the link for sixteen beats at most once in 37
+cycles, where a tile's write-out holds it for 64 beats a row, back to
+back, so texturing asks less of the DDR3 than the write-out Razboj
+already does; the scanout fetches its line in 1200 cycles of the 1587
+it has with Razboj drawing (issue~\#1209), and a burst of sixteen ahead
+of one of its own delays it less than a write-out's burst of 64 does. A
+flat list has no texturing, as it has no depth, and draws a textured
+entry untextured. Scenes under every filter, every class of texel,
+every environment and both wrap modes, magnified and minified, are
+drawn in tiles as the model draws them, byte for byte, and
+\code{//docs:razboj\_tex} replays the netlist's trilinear filtering and
+\code{BLEND} under both simulators.
 
 \section{The Rasteriser}
 \label{sec:g-raster}
