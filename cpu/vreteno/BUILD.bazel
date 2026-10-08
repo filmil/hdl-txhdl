@@ -191,10 +191,12 @@ rust_test(
 
 # A stock OpenOCD on the simulated board, through the RISC-V debug
 # transport behind BSCANE2 and OpenOCD's own BSCAN tunnel (issue 154):
-# examine, halt, pc, memory by system bus access, resume.
+# examine, halt, pc, memory by system bus access, resume. Enormous: it
+# takes 215 s alone, and a loaded host has run it past large's 900 s
+# (issue 1448).
 rust_test(
     name = "openocd_test",
-    size = "large",
+    size = "enormous",
     srcs = ["tests/openocd.rs"],
     data = [
         "//cpu/vreteno/rust:gdbprobe_elf",

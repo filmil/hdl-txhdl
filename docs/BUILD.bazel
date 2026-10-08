@@ -1546,6 +1546,7 @@ waveform(
     until = 200,
     width = 8.2,
     nvc_heap = "64m",
+    sim_size = "large",
 )
 
 # Razboj's depth test (issue 992): in one tile, a clear of depth and two
@@ -1568,6 +1569,7 @@ waveform(
     until = 200,
     width = 8.2,
     nvc_heap = "64m",
+    sim_size = "large",
 )
 
 # Razboj's blending (issue 993): in one tile, a backdrop, then a list
@@ -1595,6 +1597,7 @@ waveform(
     until = 200,
     width = 8.2,
     nvc_heap = "64m",
+    sim_size = "large",
 )
 
 # Razboj's texturing (issue 997): in one tile, a floor of two triangles
@@ -1621,6 +1624,7 @@ waveform(
     until = 200,
     width = 8.2,
     nvc_heap = "64m",
+    sim_size = "large",
 )
 
 # The demonstration's picture, rendered by Razboj and written by it.
@@ -3912,8 +3916,11 @@ pdf_edge_test(
 # document, the page and the word (issue 1061). A source line wider
 # than its column runs past the frame and stays on the page, so the
 # edge test above passes it, and neither LaTeX nor rustfmt says a word.
+# Large: it takes 120 s alone, and a loaded host runs it up to five
+# times slower than that (issue 1448).
 pdf_frame_test(
     name = "frame_test",
+    size = "large",
     pdfs = DOCUMENTS,
 )
 

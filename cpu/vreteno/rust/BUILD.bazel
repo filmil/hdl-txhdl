@@ -996,8 +996,11 @@ rust_test(
 # the host through Razboj's model and held to the hand-written one:
 # the same faces, their colours within 2, and the pictures differing
 # only on edges.
+# Large: 58 s alone, and it timed out at medium's 300 s three times on
+# a loaded host (issue 1448).
 rust_test(
     name = "ico_gl_test",
+    size = "large",
     srcs = [
         "ico_gl.rs",
         "ico_gl_test.rs",

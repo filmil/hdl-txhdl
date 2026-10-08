@@ -163,8 +163,11 @@ rust_binary(
     ],
 )
 
+# Large: 81 s alone, and up to five times that on a loaded host
+# (issue 1448).
 rust_test(
     name = "razboj_test",
+    size = "large",
     crate = ":razboj",
     edition = "2021",
 )
