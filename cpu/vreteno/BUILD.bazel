@@ -276,6 +276,22 @@ rust_binary(
     deps = [":vreteno32_opt"],
 )
 
+# The runner of the RISC-V architectural tests (issue 1442): one test's
+# ELF on the hart and a memory that answers every address, judged by
+# what it writes to `tohost`. //cpu/vreteno/act runs it as a test.
+rust_binary(
+    name = "act_run",
+    srcs = ["src/bin/act_run.rs"],
+    edition = "2021",
+    rustc_flags = ["-Copt-level=3"],
+    visibility = ["//cpu/vreteno/act:__pkg__"],
+    deps = [
+        ":vreteno32_opt",
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+)
+
 # The library's unit tests: the encoders against the decoder, and the
 # core's, the model's, the timer's and the debug module's own.
 rust_test(
