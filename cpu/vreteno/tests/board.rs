@@ -186,6 +186,9 @@ enum Op {
     Wait(u64),
     ReadBurst(u32, u32, u8),
     WriteBurst(u32, u32, u8),
+    /// The board's `irq` input, the interrupt controller's source 2,
+    /// set high or low, and on to the next step (issue 1408).
+    Irq(bool),
 }
 
 /// What a burst on the master's pins met: the beats that came back,
@@ -300,7 +303,7 @@ impl Master {
                     j.araddr.set(U::from(addr));
                     arv = !self.ar_done;
                 }
-                Op::Wait(_) => {}
+                Op::Wait(_) | Op::Irq(_) => {}
             }
         }
         j.awvalid.set(Bit::from_bool(awv));
@@ -401,6 +404,7 @@ impl Master {
                 }
                 self.end_burst();
             }
+            Op::Irq(_) => {}
         }
     }
 
@@ -887,6 +891,10 @@ fn run_all_in<const LO: usize, const HI: usize>(
                 set_reset(false);
                 rst_o.set(Bit::Zero);
             }
+        }
+        if let Some(Op::Irq(high)) = plan.get(master.at) {
+            irq_o.set(Bit::from_bool(*high));
+            master.next();
         }
         master.drive(plan, &jtag);
         device(
@@ -4107,4 +4115,61 @@ fn a_hart_woken_as_a_write_lands_sees_it() {
             );
         }
     }
+}
+
+/// Hart 1 takes an external interrupt through its own target of the
+/// interrupt controller (issue 1408). Hart 0 gives the board's `irq`
+/// input, source 2, a priority and enables it for hart 1's machine
+/// target alone, and starts hart 1 on a job that sets its trap vector,
+/// turns on its external interrupt and waits; the JTAG plan then raises
+/// `irq`. Hart 1's handler claims at its own claim word, which answers
+/// 2, completes it, and says so; hart 0 is not interrupted.
+#[test]
+fn hart_one_takes_an_external_interrupt() {
+    use txhdl_parts::plic::{CLAIM1, ENABLE1};
+    use vreteno32::isa::{
+        beq, csrrs, csrrsi, csrrw, fence, jal, lw, sw, wfi, CSR_MIE,
+        CSR_MSTATUS, CSR_MTVEC,
+    };
+    const CODE: u32 = 0x4002_0000;
+    const SAW: u32 = 0x4000_0c00;
+    const FLAG: u32 = 0x4000_0d00;
+    const PLIC: u32 = 0x0c00_0000;
+    // The job: the vector, MEIE and MIE, then wait. Nine words, so the
+    // handler is at CODE + 36.
+    let mut j = Checked::new();
+    j.li(6, CODE + 36)
+        .op(csrrw(0, CSR_MTVEC, 6))
+        .li(7, 1 << 11)
+        .op(csrrs(0, CSR_MIE, 7))
+        .op(csrrsi(0, CSR_MSTATUS, 8))
+        .op(wfi())
+        .op(jal(0, -4));
+    assert_eq!(j.p.len(), 9, "the handler's address");
+    // The handler: claim, say what, complete, raise the flag, stay.
+    j.li(5, PLIC + CLAIM1)
+        .op(lw(8, 5, 0))
+        .li(9, SAW)
+        .op(sw(8, 9, 0))
+        .op(sw(8, 5, 0))
+        .op(fence())
+        .li(10, 1)
+        .op(sw(10, 11, 0))
+        .op(jal(0, 0));
+    let job = j.p.clone();
+    let mut c = Checked::new();
+    c.li(20, PLIC)
+        .li(21, 1)
+        .op(sw(21, 20, 8))
+        .li(22, PLIC + ENABLE1)
+        .li(21, 1 << 2)
+        .op(sw(21, 22, 0));
+    c.li(8, CODE).li(12, FLAG).op(sw(0, 12, 0));
+    place(&mut c, 8, &job);
+    start_hart1(&mut c, 8, 12);
+    c.op(lw(15, 12, 0)).op(beq(15, 0, -4));
+    c.li(9, SAW).op(lw(16, 9, 0)).eq(16, 2);
+    let plan = [Op::Wait(4000), Op::Irq(true)];
+    let ran = run_debugged(&c.done(), &[], 100_000, &plan);
+    assert!(ran.halted_at.is_some(), "hart 1's handler never claimed 2");
 }
