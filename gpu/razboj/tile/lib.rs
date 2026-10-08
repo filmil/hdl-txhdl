@@ -203,16 +203,18 @@ pub fn slots_of(e: &[u32; WORDS]) -> usize {
 pub const LOAD: u32 = 1 << 26;
 
 /// Whether an entry with its second slot `ext` reads the colour already
-/// at a pixel: it blends, or writes some of the channels but not all.
+/// at a pixel: it blends, has a logic operation (Razboj's #998), or writes
+/// some of the channels but not all.
 fn reads_dst(e: &[u32; WORDS], ext: &[u32; WORDS]) -> bool {
     let mask = (ext[4] >> 16) & 0xf;
-    (e[15] >> 13) & 1 == 1 && (ext[3] & 1 == 1 || (mask != 0 && mask != 0xf))
+    let mixes = ext[3] & 1 == 1 || ext[5] & 1 == 1;
+    (e[15] >> 13) & 1 == 1 && (mixes || (mask != 0 && mask != 0xf))
 }
 
 /// Whether an entry, clipped to the tile `within`, writes every pixel of
 /// it in full, whatever was there: a clear, or a rectangle over the
-/// whole tile, that neither blends, tests alpha nor masks a channel,
-/// and passes every depth test it makes.
+/// whole tile, that neither blends, tests alpha, has a logic operation
+/// nor masks a channel, and passes every depth test it makes.
 fn covers(
     e: &[u32; WORDS],
     ext: Option<&[u32; WORDS]>,
@@ -228,7 +230,10 @@ fn covers(
     let state = (e[15] >> 13) & 1 == 1;
     let plain = !state
         || ext.is_some_and(|x| {
-            x[3] & 1 == 0 && x[4] & 1 == 0 && (x[4] >> 16) & 0xf == 0xf
+            x[3] & 1 == 0
+                && x[4] & 1 == 0
+                && x[5] & 1 == 0
+                && (x[4] >> 16) & 0xf == 0xf
         });
     let depth = (e[15] >> 8) & 1 == 0 || (e[15] >> 9) & 7 == 7;
     whole && plain && depth
@@ -433,6 +438,14 @@ mod tests {
         // A rectangle over the tile that blends covers nothing.
         let [lb, lbx] = stated(left, true, 0xf);
         assert_eq!(loads(&[lb, lbx, b, bx]), [true, true]);
+        // A logic operation reads the colour there as a blend does, and a
+        // rectangle over the tile with one covers nothing (Razboj's #998).
+        let [o, mut ox] = stated(both, false, 0xf);
+        ox[5] = 1 | (6 << 1);
+        assert_eq!(loads(&[o, ox]), [true, true], "a logic operation");
+        let [lo, mut lox] = stated(left, false, 0xf);
+        lox[5] = 1 | (6 << 1);
+        assert_eq!(loads(&[lo, lox, f, fx]), [true, false]);
     }
 
     #[test]
