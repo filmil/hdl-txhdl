@@ -211,6 +211,16 @@ genrule(
     tools = _TOOLS,
 )
 
+# What that tree holds: the initramfs's system, every entry root's.
+rust_test(
+    name = "nfs_root_test",
+    srcs = ["nfs_root_test.rs"],
+    data = ["nfs_root.tar"],
+    edition = "2021",
+    env = {"NFS_ROOT": "$(rootpath nfs_root.tar)"},
+    tags = ["manual"],
+)
+
 boot_image(
     name = "board_nfs_boot",
     bootargs = "earlycon console=ttySIF0 root=/dev/nfs " +
