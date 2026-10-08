@@ -835,6 +835,21 @@ mod tests {
         assert!(!h.contains("to_unsigned(3736805603"), "not a natural");
     }
 
+    /// The store is read into a register, `rq`, at one address, and
+    /// says it is a block RAM; nothing reads it straight onto `rx`,
+    /// which left it LUT RAM on the flagship (issue 1421). The lowering
+    /// refuses a `ram_style("block")` memory reached at more addresses
+    /// than a block RAM has ports for, so lowering it is half the test.
+    #[test]
+    fn the_receivers_store_is_read_as_a_block_ram() {
+        let v = EthRx::verilog("eth_rx");
+        assert!(v.contains("(* ram_style = \"block\" *)"), "{v}");
+        assert!(v.contains("rq <= frame["), "a registered read: {v}");
+        assert!(!v.contains("{frame[ri]"), "no read onto rx: {v}");
+        let h = EthRx::vhdl("eth_rx");
+        assert!(h.contains("attribute ram_style of frame"), "{h}");
+    }
+
     #[test]
     fn a_corrupted_frame_is_dropped() {
         let frames = vec![frame(64), frame(64), frame(64)];
