@@ -837,14 +837,40 @@ mod tests {
         take: usize,
         of: usize,
     ) -> (Vec<Vec<u8>>, u128) {
+        let lines: Vec<Vec<u8>> =
+            frames.iter().map(|f| wire_bytes(f)).collect();
+        let seen = wire_lines(&lines, gap, take, of);
+        (seen.got, seen.dropped)
+    }
+
+    /// What the receiver did with what was on its wire.
+    struct Seen {
+        got: Vec<Vec<u8>>,
+        dropped: u128,
+        /// The drops by cause, from the registers: room, check, size.
+        causes: [u128; 3],
+        /// The same, decoded from the Gray code on `rx_counts`.
+        said: [u16; 3],
+    }
+
+    /// [`wire_in`] with the bytes on the wire given whole, preamble
+    /// and check sequence included, so that a test can break them.
+    fn wire_lines(
+        lines: &[Vec<u8>],
+        gap: usize,
+        take: usize,
+        of: usize,
+    ) -> Seen {
         let (out_tx, out_rx) = chan::<EthByte, DefaultClock>();
         let (rxd_out, rxd) = signal::<U<8>, DefaultClock>();
         let (dv_out, dv) = signal::<Bit, DefaultClock>();
         let (_er_out, er) = signal::<Bit, DefaultClock>();
         let (rxlen_out, _rxlen) = signal::<U<16>, DefaultClock>();
-        let (counts_out, _counts) = signal::<U<48>, DefaultClock>();
+        let (counts_out, counts) = signal::<U<48>, DefaultClock>();
         let mut mac_rx = EthRx::default();
         let dropped = mac_rx.dropped;
+        let (room, check, size) =
+            (mac_rx.drop_room, mac_rx.drop_check, mac_rx.drop_size);
         let mut sim = Running::new(mac_rx.run(
             EthRxLines {
                 rxd,
@@ -854,12 +880,12 @@ mod tests {
             (out_tx, rxlen_out, counts_out),
         ));
         let mut line: Vec<Option<u8>> = Vec::new();
-        for f in frames {
-            line.extend(wire_bytes(f).into_iter().map(Some));
+        for l in lines {
+            line.extend(l.iter().copied().map(Some));
             line.extend(std::iter::repeat_n(None, gap));
         }
         let mut got: Vec<Vec<u8>> = vec![Vec::new()];
-        let total = line.len() + frames.len() * 2000;
+        let total = line.len() + lines.len() * 2000 + 4;
         for t in 0..total {
             let b = line.get(t).copied().flatten();
             rxd_out.set(U::from(b.unwrap_or(0)));
@@ -874,7 +900,15 @@ mod tests {
             sim.cycle();
         }
         got.pop();
-        (got, dropped.get().raw())
+        let g = counts.get().raw();
+        let un =
+            |x: u128| ungray16(U::<16>::from((x & 0xffff) as u32)).raw() as u16;
+        Seen {
+            got,
+            dropped: dropped.get().raw(),
+            causes: [room.get().raw(), check.get().raw(), size.get().raw()],
+            said: [un(g >> 32), un(g >> 16), un(g)],
+        }
     }
 
     /// Two full frames back to back at the minimum gap of twelve
@@ -888,6 +922,43 @@ mod tests {
         assert_eq!(dropped, 0, "nothing dropped");
         assert_eq!(got.len(), 2, "both frames");
         assert_eq!(got, frames);
+    }
+
+    /// Every drop is counted by its cause, and the counts come out in
+    /// Gray code for another clock to read (issue 1404): a frame whose
+    /// byte was flipped fails its check; one of three bytes and one
+    /// longer than the store are dropped for their size; and with no
+    /// reader, the third of three good frames finds no room.
+    #[test]
+    fn the_drops_are_counted_by_cause() {
+        let mut flipped = wire_bytes(&frame(100));
+        flipped[40] ^= 0x10;
+        let mut short = vec![0x55; 7];
+        short.extend([0xd5, 1, 2, 3]);
+        let long = wire_bytes(&frame(2100));
+        let lines = vec![wire_bytes(&frame(64)), flipped, short, long];
+        let seen = wire_lines(&lines, 12, 1, 1);
+        assert_eq!(seen.got, vec![frame(64)]);
+        assert_eq!(seen.causes, [0, 1, 2], "room, check, size");
+        assert_eq!(seen.said, [0, 1, 2], "the same on rx_counts");
+        assert_eq!(seen.dropped, 3);
+        let good: Vec<Vec<u8>> =
+            (0..3).map(|_| wire_bytes(&frame(64))).collect();
+        let seen = wire_lines(&good, 12, 0, 1);
+        assert!(seen.got.is_empty(), "nothing read");
+        assert_eq!(seen.causes, [1, 0, 0], "room, check, size");
+        assert_eq!(seen.said, [1, 0, 0], "the same on rx_counts");
+    }
+
+    /// Gray code and back, over every count.
+    #[test]
+    fn a_count_survives_gray_code() {
+        for x in 0..=u16::MAX as u32 {
+            let g = gray16(U::<16>::from(x)).raw() as u32;
+            assert_eq!(ungray16(U::<16>::from(g)).raw() as u32, x);
+            let n = gray16(U::<16>::from((x + 1) & 0xffff)).raw() as u32;
+            assert_eq!((g ^ n).count_ones(), 1, "one bit from {x}");
+        }
     }
 
     /// A longer train at the minimum gap, read at the board's pace:

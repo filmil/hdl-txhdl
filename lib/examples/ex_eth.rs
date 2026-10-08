@@ -22,7 +22,7 @@ use txhdl_parts::bus::axi::{axi, AxiHost, BurstKind, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::eth::EthRxLines;
 use txhdl_parts::eth::EthTxLines;
-use txhdl_parts::eth::{regs, EthByte, EthLite, EthRx, EthTx};
+use txhdl_parts::eth::{regs, ungray16, EthByte, EthLite, EthRx, EthTx};
 
 /// The link: thirty-two-bit addresses and words, four lanes,
 /// two-bit identifiers, four of them.
@@ -240,6 +240,19 @@ fn main() {
         dropped.get().raw()
     );
     assert_eq!((sent.get().raw(), dropped.get().raw()), (3, 1));
+    // The one dropped failed its check, which the counts by cause say.
+    let c = counts.get().raw();
+    let by = |shift: u32| {
+        let g = U::<16>::from(((c >> shift) & 0xffff) as u32);
+        ungray16(g).raw()
+    };
+    println!(
+        "by cause: no room {}, failed check {}, size {}",
+        by(32),
+        by(16),
+        by(0)
+    );
+    assert_eq!((by(32), by(16), by(0)), (0, 1, 0));
     let lite_net = EthLite::lowered("eth_lite");
     let tx_net = EthTx::lowered("eth_tx");
     let rx_net = EthRx::lowered("eth_rx");

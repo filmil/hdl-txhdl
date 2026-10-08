@@ -401,7 +401,11 @@ mod tests {
         let (_rx_len_o, rx_len) = signal::<U<16>, DefaultClock>();
         let (_rx_which_o, rx_which) = signal::<U<1>, DefaultClock>();
         let (_rx_drops_o, rx_drops) = signal::<U<32>, DefaultClock>();
-        let (_rx_mac_o, rx_mac) = signal::<U<48>, DefaultClock>();
+        // The MAC's drops by cause, in Gray code as they cross: room 3,
+        // check 5, size 7 (issue 1404).
+        let (rx_mac_o, rx_mac) = signal::<U<48>, DefaultClock>();
+        let g = |x: u32| crate::eth::gray16(U::<16>::from(x)).raw();
+        rx_mac_o.set(U::<48>::from((g(3) << 32) | (g(5) << 16) | g(7)));
         let (tx_base, _) = signal::<U<32>, DefaultClock>();
         let (tx_bytes, _) = signal::<U<16>, DefaultClock>();
         let (tx_start, _) = signal::<Bit, DefaultClock>();
@@ -435,7 +439,13 @@ mod tests {
         let seen = seen.borrow();
         assert_eq!(seen.len(), 10, "every read answered");
         for (word, v) in seen.iter() {
-            let want = if *word == 13 { 1 } else { 0 };
+            let want = match *word {
+                13 => 1,
+                // The MAC's drops, decoded: check, then size over room.
+                14 => 5,
+                15 => (7 << 16) | 3,
+                _ => 0,
+            };
             assert_eq!(*v, want, "word {word}");
         }
     }
