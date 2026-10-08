@@ -95,7 +95,7 @@ impl<
             In<Bit>,
             In<U<9>>,
         ),
-        (halt, instr, wb, issue, wbeat, release, dbg, dbg_rdata): (
+        (halt, instr, wb, issue, wbeat, release, dbg, dbg_rdata, asleep): (
             Out<Bit>,
             Out<U<32>>,
             Out<Writeback>,
@@ -104,6 +104,7 @@ impl<
             Tx<Grant<IW>>,
             Out<Bit>,
             Out<U<32>>,
+            Out<Bit>,
         ),
     ) {
         let rst_mmu = rst.clone();
@@ -138,8 +139,8 @@ impl<
                 ),
                 (
                     halt, instr, wb, issue, wbeat, release, dbg, dbg_rdata,
-                    satp_o, prv_o, sum_o, mxr_o, flush_o, ireq_o, dreq_o,
-                    pte_tx,
+                    asleep, satp_o, prv_o, sum_o, mxr_o, flush_o, ireq_o,
+                    dreq_o, pte_tx,
                 ),
             ),
         )

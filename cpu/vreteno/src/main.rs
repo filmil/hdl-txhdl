@@ -150,6 +150,9 @@ fn main() {
     let (_dbg_wdata_o, dbg_wdata) = signal::<U<32>, DefaultClock>();
     let (_dbg_we_o, dbg_we) = signal::<Bit, DefaultClock>();
     let (dbg_rdata_o, dbg_rdata) = signal::<U<32>, DefaultClock>();
+    // Whether the hart waits in `wfi`, a port of the lowered units, so
+    // it is in the trace (issue 1408).
+    let (asleep_o, asleep) = signal::<Bit, DefaultClock>();
     let (instr_out, instr) = signal::<U<32>, DefaultClock>();
     let (wb_out, wb) = signal::<Writeback, DefaultClock>();
     if let Some(mut w) = Wave::from_env() {
@@ -246,6 +249,7 @@ fn main() {
         w.add("dbg_wdata", &dbg_wdata);
         w.add("dbg_we", &dbg_we);
         w.add("dbg_rdata", &dbg_rdata);
+        w.add("asleep", &asleep);
         w.start();
     }
     // The timer first: its line is a wire the core reads in the same
@@ -278,6 +282,7 @@ fn main() {
                         release,
                         debug_o,
                         dbg_rdata_o,
+                        asleep_o,
                     ),
                 ),
             ),

@@ -228,6 +228,10 @@ impl<const IW: usize> Unit for Pair<IW> {
         let (_wd1_o, wd1_i) = signal::<U<32>, DefaultClock>();
         let (_we1_o, we1_i) = signal::<Bit, DefaultClock>();
         let (rd1_o, _rd1_i) = signal::<U<32>, DefaultClock>();
+        // Whether each waits in `wfi`, which the pair does not compare
+        // (issue 1408).
+        let (sl1_o, _sl1_i) = signal::<Bit, DefaultClock>();
+        let (sl2_o, _sl2_i) = signal::<Bit, DefaultClock>();
         let (_rn2_o, rn2_i) = signal::<U<16>, DefaultClock>();
         let (_wd2_o, wd2_i) = signal::<U<32>, DefaultClock>();
         let (_we2_o, we2_i) = signal::<Bit, DefaultClock>();
@@ -253,7 +257,7 @@ impl<const IW: usize> Unit for Pair<IW> {
                         ),
                         (
                             halt1_o, instr1_o, wb1_o, is1_tx, beat1_tx, rl1_tx,
-                            dbg1_o, rd1_o,
+                            dbg1_o, rd1_o, sl1_o,
                         ),
                     ),
                     self.two.run(
@@ -276,7 +280,7 @@ impl<const IW: usize> Unit for Pair<IW> {
                         ),
                         (
                             halt2_o, instr2_o, wb2_o, is2_tx, beat2_tx, rl2_tx,
-                            dbg2_o, rd2_o,
+                            dbg2_o, rd2_o, sl2_o,
                         ),
                     ),
                 ),

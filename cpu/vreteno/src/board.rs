@@ -37,7 +37,7 @@ use ddr3::Ddr3Per;
 use razboj::doorbell::Doorbell;
 use razboj::raster::Raster;
 use txhdl::comp::{
-    chan, join2, signal, DefaultClock, In, Out, Pad, Rx, Tx, Unit,
+    chan, join2, signal, tie, DefaultClock, In, Out, Pad, Rx, Tx, Unit,
 };
 use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
@@ -218,6 +218,12 @@ pub struct Board<const DIV: u32> {
     /// the arbiter and the monitor keep (issue 1408).
     pub cpu: Hart<2, 16384, 1, 0, 1>,
     pub host: AxiHost<32, 32, 4, 2, 4>,
+    /// The second hart and its tracker (issue 1408), on the arbiter's
+    /// eighth port. Its boot memory holds `park`, where it waits until
+    /// the first starts it through the mailbox; it takes no external
+    /// interrupt and is not on the debug module yet.
+    pub cpu1: Hart<2, 16384, 1, 1, 1>,
+    pub host1: AxiHost<32, 32, 4, 2, 4>,
     /// The second host: Vivado's JTAG-to-AXI master, on the top beside
     /// the board's, reached over the cable that programs the part, so
     /// that memory and every peripheral can be read and written whatever
@@ -263,7 +269,7 @@ pub struct Board<const DIV: u32> {
     /// The exclusive hold is built (issue 1408): from a host's
     /// exclusive read until its exclusive write, no other host's write
     /// is granted, so an AMO's pair keeps.
-    pub arb: Arbiter<7, 32, 32, 4, 2, 5, 0, 1>,
+    pub arb: Arbiter<8, 32, 32, 4, 2, 5, 0, 1>,
     /// The exclusive monitor (issue 1408), between the arbiter and the
     /// router, which every host's writes pass in the order each
     /// peripheral takes them: the reservations of the harts on ports 0
@@ -273,7 +279,7 @@ pub struct Board<const DIV: u32> {
     /// DDR3: another host's write into the DDR3, once answered,
     /// invalidates its lines in the core's data cache before the answer
     /// goes back.
-    pub dcsnoop: DcSnoop,
+    pub dcsnoop: DcSnoop<7>,
     pub router: BoardRouter,
     pub pdmem: AxiPer<32, 32, 4, 5>,
     pub ptimer: AxiPer<32, 32, 4, 5>,
@@ -684,13 +690,15 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (dbg_we_o, dbg_we_i) = signal::<Bit, DefaultClock>();
         let (debug_o, debug_i) = signal::<Bit, DefaultClock>();
         let (dbg_rdata_o, dbg_rdata_i) = signal::<U<32>, DefaultClock>();
+        // Whether hart 0 waits in `wfi`, unread (issue 1408).
+        let (asleep0_o, _asleep0_i) = signal::<Bit, DefaultClock>();
         let (retire_o, _retire_i) = signal::<Writeback, DefaultClock>();
         let (tirq_o, tirq_i) = signal::<Bit, DefaultClock>();
         // The software interrupt the controller raises for a program.
         let (sirq_o, sirq_i) = signal::<Bit, DefaultClock>();
         // Hart 1's lines, unread until the board has hart 1 (issue 1408).
-        let (tirq1_o, _tirq1_i) = signal::<Bit, DefaultClock>();
-        let (sirq1_o, _sirq1_i) = signal::<Bit, DefaultClock>();
+        let (tirq1_o, tirq1_i) = signal::<Bit, DefaultClock>();
+        let (sirq1_o, sirq1_i) = signal::<Bit, DefaultClock>();
         let (time_o, time_i) = signal::<U<64>, DefaultClock>();
         let (uirq_o, uirq_i) = signal::<Bit, DefaultClock>();
         let (eirq_o, eirq_i) = signal::<Bit, DefaultClock>();
@@ -759,8 +767,31 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (snw_tx, snw_rx) = chan::<W<32, 4>, DefaultClock>();
         let (snb_tx, snb_rx) = chan::<B<5>, DefaultClock>();
         let (dcs_o, dcs_i) = signal::<U<9>, DefaultClock>();
-        // The second hart's, unread until the board has one (issue 1408).
-        let (dcs1_o, _dcs1_i) = signal::<U<9>, DefaultClock>();
+        // The second hart's (issue 1408).
+        let (dcs1_o, dcs1_i) = signal::<U<9>, DefaultClock>();
+        // The second hart and its tracker, and the tracker's link to
+        // the arbiter's eighth port (issue 1408).
+        let rst_h1 = rst.clone();
+        let time_h1 = time_i.clone();
+        let (issue1_tx, issue1_rx) = chan::<Issue<32>, DefaultClock>();
+        let (wbeat1_tx, wbeat1_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (release1_tx, release1_rx) = chan::<Grant<2>, DefaultClock>();
+        let (grant1_tx, grant1_rx) = chan::<Grant<2>, DefaultClock>();
+        let (done1_tx, done1_rx) = chan::<Done<2>, DefaultClock>();
+        let (rdata1_tx, rdata1_rx) = chan::<R<32, 2>, DefaultClock>();
+        let (halt1_o, _halt1_i) = signal::<Bit, DefaultClock>();
+        let (instr1_o, _instr1_i) = signal::<U<32>, DefaultClock>();
+        let (retire1_o, _retire1_i) = signal::<Writeback, DefaultClock>();
+        let (debug1_o, _debug1_i) = signal::<Bit, DefaultClock>();
+        let (dbg_rdata1_o, _dbg_rdata1_i) = signal::<U<32>, DefaultClock>();
+        // Whether hart 1 waits in `wfi`: the snoop tells it nothing then
+        // (issue 1408).
+        let (asleep1_o, asleep1_i) = signal::<Bit, DefaultClock>();
+        let (haw_tx, haw_rx) = chan::<Aw<32, 2>, DefaultClock>();
+        let (har_tx, har_rx) = chan::<Ar<32, 2>, DefaultClock>();
+        let (hw_tx, hw_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (hb_tx, hb_rx) = chan::<B<2>, DefaultClock>();
+        let (hr_tx, hr_rx) = chan::<R<32, 2>, DefaultClock>();
         let (xr_tx, xr_rx) = chan::<R<32, 5>, DefaultClock>();
         // The router and each peripheral's tracker.
         let (aw0_tx, aw0_rx) = chan::<Aw<32, 5>, DefaultClock>();
@@ -1238,6 +1269,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                     ),
                                     (req0_tx, wd0_tx, b0_tx, r0_tx),
                                 ),
+                            join2(
                             self.cpu.run(
                                 (
                                     rst,
@@ -1265,7 +1297,52 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                     release_tx,
                                     debug_o,
                                     dbg_rdata_o,
+                                    asleep0_o,
                                 ),
+                            ),
+                            // The second hart (issue 1408).
+                            join2(
+                                self.host1.run(
+                                    (
+                                        issue1_rx, wbeat1_rx, hb_rx, hr_rx,
+                                        release1_rx,
+                                    ),
+                                    (
+                                        haw_tx, har_tx, hw_tx, grant1_tx,
+                                        done1_tx, rdata1_tx,
+                                    ),
+                                ),
+                                self.cpu1.run(
+                                    (
+                                        rst_h1,
+                                        tie(Bit::Zero),
+                                        tirq1_i,
+                                        sirq1_i,
+                                        rdata1_rx,
+                                        done1_rx,
+                                        grant1_rx,
+                                        tie(Bit::Zero),
+                                        tie(Bit::Zero),
+                                        tie(U::<16>::from(0u16)),
+                                        tie(U::<32>::from(0u32)),
+                                        tie(Bit::Zero),
+                                        time_h1,
+                                        tie(Bit::Zero),
+                                        dcs1_i,
+                                    ),
+                                    (
+                                        halt1_o,
+                                        instr1_o,
+                                        retire1_o,
+                                        issue1_tx,
+                                        wbeat1_tx,
+                                        release1_tx,
+                                        debug1_o,
+                                        dbg_rdata1_o,
+                                        asleep1_o,
+                                    ),
+                                ),
+                            ),
                             ),
                         ),
                     ),
@@ -1296,14 +1373,17 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                             [
                                                 aw_rx, jaw_rx, faw_rx, saw_rx,
                                                 scaw_rx, sdaw_rx, raw_rx,
+                                                haw_rx,
                                             ],
                                             [
                                                 ar_rx, jar_rx, far_rx, sar_rx,
                                                 scar_rx, sdar_rx, rar_rx,
+                                                har_rx,
                                             ],
                                             [
                                                 w_rx, jw_rx, fw_rx, sw_rx,
                                                 scw_rx, sdw_rx, rw_rx,
+                                                hw_rx,
                                             ],
                                             mxb_rx,
                                             xr_rx,
@@ -1315,10 +1395,12 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                             [
                                                 b_tx, jb_tx, fb_tx, sb_tx,
                                                 scb_tx, sdb_tx, rb_tx,
+                                                hb_tx,
                                             ],
                                             [
                                                 r_tx, jr_tx, fr_tx, sr_tx,
                                                 scr_tx, sdr_tx, rr_tx,
+                                                hr_tx,
                                             ],
                                         ),
                                     ),
@@ -1445,7 +1527,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
                             // After the router, which sends to it in the
                             // cycle (issue 1275).
                             self.dcsnoop.run(
-                                (snaw_rx, snw_rx, b3_rx),
+                                (snaw_rx, snw_rx, b3_rx, asleep1_i),
                                 (aw3_tx, w3_tx, snb_tx, dcs_o, dcs1_o),
                             ),
                             ),

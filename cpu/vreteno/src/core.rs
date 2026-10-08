@@ -1281,6 +1281,7 @@ impl<
             release,
             dbg,
             dbg_rdata,
+            asleep,
             mmu_satp,
             mmu_prv,
             mmu_sum,
@@ -1298,6 +1299,8 @@ impl<
             Tx<Grant<IW>>,
             Out<Bit>,
             Out<U<32>>,
+            // Whether the core waits in `wfi` (issue 1408).
+            Out<Bit>,
             // What the unit translates by, the requests, and the
             // walker's answers (issue 1014).
             Out<U<32>>,
@@ -2581,7 +2584,13 @@ impl<
             // lr.w or sc.w, by a miss for its line and by a fill not kept;
             // set by a fill kept; and all cleared at reset and when the bus
             // refuses a store of the core's, whose line is not known.
-            let dc_all = rst | (take_done & done_bad & !self.busquiet);
+            // A hart other than the first, whose cache the other
+            // harts' writes are not named to while it waits in `wfi`,
+            // forgets its cache as it wakes, whatever woke it (issue
+            // 1408).
+            let dc_all = rst
+                | (take_done & done_bad & !self.busquiet)
+                | (wake & self.waiting & Bit::from(HID != 0));
             let dc_miss_in = dc_miss & dc_in;
             let dc_clr0 = dc_bit(snoop_line, snoop_v, Bit::Zero)
                 | dc_bit(dc_line_x, dc_own_x, Bit::Zero)
@@ -3516,6 +3525,7 @@ impl<
             self.stopped.set(stop);
             halt.set(self.halted);
             dbg.set(self.debug);
+            asleep.set(self.waiting.get());
             // What the debug module asked for: a general register through
             // the lent read port, `x0` as zero, or a CSR through the
             // CSR read, whose number is the module's in debug mode.
