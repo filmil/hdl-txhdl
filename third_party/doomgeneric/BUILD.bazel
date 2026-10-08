@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+# Doom (issue 1177): the BUILD files laid over the fetched doomgeneric
+# and Freedoom archives. Nothing of either is in this tree.
+exports_files([
+    "BUILD.doomgeneric",
+    "BUILD.freedoom",
+])

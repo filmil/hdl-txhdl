@@ -82,6 +82,33 @@ http_archive(
     ],
 )
 
+# Doom (issue 1177): doomgeneric, the portable Doom whose platform is five
+# functions, fetched by checksum at a pinned commit and built from there.
+# It is GPL-2.0 and this repository is Apache-2.0, so it is not copied
+# into the tree: the build reads it, and an image that links it is GPL,
+# which is what anything published of it is.
+http_archive(
+    name = "doomgeneric",
+    build_file = "//third_party/doomgeneric:BUILD.doomgeneric",
+    sha256 = "1bd3f7f26220494159a38d71f2847ec81b58d6bbd7c7c8d81b08993018001148",
+    strip_prefix = "doomgeneric-dcb7a8dbc7a16ce3dda29382ac9aae9d77d21284",
+    urls = [
+        "https://github.com/ozkl/doomgeneric/archive/dcb7a8dbc7a16ce3dda29382ac9aae9d77d21284.tar.gz",
+    ],
+)
+
+# Freedoom's game data, which may be passed on, where id's is not: the
+# release's archive, by the checksum its signed list gives.
+http_archive(
+    name = "freedoom",
+    build_file = "//third_party/doomgeneric:BUILD.freedoom",
+    sha256 = "3f9b264f3e3ce503b4fb7f6bdcb1f419d93c7b546f4df3e874dd878db9688f59",
+    strip_prefix = "freedoom-0.13.0",
+    urls = [
+        "https://github.com/freedoom/freedoom/releases/download/v0.13.0/freedoom-0.13.0.zip",
+    ],
+)
+
 # Prebuilt tools, fetched by checksum for every platform they ship for.
 # vcdcvt and sqlite2drawtiming turn a VCD into a signals database and
 # the database into drawtiming text; //tools/dt2tikz draws that text.

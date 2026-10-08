@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+# Doom (issue 1177): doomgeneric's game, fetched, with platforms of this
+# repository's. What links the game is GPL-2.0, as the game is; the
+# platform files here are Apache-2.0 on their own.
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+cc_library(
+    name = "png",
+    srcs = ["png.c"],
+    hdrs = ["png.h"],
+)
+
+# Doom on the host with no screen and no keyboard: simulated time, a
+# script of keys, and PNGs of the frames.
+#   bazel run //demo/doom:host -- $PWD/<wad> /tmp/doom 400
+cc_binary(
+    name = "host",
+    srcs = ["host.c"],
+    deps = [
+        ":png",
+        "@doomgeneric//:game",
+    ],
+)
