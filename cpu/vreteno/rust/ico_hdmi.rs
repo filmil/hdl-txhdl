@@ -91,8 +91,16 @@ const _: () = assert!(Scan::WIDTH as i32 / 2 + ico_list::REACH < LOGO_X as i32);
 /// through the GL ES library (issue 995).
 #[cfg(not(gl))]
 const SAYS: &[u8] = b"ico razboj list ";
-#[cfg(gl)]
+#[cfg(all(gl, not(tex)))]
 const SAYS: &[u8] = b"ico gl list ";
+#[cfg(tex)]
+const SAYS: &[u8] = b"ico gl tex list ";
+
+/// Where the texture's room is with `tex` (#997): in the list's memory,
+/// two megabytes past its start and past the tile table's megabyte.
+/// Razboj reads it at the address the core writes it at.
+#[cfg(tex)]
+const TEX: u32 = Razboj::LIST + 0x20_0000;
 
 /// Words from one row of the frame to the next.
 const ROW: u32 = Scan::STRIDE / 4;
@@ -240,9 +248,31 @@ fn main() -> ! {
         #[cfg(not(gl))]
         let (n, filled) =
             ico_list::frame(&solid, ay, ax, dy, last[which], &mut list);
+        #[cfg(all(gl, not(tex)))]
+        let tex = None;
+        // SAFETY: the room is DDR3 nothing else uses, and Razboj reads it
+        // only while it draws, which this waits for.
+        #[cfg(tex)]
+        let tex = Some((
+            unsafe {
+                core::slice::from_raw_parts_mut(
+                    TEX as *mut u32,
+                    ico_gl::TEX_ROOM,
+                )
+            },
+            TEX,
+        ));
         #[cfg(gl)]
-        let (n, filled) =
-            ico_gl::frame(&model, ay, ax, dy, last[which], true, &mut list);
+        let (n, filled) = ico_gl::frame(
+            &model,
+            ay,
+            ax,
+            dy,
+            last[which],
+            true,
+            tex,
+            &mut list,
+        );
         last[which] = filled;
         let listed = mcycle();
         #[cfg(not(gl))]

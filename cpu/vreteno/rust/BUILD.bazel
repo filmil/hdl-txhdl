@@ -845,6 +845,57 @@ vreteno_flat(
     program = ":ico_gl_hdmi",
 )
 
+# The same program textured (#997): each face a checker under the
+# lighting, through Razboj's texture cache, in tiles.
+rust_binary(
+    name = "ico_tex_hdmi",
+    srcs = [
+        "ico_gl.rs",
+        "ico_hdmi.rs",
+        "ico_list.rs",
+    ],
+    compile_data = ["vreteno_ram.ld"],
+    crate_root = "ico_hdmi.rs",
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS + [
+        "--cfg=gl",
+        "--cfg=tex",
+    ],
+    tags = ["manual"],
+    deps = [
+        "//cpu/vreteno/rust/hal:vreteno_hal",
+        "//cpu/vreteno/rust/regs:vreteno_regs",
+        "//gles",
+        "//gpu/razboj:tile",
+        "//lib/logo:txhdl_logo",
+    ],
+)
+
+vreteno_flat(
+    name = "ico_tex_hdmi_bin",
+    platform = ":vreteno",
+    program = ":ico_tex_hdmi",
+)
+
+# One frame of the textured icosahedron worked out on the host, as a
+# PNG: the GL list rendered through Razboj's model with the texture's
+# room as its memory, and the logo laid in.
+rust_binary(
+    name = "ico_tex_frame",
+    srcs = [
+        "ico_gl.rs",
+        "ico_list.rs",
+        "ico_tex_frame.rs",
+    ],
+    crate_root = "ico_tex_frame.rs",
+    edition = "2021",
+    deps = [
+        "//gles",
+        "//gpu/razboj",
+        "//lib/logo:txhdl_logo",
+    ],
+)
+
 # The icosahedron's display lists (issue 986), the part of ico_hdmi
 # with no hardware in it, rendered on the host through Razboj's model:
 # the faces tile the silhouette once, they are the front faces, and

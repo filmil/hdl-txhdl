@@ -8,6 +8,9 @@
 //! channel; and every pixel where the two pictures differ by more than
 //! that lies on an edge in both, one pixel from a pixel of another
 //! colour.
+// Shared with the board program and ico_tex_frame, which use parts of
+// it these tests do not.
+#[allow(dead_code)]
 mod ico_gl;
 mod ico_list;
 
@@ -60,7 +63,8 @@ fn lists(
     let (n, _) = ico_list::frame(s, ay, ax, dy, Box::SCREEN, &mut out);
     let hand = insns(&out[..n]);
     let mut out = [[0u32; WORDS]; ico_gl::MOST];
-    let (n, _) = ico_gl::frame(m, ay, ax, dy, Box::SCREEN, false, &mut out);
+    let (n, _) =
+        ico_gl::frame(m, ay, ax, dy, Box::SCREEN, false, None, &mut out);
     (hand, insns(&out[..n]))
 }
 
@@ -126,8 +130,16 @@ fn the_depth_test_draws_the_culled_picture() {
         for dy in [0, SECOND] {
             let draw = |depth: bool| {
                 let mut out = [[0u32; WORDS]; ico_gl::MOST];
-                let (n, _) =
-                    ico_gl::frame(&m, ay, ax, dy, Box::SCREEN, depth, &mut out);
+                let (n, _) = ico_gl::frame(
+                    &m,
+                    ay,
+                    ax,
+                    dy,
+                    Box::SCREEN,
+                    depth,
+                    None,
+                    &mut out,
+                );
                 let deep = out[..n].iter().any(|w| (w[15] >> 8) & 1 == 1);
                 assert_eq!(deep, depth, "depth tested only when asked");
                 render(&insns(&out[..n]), FW, FH)
@@ -164,8 +176,16 @@ fn the_gl_frame_box_covers_its_faces() {
             [(0, false), (SECOND, false), (0, true), (SECOND, true)]
         {
             let mut out = [[0u32; WORDS]; ico_gl::MOST];
-            let (n, b) =
-                ico_gl::frame(&m, ay, ax, dy, Box::SCREEN, depth, &mut out);
+            let (n, b) = ico_gl::frame(
+                &m,
+                ay,
+                ax,
+                dy,
+                Box::SCREEN,
+                depth,
+                None,
+                &mut out,
+            );
             let drawn = render(&insns(&out[1..n]), FW, FH);
             for y in 0..FH {
                 for x in 0..FW {
