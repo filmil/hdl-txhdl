@@ -16,9 +16,17 @@
 //! and answers `Okay` itself, so the write never reaches the
 //! peripheral or anything between, the data cache's snoop among them.
 //!
-//! An exclusive read waits until every write the monitor has passed is
-//! answered, so that it reads what they wrote and no write that was in
-//! flight when it was taken can land after it. The arbiter holds new
+//! An exclusive write, whether it stores or not, uses its port's
+//! reservation up, as `sc.w` does.
+//!
+//! The monitor keeps exclusives for one range of addresses, the
+//! memory's: an address `a` with `a & RM == RB`. An exclusive read
+//! outside it makes no reservation, and an exclusive write outside it
+//! fails. An exclusive read waits until every write into the range the
+//! monitor has passed is answered, so that it reads what they wrote and
+//! no write that was in flight when it was taken can land after it;
+//! writes elsewhere, which a slow peripheral may hold for long, it does
+//! not wait for. The arbiter holds new
 //! writes from every other host while an exclusive pair is open, so
 //! the wait is for the writes already granted and ends. The failed
 //! write's answer waits the same way, so it never overtakes an answer
@@ -34,14 +42,17 @@ use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 
 /// The monitor for the two ports `P0` and `P1` of an arbiter whose
-/// identifiers are `J` bits, the host's own `I` of them below the
-/// port's, on a link of 32-bit addresses and words.
+/// identifiers are `J` bits, at most five, the host's own `I` of them
+/// below the port's, on a link of 32-bit addresses and words, for the
+/// addresses `a` with `a & RM == RB`.
 #[derive(Trace, Default)]
 pub struct ExMon<
     const J: usize,
     const I: usize,
     const P0: usize,
     const P1: usize,
+    const RB: usize,
+    const RM: usize,
 > {
     /// Whether port `P0` has a reservation.
     pub v0: Reg<Bit>,
@@ -51,8 +62,14 @@ pub struct ExMon<
     pub v1: Reg<Bit>,
     /// The line it is for.
     pub line1: Reg<U<28>>,
-    /// Writes passed on and not yet answered.
-    pub wout: Reg<U<6>>,
+    /// The identifiers of the writes into the range passed on and not
+    /// yet answered, a bit each: an identifier is one transaction's
+    /// until its answer.
+    pub wids: Reg<U<32>>,
+    /// Set for good when a watched port sent a write under the
+    /// identifier of its exclusive write whose answer is still to
+    /// come, which would make that answer ambiguous; a test reads it.
+    pub xdup: Reg<Bit>,
     /// A write burst taken whose beats are still coming.
     pub wpend: Reg<Bit>,
     /// Whether those beats are a failed exclusive write's, taken and
@@ -74,8 +91,14 @@ pub struct ExMon<
 }
 
 #[lower]
-impl<const J: usize, const I: usize, const P0: usize, const P1: usize> Unit
-    for ExMon<J, I, P0, P1>
+impl<
+        const J: usize,
+        const I: usize,
+        const P0: usize,
+        const P1: usize,
+        const RB: usize,
+        const RM: usize,
+    > Unit for ExMon<J, I, P0, P1, RB, RM>
 {
     async fn run(
         &mut self,
@@ -96,16 +119,19 @@ impl<const J: usize, const I: usize, const P0: usize, const P1: usize> Unit
             DefaultClock::rising().await;
             let (v0, v1) = (self.v0.get(), self.v1.get());
             let (line0, line1) = (self.line0.get(), self.line1.get());
-            let wout = self.wout.get();
+            let wids = self.wids.get();
             let wpend = self.wpend.get();
             let binj = self.binj.get();
-            let quiet = Bit::from(wout == 0);
+            let quiet = Bit::from(wids == 0);
+            let (rb, rm) = (U::<32>::from(RB as u32), U::<32>::from(RM as u32));
             // A read passes, an exclusive one once every write passed
             // on is answered, and its port takes the reservation.
             let ar = ar_in.head();
             let ar_here = Bit::from(ar_in.peek().is_some());
             let ar_port = ar.id >> I;
-            let ar_go = ar_here & (!ar.lock | quiet) & ar_out.ready();
+            let ar_in_range = Bit::from((ar.addr & rm) == rb);
+            let ar_x = ar.lock & ar_in_range;
+            let ar_go = ar_here & (!ar_x | quiet) & ar_out.ready();
             let _ = ar_in.recv_if(ar_go);
             if ar_go.to_bool() {
                 ar_out.send(Ar {
@@ -122,8 +148,8 @@ impl<const J: usize, const I: usize, const P0: usize, const P1: usize> Unit
                 });
             }
             let ar_line = ar.addr.slice::<4, 28>();
-            let set0 = ar_go & ar.lock & Bit::from(ar_port == P0);
-            let set1 = ar_go & ar.lock & Bit::from(ar_port == P1);
+            let set0 = ar_go & ar_x & Bit::from(ar_port == P0);
+            let set1 = ar_go & ar_x & Bit::from(ar_port == P1);
             // A write: one burst at a time, and none while a failed
             // one's answer waits. An exclusive one passes when its
             // port's reservation stands for its line and it is one
@@ -136,7 +162,8 @@ impl<const J: usize, const I: usize, const P0: usize, const P1: usize> Unit
                 Bit::from(aw_port == P0) & v0 & Bit::from(line0 == aw_line);
             let ok1 =
                 Bit::from(aw_port == P1) & v1 & Bit::from(line1 == aw_line);
-            let ex_ok = (ok0 | ok1) & Bit::from(aw.len == 0);
+            let aw_in_range = Bit::from((aw.addr & rm) == rb);
+            let ex_ok = (ok0 | ok1) & Bit::from(aw.len == 0) & aw_in_range;
             let fail = aw.lock & !ex_ok;
             let aw_take = aw_here & !wpend & !binj;
             let aw_fwd = aw_take & !fail & aw_out.ready();
@@ -197,9 +224,24 @@ impl<const J: usize, const I: usize, const P0: usize, const P1: usize> Unit
                     resp: mux(inj, Resp::Okay, mux(exo, Resp::ExOkay, bh.resp)),
                 });
             }
-            let wout_up = mux(aw_fwd, wout + 1, wout);
+            // The writes into the range out, by identifier.
+            let one = U::<32>::from(1u32);
+            let zero = U::<32>::from(0u32);
+            let w_set =
+                mux(aw_fwd & aw_in_range, one << (aw.id.raw() as usize), zero);
+            let w_clr = mux(b_go, one << (bh.id.raw() as usize), zero);
+            // An exclusive write uses its port's reservation up, whether
+            // it stored or not.
+            let used0 = aw_abs & Bit::from(aw_port == P0);
+            let used1 = aw_abs & Bit::from(aw_port == P1);
+            // A watched port's write under the identifier its exclusive
+            // write's answer will come back with.
+            let dup = aw_fwd
+                & ((self.x0.get() & Bit::from(aw.id == self.x0id.get()))
+                    | (self.x1.get() & Bit::from(aw.id == self.x1id.get())));
             with!(self <= {
-                wout: mux(b_go, wout_up - 1, wout_up),
+                wids: (wids | w_set) & !w_clr,
+                dup ? xdup: Bit::One,
                 aw_fwd | aw_abs ? { wpend: Bit::One, wdrop: aw_abs },
                 aw_abs ? binjid: aw.id,
                 w_end ? wpend: Bit::Zero,
@@ -207,8 +249,8 @@ impl<const J: usize, const I: usize, const P0: usize, const P1: usize> Unit
                 inj ? binj: Bit::Zero,
                 // A write's clear wins over a read's set in one cycle,
                 // since the two reach the peripheral in no known order.
-                v0: (v0 | set0) & !hit0,
-                v1: (v1 | set1) & !hit1,
+                v0: (v0 | set0) & !hit0 & !used0,
+                v1: (v1 | set1) & !hit1 & !used1,
                 set0 ? line0: ar_line,
                 set1 ? line1: ar_line,
                 xok0 ? { x0: Bit::One, x0id: aw.id },
@@ -294,7 +336,8 @@ mod tests {
         let ram = ram.reading_at_address().timed(8, 2, 0);
         let words = ram.memory();
         let mut arb = Arbiter::<2, 32, 32, 4, 2, 5, 0, HOLD>::default();
-        let mut mon = ExMon::<5, 2, 0, 1>::default();
+        let mut mon = ExMon::<5, 2, 0, 1, 0, 0>::default();
+        let xdup = mon.xdup;
         // The arbiter's link goes into the monitor, whose outputs are a
         // link of their own to the memory's unit; the read data goes
         // straight back.
@@ -340,7 +383,37 @@ mod tests {
         for _ in 0..n {
             sim.cycle();
         }
+        assert!(
+            !xdup.get().to_bool(),
+            "a watched port reused its exclusive write's identifier"
+        );
         Mem(words)
+    }
+
+    /// An exclusive write uses its port's reservation up whether it
+    /// stores or not: after `lr` of one word, a failed `sc` of another,
+    /// then `sc` of the first fails too, as Linux's `sc` on the way out of
+    /// a trap relies on.
+    #[test]
+    fn a_failed_exclusive_write_uses_the_reservation_up() {
+        let got = Rc::new(RefCell::new((Resp::SlvErr, Resp::SlvErr)));
+        let g = got.clone();
+        let ram = rig::<1>(
+            move |host| {
+                Box::new(Box::pin(async move {
+                    host.read(xrd(0x100)).await.done().await;
+                    let seven = [U::from(7u32)];
+                    let b = host.write(xwr(0x200), &seven).await.done().await;
+                    let a = host.write(xwr(0x100), &seven).await.done().await;
+                    *g.borrow_mut() = (b.resp, a.resp);
+                }))
+            },
+            |_| Box::new(Box::pin(async {})),
+            200,
+        );
+        assert_eq!(*got.borrow(), (Resp::Okay, Resp::Okay), "both failed");
+        assert_eq!(ram.word(0x100 / 4).raw(), 0, "nothing stored at A");
+        assert_eq!(ram.word(0x200 / 4).raw(), 0, "nor at B");
     }
 
     /// The reply to one write and the cycle it came in, from `t0`,
