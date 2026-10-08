@@ -315,3 +315,32 @@ fn a_depth_clear_alone_clears_only_the_depth() {
     );
     assert_eq!(at(8, 10), 0xffff_0000, "the near one, outside the far one");
 }
+
+/// Dithering (#998): `GL_DITHER` is on at first, as GL says, and switches
+/// off and on, and the frame it writes is the same word for word either
+/// way. GL lets dithering be the identity when the framebuffer keeps
+/// every bit of the colour, and Razboj's keeps eight a channel.
+#[test]
+fn dithering_is_the_identity() {
+    let draw = |dither: bool| {
+        let mut frame = vec![[0u32; WORDS]; 64];
+        let mut g = Gl::new(&mut frame, 64, 48);
+        assert!(g.is_enabled(gl::DITHER), "on at first");
+        if !dither {
+            g.disable(gl::DITHER);
+            assert!(!g.is_enabled(gl::DITHER));
+        }
+        g.shade_model(gl::SMOOTH);
+        let p = [
+            [-ONE, -ONE, 0, ONE],
+            [ONE, -ONE / 2, 0, ONE],
+            [0, ONE, 0, ONE],
+        ];
+        let c = [[ONE, 0, 0, ONE], [0, ONE, 0, ONE], [0, 0, ONE, ONE / 2]];
+        g.draw_arrays(gl::TRIANGLES, &p, Some(&c), None);
+        assert_eq!(g.get_error(), gl::NO_ERROR);
+        let n = g.frame().len();
+        frame[..n].to_vec()
+    };
+    assert_eq!(draw(true), draw(false));
+}
