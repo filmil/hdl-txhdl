@@ -827,15 +827,9 @@ pub fn axi<
     const NIDS: usize,
 >() -> Link<A, D, S, I, NIDS> {
     let u = axi_units::<A, D, S, I>();
-    let (req, wd, ans, rb) = u.per_client;
     Link {
         host: host_end(u.host_client),
-        per: Per {
-            req,
-            wd,
-            port: Rc::new(Port::new(ans, rb)),
-            gathering: Rc::new(Cell::new(false)),
-        },
+        per: per_end(u.per_client),
         host_in: u.host_in,
         host_out: u.host_out,
         per_in: u.per_in,
@@ -916,6 +910,30 @@ pub fn host_end<
             freed: RefCell::new(VecDeque::new()),
             drained: Cell::new(u64::MAX),
         }),
+    }
+}
+
+/// The peripheral end over a peripheral client's channel ends, the
+/// mirror of [`host_end`].
+///
+/// `axi` uses this to build the end it hands back. It is public as
+/// well, because a design whose host is hardware takes its channels
+/// from `axi_units` and may still want the peripheral answered by a
+/// client; the core's architectural tests are such a design (issue
+/// 1442).
+pub fn per_end<
+    const A: usize,
+    const D: usize,
+    const S: usize,
+    const I: usize,
+>(
+    (req, wd, ans, rb): PerClient<A, D, S, I>,
+) -> Per<A, D, S, I> {
+    Per {
+        req,
+        wd,
+        port: Rc::new(Port::new(ans, rb)),
+        gathering: Rc::new(Cell::new(false)),
     }
 }
 
