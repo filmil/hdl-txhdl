@@ -69,6 +69,8 @@ pub struct Map {
     pub uart: (u32, u32),
     pub eth: (u32, u32),
     pub trng: (u32, u32),
+    /// The third slot, where the video peripheral and the scanout are.
+    pub video: (u32, u32),
     /// Where the Ethernet port's slots are in the DDR3.
     pub eth_bufs: u32,
 }
@@ -84,6 +86,7 @@ impl Map {
             uart: range::<10, SlotMap>("serial"),
             eth: range::<10, SlotMap>("Ethernet port's registers"),
             trng: range::<10, SlotMap>("entropy source"),
+            video: range::<10, SlotMap>("third slot"),
             eth_bufs: crate::isa::ETH_BUF_BASE,
         }
     }
@@ -107,6 +110,11 @@ pub struct Devices {
     pub uart: uart::Uart,
     pub eth: eth::Eth,
     pub trng: trng::Trng,
+    /// The video peripheral's and the scanout's registers, as words
+    /// that keep what is written (issue 1177): a program that points
+    /// the scanout at a frame and shows it runs here, and nothing is
+    /// shown.
+    pub video: [u32; 64],
     /// The lines the PLIC drives, as last worked out, and whether they
     /// have to be worked out again: they change only when a program
     /// reaches the PLIC or the serial port, or when a byte arrives, so
@@ -153,6 +161,9 @@ impl Bus for Board {
         }
         if let Some(off) = inside(map.trng, addr) {
             return Some(d.trng.load(off));
+        }
+        if let Some(off) = inside(map.video, addr) {
+            return Some(d.video[(off / 4) as usize % 64]);
         }
         None
     }
@@ -201,6 +212,10 @@ impl Bus for Board {
             d.trng.store(off, v);
             return true;
         }
+        if let Some(off) = inside(map.video, addr) {
+            d.video[(off / 4) as usize % 64] = v;
+            return true;
+        }
         false
     }
 }
@@ -224,6 +239,7 @@ impl Machine {
             uart: uart::Uart::default(),
             eth: eth::Eth::default(),
             trng: trng::Trng::default(),
+            video: [0; 64],
             meip: false,
             seip: false,
             stale: true,
