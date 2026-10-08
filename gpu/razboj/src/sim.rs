@@ -884,17 +884,18 @@ mod tests {
     }
 
     /// Texturing in tiles (issue 997): textured triangles in perspective,
-    /// flat and shaded, under every class of texel, `REPLACE` and
-    /// `MODULATE`, repeated and clamped, among entries that are not
-    /// textured and under a depth test in some rounds, sampled at the
-    /// nearest texel of the base level, are byte for byte the model's. A
-    /// flat list has no texturing, as it has no depth, and draws the same
-    /// entries untextured.
+    /// flat and shaded, under every class of texel, every environment,
+    /// both magnification filters and all six minification filters over
+    /// a texture of six levels, repeated and clamped, magnified and
+    /// minified, among entries that are not textured and under a depth
+    /// test in some rounds, are byte for byte the model's. A flat list has
+    /// no texturing, as it has no depth, and draws the same entries
+    /// untextured.
     #[test]
     fn texturing_in_tiles_is_the_models() {
         use crate::model::{render_textured, Textures};
         use crate::op::{DepthMode, TexMode, LESS};
-        use razboj_tile::tex::{encode, texel_offset, Desc, NEAREST};
+        use razboj_tile::tex::{encode, level_base, side, texel_offset, Desc};
         use std::collections::HashMap;
         const A: usize = 20;
         const LOGW: usize = 7;
@@ -903,15 +904,15 @@ mod tests {
         const N: usize = 16384;
         const DL: usize = 0xa000;
         const CTRL: usize = 0xfffc;
-        // The descriptor, and the base level after it, both clear of the
+        // The descriptor, and the levels after it, all clear of the
         // framebuffer and the list.
         const DESC: u32 = 0x8000;
         const BASE: u32 = 0x8040;
-        let texel = |i: u32, j: u32| {
-            ((0x80 + 4 * (i + j)) << 24)
-                | ((i * 8) << 16)
+        let texel = |l: u32, i: u32, j: u32| {
+            ((0x80 + 4 * (i + j) + 16 * l) << 24)
+                | ((i * 8 + l * 40) << 16)
                 | ((j * 8) << 8)
-                | ((i ^ j) * 8)
+                | ((i ^ j) * 8 + l * 20)
         };
         let mut x = 0x2545_f491u32;
         let mut next = || {
@@ -921,29 +922,34 @@ mod tests {
             x
         };
         let (mut textured, mut flat) = (0, 0);
-        for round in 0..10u32 {
+        for round in 0..25u32 {
             let d = Desc {
                 base: BASE,
                 log_w: 5,
-                log_h: 5,
-                levels: 1,
+                log_h: 4,
+                levels: 6,
                 clamp_s: round % 3 == 1,
                 clamp_t: round % 4 == 2,
-                min: NEAREST,
-                mag: NEAREST,
-                class: round % 5,
+                min: round % 6,
+                mag: (round / 6) % 2,
+                class: (round / 5) % 5,
             };
             let mut more: Vec<(usize, u32)> = encode(&d)
                 .iter()
                 .enumerate()
                 .map(|(k, w)| (DESC as usize + 4 * k, *w))
                 .collect();
-            for j in 0..32 {
-                for i in 0..32 {
-                    let at = BASE + texel_offset(&d, 0, i, j);
-                    more.push((at as usize, texel(i, j)));
+            for l in 0..d.levels {
+                for j in 0..side(d.log_h, l) {
+                    for i in 0..side(d.log_w, l) {
+                        let at = level_base(&d, l) + texel_offset(&d, l, i, j);
+                        more.push((at as usize, texel(l, i, j)));
+                    }
                 }
             }
+            // Texel coordinates across a range that magnifies in some
+            // rounds and minifies in others.
+            let span = [96.0, 384.0, 1536.0][round as usize % 3];
             let mem: HashMap<u32, u32> =
                 more.iter().map(|&(a, w)| (a as u32, w)).collect();
             let deep = round % 3 == 2;
@@ -957,8 +963,8 @@ mod tests {
                 })),
                 Op::Texture(Some(TexMode {
                     desc: DESC,
-                    env: round % 2,
-                    env_colour: 0,
+                    env: round % 5,
+                    env_colour: next(),
                 })),
             ];
             for k in 0..4 {
@@ -974,8 +980,8 @@ mod tests {
                                 ((r >> 12) % (H as u32 * 16)) as i32 - 32,
                             ),
                             1.0 + (s % 300) as f64 / 100.0,
-                            (s >> 9) as f64 % 96.0 - 32.0,
-                            (s >> 17) as f64 % 96.0 - 32.0,
+                            (s >> 9) as f64 % span - span / 3.0,
+                            (s >> 17) as f64 % span - span / 3.0,
                         )
                     })
                     .collect();
@@ -1040,8 +1046,8 @@ mod tests {
                 flat += 1;
             }
         }
-        assert!(textured >= 9, "the texture mattered in {textured} rounds");
-        assert!(flat >= 6, "{flat} flat rounds");
+        assert!(textured >= 21, "the texture mattered in {textured} rounds");
+        assert!(flat >= 15, "{flat} flat rounds");
     }
 
     /// What a textured pixel costs (issue 997), and what its refills ask
@@ -1051,10 +1057,14 @@ mod tests {
     /// with a pixel sixteen texels across from the last on a texture 1024
     /// wide, so that a row's 64 blocks share 16 lines and nearly every
     /// pixel misses and refills a line. A refill is one burst of sixteen beats.
+    /// And once with three texels a pixel under `LINEAR_MIPMAP_LINEAR`, which
+    /// reads eight texels, four from each of two levels.
     #[test]
     fn what_a_textured_pixel_costs() {
         use crate::op::{Op, TexMode};
-        use razboj_tile::tex::{encode, Desc, NEAREST};
+        use razboj_tile::tex::{
+            encode, Desc, LINEAR, LINEAR_MIPMAP_LINEAR, NEAREST,
+        };
         const A: usize = 20;
         const LOGW: usize = 6;
         const W: usize = 1 << LOGW;
@@ -1073,14 +1083,16 @@ mod tests {
             mag: NEAREST,
             ..Desc::default()
         };
-        let more: Vec<(usize, u32)> = encode(&d)
-            .iter()
-            .enumerate()
-            .map(|(k, w)| (DESC as usize + 4 * k, *w))
-            .collect();
+        let words = |d: &Desc| -> Vec<(usize, u32)> {
+            encode(d)
+                .iter()
+                .enumerate()
+                .map(|(k, w)| (DESC as usize + 4 * k, *w))
+                .collect()
+        };
         // A square of two triangles with `u` growing by `step` texels a
         // pixel across, and `q` one throughout.
-        let square = |textured: bool, step: i64| {
+        let square = |textured: bool, step: i64, d: &Desc| {
             let q = 1u64 << 48;
             let u = |x: i64| (x * step) << 32;
             let s = 64 * 16;
@@ -1108,13 +1120,13 @@ mod tests {
             }
             let list = assemble(&ops, W, H);
             Work {
-                more: more.clone(),
+                more: words(d),
                 ..Work::tiled(&list, W, H)
             }
         };
-        let cost = |step: i64| {
+        let cost = |step: i64, d: &Desc| {
             let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
-                &[square(false, step), square(true, step)],
+                &[square(false, step, d), square(true, step, d)],
                 false,
                 false,
             );
@@ -1123,16 +1135,28 @@ mod tests {
             let beats = runs[1].reads.1 - 2 * runs[0].reads.1;
             (cycles as f64 / px as f64, beats as f64 / px as f64)
         };
-        let (hit, hit_beats) = cost(0);
-        let (miss, miss_beats) = cost(16);
+        let (hit, hit_beats) = cost(0, &d);
+        let (miss, miss_beats) = cost(16, &d);
+        // Three texels a pixel under `LINEAR_MIPMAP_LINEAR`: levels one
+        // and two, four texels each, with their refills.
+        let tri = Desc {
+            levels: 11,
+            min: LINEAR_MIPMAP_LINEAR,
+            mag: LINEAR,
+            ..d
+        };
+        let (eight, _) = cost(3, &tri);
         println!(
             "a textured pixel: {hit:.1} cycles on a hit, {miss:.1} on a \
              miss, whose refill is {miss_beats:.1} beats ({hit_beats:.3} \
-             a pixel on hits)"
+             a pixel on hits); {eight:.1} reading eight texels"
         );
-        assert!(hit < 16.0, "{hit:.1} cycles a hit");
+        // A nearest texel of one level: the reciprocal, the level of detail
+        // and the texel's own turns (issue 997), about 18.
+        assert!(hit < 20.0, "{hit:.1} cycles a hit");
         assert!(miss_beats > 12.0 && miss_beats <= 16.0, "{miss_beats}");
         assert!(miss < hit + 40.0, "{miss:.1} cycles a miss");
+        assert!(eight < 90.0, "{eight:.1} cycles for eight texels");
     }
 
     /// What a load costs (issue 993): the same tile table drawn with its

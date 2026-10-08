@@ -1596,10 +1596,12 @@ waveform(
 )
 
 # Razboj's texturing (issue 997): in one tile, a floor of two triangles
-# in perspective, textured under GL_MODULATE with a texture repeated past
-# its edges. The rasteriser's netlist is replayed against the run under
-# nvc and Verilator: the slots and the descriptor, the reciprocal, the
-# texel's address, the cache's refills and hits, and the environment.
+# in perspective, textured under GL_BLEND with a texture of five levels
+# repeated past its edges, filtered with GL_LINEAR_MIPMAP_LINEAR. The
+# rasteriser's netlist is replayed against the run under nvc and
+# Verilator: the slots and the descriptor, the reciprocal, the level of
+# detail, each texel's address, the cache's refills and hits, the filters
+# and the environment.
 waveform(
     name = "razboj_tex",
     example = "//gpu/razboj:trace_tex",
