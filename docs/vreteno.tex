@@ -367,8 +367,14 @@ its own memories, and a store goes out as a word and a mask of its
 lanes, so that a device is never read on the way to being written.
 \code{cpu/vreteno/src/machine} puts the board around it at the
 addresses its maps give: the DDR3 as a gigabyte of plain memory, the
-CLINT with its count moving one an instruction, the PLIC with its two
-targets, and the serial port as SiFive's. A loader lays an image and
+CLINT with its count moving one an instruction, the PLIC with its four
+targets, and the serial port as SiFive's. It holds the board's second
+hart too (issue~\#1408), a second model on the same bus, which waits
+until its \code{msip} starts it at the mailbox's entry, as the board's
+\code{park} does, and then steps beside the first, in cycles in the
+timing mode; a store by either hart takes the other's reservation of
+that word, so the two harts' \code{lr.w} and \code{sc.w} keep their
+counts as the board's do. A loader lays an image and
 a device tree blob into the DDR3 and starts the hart as a bootloader
 would, \code{a0} the hart's number and \code{a1} the blob's address,
 and \code{//cpu/vreteno:machine} runs it with the serial port's output
