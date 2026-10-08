@@ -331,7 +331,9 @@ pub struct EthRxLines {
 #[derive(Trace, Default)]
 pub struct EthRx {
     /// Two frames: the one being received, and the one being offered.
-    /// Frame `k` starts at `k * FRAME_MAX`.
+    /// Frame `k` starts at `k * FRAME_MAX`. A block RAM, read through
+    /// `rq` (issue 1421).
+    #[ram_style("block")]
     pub frame: Mem<U<8>, RX_STORE>,
     /// Bytes received of the frame coming in, check sequence included.
     pub len: Reg<U<11>>,
@@ -368,6 +370,11 @@ pub struct EthRx {
     /// block RAM and not flops every byte of the wire fans out to
     /// (issue 753).
     pub ri: Reg<U<12>>,
+    /// The byte at `ri`, read a cycle ahead: loaded with the frame's
+    /// first byte as it starts and with the next as each is taken, so
+    /// that the store is read into a register, as a block RAM reads,
+    /// rather than through wires to `rx` (issue 1421).
+    pub rq: Reg<U<8>>,
     /// Frames offered.
     pub frames: Reg<U<16>>,
     /// Frames dropped: a failed check, an error, or no room.
@@ -503,22 +510,33 @@ impl Unit<EthRxLines, (Tx<EthByte>, Out<U<16>>, Out<U<48>>)> for EthRx {
                     // the payload while the frame is offered and zero
                     // at every other time.
                     rx_len.set((self.olen.get() - 4).resize::<16>());
-                    self.ri.set(slot_at(self.rsel.get(), U::<11>::from(0u8)));
-                    // The bytes without the check sequence, each put
-                    // until it is taken, and `ri` moved on at the edge
-                    // it is (issue 755). The store is read at `ri`
-                    // alone, one read port at a registered address,
-                    // which Vivado maps to RAM (issue 753).
+                    // `ri` one before the frame's first byte, so that the
+                    // step that moves it on reads that byte first.
+                    self.ri.set(
+                        slot_at(self.rsel.get(), U::<11>::from(0u8))
+                            - U::<12>::from(1u8),
+                    );
+                    DefaultClock::rising().await;
+                    // The bytes without the check sequence. Each step
+                    // moves `ri` on and reads the byte there into `rq`,
+                    // one read at one address, as a block RAM reads; the
+                    // byte is then put until it is taken, and the next
+                    // step comes at the edge it is (issue 755). A read
+                    // straight to `rx` left the store LUT RAM (issues
+                    // 753, 1421).
                     for _ in 0..(self.olen.get() - 4).raw() as usize {
+                        with!(self <= {
+                            ri: self.ri.get() + 1,
+                            rq: self.frame.read(self.ri.get() + 1),
+                        });
                         rx.put(|| EthByte {
-                            data: self.frame.read(self.ri.get()),
+                            data: self.rq.get(),
                             last: Bit::from(
                                 self.ri.get().slice::<0, 11>() + 1
                                     == self.olen.get() - 4,
                             ),
                         })
                         .await;
-                        self.ri.set(self.ri.get() + 1);
                     }
                     DefaultClock::rising().await;
                     rx_len.set(U::<16>::from(0u8));
