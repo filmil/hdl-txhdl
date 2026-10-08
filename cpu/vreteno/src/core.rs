@@ -2775,10 +2775,10 @@ impl<const IW: usize, const DW: usize, const IC: usize> Unit
                     dc_st: U::<2>::from(2u8),
                     dc_beat: U::<2>::from(0u8)
                 },
-                dc_beat_r ? {
-                    dc_beat: self.dc_beat.get() + 1,
-                    dc_kill: dc_kill_now
-                },
+                dc_beat_r ? dc_beat: self.dc_beat.get() + 1,
+                // A line named while its fill is out, before the first
+                // beat as after it, is not kept (issue 1429).
+                Bit::from(dc_st != 0) ? dc_kill: dc_kill_now,
                 dc_last ? dc_st: U::<2>::from(0u8),
                 ic_clr2: ic_clearing,
                 rst ? {
