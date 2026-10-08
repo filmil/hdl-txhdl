@@ -180,6 +180,14 @@ impl AddrMap<10> for SlotMap {
         "the SD card host",
         "Razboj's doorbell",
     ];
+    /// The remote peripheral takes single beats only: each of its
+    /// accesses may wait `REMOTE_WAIT` for a program on the network,
+    /// and a burst over it held the whole page for 64 of them, a minute
+    /// in which the serial port did not answer (issue 1436). Nothing
+    /// legitimate bursts into it; the bridge answers a burst `SlvErr`.
+    const SINGLE: [bool; 10] = [
+        false, false, false, true, false, false, false, false, false, false,
+    ];
 }
 
 /// Where the interrupt controller is, behind a bridge of its own.

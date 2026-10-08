@@ -3286,22 +3286,23 @@ fn the_data_cache_sees_another_hosts_write() {
     }
 }
 
-/// A scanout burst over the remote peripheral holds the serial port
-/// for as long as the remote waits (issue 1412). On the board, a stale
-/// base sent the scanout's lines into the peripheral page, and the
-/// core's printing stopped for 62 s (#1317). A line there is ten bursts
+/// A burst over the remote peripheral is refused, so an unserved remote
+/// does not hold the serial port (issues 1412, 1436). On the board, a
+/// stale base sent the scanout's lines into the peripheral page, and the
+/// core's printing stopped for 62 s (#1317): a line there is ten bursts
 /// of 64 beats over `0x3000` to `0x39ff`, the whole page; `LiteBridge`
-/// takes one burst at a time, reads and writes alike; and the remote
-/// peripheral, at `0x3300`, waits `REMOTE_WAIT`, a second, for a program
-/// on the network before it answers a beat itself, so the burst over it
-/// holds the page for 64 of them. Here the line is given at `0x3000`
-/// with the pair's window opened to the whole address space, which
-/// puts the same bursts on the bus as the stale base did, and the third
-/// slot answers as the flagship's does. With no program serving the
-/// remote, the printing stops once the line is asked and does not come
-/// back; with one, every line comes and the printing goes on.
+/// takes one burst at a time; and the remote peripheral, at `0x3300`,
+/// waits `REMOTE_WAIT`, a second, for a program on the network before
+/// it answers a beat itself, so a burst over it held the page for 64 of
+/// them. The board's map now says the remote takes single beats only,
+/// and the bridge answers a burst to it `SlvErr` at once. Here the line
+/// is given at `0x3000` with the pair's window opened to the whole
+/// address space, which puts the same bursts on the bus as the stale
+/// base did, and the third slot answers as the flagship's does. With no
+/// program serving the remote, the printing goes on through the line,
+/// and no request goes out for the burst; with one, the same.
 #[test]
-fn a_burst_over_the_unserved_remote_holds_the_serial_port() {
+fn a_burst_over_the_unserved_remote_does_not_hold_the_serial_port() {
     let frame = 6 * SCAN_LINE;
     let run = |serve: bool| {
         let net = Net {
@@ -3323,30 +3324,27 @@ fn a_burst_over_the_unserved_remote_holds_the_serial_port() {
             &[],
         )
     };
-    let alone = run(false);
-    let asked_at = alone.scan.lines[0].1;
-    let last = *alone.said_at.last().expect("it printed");
-    assert_eq!(alone.scan.lines[0].0, 0x3000, "the line asked");
-    assert!(
-        last > asked_at && last < asked_at + 2_000,
-        "the printing stops once the line is asked, at {asked_at}: \
-         the last byte at {last}"
-    );
-    assert!(
-        alone.ran_for > last + 2 * frame,
-        "and stays stopped for frames: ran to {}",
-        alone.ran_for
-    );
-    assert_eq!(alone.sent.len(), 1, "the remote's one request went out");
-    assert_eq!(alone.scan.stuck.map(|(_, at)| at), Some(0x3000));
-
-    let served = run(true);
-    let last = *served.said_at.last().expect("it printed");
-    assert!(
-        last + SCAN_LINE > served.ran_for,
-        "with the remote served the printing goes on: the last byte at \
-         {last} of {}",
-        served.ran_for
-    );
-    assert_eq!(served.scan.stuck, None, "every line comes");
+    for serve in [false, true] {
+        let ran = run(serve);
+        let asked_at = ran.scan.lines[0].1;
+        assert_eq!(ran.scan.lines[0].0, 0x3000, "the line asked");
+        let last = *ran.said_at.last().expect("it printed");
+        assert!(
+            last > asked_at + 2 * frame && last + SCAN_LINE > ran.ran_for,
+            "served {serve}: the printing goes on past the line, asked \
+             at {asked_at}: the last byte at {last} of {}",
+            ran.ran_for
+        );
+        // The longest silence while the line is fetched is a few lines'
+        // time, not a remote's wait.
+        let worst = ran
+            .said_at
+            .windows(2)
+            .filter(|w| w[1] > asked_at)
+            .map(|w| w[1] - w[0])
+            .max()
+            .unwrap_or(0);
+        assert!(worst < 2 * SCAN_LINE, "served {serve}: a gap of {worst}");
+        assert_eq!(ran.sent.len(), 0, "served {serve}: no request for a burst");
+    }
 }

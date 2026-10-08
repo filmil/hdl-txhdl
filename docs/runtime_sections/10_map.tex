@@ -17,4 +17,13 @@ is; the loop is unrolled there and \code{i} is its variable. Nothing
 else of the module lowers, and the module holds nothing but the
 trait.
 
+Two more constants have defaults, so a map states them only when it
+means something by them. \code{NAMES} gives a few words for each
+range, for a table of the map. \code{SINGLE} says which ranges take
+single beats only: \code{LiteBridge} answers a burst of more than one
+beat to such a range itself, with \code{SlvErr}, rather than holding
+itself for a peripheral that may wait long on every access (issue
+1436). A unit reads it as it reads \code{RANGES}, \code{M::SINGLE[i]},
+a truth value worked out when \code{lowered} runs.
+
 \lstinputlisting[caption={\code{lib/src/map.rs}.},label={lst:r-map}]{lib/src/map.rs}

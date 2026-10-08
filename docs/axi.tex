@@ -828,6 +828,16 @@ bridge. Write beats are consumed and discarded with \code{DecErr} responses,
 while read requests return \code{DecErr} across the exact number of beats
 specified by the host request.
 
+Fifth, a burst of more than one beat to a range the map marks as taking
+single beats only, \code{AddrMap::SINGLE}, is refused the same way, but
+answered \code{SlvErr} (issue~1436).
+That is for a peripheral whose every access may wait long, such as the
+remote peripheral, whose program answers over a network: a burst of 64
+beats over it held the whole bridge for 64 of its waits, a minute in
+which the board's serial port did not answer.
+The run below marks its second bank so, and a read of two words there
+comes back \code{SlvErr} in two beats while the bank sees none of it.
+
 \litepart{state}{The bridge's state, for any count of
 peripherals.}{lst:a-lite-state}
 

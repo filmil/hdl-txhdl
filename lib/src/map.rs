@@ -31,4 +31,12 @@ pub trait AddrMap<const N: usize> {
     /// the design decodes rather than a copy of it (issue 444). A map
     /// that names nothing leaves each one empty.
     const NAMES: [&'static str; N] = [""; N];
+    /// Which ranges take single beats only, in the same order: a bridge
+    /// answers a burst of more than one beat to such a range itself,
+    /// with an error, and the peripheral sees none of it (issue 1436).
+    /// It is for a peripheral whose every access may wait long, such as
+    /// one answered over a network, which a burst would otherwise hold
+    /// for as many waits as it has beats. A map that says nothing lets
+    /// every range take bursts.
+    const SINGLE: [bool; N] = [false; N];
 }

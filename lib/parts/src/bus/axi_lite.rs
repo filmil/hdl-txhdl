@@ -234,6 +234,10 @@ pub struct LiteBridge<
     pub sent: Reg<Bit>,
     /// A write burst's response so far: its first error, or `Okay`.
     pub wresp: Reg<Resp>,
+    /// The burst was refused, a burst of more than one beat to a range
+    /// the map says takes single beats only: it is answered here, as a
+    /// hole is, but `SlvErr` rather than `DecErr` (issue 1436).
+    pub refused: Reg<Bit>,
 }
 // end{state}
 
@@ -260,6 +264,7 @@ impl<
             sel: Reg::default(),
             sent: Reg::default(),
             wresp: Reg::default(),
+            refused: Reg::default(),
         }
     }
 }
@@ -318,6 +323,9 @@ impl<
             let mut ar_any = Bit::Zero;
             let mut aw_sel = U::<N>::from(0u8);
             let mut aw_any = Bit::Zero;
+            // Whether the range it decoded to takes single beats only.
+            let mut ar_single = Bit::Zero;
+            let mut aw_single = Bit::Zero;
             for i in 0..N {
                 let one = U::<N>::from(1u8) << i;
                 let ar_hit = Bit::from(
@@ -326,14 +334,25 @@ impl<
                 ) & !ar_any;
                 ar_sel = mux(ar_hit, one, ar_sel);
                 ar_any = ar_any | ar_hit;
+                ar_single = ar_single | (ar_hit & Bit::from(M::SINGLE[i]));
                 let aw_hit = Bit::from(
                     (awh.addr.raw() as usize & M::RANGES[i].1)
                         == M::RANGES[i].0,
                 ) & !aw_any;
                 aw_sel = mux(aw_hit, one, aw_sel);
                 aw_any = aw_any | aw_hit;
+                aw_single = aw_single | (aw_hit & Bit::from(M::SINGLE[i]));
             }
-            let new_sel = mux(take_ar, ar_sel, aw_sel);
+            // A burst of more than one beat to such a range is refused:
+            // it goes to no peripheral, as a hole does, and is answered
+            // here at once, so a peripheral that waits long on each
+            // access cannot hold the bridge for a burst's worth of
+            // waits (issue 1436).
+            let ar_refuse = ar_single & Bit::from(arh.len != U::<8>::from(0u8));
+            let aw_refuse = aw_single & Bit::from(awh.len != U::<8>::from(0u8));
+            let refuse = mux(take_ar, ar_refuse, aw_refuse);
+            let new_sel =
+                mux(refuse, U::<N>::from(0u8), mux(take_ar, ar_sel, aw_sel));
             // How far the address moves per beat: a beat's width, or
             // nothing for a fixed burst.
             let size = mux(take_ar, arh.size, awh.size);
@@ -384,12 +403,14 @@ impl<
             // end{requests}
             // begin{answers}
             // The answer to the beat, from that peripheral, or the
-            // bridge's own `DecErr` for a hole, there at once.
+            // bridge's own for a hole, there at once: `DecErr`, or
+            // `SlvErr` for a burst it refused.
+            let own = mux(self.refused.get(), Resp::SlvErr, Resp::DecErr);
             let mut b_off = Bit::One;
-            let mut b_resp = Resp::DecErr;
+            let mut b_resp = own;
             let mut r_off = Bit::One;
             let mut r_data = U::<D>::from(0u8);
-            let mut r_resp = Resp::DecErr;
+            let mut r_resp = own;
             for i in 0..N {
                 let me = cur.bit(i);
                 b_off = mux(me, Bit::from(bs[i].peek().is_some()), b_off);
@@ -445,6 +466,7 @@ impl<
                     sel: new_sel,
                     sent: Bit::Zero,
                     wresp: Resp::Okay,
+                    refused: refuse,
                 },
                 (w_go | ar_go) ? { sent: Bit::One },
                 done ? {
@@ -605,5 +627,81 @@ mod tests {
         // transactions on the first peripheral, and two on the second.
         assert_eq!(*served0.borrow(), 10, "one transaction per beat");
         assert_eq!(*served1.borrow(), 2, "the second peripheral's");
+    }
+
+    /// The same two peripherals, the second taking single beats only.
+    struct SingleMap;
+    impl AddrMap<2> for SingleMap {
+        const RANGES: [(usize, usize); 2] = TwoMap::RANGES;
+        const SINGLE: [bool; 2] = [false, true];
+    }
+
+    /// A burst of more than one beat to a range that takes single beats
+    /// only is answered `SlvErr` by the bridge, in as many beats as it
+    /// asked for, and the peripheral sees none of it; a single beat
+    /// there goes through, and so does a burst to the other range
+    /// (issue 1436).
+    #[test]
+    fn a_burst_to_a_single_beat_range_is_refused() {
+        let Link {
+            host,
+            host_in,
+            host_out,
+            per_in,
+            per_out,
+            ..
+        } = axi::<16, 32, 4, 2, 4>();
+        let l0 = axi_lite::<16, 32, 4>();
+        let l1 = axi_lite::<16, 32, 4>();
+        let (aw0, ar0, w0, b0, r0) = l0.host;
+        let (aw1, ar1, w1, b1, r1) = l1.host;
+        let words = Rc::new(RefCell::new(HashMap::new()));
+        let served0 = Rc::new(RefCell::new(0usize));
+        let served1 = Rc::new(RefCell::new(0usize));
+        let out = Rc::new(RefCell::new(Vec::<String>::new()));
+        let o = out.clone();
+        let client = async move {
+            let two = [U::from(1u32), U::from(2u32)];
+            // A burst of two to the single-beat range, each way.
+            let wr = host.write(Wr::at(0x2000u32), &two).await;
+            assert_eq!(wr.done().await.resp, Resp::SlvErr);
+            let got = host.read(Rd::at(0x2000u32, 2)).await.done().await;
+            assert_eq!(got.resp, Resp::SlvErr);
+            assert_eq!(got.data.len(), 2, "refused, in beats");
+            // A single beat there goes through.
+            let wr = host.write(Wr::at(0x2000u32), &[U::from(7u32)]).await;
+            assert_eq!(wr.done().await.resp, Resp::Okay);
+            let got = host.read(Rd::at(0x2000u32, 1)).await.done().await;
+            assert_eq!((got.resp, got.data[0].raw()), (Resp::Okay, 7));
+            // And a burst to the other range.
+            let wr = host.write(Wr::at(0x1000u32), &two).await;
+            assert_eq!(wr.done().await.resp, Resp::Okay);
+            o.borrow_mut().push("done".to_string());
+        };
+        let mut h = Host::default();
+        let mut bridge = LiteBridge::<2, SingleMap, 16, 32, 4, 2>::default();
+        let (s0, s1) = (served0.clone(), served1.clone());
+        let mut sim = Running::new(join2(
+            join2(
+                h.run(host_in, host_out),
+                bridge.run(
+                    (per_in.0, per_in.1, per_in.2, [b0, b1], [r0, r1]),
+                    ([aw0, aw1], [ar0, ar1], [w0, w1], per_out.2, per_out.3),
+                ),
+            ),
+            join2(
+                client,
+                join2(
+                    memory(l0.per, words.clone(), s0),
+                    memory(l1.per, words.clone(), s1),
+                ),
+            ),
+        ));
+        for _ in 0..400 {
+            sim.cycle();
+        }
+        assert_eq!(*out.borrow(), vec!["done".to_string()], "the run ended");
+        assert_eq!(*served1.borrow(), 2, "only the single beats arrived");
+        assert_eq!(*served0.borrow(), 2, "the burst to the other range");
     }
 }
