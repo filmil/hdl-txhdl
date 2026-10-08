@@ -34,6 +34,15 @@ SECTIONS
     *(.srodata .srodata.*)
   } > imem
 
+  /* The loader's record of the last trap that brought a program
+     back to it (issue 1411): first in the data memory, at 0x1000,
+     where a debugger reads it by system bus access. Neither loaded
+     nor cleared, so it outlives the trap the loader restarts from.
+     Only the loader puts anything here. */
+  .keep (NOLOAD) : ALIGN(4) {
+    KEEP(*(.keep .keep.*))
+  } > dmem
+
   .data : ALIGN(4) {
     *(.data .data.*)
     *(.sdata .sdata.*)
