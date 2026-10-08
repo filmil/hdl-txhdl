@@ -226,6 +226,12 @@ pub struct Model {
     /// The step's data access, if it made one: its address, and
     /// whether it was a store.
     pub access: std::cell::Cell<Option<(u32, bool)>>,
+    /// The physical word the last step wrote, a store, `sc.w` or an AMO,
+    /// and the reservation's physical address: what a machine of two
+    /// harts compares to take one hart's reservation when the other
+    /// writes its word (issue 1408).
+    pub wrote: Option<u32>,
+    pub rsv_pa: Option<u32>,
 }
 
 /// What a step costs in the timing mode (issue 1392): a base an
@@ -315,6 +321,8 @@ impl Default for Model {
             timing: None,
             cycles: 0,
             access: std::cell::Cell::new(None),
+            wrote: None,
+            rsv_pa: None,
             dcsr: 0x4000_0003,
             step_armed: false,
             stepped: false,
@@ -1016,6 +1024,7 @@ impl Model {
         if self.halted.is_some() || self.debug {
             return;
         }
+        self.wrote = None;
         if self.timing.is_none() {
             return self.execute(imem, interrupt);
         }
@@ -1158,6 +1167,7 @@ impl Model {
                     }
                 };
                 self.access.set(Some((addr, true)));
+                self.wrote = Some(addr);
                 // In a machine the store goes out with its lanes' mask,
                 // and nothing is read first (issue 1016); one into the
                 // data RAM stays in the core (issue 1275).
@@ -1212,6 +1222,7 @@ impl Model {
                         return;
                     }
                 };
+                self.rsv_pa = Some(pa);
                 if pa >= DEVICES && self.dev_err && !self.csr.busquiet {
                     self.trap(CAUSE_LOAD_ACCESS, a);
                     return;
@@ -1244,6 +1255,7 @@ impl Model {
                         return;
                     }
                     self.set_word(pa, b);
+                    self.wrote = Some(pa);
                 }
                 rd = Some(!held as u32);
             }
@@ -1285,6 +1297,7 @@ impl Model {
                 // the bus's word and writes nothing, as a load does.
                 if !refused {
                     self.set_word(pa, new);
+                    self.wrote = Some(pa);
                 }
                 rd = Some(old);
             }
