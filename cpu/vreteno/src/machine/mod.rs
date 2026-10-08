@@ -131,6 +131,19 @@ pub struct Devices {
     pub elapsed: u64,
 }
 
+impl Devices {
+    /// Where the scanout shows its frame from, once its control bit
+    /// shows it: the third slot's upper half, from `1 << SCAN_BIT`, the
+    /// base at its first word and the control at its second (issue
+    /// 1440).
+    pub fn scanout(&self) -> Option<u32> {
+        use txhdl_parts::scanout::{scan, SCAN_BIT};
+        let word =
+            |off: u32| self.video[(((1 << SCAN_BIT) + off) / 4) as usize];
+        (word(scan::ctrl) & 1 != 0).then(|| word(scan::base))
+    }
+}
+
 /// The bus the model reaches the devices through.
 #[derive(Debug)]
 pub struct Board(pub RefCell<Devices>);
@@ -372,6 +385,20 @@ impl Default for Machine {
 
 #[cfg(test)]
 mod tests {
+    /// The base and the bit that shows it, written as the boot shim
+    /// writes them, say where the screen is (issue 1440).
+    #[test]
+    fn the_scanout_is_where_its_base_says_once_shown() {
+        let mut m = Machine::new();
+        let video = m.board.0.borrow().map.video.0;
+        use crate::model::Bus;
+        assert!(m.board.store(video + 0x80, 0x4200_0000, !0));
+        assert_eq!(m.board.0.borrow().scanout(), None, "not shown yet");
+        assert!(m.board.store(video + 0x84, 1, !0));
+        assert_eq!(m.board.0.borrow().scanout(), Some(0x4200_0000));
+        let _ = &mut m;
+    }
+
     use super::*;
 
     /// The sources the model drives are the board's: the serial port's

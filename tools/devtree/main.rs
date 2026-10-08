@@ -109,13 +109,24 @@ pub struct Chosen {
     pub initrd: Option<(u32, u32)>,
     /// The kernel's command line.
     pub bootargs: Option<String>,
+    /// A simple framebuffer at this address in the DDR3, which the boot
+    /// shim has the scanout show (issue 1440).
+    pub framebuffer: Option<u32>,
 }
+
+/// The scanout's frame: 640 by 480, a word a pixel with red, green and
+/// blue in its low 24 bits, 4096 bytes from a line to the next, the
+/// flagship's mode and Razboj's row (issue 1440).
+pub const FB_WIDTH: u32 = 640;
+pub const FB_HEIGHT: u32 = 480;
+pub const FB_STRIDE: u32 = 4096;
 
 impl Default for Chosen {
     fn default() -> Self {
         Chosen {
             initrd: None,
             bootargs: Some(BOOTARGS.to_string()),
+            framebuffer: None,
         }
     }
 }
@@ -161,6 +172,22 @@ pub fn dts_with(chosen: &Chosen) -> String {
         None => String::new(),
     };
     let ndev = PLIC_SOURCES.len();
+    // The framebuffer: kept from the kernel's own use, and described for
+    // simplefb, which drives no hardware and takes the mode as given.
+    let (fb_reserved, fb_node) = match chosen.framebuffer {
+        Some(at) => {
+            let len = FB_STRIDE * FB_HEIGHT;
+            (
+                format!(
+                    "\n\n\t\t// The scanout's frame, which the boot shim shows\n\t\t// (issue 1440).\n\t\tfb_mem: memory@{at:x} {{\n\t\t\treg = <{at:#010x} {len:#x}>;\n\t\t\tno-map;\n\t\t}};"
+                ),
+                format!(
+                    "\n\n\t// The console on HDMI (issue 1440): the scanout's frame,\n\t// a word a pixel, red in bits 23 to 16.\n\tframebuffer@{at:x} {{\n\t\tcompatible = \"simple-framebuffer\";\n\t\treg = <{at:#010x} {len:#x}>;\n\t\twidth = <{FB_WIDTH:#x}>;\n\t\theight = <{FB_HEIGHT:#x}>;\n\t\tstride = <{FB_STRIDE:#x}>;\n\t\tformat = \"x8r8g8b8\";\n\t\tstatus = \"okay\";\n\t}};"
+                ),
+            )
+        }
+        None => (String::new(), String::new()),
+    };
     format!(
         r#"// SPDX-License-Identifier: Apache-2.0
 // The Vreteno board's device tree, for Linux. Written by
@@ -219,8 +246,8 @@ pub fn dts_with(chosen: &Chosen) -> String {
 		eth_bufs: memory@{eth:x} {{
 			reg = <{eth:#010x} 0x2000>;
 			no-map;
-		}};
-	}};
+		}};{fb_reserved}
+	}};{fb_node}
 
 	sysclk: clock {{
 		compatible = "fixed-clock";
@@ -290,8 +317,8 @@ pub fn dts_with(chosen: &Chosen) -> String {
     )
 }
 
-/// `devtree [--initrd START END] [--bootargs ARGS]`: the tree, with a
-/// boot image's choices when given.
+/// `devtree [--initrd START END] [--bootargs ARGS] [--framebuffer
+/// ADDR]`: the tree, with a boot image's choices when given.
 fn main() {
     let mut chosen = Chosen::default();
     let mut args = std::env::args().skip(1);
@@ -305,6 +332,10 @@ fn main() {
                 let start = num(args.next().expect("--initrd START END"));
                 let end = num(args.next().expect("--initrd START END"));
                 chosen.initrd = Some((start, end));
+            }
+            "--framebuffer" => {
+                chosen.framebuffer =
+                    Some(num(args.next().expect("--framebuffer ADDR")))
             }
             "--bootargs" => {
                 chosen.bootargs = Some(args.next().expect("--bootargs ARGS"))
@@ -469,6 +500,7 @@ mod tests {
         let t = dts_with(&Chosen {
             initrd: Some((0x4080_0000, 0x4090_0000)),
             bootargs: Some("earlycon console=ttySIF0".into()),
+            framebuffer: None,
         });
         assert_eq!(cells(&t, "chosen {", "linux,initrd-start"), [0x4080_0000]);
         assert_eq!(cells(&t, "chosen {", "linux,initrd-end"), [0x4090_0000]);
@@ -478,6 +510,29 @@ mod tests {
             dts().contains("bootargs = \"earlycon console=ttySIF0\";"),
             "but the console from the first line (issue 1125)"
         );
+    }
+
+    /// A framebuffer chosen is a simple-framebuffer node over the
+    /// scanout's frame, in its format and stride, and memory the kernel
+    /// keeps out of its own use (issue 1440); none by default.
+    #[test]
+    fn a_framebuffer_is_described_and_reserved() {
+        let t = dts_with(&Chosen {
+            framebuffer: Some(0x4200_0000),
+            ..Chosen::default()
+        });
+        let node = "framebuffer@42000000 {";
+        assert_eq!(cells(&t, node, "reg"), [0x4200_0000, 0x1e_0000]);
+        assert_eq!(cells(&t, node, "width"), [640]);
+        assert_eq!(cells(&t, node, "height"), [480]);
+        assert_eq!(cells(&t, node, "stride"), [4096]);
+        assert!(t.contains("compatible = \"simple-framebuffer\";"));
+        assert!(t.contains("format = \"x8r8g8b8\";"));
+        assert_eq!(
+            cells(&t, "fb_mem: memory@42000000 {", "reg"),
+            [0x4200_0000, 0x1e_0000]
+        );
+        assert!(!dts().contains("framebuffer@"), "none by default");
     }
 
     /// The hart names its MMU exactly when the design says it has one.

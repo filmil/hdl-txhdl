@@ -467,6 +467,24 @@ command line and goes to mount the root, which the model cannot serve,
 so the mount itself is the board's to check. \code{board\_boot}, with
 its root in memory, stays the image to fall back on.
 
+Linux's console shows on the HDMI output as well, through the
+scanout (issue~1440). The kernel's \code{simplefb} drives no hardware:
+it takes a frame the firmware has already put on the screen, described
+in the tree. So the boot shim, given a framebuffer, writes the
+scanout's base and its control bit before it jumps to OpenSBI, and the
+tree has a \code{simple-framebuffer} node over that frame, at
+\code{0x4200\_0000} in the DDR3, with its memory reserved
+\code{no-map}. The scanout's format is simplefb's
+\code{x8r8g8b8}, a word a pixel with red in bits 23 to 16, at 640 by
+480 and 4096 bytes a line. The command line names
+\code{console=tty0 console=ttySIF0}, so the log goes to both and the
+serial port, named last, stays \code{/dev/console}, where the input
+is; the kernel shows its logo, and \code{/init} starts a shell on
+\code{tty1}, so a prompt shows on the screen. The machine has the
+third slot's registers, and \code{--screen} writes what the scanout
+would show when the run stops: on the model, the logo, the boot log
+and the prompt.
+
 Linux reaches the network through its own LiteEth driver,
 \code{litex\_liteeth}, on the Ethernet port (issue~\#1203). The
 port's registers are LiteEth's at LiteX's offsets, and its two
