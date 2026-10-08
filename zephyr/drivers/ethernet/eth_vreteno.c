@@ -441,4 +441,18 @@ uint32_t eth_vreteno_rx_errors(void)
 	return eth_vreteno_read(DEVICE_DT_INST_GET(0),
 				ETHSLOTS_RX_ERRORS);
 }
+
+void eth_vreteno_mac_drops(struct eth_vreteno_mac_drops *d)
+{
+	const struct device *dev = DEVICE_DT_INST_GET(0);
+	uint32_t drops = eth_vreteno_read(dev, ETHSLOTS_RX_MAC_DROPS);
+	uint32_t check = eth_vreteno_read(dev, ETHSLOTS_RX_MAC_CHECK);
+
+	d->room = (drops & ETHSLOTS_RX_MAC_DROPS_ROOM_MASK) >>
+		  ETHSLOTS_RX_MAC_DROPS_ROOM_SHIFT;
+	d->size = (drops & ETHSLOTS_RX_MAC_DROPS_SIZE_MASK) >>
+		  ETHSLOTS_RX_MAC_DROPS_SIZE_SHIFT;
+	d->check = (check & ETHSLOTS_RX_MAC_CHECK_COUNT_MASK) >>
+		   ETHSLOTS_RX_MAC_CHECK_COUNT_SHIFT;
+}
 #endif
