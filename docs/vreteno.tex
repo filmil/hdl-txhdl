@@ -2064,6 +2064,11 @@ and keeps the line when the last comes. A store of the core's own
 writes its word into a line it holds and goes to the DDR3 as before;
 \code{lr.w}, \code{sc.w} and the AMOs go round the cache and drop the
 line, so the controller stays the one place they meet another host.
+Execute reads a line's word, tag and valid bit in the cycle writeback
+may be writing them, so writeback takes that cycle's writes, held in
+registers, over what was read: a load right behind a store to its word
+gets the store's word, and a byte store behind another merges into
+the word the first one left (issue~\#1431).
 Another host's write is the cache's to notice: a unit on the router's
 port to the DDR3 notes each such burst as its address goes by, and
 when the controller answers it names the burst's lines to the core,
