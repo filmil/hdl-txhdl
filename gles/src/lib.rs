@@ -127,6 +127,11 @@ pub struct Gl<'a> {
     /// factor and units, in 16.16.
     offset_on: bool,
     offset: (Fx, Fx),
+    /// Dithering (#998): its switch, on at first as GL's is. It changes
+    /// nothing drawn: GL lets dithering be the identity when the
+    /// framebuffer keeps every bit of the colour, and Razboj's keeps eight
+    /// a channel, as many as a colour has here.
+    dither: bool,
     /// Whether the frame holds an entry that tests depth, which Razboj
     /// draws only from a tile table.
     deep: bool,
@@ -199,6 +204,7 @@ impl<'a> Gl<'a> {
             depth_func: gl::LESS - gl::NEVER,
             offset_on: false,
             offset: (0, 0),
+            dither: true,
             depth_mask: true,
             clear_depth: ONE,
             depth_range: (0, ONE),
@@ -392,6 +398,7 @@ impl<'a> Gl<'a> {
             gl::COLOR_MATERIAL => self.colour_material = on,
             gl::DEPTH_TEST => self.depth_test = on,
             gl::POLYGON_OFFSET_FILL => self.offset_on = on,
+            gl::DITHER => self.dither = on,
             gl::BLEND => self.blend_on = on,
             gl::ALPHA_TEST => self.alpha_on = on,
             gl::TEXTURE_2D => self.texture_on = on,
@@ -421,6 +428,7 @@ impl<'a> Gl<'a> {
             gl::COLOR_MATERIAL => self.colour_material,
             gl::DEPTH_TEST => self.depth_test,
             gl::POLYGON_OFFSET_FILL => self.offset_on,
+            gl::DITHER => self.dither,
             gl::BLEND => self.blend_on,
             gl::ALPHA_TEST => self.alpha_on,
             gl::TEXTURE_2D => self.texture_on,
