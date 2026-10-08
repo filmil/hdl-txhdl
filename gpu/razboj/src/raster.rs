@@ -281,6 +281,12 @@ pub struct Raster<
     pub afunc: Reg<U<3>>,
     pub aref: Reg<U<8>>,
     pub cmask: Reg<U<4>>,
+    /// The logic operation (issue 998): whether it is on, in place of the
+    /// blend, which of GL's sixteen, and the pixel it makes, a turn
+    /// before the write.
+    pub lon: Reg<Bit>,
+    pub lop: Reg<U<4>>,
+    pub lres: Reg<U<32>>,
     /// The tile's colour again, written where and as the bank is and
     /// read only by the walk, for the colour already at a pixel, so that
     /// each of the two is a block RAM of one write and one read; the
@@ -568,6 +574,22 @@ fn over255(x: U<17>) -> U<8> {
         U::<8>::from(255u32),
         r.slice::<0, 8>(),
     )
+}
+
+/// GL's logic operation `op` of the pixel `s` and the colour there `d`,
+/// bit by bit (issue 998), as `op::logic` has it: bit `3 - (2s + d)` of
+/// the operation is the result for a source bit `s` and a destination
+/// bit `d`.
+#[lower]
+fn logic_op(op: U<4>, s: U<32>, d: U<32>) -> U<32> {
+    let z = U::<32>::from(0u8);
+    let all = U::<32>::from(u32::MAX);
+    let (ns, nd) = (s ^ all, d ^ all);
+    let t3 = mux(op.bit(3), all, z);
+    let t2 = mux(op.bit(2), all, z);
+    let t1 = mux(op.bit(1), all, z);
+    let t0 = mux(op.bit(0), all, z);
+    (t3 & ns & nd) | (t2 & ns & d) | (t1 & s & nd) | (t0 & s & d)
 }
 
 /// The bytes of `new` that `mask` holds, a bit a byte, over `old`.
@@ -1541,7 +1563,7 @@ impl<
                                               + ((self.insn.get() + 1)
                                                   .resize::<A>()
                                                   << SHIFT),
-                                          len: U::<8>::from(4u8),
+                                          len: U::<8>::from(5u8),
                                           size: U::<3>::from(2u8),
                                           burst: BurstKind::Incr,
                                           lock: Bit::Zero,
@@ -1613,6 +1635,22 @@ impl<
                                           afunc: w4.slice::<1, 3>(),
                                           aref: w4.slice::<8, 8>(),
                                           cmask: w4.slice::<16, 4>(),
+                                      });
+                                      // The logic operation, word 5 (issue
+                                      // 998).
+                                      until(DefaultClock::rising, || {
+                                          landing(
+                                              rdata.peek().is_some(),
+                                              release.ready(),
+                                              done.peek().is_some(),
+                                          )
+                                          .to_bool()
+                                      })
+                                      .await;
+                                      let w5 = rdata.head().data;
+                                      with!(self <= {
+                                          lon: w5.bit(0),
+                                          lop: w5.slice::<1, 4>(),
                                       });
                                   }
                                   // A textured entry's two slots more
@@ -2568,6 +2606,11 @@ impl<
                                                     f.slice::<0, 8>(),
                                                     g.slice::<0, 8>(),
                                                 ),
+                                                lres: logic_op(
+                                                    self.lop.get(),
+                                                    s,
+                                                    d,
+                                                ),
                                             });
                                             DefaultClock::rising().await;
                                             let top = over255(self.sum_a.get());
@@ -2581,12 +2624,18 @@ impl<
                                                 .concat::<8, 32>(over255(
                                                     self.sum_b.get(),
                                                 ));
+                                            let bl = mux(
+                                                self.bon.get(),
+                                                mixed,
+                                                self.srcq.get(),
+                                            );
+                                            // A logic operation is in place
+                                            // of the blend (issue 998).
+                                            let lr = self.lres.get();
+                                            let lon = self.lon.get();
+                                            let lg = mux(lon, lr, bl);
                                             self.bout.set(masked(
-                                                mux(
-                                                    self.bon.get(),
-                                                    mixed,
-                                                    self.srcq.get(),
-                                                ),
+                                                lg,
                                                 self.dcol.get(),
                                                 self.cmask.get(),
                                             ));
