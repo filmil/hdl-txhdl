@@ -40,6 +40,11 @@
 //! within ten thousand instructions (issue 1441). A boot timed to
 //! `/init`'s marker is a boot's time to userspace.
 //!
+//! `--screen FILE` writes what the scanout would show when the run
+//! stops, as a PPM: the frame at the scanout's base in the DDR3, in the
+//! flagship's mode, 640 by 480, a word a pixel, 4096 bytes a line, or
+//! nothing if the scanout is not shown (issue 1440).
+//!
 //! It stops when the hart halts, or after `--steps` instructions, and
 //! says which, with the program counter, on standard error.
 use std::io::{Read, Write};
@@ -77,6 +82,7 @@ fn main() {
     let mut timing = false;
     let mut fastboot = None;
     let mut until: Option<String> = None;
+    let mut screen: Option<String> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         let mut val =
@@ -95,6 +101,9 @@ fn main() {
             // run got, which times a boot to a line of its log (issue
             // 1441).
             "--until" => until = Some(val()),
+            // What the scanout would show when the run stops, as a PPM
+            // (issue 1440).
+            "--screen" => screen = Some(val()),
             _ => panic!("unknown argument {a}"),
         }
     }
@@ -184,6 +193,27 @@ fn main() {
         None => "stopped at the step limit".to_string(),
     };
     eprintln!("\n{how} after {ran} instructions, pc {:#010x}", m.model.pc);
+    if let Some(path) = &screen {
+        let d = m.board.0.borrow();
+        match d.scanout() {
+            Some(base) => {
+                // The flagship's mode: 640 by 480, a word a pixel, the
+                // low 24 bits red, green and blue, 4096 bytes a line.
+                let (w, h, stride) = (640u32, 480u32, 4096u32);
+                let mut ppm = format!("P6\n{w} {h}\n255\n").into_bytes();
+                for y in 0..h {
+                    for x in 0..w {
+                        let p = d.ddr.load(base + y * stride + 4 * x);
+                        ppm.extend([(p >> 16) as u8, (p >> 8) as u8, p as u8]);
+                    }
+                }
+                std::fs::write(path, ppm)
+                    .unwrap_or_else(|e| panic!("{path}: {e}"));
+                eprintln!("screen: the scanout at {base:#010x}, in {path}");
+            }
+            None => eprintln!("screen: the scanout is not shown"),
+        }
+    }
     if timing {
         eprintln!("timing: {} cycles", m.model.cycles);
     }
