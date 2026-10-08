@@ -18,6 +18,7 @@ pub mod axi;
 pub mod axi_lite;
 pub mod axi_per_pins;
 pub mod axi_pins;
+pub mod exmon;
 pub mod lite_split;
 pub mod noc;
 pub mod router;
