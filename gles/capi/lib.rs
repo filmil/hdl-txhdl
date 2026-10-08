@@ -537,6 +537,26 @@ pub unsafe extern "C" fn glFogxv(pname: u32, params: *const Fx) {
 }
 
 #[no_mangle]
+pub extern "C" fn glStencilFunc(func: u32, reference: i32, mask: u32) {
+    with(|g| g.stencil_func(func, reference, mask));
+}
+
+#[no_mangle]
+pub extern "C" fn glStencilOp(fail: u32, zfail: u32, zpass: u32) {
+    with(|g| g.stencil_op(fail, zfail, zpass));
+}
+
+#[no_mangle]
+pub extern "C" fn glStencilMask(mask: u32) {
+    with(|g| g.stencil_mask(mask));
+}
+
+#[no_mangle]
+pub extern "C" fn glClearStencil(s: i32) {
+    with(|g| g.clear_stencil(s));
+}
+
+#[no_mangle]
 pub extern "C" fn glScissor(x: i32, y: i32, w: i32, h: i32) {
     with(|g| g.scissor(x, y, w, h));
 }

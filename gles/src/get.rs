@@ -231,7 +231,7 @@ impl Gl<'_> {
             SUBPIXEL_BITS => i(&[4]),
             RED_BITS | GREEN_BITS | BLUE_BITS | ALPHA_BITS => i(&[8]),
             DEPTH_BITS => i(&[16]),
-            STENCIL_BITS => i(&[0]),
+            STENCIL_BITS => i(&[8]),
             TEXTURE_BINDING_2D => i(&[self.bound as i64]),
             ACTIVE_TEXTURE => i(&[TEXTURE0 as i64]),
             MAX_TEXTURE_UNITS => i(&[1]),
@@ -253,6 +253,27 @@ impl Gl<'_> {
             gl::FOG_START => f(&[self.fog_start]),
             gl::FOG_END => f(&[self.fog_end]),
             gl::FOG_COLOR => u(&self.fog_colour),
+            // The stencil (#998). A mask of all ones reads as -1, as a
+            // GLint holds it.
+            gl::STENCIL_FUNC => i(&[(gl::NEVER + self.stencil_func) as i64]),
+            gl::STENCIL_REF => i(&[self.stencil_ref as i64]),
+            gl::STENCIL_VALUE_MASK => i(&[self.stencil_mask as i32 as i64]),
+            gl::STENCIL_WRITEMASK => i(&[self.stencil_write as i32 as i64]),
+            gl::STENCIL_CLEAR_VALUE => i(&[self.clear_stencil as i64]),
+            gl::STENCIL_FAIL
+            | gl::STENCIL_PASS_DEPTH_FAIL
+            | gl::STENCIL_PASS_DEPTH_PASS => {
+                let k = (pname - gl::STENCIL_FAIL) as usize;
+                let ops = [
+                    gl::KEEP,
+                    gl::ZERO,
+                    gl::REPLACE,
+                    gl::INCR,
+                    gl::DECR,
+                    gl::INVERT,
+                ];
+                i(&[ops[self.stencil_ops[k] as usize] as i64])
+            }
             // The scissor and the hints (#1490).
             SCISSOR_BOX => {
                 let (x, y, w, h) = self.scissor;

@@ -62,6 +62,22 @@ pub const FOG_MODE: u32 = 0x0B65;
 pub const FOG_COLOR: u32 = 0x0B66;
 pub const EXP: u32 = 0x0800;
 pub const EXP2: u32 = 0x0801;
+/// The stencil (#998): the switch, the clear's bit, the queries, and the
+/// operations besides `GL_ZERO` and `GL_REPLACE`.
+pub const STENCIL_TEST: u32 = 0x0B90;
+pub const STENCIL_BUFFER_BIT: u32 = 0x0000_0400;
+pub const STENCIL_CLEAR_VALUE: u32 = 0x0B91;
+pub const STENCIL_FUNC: u32 = 0x0B92;
+pub const STENCIL_VALUE_MASK: u32 = 0x0B93;
+pub const STENCIL_FAIL: u32 = 0x0B94;
+pub const STENCIL_PASS_DEPTH_FAIL: u32 = 0x0B95;
+pub const STENCIL_PASS_DEPTH_PASS: u32 = 0x0B96;
+pub const STENCIL_REF: u32 = 0x0B97;
+pub const STENCIL_WRITEMASK: u32 = 0x0B98;
+pub const KEEP: u32 = 0x1E00;
+pub const INCR: u32 = 0x1E02;
+pub const DECR: u32 = 0x1E03;
+pub const INVERT: u32 = 0x150A;
 pub const SCISSOR_TEST: u32 = 0x0C11;
 /// The hints (#1490): GL ES 1.1's targets, and the three modes.
 pub const PERSPECTIVE_CORRECTION_HINT: u32 = 0x0C50;
