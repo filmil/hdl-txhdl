@@ -113,6 +113,20 @@ int main(void) {
   void *at = 0;
   glGetPointerv(GL_VERTEX_ARRAY_POINTER, &at);
   printf("vertex pointer %d\n", at == (void *)fan);
+  /* Fog's state (#998), through both its entry points. */
+  glFogx(GL_FOG_MODE, GL_LINEAR);
+  glFogx(GL_FOG_END, 8 * ONE);
+  static const GLfixed fog[4] = {ONE / 2, 2 * ONE, -ONE, ONE};
+  glFogxv(GL_FOG_COLOR, fog);
+  static const GLfixed density = ONE / 4;
+  glFogxv(GL_FOG_DENSITY, &density);
+  GLfixed got[4];
+  glGetFixedv(GL_FOG_COLOR, got);
+  printf("fog colour %d %d %d %d\n", got[0], got[1], got[2], got[3]);
+  glGetFixedv(GL_FOG_END, got);
+  glGetFixedv(GL_FOG_DENSITY, got + 1);
+  glGetIntegerv(GL_FOG_MODE, v);
+  printf("fog %04x end %d density %d\n", v[0], got[0], got[1]);
 
 
   /* Buffer objects (#1488): a new context with room for their stores,

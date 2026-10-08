@@ -110,6 +110,10 @@ fn main() {
     // The fan's array: two fixed components a vertex, packed.
     println!("vertex array 2 140c 0");
     println!("vertex pointer 1");
+    // Fog's state (#998): the colour clamped, GL_LINEAR, its end and its
+    // density.
+    println!("fog colour {} {} 0 {}", ONE / 2, ONE, ONE);
+    println!("fog {:04x} end {} density {}", gl::LINEAR, 8 * ONE, ONE / 4);
 
     // Buffer objects (#1488): the quad in a new context, scaled by a half,
     // its colours per vertex, as draw.c draws it from its buffers.
