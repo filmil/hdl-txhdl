@@ -132,6 +132,13 @@ pub struct Gl<'a> {
     /// framebuffer keeps every bit of the colour, and Razboj's keeps eight
     /// a channel, as many as a colour has here.
     dither: bool,
+    /// The scissor (#1490): its switch, and its box in GL's window,
+    /// the first column and row from the bottom left and the size.
+    scissor_on: bool,
+    scissor: (i32, i32, i32, i32),
+    /// The hints (#1490), a mode for each of GL ES 1.1's five targets in
+    /// the order of [`HINTS`]. They change nothing drawn, as GL allows.
+    hints: [u32; 5],
     /// Whether the frame holds an entry that tests depth, which Razboj
     /// draws only from a tile table.
     deep: bool,
@@ -205,6 +212,9 @@ impl<'a> Gl<'a> {
             offset_on: false,
             offset: (0, 0),
             dither: true,
+            scissor_on: false,
+            scissor: (0, 0, sw as i32, sh as i32),
+            hints: [gl::DONT_CARE; 5],
             depth_mask: true,
             clear_depth: ONE,
             depth_range: (0, ONE),
@@ -399,6 +409,7 @@ impl<'a> Gl<'a> {
             gl::DEPTH_TEST => self.depth_test = on,
             gl::POLYGON_OFFSET_FILL => self.offset_on = on,
             gl::DITHER => self.dither = on,
+            gl::SCISSOR_TEST => self.scissor_on = on,
             gl::BLEND => self.blend_on = on,
             gl::ALPHA_TEST => self.alpha_on = on,
             gl::TEXTURE_2D => self.texture_on = on,
@@ -429,6 +440,7 @@ impl<'a> Gl<'a> {
             gl::DEPTH_TEST => self.depth_test,
             gl::POLYGON_OFFSET_FILL => self.offset_on,
             gl::DITHER => self.dither,
+            gl::SCISSOR_TEST => self.scissor_on,
             gl::BLEND => self.blend_on,
             gl::ALPHA_TEST => self.alpha_on,
             gl::TEXTURE_2D => self.texture_on,
@@ -605,6 +617,27 @@ impl<'a> Gl<'a> {
 
     pub fn clear_color(&mut self, r: Fx, g: Fx, b: Fx, a: Fx) {
         self.clear_colour = [r, g, b, a];
+    }
+
+    /// `glScissor` (#1490): the scissor's box in GL's window, its first
+    /// column and row from the bottom left and its size, which every
+    /// drawing and clear keeps within while `GL_SCISSOR_TEST` is on.
+    pub fn scissor(&mut self, x: i32, y: i32, w: i32, h: i32) {
+        if w < 0 || h < 0 {
+            return self.fail(gl::INVALID_VALUE);
+        }
+        self.scissor = (x, y, w, h);
+    }
+
+    /// `glHint` (#1490): a mode for one of GL ES 1.1's five targets, kept
+    /// for the queries and otherwise ignored, as GL allows.
+    pub fn hint(&mut self, target: u32, mode: u32) {
+        let at = HINTS.iter().position(|&t| t == target);
+        let ok = matches!(mode, gl::DONT_CARE | gl::FASTEST | gl::NICEST);
+        match at {
+            Some(k) if ok => self.hints[k] = mode,
+            _ => self.fail(gl::INVALID_ENUM),
+        }
     }
 
     /// `glDepthFunc`: the comparison a pixel's depth makes with the
@@ -909,11 +942,16 @@ impl<'a> Gl<'a> {
         // with depth or a mask is a rectangle too, since only a tile
         // table holds either and a tile table makes every clear one.
         let plain = !depth && pixel == emit::Pixel::DEFAULT;
-        let mut w = if self.window_top == 0 && plain {
+        // The scissor holds for a clear too (#1490), so a scissored clear
+        // is a rectangle of the scissor's box, and an empty one is none.
+        let mut w = if self.window_top == 0 && plain && !self.scissor_on {
             emit::clear(colour)
         } else {
-            let (sw, sh) = self.screen;
-            emit::rect(colour, (0, self.window_top, sw - 1, sh - 1))
+            let b = self.bounds();
+            if b.0 > b.2 {
+                return;
+            }
+            emit::rect(colour, b)
         };
         if plain {
             return self.push(w);
@@ -1214,11 +1252,24 @@ impl<'a> Gl<'a> {
         }
     }
 
-    /// The part of the screen GL draws on, which every instruction is
-    /// clipped to: the window's rows, from its top down.
+    /// The columns and rows a frame may draw in, as Razboj's: the window,
+    /// and with the scissor test on, its box too (#1490), turned over from
+    /// GL's rows, which count up from the window's bottom. An empty
+    /// scissor gives a box whose last column comes before its first,
+    /// which every clip against it refuses.
     fn bounds(&self) -> Bounds {
         let (sw, sh) = self.screen;
-        (0, self.window_top, sw - 1, sh - 1)
+        let window = (0, self.window_top, sw - 1, sh - 1);
+        if !self.scissor_on {
+            return window;
+        }
+        let (x, y, w, h) = self.scissor;
+        let (x, y, w, h) = (x as i64, y as i64, w as i64, h as i64);
+        let sh = sh as i64;
+        let c = |v: i64| v.clamp(-(1 << 20), 1 << 20) as i32;
+        let (x0, x1) = (c(x), c(x + w - 1));
+        let (y0, y1) = (c(sh - (y + h)), c(sh - 1 - y));
+        clip(x0, y0, x1, y1, window).unwrap_or((1, 1, 0, 0))
     }
 
     /// A clipped vertex in GL's window, in sixteenths of a pixel, its y
@@ -1676,3 +1727,12 @@ fn between(a: &Vert, b: &Vert, da: i128, db: i128) -> Vert {
         tex: mix(&a.tex, &b.tex),
     }
 }
+
+/// GL ES 1.1's hint targets, in the order a context keeps their modes.
+pub const HINTS: [u32; 5] = [
+    gl::PERSPECTIVE_CORRECTION_HINT,
+    gl::POINT_SMOOTH_HINT,
+    gl::LINE_SMOOTH_HINT,
+    gl::FOG_HINT,
+    gl::GENERATE_MIPMAP_HINT,
+];

@@ -514,6 +514,16 @@ pub extern "C" fn glClear(mask: u32) {
 }
 
 #[no_mangle]
+pub extern "C" fn glScissor(x: i32, y: i32, w: i32, h: i32) {
+    with(|g| g.scissor(x, y, w, h));
+}
+
+#[no_mangle]
+pub extern "C" fn glHint(target: u32, mode: u32) {
+    with(|g| g.hint(target, mode));
+}
+
+#[no_mangle]
 pub extern "C" fn glDepthFunc(func: u32) {
     with(|g| g.depth_func(func));
 }

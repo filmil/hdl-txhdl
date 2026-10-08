@@ -31,6 +31,7 @@ pub mod name {
     pub const DEPTH_CLEAR_VALUE: u32 = 0x0B73;
     pub const DEPTH_FUNC: u32 = 0x0B74;
     pub const MATRIX_MODE: u32 = 0x0BA0;
+    pub const SCISSOR_BOX: u32 = 0x0C10;
     pub const VIEWPORT: u32 = 0x0BA2;
     pub const MODELVIEW_STACK_DEPTH: u32 = 0x0BA3;
     pub const PROJECTION_STACK_DEPTH: u32 = 0x0BA4;
@@ -244,6 +245,15 @@ impl Gl<'_> {
             gl::LIGHT_MODEL_AMBIENT => u(&self.scene_ambient),
             gl::LIGHT_MODEL_TWO_SIDE => b(&[self.two_side]),
             // Polygon offset (#998).
+            // The scissor and the hints (#1490).
+            SCISSOR_BOX => {
+                let (x, y, w, h) = self.scissor;
+                i(&[x as i64, y as i64, w as i64, h as i64])
+            }
+            h if crate::HINTS.contains(&h) => {
+                let k = crate::HINTS.iter().position(|&t| t == h).unwrap_or(0);
+                i(&[self.hints[k] as i64])
+            }
             gl::POLYGON_OFFSET_FACTOR => f(&[self.offset.0]),
             gl::POLYGON_OFFSET_UNITS => f(&[self.offset.1]),
             cap => self.enabled(cap).and_then(|on| b(&[on])),
