@@ -3454,7 +3454,7 @@ fn random_loads_and_stores_through_the_data_cache() {
         p.extend(li(9, 0x4000_1000));
         let mut checks = vec![];
         // A width of 1, 2 or 4 bytes, and an address aligned to it.
-        let mut place = |rnd: &mut dyn FnMut(u32) -> u32| {
+        let place = |rnd: &mut dyn FnMut(u32) -> u32| {
             let w = [1u32, 2, 4][rnd(3) as usize];
             let base = [5u32, 9][rnd(2) as usize];
             (w, base, rnd(32 / w) * w)
@@ -3464,7 +3464,7 @@ fn random_loads_and_stores_through_the_data_cache() {
             2 => sh(rs, base, off as i32),
             _ => sw(rs, base, off as i32),
         };
-        let mut put = |mem: &mut HashMap<u32, u8>, a: u32, w: u32, v: u32| {
+        let put = |mem: &mut HashMap<u32, u8>, a: u32, w: u32, v: u32| {
             for i in 0..w {
                 mem.insert(a + i, (v >> (8 * i)) as u8);
             }
