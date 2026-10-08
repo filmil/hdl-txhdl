@@ -237,7 +237,8 @@ fn the_textured_frame_on_the_rasteriser_is_the_models() {
         &mut out,
     );
     let list = insns(&out[..n]);
-    assert_eq!(list.iter().filter(|i| i.tex.to_bool()).count(), 20);
+    let faces = 20 + ico_gl::FLOOR_TRIS;
+    assert_eq!(list.iter().filter(|i| i.tex.to_bool()).count(), faces);
     let more: Vec<(usize, u32)> = room
         .iter()
         .enumerate()

@@ -1011,6 +1011,26 @@ rust_test(
     ],
 )
 
+# The same tests mipmapped (#997 step 4): the floor and the solid under
+# GL_LINEAR_MIPMAP_LINEAR, the rasteriser's frame byte for byte the
+# model's, and a kept texture with its generated levels drawing as an
+# uploaded one.
+rust_test(
+    name = "ico_mip_test",
+    srcs = [
+        "ico_gl.rs",
+        "ico_gl_test.rs",
+        "ico_list.rs",
+    ],
+    crate_root = "ico_gl_test.rs",
+    edition = "2021",
+    rustc_flags = ["--cfg=mip"],
+    deps = [
+        "//gles",
+        "//gpu/razboj",
+    ],
+)
+
 # One frame of ico_hdmi worked out on the host, as a PPM: the list
 # rendered through Razboj's model with the logo laid in, to hold a board
 # recording against (issues 986 and 1213).
