@@ -61,6 +61,17 @@
 //! nearest. Razboj tests depth only in a tile table, so the frame is
 //! binned into one at the list and rung as one, and the draw line then
 //! counts the binning and the tile buffer's write-out too.
+//!
+//! ## Two harts
+//!
+//! Through GL the second hart, where the bitstream has one, builds and
+//! bins the odd frames while this one does the even ones (#1408): each
+//! hart draws into its own frame and bins into its own half of the
+//! room, so the two share only the odd frame's records and three words.
+//! Hart 0 still rings every frame, waits for every drawing and moves the
+//! scanout, so the frames are shown in the order they were before. On
+//! the machine, `ico_split` measured the core's part of a textured frame
+//! at half what one hart takes.
 #![no_std]
 #![no_main]
 
@@ -74,9 +85,13 @@ mod ico_gl;
 mod ico_list;
 
 use core::ptr::{read_volatile, write_volatile};
+#[cfg(gl)]
+use core::sync::atomic::{AtomicU32, Ordering};
 #[cfg(not(gl))]
 use ico_list::MOST;
 use ico_list::{rect, Box, Solid, BACKDROP, SECOND, WORDS};
+#[cfg(gl)]
+use vreteno_hal::Hart1;
 use vreteno_hal::{entry, trap, Razboj, Scan, Uart, Video};
 
 entry!(main);
@@ -216,6 +231,101 @@ fn wait_drawn() {
     while Razboj::count() != 0 || !Razboj::idle() {}
 }
 
+/// Where a frame starts to clear, before the solid has filled anything
+/// in its buffer: the corner pixel, which is the backdrop already. A
+/// clear of the whole screen would take the logo with it.
+const CORNER: Box = Box {
+    x0: 0,
+    y0: 0,
+    x1: 0,
+    y1: 0,
+};
+
+/// Hart 1 has started (#1408).
+#[cfg(gl)]
+static ALIVE: AtomicU32 = AtomicU32::new(0);
+
+/// Every frame before this one is drawn: the half of the room the frame
+/// before last was binned into is free.
+#[cfg(gl)]
+static DRAWN: AtomicU32 = AtomicU32::new(0);
+
+/// An odd frame binned by hart 1 and not yet rung, and its number plus
+/// one while it waits, zero once hart 0 has rung it.
+#[cfg(gl)]
+static mut ODD: Binned = Binned {
+    tiles: [[0; razboj_tile::TILE_WORDS]; razboj_tile::MAX_TILES],
+    count: 0,
+    last: 0,
+};
+#[cfg(gl)]
+static ODD_READY: AtomicU32 = AtomicU32::new(0);
+
+/// The texture `ico_gl::frame` is given: none untextured, else the
+/// room, the checker uploaded into it when `upload`.
+#[cfg(gl)]
+fn texture(upload: bool) -> Option<(&'static mut [u32], u32, bool)> {
+    #[cfg(not(tex))]
+    {
+        let _ = upload;
+        None
+    }
+    // SAFETY: the room is DDR3 nothing else uses. Razboj reads it while
+    // it draws, and after the first frame nothing writes it.
+    #[cfg(tex)]
+    {
+        let room = unsafe {
+            core::slice::from_raw_parts_mut(TEX as *mut u32, ico_gl::TEX_ROOM)
+        };
+        Some((room, TEX, upload))
+    }
+}
+
+/// Hart 1 (#1408): the odd frames, each built into its buffer and binned
+/// into the second half of the room once the frame before last, which
+/// took that half, is drawn, then left for hart 0 to ring. Its entries
+/// are read back before it says they are there, so that they have
+/// landed when Razboj reads them.
+#[cfg(gl)]
+extern "C" fn odd_frames(_hart: u32, _arg: u32) -> ! {
+    ALIVE.store(1, Ordering::Release);
+    let solid = Solid::new();
+    let model = ico_gl::Model::new(&solid);
+    let mut list = [[0u32; WORDS]; ico_gl::MOST];
+    let mut last = CORNER;
+    let mut f = 1u32;
+    loop {
+        let (ay, ax) = ((2 * f as i32) & 255, f as i32 & 255);
+        let tex = texture(false);
+        let (n, filled) =
+            ico_gl::frame(&model, ay, ax, SECOND, last, true, tex, &mut list);
+        last = filled;
+        while DRAWN.load(Ordering::Acquire) < f - 1 {}
+        let sh = (ico_list::H + SECOND) as u32;
+        let b = bin_tiled(&list, n, sh, 1);
+        let _ = unsafe { read_volatile(b.last as *const u32) };
+        while ODD_READY.load(Ordering::Acquire) != 0 {}
+        // SAFETY: hart 0 reads the records only while they are ready.
+        unsafe { core::ptr::addr_of_mut!(ODD).write(b) };
+        ODD_READY.store(f + 1, Ordering::Release);
+        f = f.wrapping_add(2);
+    }
+}
+
+/// Start hart 1 on the odd frames, and say whether it answered within
+/// ten milliseconds; a bitstream with one hart never does.
+#[cfg(gl)]
+fn start_odd() -> bool {
+    Hart1::start(odd_frames, 0);
+    let t = mcycle();
+    while mcycle().wrapping_sub(t) < 1_000_000 {
+        if ALIVE.load(Ordering::Acquire) != 0 {
+            return true;
+        }
+    }
+    false
+}
+
 /// Paint the logo into the frame `dy` rows down. A transparent pixel is
 /// left as the backdrop.
 fn logo(dy: u32) {
@@ -264,15 +374,7 @@ fn main() -> ! {
     Scan::base(Razboj::FRAME);
     Scan::show(true);
 
-    // What the solid filled last time in each frame: nothing yet, so
-    // the first clear is the corner pixel, which is the backdrop
-    // already. A clear of the whole screen would take the logo with it.
-    const CORNER: Box = Box {
-        x0: 0,
-        y0: 0,
-        x1: 0,
-        y1: 0,
-    };
+    // What the solid filled last time in each frame: nothing yet.
     let mut last = [CORNER, CORNER];
     #[cfg(not(gl))]
     let mut list = [[0u32; WORDS]; MOST];
@@ -314,54 +416,70 @@ fn main() -> ! {
     // Through GL a frame's list is built and binned while Razboj draws
     // the frame before (#1433). Then the core waits for that drawing,
     // shows it from the next blanking, which frees the buffer this frame
-    // draws into, and rings this one. The cycles line says what the list
-    // and its binning took, what was left of the drawing to wait for,
-    // and the whole frame, blanking included.
+    // draws into, and rings this one. Once the first frame is built,
+    // hart 1 is started on the odd frames, and this hart builds the even
+    // ones and rings them all in order (#1408). The cycles line says
+    // what the list and its binning took, or the wait for hart 1's; what
+    // was left of the drawing to wait for; the whole frame, blanking
+    // included; and the two frames up to this one's showing.
+    #[cfg(gl)]
+    let mut two = false;
+    #[cfg(gl)]
+    let mut shown_at = [0u32; 2];
     #[cfg(gl)]
     loop {
         let start = mcycle();
         let dy = which as i32 * SECOND;
-        #[cfg(not(tex))]
-        let tex = None;
-        // SAFETY: the room is DDR3 nothing else uses. Razboj reads it
-        // while it draws, and after the first frame nothing writes it.
-        #[cfg(tex)]
-        let tex = Some((
-            unsafe {
-                core::slice::from_raw_parts_mut(
-                    TEX as *mut u32,
-                    ico_gl::TEX_ROOM,
-                )
-            },
-            TEX,
-            // The first frame uploads the texture, and every frame after it
-            // finds it where it is (#1433).
-            frames == 0,
-        ));
-        let (n, filled) = ico_gl::frame(
-            &model,
-            ay,
-            ax,
-            dy,
-            last[which],
-            true,
-            tex,
-            &mut list,
-        );
-        last[which] = filled;
-        let sh = (ico_list::H + dy) as u32;
-        let binned = bin_tiled(&list, n, sh, (frames & 1) as usize);
+        let odd = two && frames & 1 == 1;
+        let mine;
+        let binned = if odd {
+            while ODD_READY.load(Ordering::Acquire) != frames + 1 {}
+            // SAFETY: hart 1 leaves the records alone until they are rung.
+            unsafe { &*core::ptr::addr_of!(ODD) }
+        } else {
+            // The first frame uploads the texture, and every frame after
+            // it finds it where it is (#1433).
+            let tex = texture(frames == 0);
+            let (n, filled) = ico_gl::frame(
+                &model,
+                ay,
+                ax,
+                dy,
+                last[which],
+                true,
+                tex,
+                &mut list,
+            );
+            last[which] = filled;
+            let sh = (ico_list::H + dy) as u32;
+            mine = bin_tiled(&list, n, sh, (frames & 1) as usize);
+            if frames == 0 {
+                two = start_odd();
+                Uart::say(if two {
+                    b"ico two harts\n"
+                } else {
+                    b"ico one hart\n"
+                });
+            }
+            &mine
+        };
         let listed = mcycle();
         // The frame before: drawn, then shown from the next blanking.
         wait_drawn();
+        DRAWN.store(frames, Ordering::Release);
         let drawn = mcycle();
         if frames != 0 {
             let before = (which ^ 1) as u32 * SECOND as u32;
             Scan::base(Razboj::FRAME + before * Scan::STRIDE);
             wait_blanking();
         }
-        ring_tiled(&binned);
+        ring_tiled(binned);
+        if odd {
+            ODD_READY.store(0, Ordering::Release);
+        }
         let shown = mcycle();
+        let pair = shown.wrapping_sub(shown_at[which]);
+        shown_at[which] = shown;
         if frames & 63 == 0 {
             Uart::say(SAYS);
             Uart::put_decimal(listed.wrapping_sub(start));
@@ -369,6 +487,8 @@ fn main() -> ! {
             Uart::put_decimal(drawn.wrapping_sub(listed));
             Uart::say(b" frame ");
             Uart::put_decimal(shown.wrapping_sub(start));
+            Uart::say(b" two ");
+            Uart::put_decimal(pair);
             Uart::put(b'\n');
         }
         frames = frames.wrapping_add(1);
