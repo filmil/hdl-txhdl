@@ -332,8 +332,10 @@ pub fn kept<'a>(g: &mut Gl<'a>, room: &'a mut [u32], bus: u32) {
 
 /// Under `mip` (#997), a floor below the solid and behind it, receding
 /// from 11.25 units to 31, a unit and a half down: on the screen, rows
-/// 296 to 400 across the width, clear of the logo's corner. The texture
-/// repeats eight times across it and sixteen times along it, so its far
+/// 296 to 400 from the left edge to column 480. The logo's 144 square
+/// pixels start at column 488 and row 328, and the frame's box, which the
+/// next frame clears, must stay off them (`ico_mip_test` checks). The
+/// texture repeats six times across it and sixteen times along it, so its far
 /// edge minifies the checker several levels down. Drawn with the
 /// modelview at the identity, before the solid's turn.
 #[cfg(mip)]
@@ -341,8 +343,8 @@ fn floor(g: &mut Gl<'_>) {
     let (y, near, far) = (-3 * ONE / 2, -45 * ONE / 4, -31 * ONE);
     let corners = [
         ([-3 * ONE, y, near, ONE], [0, 0]),
-        ([3 * ONE, y, near, ONE], [8 * ONE, 0]),
-        ([3 * ONE, y, far, ONE], [8 * ONE, 16 * ONE]),
+        ([3 * ONE / 2, y, near, ONE], [6 * ONE, 0]),
+        ([3 * ONE / 2, y, far, ONE], [6 * ONE, 16 * ONE]),
         ([-3 * ONE, y, far, ONE], [0, 16 * ONE]),
     ];
     let order = [0, 1, 2, 0, 2, 3];

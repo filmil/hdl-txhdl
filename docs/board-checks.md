@@ -724,7 +724,7 @@ Nothing is written to flash.
 
 `ico_mip_hdmi` is `ico_tex_hdmi` built with `--cfg=mip`.
 The checker is filtered with `GL_LINEAR_MIPMAP_LINEAR` and `GL_LINEAR`, and its levels are generated as it is uploaded.
-A floor recedes below the solid, rows 296 to 400 across the screen and clear of the logo, with the checker sixteen times along it, so its far rows read the levels below the base.
+A floor recedes below the solid, rows 296 to 400 from the left edge to column 480, clear of the logo's columns, with the checker sixteen times along it, so its far rows read the levels below the base.
 
 ```sh
 bazel build //cpu/vreteno/rust:ico_mip_hdmi_bin

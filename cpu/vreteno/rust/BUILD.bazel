@@ -1008,6 +1008,7 @@ rust_test(
     deps = [
         "//gles",
         "//gpu/razboj",
+        "//lib/logo:txhdl_logo",
     ],
 )
 
@@ -1028,6 +1029,7 @@ rust_test(
     deps = [
         "//gles",
         "//gpu/razboj",
+        "//lib/logo:txhdl_logo",
     ],
 )
 
