@@ -788,11 +788,17 @@ write that passes clears every reservation its burst covers. An
 exclusive write of one beat whose port's reservation stands for its
 line passes, and its answer goes back as \code{ExOkay}; any other is
 taken, written nowhere, and answered \code{Okay} by the monitor
-itself. The host reads the answer as \code{sc.w}'s result.
+itself. Either way the write uses its port's reservation up, as
+\code{sc.w} does. The host reads the answer as \code{sc.w}'s result.
+The monitor keeps exclusives for one range of addresses, the memory's,
+which its last two parameters give as a base and a mask: outside it an
+exclusive read reserves nothing and an exclusive write fails.
 
-Two orders matter. An exclusive read waits until every write the
-monitor has passed is answered, so it reads what they wrote and no
-write in flight can land after it; the hold means nothing new joins
+Two orders matter. An exclusive read waits until every write into the
+range the monitor has passed is answered, so it reads what they wrote
+and no write in flight can land after it; writes elsewhere, which a
+slow peripheral may hold for a second, it does not wait for, and it
+knows the range's writes by their identifiers until their answers; the hold means nothing new joins
 them, so the wait ends. A failed write's answer waits the same way,
 so it never overtakes an answer to an earlier write of its host.
 The unit tests in \code{lib/parts/src/bus/exmon.rs} run two hosts, an
@@ -800,8 +806,10 @@ arbiter and the monitor before a memory that takes a read's words at
 its address: a pair with nothing between stores; a write between, with
 the hold not built, breaks it; a read that comes while a burst over
 its line is still writing reads the burst's word, and does not when
-the wait is removed; and the failed write's answer comes after the
-earlier one.
+the wait is removed; the failed write's answer comes after the
+earlier one; and after a failed \code{sc} of another word the
+reservation is gone. Every run checks that no watched host sent a
+write under the identifier its exclusive write's answer will carry.
 
 \section{AXI-Lite and the Bridge}
 \label{sec:a-lite}
