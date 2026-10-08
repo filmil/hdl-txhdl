@@ -1573,10 +1573,10 @@ waveform(
 # Razboj's blending (issue 993): in one tile, a backdrop, then a list
 # without a clear, so the tile is loaded from the framebuffer, of two
 # triangles blended at their alpha, one alpha-tested, and a rectangle
-# masked to one channel, then one under GL_XOR (issue 998). The
-# rasteriser's netlist is replayed against the run under nvc and
-# Verilator: the load, the colour bank's copy, the blend, the alpha test,
-# the mask and the logic operation.
+# masked to one channel, then one under GL_XOR and a fogged triangle
+# (issue 998). The rasteriser's netlist is replayed against the run under
+# nvc and Verilator: the load, the colour bank's copy, the blend, the
+# alpha test, the mask, the logic operation and the fog.
 waveform(
     name = "razboj_blend",
     example = "//gpu/razboj:trace_blend",
