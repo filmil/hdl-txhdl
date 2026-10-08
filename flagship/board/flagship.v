@@ -402,9 +402,10 @@ module flagship (
   // peripheral's link reads them. The FIFO is 128 bytes rather than
   // the echo's 16, because the port delivers a byte every 8 ns and the
   // core reads one every 10, so a whole frame has to fit while the
-  // reader catches up. A frame that arrives while the last one is
-  // still coming out of the MAC is lost, and a lost frame is a
-  // transaction the peripheral's patience covers.
+  // reader catches up. The MAC holds two frames, so the second of a
+  // pair sent back to back lands while the first is still coming out
+  // (#1409); a third that arrives while both are held is lost, and
+  // counted.
   wire [8:0] net_rx_data;
   wire net_rx_valid, net_rx_ready;
   chan_cdc #(.W(9), .AW(7)) rx_crossing (

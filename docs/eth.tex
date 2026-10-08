@@ -178,21 +178,31 @@ total frame length must exceed four bytes. Validated frames are then
 presented across channel \code{rx} stripped of their check sequence, with
 the final payload byte tagged accordingly.
 
+The store holds two frames, and the receiver takes the next frame into
+one while the other is still being offered (issue~1409).
+A sender puts frames back to back with twelve idle bytes between them,
+and on the board the reader is slower than the wire, so emptying a
+frame takes longer than the next one takes to arrive.
+With room for one frame, the second of every such pair was lost: a
+server whose network card sends a window of two as one burst lost
+about four frames in ten, and a download crawled on the retransmits.
+
 Counter \code{dropped} records discarded frames across three distinct
 error conditions. First, frames failing the CRC residue check are dropped
 immediately. Second, frames arriving while previous data remains pending
-on the client channel are discarded due to buffer occupancy. Third,
+on the client channel while both frames are held are discarded. Third,
 incomplete frame fragments encountered without a valid preamble and start
 delimiter are ignored until \code{rx\_dv} deasserts.
 
 The receiver likewise separates into two concurrent processes. The
 physical interface process monitors wire signals on every cycle: hunting
 for frame boundaries, streaming bytes into memory, evaluating integrity,
-and asserting signal \code{full}. The client drain process executes
-sequentially: awaiting \code{full}, driving the payload size onto
-\code{rx\_len}, streaming payload octets bounded by \code{len - 4} until
-consumed, and asserting \code{given} to release the buffer for subsequent
-traffic. As with the transmitter, the lowering generates dedicated state
+and marking the frame received into, \code{wsel}, full. The client
+drain process executes sequentially: awaiting the frame whose turn it
+is, \code{rsel}, driving the payload size onto \code{rx\_len},
+streaming payload octets bounded by \code{olen - 4} until consumed,
+and asserting \code{given} to release that frame and turn to the
+other. As with the transmitter, the lowering generates dedicated state
 registers and loop counters automatically.
 
 \ethpart{rxstate}{The receiver's state.}{lst:e-rxstate}
@@ -395,8 +405,9 @@ design leaves management pins idle, relying on power-on strap defaults
 without active link monitoring. The flagship SoC provides an MDIO master
 at peripheral offset \code{0x3700} (issue~864).
 
-Each MAC half buffers a single frame. If client logic fails to drain
-the receiver before another packet arrives, the arriving frame is dropped.
+The transmitter buffers a single frame and the receiver two. If client
+logic fails to drain the receiver before a third frame arrives, the
+arriving frame is dropped and counted.
 Peripheral \code{EthLite} transfers one byte per bus transaction. The
 Vreteno system bypasses byte-by-byte register transfers, accessing MAC
 ports through \code{EthSlots} in slot~5 via DMA engines that stream
