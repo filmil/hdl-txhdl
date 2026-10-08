@@ -18,7 +18,9 @@
 //!
 //! `--timing` charges each step what the core would spend on it, with
 //! the board's costs (issue 1392), so `mcycle` reads cycles and the
-//! machine says the total when it stops.
+//! machine says the total when it stops. `--ddr3-store N` charges a
+//! store into the DDR3 `N` cycles instead of the board's, to ask what a
+//! dearer store would cost a run (issue 1408).
 //!
 //! `--fastboot-peer BYTES` puts a fastboot client on the cable instead
 //! (issue 1390), smoltcp's TCP/IP at 192.168.1.1 with a client on top,
@@ -96,6 +98,7 @@ fn main() {
     let mut screen: Option<String> = None;
     let mut profile: Option<String> = None;
     let mut watch: Option<u32> = None;
+    let mut ddr3_store: Option<u64> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         let mut val =
@@ -109,6 +112,7 @@ fn main() {
             "--as-loaded" => loaded = Some(val()),
             "--eth-peer" => peer = true,
             "--timing" => timing = true,
+            "--ddr3-store" => ddr3_store = Some(number(&val())),
             "--fastboot-peer" => fastboot = Some(number(&val()) as usize),
             // Stop once the console has said this, and say how far the
             // run got, which times a boot to a line of its log (issue
@@ -138,7 +142,15 @@ fn main() {
     m.boot(at, if dtb.is_some() { dtb_at } else { 0 });
     m.board.0.borrow_mut().eth.peer = peer;
     if timing {
-        m.model.timing = Some(vreteno32::model::Timing::board());
+        let mut t = vreteno32::model::Timing::board();
+        if let Some(n) = ddr3_store {
+            for r in &mut t.regions {
+                if r.0 == 0x4000_0000 {
+                    r.3 = n;
+                }
+            }
+        }
+        m.model.timing = Some(t);
     }
     if profiling {
         m.profile = Some(Default::default());
