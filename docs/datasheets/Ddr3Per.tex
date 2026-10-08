@@ -141,6 +141,14 @@ generates under Vivado and which stays out of the tree, being AMD's.
 The controller was generated without narrow bursts, so every beat is
 the full thirty-two bits, with strobes for less; a byte's access is a
 full-width beat at the byte's address under that byte's strobe, which
-\code{wrapper\_test} checks. The path through the controller's own port
-has run in simulation; its run on the board is the fourth step of
-issue~\#1023.
+\code{wrapper\_test} checks.
+
+The path through the controller's own port has run on the board
+(issue~\#1023). On October 5, 2026, the flagship's
+\code{ddr3bw\_ram\_bin} took 799 to 824 cycles for sixteen loads,
+against 397 from the data memory: 25 to 27 cycles a load more, the
+controller's latency, near the Vivado simulation's 25. Sixteen stores
+took 236 to 237 cycles, against the data memory's 250. The core has one
+load out at a time, so the loads give the latency and not the port's
+throughput; the controller keeps the bursts of the DMA engines in
+flight itself, which is what its own port is for.
