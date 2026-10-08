@@ -61,6 +61,16 @@ pub const CRC_GOOD: u32 = !CRC_RESIDUE;
 /// The largest frame a half stores, check sequence included.
 pub const FRAME_MAX: usize = 2048;
 
+/// The receiver's store: two frames of [`FRAME_MAX`] (issue 1409).
+pub const RX_STORE: usize = 2 * FRAME_MAX;
+
+/// Byte `i` of the receiver's frame `k`, the second when `k` is set.
+#[lower]
+fn slot_at(k: Bit, i: U<11>) -> U<12> {
+    mux(k, U::<12>::from(FRAME_MAX as u32), U::<12>::from(0u32))
+        + i.resize::<12>()
+}
+
 // begin{crc}
 /// One step of the CRC-32 register: it shifts right, and the
 /// polynomial goes in whenever the bit that leaves is set.
@@ -290,22 +300,42 @@ pub struct EthRxLines {
 /// stays high, and at its end checks the frame check sequence. A frame
 /// that passes, and is longer than its check sequence, is offered on
 /// `rx` without the check sequence, its last byte marked; one that
-/// fails, or that had `rx_er` high, is dropped and counted. A frame
-/// that arrives while the previous one is still being offered is
-/// dropped too, since the wire cannot wait; so is the rest of a frame
-/// whose start was missed.
+/// fails, or that had `rx_er` high, is dropped and counted.
+///
+/// The store holds two frames, so the receiver takes the next frame
+/// into one while the other is still being offered (issue 1409). A
+/// sender puts frames back to back with twelve idle bytes between
+/// them, and a reader slower than the wire takes longer to empty a
+/// frame than the next takes to arrive: with one frame's room, the
+/// second of every such pair was lost. A frame that arrives while both
+/// are held is dropped and counted, since the wire cannot wait; so is
+/// the rest of a frame whose start was missed.
 // begin{rxstate}
 #[derive(Trace, Default)]
 pub struct EthRx {
-    /// The frame being received, or being offered.
-    pub frame: Mem<U<8>, FRAME_MAX>,
-    /// Bytes received, check sequence included.
+    /// Two frames: the one being received, and the one being offered.
+    /// Frame `k` starts at `k * FRAME_MAX`.
+    pub frame: Mem<U<8>, RX_STORE>,
+    /// Bytes received of the frame coming in, check sequence included.
     pub len: Reg<U<11>>,
+    /// The frame being received into: the second when set.
+    pub wsel: Reg<Bit>,
+    /// The frame being offered: the second when set.
+    pub rsel: Reg<Bit>,
+    /// The first frame is stored and good, waiting or being offered.
+    pub full0: Reg<Bit>,
+    /// The second, the same.
+    pub full1: Reg<Bit>,
+    /// The first frame's length, check sequence included.
+    pub len0: Reg<U<11>>,
+    /// The second's.
+    pub len1: Reg<U<11>>,
+    /// The length of the frame whose turn it is to be offered, kept by
+    /// the receiver as frames are stored and given back.
+    pub olen: Reg<U<11>>,
     /// A frame is being received: the delimiter has passed and
     /// `rx_dv` has not yet fallen.
     pub receiving: Reg<Bit>,
-    /// A frame is stored and good, and is being offered.
-    pub full: Reg<Bit>,
     /// The CRC-32 register over the frame and its check sequence.
     pub crc: Reg<U<32>>,
     /// `rx_er` was high during this frame.
@@ -316,10 +346,11 @@ pub struct EthRx {
     /// Up for the one cycle after the last byte is taken, which is
     /// when the receiver lets the next frame in.
     pub given: Reg<Bit>,
-    /// The byte of the frame being offered: the store's one read
-    /// address, a register, so the store is a block RAM and not flops
-    /// every byte of the wire fans out to (issue 753).
-    pub ri: Reg<U<11>>,
+    /// The byte of the frame being offered, the frame's bit above it:
+    /// the store's one read address, a register, so the store is a
+    /// block RAM and not flops every byte of the wire fans out to
+    /// (issue 753).
+    pub ri: Reg<U<12>>,
     /// Frames offered.
     pub frames: Reg<U<16>>,
     /// Frames dropped: a failed check, an error, or no room.
@@ -352,7 +383,9 @@ impl Unit<EthRxLines, (Tx<EthByte>, Out<U<16>>)> for EthRx {
                     let dv = rx_dv.get();
                     let er = rx_er.get();
                     let receiving = self.receiving.get();
-                    let full = self.full.get();
+                    let w = self.wsel.get();
+                    // The frame to receive into is still held.
+                    let full = mux(w, self.full1.get(), self.full0.get());
                     // Hunting: the delimiter with `rx_dv` high starts a
                     // frame; the preamble before it is passed over, and
                     // anything else on a busy line is the middle of a
@@ -369,8 +402,11 @@ impl Unit<EthRxLines, (Tx<EthByte>, Out<U<16>>)> for EthRx {
                     let good = !self.bad.get()
                         & Bit::from(crc == CRC_RESIDUE)
                         & Bit::from(len > 4);
-                    // A frame on the line while this half cannot take it.
-                    let busy_line = dv & full;
+                    // A frame on the line while both frames are held.
+                    let busy_line = !receiving & dv & full;
+                    let kept = dv_end & good;
+                    let r = self.rsel.get();
+                    let given = self.given.get();
                     let last_slot = len == 2047;
                     with!(self <= {
                         stray | busy_line ? skip: Bit::One,
@@ -387,38 +423,53 @@ impl Unit<EthRxLines, (Tx<EthByte>, Out<U<16>>)> for EthRx {
                             bad: self.bad.get() | er,
                         },
                         dv_end ? receiving: Bit::Zero,
-                        dv_end & good ? full: Bit::One,
+                        kept ? wsel: !w,
+                        kept & !w ? { full0: Bit::One, len0: len },
+                        kept & w ? { full1: Bit::One, len1: len },
                         dv_end & !good ? dropped: self.dropped.get() + 1,
-                        self.given.get() ? full: Bit::Zero,
+                        // The frame offered is given back, and the next
+                        // is offered.
+                        given ? rsel: !r,
+                        // The frame whose turn is next: the other one
+                        // when this is given back, unless the frame
+                        // just stored is that one.
+                        given ? olen: mux(r, self.len0.get(), self.len1.get()),
+                        kept & (w == mux(given, !r, r)) ? olen: len,
+                        given & !r ? full0: Bit::Zero,
+                        given & r ? full1: Bit::Zero,
                         busy_line & !self.skip.get() ?
                             dropped: self.dropped.get() + 1,
                     });
                     if store.to_bool() {
-                        self.frame.at(len).set(d);
+                        self.frame.at(slot_at(w, len)).set(d);
                     }
                 }
             },
             async {
                 loop {
-                    // A full frame.
-                    until(DefaultClock::rising, || self.full.get().to_bool())
-                        .await;
+                    // A full frame, the one whose turn it is.
+                    until(DefaultClock::rising, || {
+                        mux(self.rsel.get(), self.full1.get(), self.full0.get())
+                            .to_bool()
+                    })
+                    .await;
                     // The frame's length, for anything that must know
                     // it before it has consumed the frame: it reads
                     // the payload while the frame is offered and zero
                     // at every other time.
-                    rx_len.set((self.len.get() - 4).resize::<16>());
-                    self.ri.set(U::<11>::from(0u8));
+                    rx_len.set((self.olen.get() - 4).resize::<16>());
+                    self.ri.set(slot_at(self.rsel.get(), U::<11>::from(0u8)));
                     // The bytes without the check sequence, each put
                     // until it is taken, and `ri` moved on at the edge
                     // it is (issue 755). The store is read at `ri`
                     // alone, one read port at a registered address,
                     // which Vivado maps to RAM (issue 753).
-                    for _ in 0..(self.len.get() - 4).raw() as usize {
+                    for _ in 0..(self.olen.get() - 4).raw() as usize {
                         rx.put(|| EthByte {
                             data: self.frame.read(self.ri.get()),
                             last: Bit::from(
-                                self.ri.get() + 1 == self.len.get() - 4,
+                                self.ri.get().slice::<0, 11>() + 1
+                                    == self.olen.get() - 4,
                             ),
                         })
                         .await;
@@ -729,13 +780,14 @@ mod tests {
         assert_eq!(dropped, 1);
     }
 
-    /// A frame that arrives while the one before it is still being
-    /// offered is dropped and counted, and the one offered is intact.
+    /// A frame that arrives while both frames the receiver holds are
+    /// still waiting is dropped and counted, and the two held are
+    /// intact (issue 1409).
     #[test]
     fn a_frame_on_a_busy_receiver_is_dropped() {
-        let frames = vec![frame(64), frame(64)];
-        let (_, got, dropped) = loopback(&frames, None, 400);
-        assert_eq!(got, vec![frames[0].clone()]);
+        let frames = vec![frame(64), frame(64), frame(64)];
+        let (_, got, dropped) = loopback(&frames, None, 900);
+        assert_eq!(got, vec![frames[0].clone(), frames[1].clone()]);
         assert_eq!(dropped, 1);
     }
 }
