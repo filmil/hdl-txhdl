@@ -883,6 +883,113 @@ mod tests {
         assert!(changed >= 8, "the state mattered in {changed} rounds");
     }
 
+    /// Logic operations in tiles (issue 998): each of GL's sixteen, over
+    /// a backdrop the tiles load from memory, with and without depth and
+    /// a colour mask in some rounds, and in some with a blend set that the
+    /// logic operation must take the place of, are drawn as the model draws
+    /// them, byte for byte; and each but `GL_COPY` changes the picture. In
+    /// the rounds with neither a blend nor a mask, the logic operation is
+    /// what has the tiles loaded.
+    #[test]
+    fn logic_ops_in_tiles_are_the_models() {
+        use crate::op::{BlendMode, DepthMode, COPY, LESS, ONE, SRC_ALPHA};
+        const A: usize = 20;
+        const LOGW: usize = 7;
+        const W: usize = 1 << LOGW;
+        const H: usize = 64;
+        const N: usize = 16384;
+        const DL: usize = 0xa000;
+        const CTRL: usize = 0xfffc;
+        let mut x = 0x1b87_3593u32;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x
+        };
+        let backdrop: Vec<Op> = (0..4)
+            .map(|k| Op::Rect {
+                colour: 0x5a_a53cu32.wrapping_mul(k + 3) | (k * 0x4b) << 24,
+                x: 0,
+                y: k as i32 * 16,
+                w: W as i32,
+                h: 16,
+            })
+            .collect();
+        let first = assemble(&backdrop, W, H);
+        let mut changed = 0;
+        for op in 0..16u32 {
+            let mut ops = vec![
+                Op::Blend((op % 4 == 0).then_some(BlendMode {
+                    src: SRC_ALPHA,
+                    dst: ONE,
+                })),
+                Op::LogicOp(Some(op)),
+                Op::ColourMask(if op % 3 == 1 { 0b0111 } else { 0xf }),
+                Op::Depth((op % 2 == 1).then_some(DepthMode {
+                    func: LESS,
+                    write: true,
+                })),
+            ];
+            for k in 0..4 {
+                let (r, q) = (next(), next());
+                let p = |v: u32| {
+                    (
+                        (v % (W as u32 * 16)) as i32 - 64,
+                        ((v >> 12) % (H as u32 * 16)) as i32 - 64,
+                    )
+                };
+                let z = [r & 0xffff, q & 0xffff, (r >> 16) ^ (q >> 16)];
+                let (a, b, c) = (p(r), p(q), p(r ^ q.rotate_left(7)));
+                ops.push(if k % 2 == 0 {
+                    Op::TriZ {
+                        colour: q,
+                        a,
+                        b,
+                        c,
+                        z,
+                    }
+                } else {
+                    Op::GouraudZ {
+                        a,
+                        b,
+                        c,
+                        colours: [q, r, q ^ r],
+                        z,
+                    }
+                });
+            }
+            let over = assemble(&ops, W, H);
+            let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
+                &[Work::tiled(&first, W, H), Work::tiled(&over, W, H)],
+                false,
+                false,
+            );
+            let base = model::render(&first, W, H);
+            let want = model::render_over(&over, W, H, base.clone());
+            let at = want.iter().zip(&runs[1].fb).position(|(p, q)| p != q);
+            assert_eq!(
+                at,
+                None,
+                "op {op}: {:08x} not {:08x}",
+                at.map_or(0, |a| runs[1].fb[a]),
+                at.map_or(0, |a| want[a])
+            );
+            // Against the same entries copying the pixel through.
+            let copy: Vec<_> = over
+                .iter()
+                .map(|i| {
+                    let mut i = *i;
+                    i.lop = txhdl::types::U::from(COPY);
+                    i
+                })
+                .collect();
+            let copied = model::render_over(&copy, W, H, base);
+            changed += (want != copied) as u32;
+        }
+        assert_eq!(changed, 15, "every op but GL_COPY changed the picture");
+    }
+
     /// Texturing in tiles (issue 997): textured triangles in perspective,
     /// flat and shaded, under every class of texel, every environment,
     /// both magnification filters and all six minification filters over

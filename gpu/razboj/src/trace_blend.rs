@@ -2,14 +2,15 @@
 //! The traced run of blending (issue 993): in one tile, a backdrop, then
 //! a list without a clear, so that the tile is loaded from the
 //! framebuffer first. The list's two triangles are blended over the
-//! backdrop at half their alpha, one tests alpha, and the last writes
-//! only some channels. It writes the trace and the rasteriser's netlist,
-//! so the build replays the netlist under nvc and Verilator against this
-//! run: the load, the colour bank's copy, the blend, the alpha test and
-//! the mask. It checks the picture against the model.
+//! backdrop at half their alpha, one tests alpha, a rectangle writes
+//! only some channels, and the last is under `GL_XOR` (issue 998). It
+//! writes the trace and the rasteriser's netlist, so the build replays
+//! the netlist under nvc and Verilator against this run: the load, the
+//! colour bank's copy, the blend, the alpha test, the mask and the logic
+//! operation. It checks the picture against the model.
 use razboj::model;
 use razboj::op::{assemble, AlphaTest, BlendMode, Op, GREATER};
-use razboj::op::{ONE_MINUS_SRC_ALPHA, SRC_ALPHA};
+use razboj::op::{ONE_MINUS_SRC_ALPHA, SRC_ALPHA, XOR};
 use razboj::raster::Raster;
 use razboj::sim::{self, Work};
 
@@ -72,6 +73,17 @@ fn main() {
             y: 12,
             w: 16,
             h: 16,
+        },
+        // Every channel again, under GL_XOR in place of any blend (issue
+        // 998).
+        Op::ColourMask(0xf),
+        Op::LogicOp(Some(XOR)),
+        Op::Rect {
+            colour: 0x5a00_ff3c,
+            x: 8,
+            y: 28,
+            w: 40,
+            h: 8,
         },
     ];
     let (first, list) = (assemble(&backdrop, W, H), assemble(&ops, W, H));
