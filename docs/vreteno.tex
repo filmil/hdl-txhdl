@@ -2556,8 +2556,40 @@ host sets \code{lock}. The monitor takes the arbiter's link through its
 registers and hands it on to the router in the cycle, so no path
 gained a register: the DDR3 path test times the same with it. The
 snoop has an output for the second hart beside the first's, which
-names a line to each hart that did not write it; the board leaves it
-unread until it has that hart.
+names a line to each hart that did not write it.
+
+The board has that hart (issue~\#1408): a second core, built with
+\code{mhartid} one, on the arbiter's eighth port with a tracker of its
+own, and its own boot memory, data memory, instruction cache and data
+cache, sharing the DDR3 and the peripherals with the first. Its boot
+memory holds twelve words of its own, \code{park}, and not the board's
+program: it turns on its software interrupt in \code{mie} and waits in
+\code{wfi}; when the first hart writes the mailbox and raises its
+\code{msip}, it clears that, reads where to start and with what, empties
+its instruction cache with \code{fence.i}, since the first hart has just
+written the code, and jumps; a program that is done jumps back to zero.
+It takes no external interrupt yet and the debug module does not see it.
+\code{//cpu/vreteno:board\_test} starts it twice at one address with
+different code, which needs that \code{fence.i}; has both harts add a
+hundred times each to one counter with \code{amoadd.w} and to another
+with \code{lr.w} and \code{sc.w}, every add counted; and hands a word
+each way with a \code{fence} and a flag, the other hart having the
+word's line cached.
+
+The snoop notes the first hart's writes too, to tell the second's
+cache, and holding each answer while it named the lines made sixteen
+stores into the DDR3 take 29 cycles more than into the data memory,
+where they took nine with one hart: about two per cent of a boot to
+Linux's userspace, on the machine's timing. So the snoop decides whom
+to tell as a write is answered, when it has landed, and tells the
+second hart nothing while it waits in \code{wfi}; that hart forgets
+its data cache as it wakes, whatever woke it, and so can hold nothing
+written while it slept. A write nobody is to be told of is answered
+at once. With the second hart waiting, which is every program that
+does not start it, the stores take nine again; with both running they
+take 29. A test wakes the second hart on either side of the cycle a
+write to a word it had cached is answered, and it reads the new word
+every time; without the forgetting it reads the old one for ever.
 
 The cost of a host is its share of the bus when every host is busy.
 For the scanout, a line of 640 words, 2560 bytes, must arrive within
