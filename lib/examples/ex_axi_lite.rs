@@ -9,7 +9,10 @@
 //! The run writes a burst of three words, reads four back, reads one
 //! word three times in a fixed burst, writes and reads the second
 //! bank, and sends a write and a read to an address that is nobody's,
-//! which the bridge answers `DecErr` itself. The bridge and both banks
+//! which the bridge answers `DecErr` itself. The second bank takes
+//! single beats only, as the map says, so a burst of two to it is
+//! answered `SlvErr` by the bridge and the bank sees none of it (issue
+//! 1436). The bridge and both banks
 //! are lowered, and the build simulates the three netlists against
 //! this run under nvc and under Verilator.
 use txhdl::comp::trace::{stop, Wave};
@@ -31,11 +34,13 @@ type HostUnit = AxiHost<16, 32, 4, 2, 4>;
 type Bridge = LiteBridge<2, TwoMap, 16, 32, 4, 2>;
 
 /// Where the two register files are: a nibble each, at 0x1000 and
-/// 0x2000; everything else is a hole.
+/// 0x2000; everything else is a hole. The second takes single beats
+/// only.
 pub struct TwoMap;
 
 impl AddrMap<2> for TwoMap {
     const RANGES: [(usize, usize); 2] = [(0x1000, 0xf000), (0x2000, 0xf000)];
+    const SINGLE: [bool; 2] = [false, true];
 }
 
 // begin{regs}
@@ -191,6 +196,18 @@ fn main() {
             r.data.len()
         );
         assert_eq!((r.resp, r.data.len()), (Resp::DecErr, 2));
+        // A burst of two to the second bank, which takes single beats
+        // only: refused by the bridge, and 7 still there.
+        let r = host.read(words(0x2008, 2)).await.done().await;
+        println!(
+            "t={:>3} read 2 at 0x2008 -> {:?}, {} beats",
+            now(),
+            r.resp,
+            r.data.len()
+        );
+        assert_eq!((r.resp, r.data.len()), (Resp::SlvErr, 2));
+        let r = host.read(words(0x200c, 1)).await.done().await;
+        assert_eq!(raw(&r.data), vec![7]);
         println!("every burst answered, a beat at a time");
     };
 
