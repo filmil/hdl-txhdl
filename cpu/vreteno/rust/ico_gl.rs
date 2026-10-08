@@ -52,6 +52,12 @@
 //! a frame's context is new each time, at the nearest texel and repeated,
 //! twice across each face, the lighting's colour modulating it.
 //! Razboj textures only in a tile, as it tests depth only in one.
+//!
+//! Built with `--cfg=mip`, as `ico_mip_hdmi` (#997 step 4), the checker
+//! is filtered with `GL_LINEAR_MIPMAP_LINEAR` and `GL_LINEAR`, its levels
+//! generated as it is uploaded, and a floor recedes below the solid with
+//! the checker repeated along it, so that its far rows read the levels
+//! below the base.
 
 use crate::ico_list::{rect, Box, Solid, BACKDROP, BODY, FACES, H, W, WORDS};
 use gles::fixed::{Fx, ONE};
@@ -79,7 +85,14 @@ pub const VERTS: usize = 3 * FACES;
 /// The most a frame's list holds: the backdrop's rectangle, and every
 /// face with its second slot when the depth test is on and its two
 /// texture slots when it is textured.
-pub const MOST: usize = 1 + 4 * FACES;
+pub const MOST: usize = 1 + 4 * FACES + 4 * FLOOR_TRIS;
+
+/// The floor's triangles under `mip` (#997): two, each with its second
+/// slot and its two texture slots.
+#[cfg(mip)]
+pub const FLOOR_TRIS: usize = 2;
+#[cfg(not(mip))]
+pub const FLOOR_TRIS: usize = 0;
 
 /// The texture's side, in texels, and the side of one of its squares.
 pub const TEX_SIDE: u32 = 32;
@@ -227,6 +240,11 @@ pub fn frame<'a>(
         }
     }
 
+    #[cfg(mip)]
+    if textured {
+        floor(&mut g);
+    }
+
     // `ico_list` turns about y and then about x.
     g.translate(0, 0, -D);
     g.rotate(degrees(ax), ONE, 0, 0);
@@ -281,8 +299,20 @@ pub fn texture<'a>(g: &mut Gl<'a>, room: &'a mut [u32], bus: u32) {
     g.gen_textures(&mut name);
     g.bind_texture(gl::TEXTURE_2D, name[0]);
     let t2 = gl::TEXTURE_2D;
-    g.tex_parameter(t2, gl::TEXTURE_MIN_FILTER, gl::NEAREST);
-    g.tex_parameter(t2, gl::TEXTURE_MAG_FILTER, gl::NEAREST);
+    #[cfg(not(mip))]
+    {
+        g.tex_parameter(t2, gl::TEXTURE_MIN_FILTER, gl::NEAREST);
+        g.tex_parameter(t2, gl::TEXTURE_MAG_FILTER, gl::NEAREST);
+    }
+    // Under `mip`, the levels made from the base as it is uploaded, and
+    // trilinear filtering (#997).
+    #[cfg(mip)]
+    {
+        let lml = gl::LINEAR_MIPMAP_LINEAR;
+        g.tex_parameter(t2, gl::GENERATE_MIPMAP, 1);
+        g.tex_parameter(t2, gl::TEXTURE_MIN_FILTER, lml);
+        g.tex_parameter(t2, gl::TEXTURE_MAG_FILTER, gl::LINEAR);
+    }
     let (s, rgba, ub) = (TEX_SIDE, gl::RGBA, gl::UNSIGNED_BYTE);
     g.tex_image_2d(t2, 0, rgba, s, s, 0, rgba, ub, &CHECKER);
     let modulate = gl::MODULATE as Fx;
@@ -298,4 +328,31 @@ pub fn kept<'a>(g: &mut Gl<'a>, room: &'a mut [u32], bus: u32) {
     let modulate = gl::MODULATE as Fx;
     g.tex_env(gl::TEXTURE_ENV, gl::TEXTURE_ENV_MODE, &[modulate]);
     g.enable(gl::TEXTURE_2D);
+}
+
+/// Under `mip` (#997), a floor below the solid and behind it, receding
+/// from 11.25 units to 31, a unit and a half down: on the screen, rows
+/// 296 to 400 across the width, clear of the logo's corner. The texture
+/// repeats eight times across it and sixteen times along it, so its far
+/// edge minifies the checker several levels down. Drawn with the
+/// modelview at the identity, before the solid's turn.
+#[cfg(mip)]
+fn floor(g: &mut Gl<'_>) {
+    let (y, near, far) = (-3 * ONE / 2, -45 * ONE / 4, -31 * ONE);
+    let corners = [
+        ([-3 * ONE, y, near, ONE], [0, 0]),
+        ([3 * ONE, y, near, ONE], [8 * ONE, 0]),
+        ([3 * ONE, y, far, ONE], [8 * ONE, 16 * ONE]),
+        ([-3 * ONE, y, far, ONE], [0, 16 * ONE]),
+    ];
+    let order = [0, 1, 2, 0, 2, 3];
+    g.draw_vertices(gl::TRIANGLES, order.len(), |k| {
+        let (position, [s, t]) = corners[order[k]];
+        Vertex {
+            position,
+            colour: None,
+            normal: Some([0, ONE, 0]),
+            tex: Some([s, t, 0, ONE]),
+        }
+    });
 }
