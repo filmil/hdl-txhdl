@@ -255,20 +255,36 @@ pub struct Raster<
     pub zdx: Reg<U<32>>,
     pub zdy: Reg<U<32>>,
     pub pa: Reg<U<12>>,
-    /// The depth bank, a tile's depths, read and written at one address
-    /// only, so that it is a block RAM of one port; a mark for each
-    /// depth, the serial of the tile that wrote it as with the colour,
-    /// so that a depth not written in this tile reads as the farthest;
-    /// the depth and its mark read for the pixel under the walk, and the
-    /// pixel's own depth; and whether the pixel passed, decided a turn
-    /// after the read so that the banks' write enables come from a
-    /// register.
-    pub zbank: Mem<U<16>, 4096>,
+    /// The depth bank, a tile's depths, and above each its stencil (issue
+    /// 998), read and written at one address only, so that it is a block
+    /// RAM of one port; a mark for each, the serial of the tile that
+    /// wrote it as with the colour, so that a depth not written in this
+    /// tile reads as the farthest and a stencil as nought; the word and
+    /// its mark read for the pixel under the walk, and the pixel's own
+    /// depth; whether the pixel passed, decided a turn after the read so
+    /// that the banks' write enables come from a register; and whether
+    /// the bank is written, and the word it takes. A pixel that changes
+    /// one of the two writes the other back as it was, so one mark holds
+    /// for both.
+    pub zbank: Mem<U<24>, 4096>,
     pub zmark: Mem<U<8>, 4096>,
-    pub dread: Reg<U<16>>,
+    pub dread: Reg<U<24>>,
     pub dtag: Reg<U<8>>,
     pub zq: Reg<U<16>>,
     pub zpass: Reg<Bit>,
+    pub zsw: Reg<Bit>,
+    pub zsv: Reg<U<24>>,
+    /// The stencil (issue 998): whether the entry tests it, the comparison,
+    /// the reference, the value mask and the write mask, and the operations
+    /// for a stencil failure, a depth failure and a pass.
+    pub sten: Reg<Bit>,
+    pub sfunc: Reg<U<3>>,
+    pub sref: Reg<U<8>>,
+    pub smask: Reg<U<8>>,
+    pub swmask: Reg<U<8>>,
+    pub sfail: Reg<U<3>>,
+    pub szfail: Reg<U<3>>,
+    pub szpass: Reg<U<3>>,
     /// The pixel's state (issue 993), which only a tile has: whether the
     /// entry has any, whether it blends and with which two factors,
     /// whether it tests alpha, how and against what, and the channels it
@@ -529,6 +545,23 @@ fn depth16(v: U<32>) -> U<16> {
     let over = Bit::from(v.slice::<28, 3>() != 0);
     let top = mux(over, U::<16>::from(0xffffu32), v.slice::<12, 16>());
     mux(v.bit(31), U::<16>::from(0u8), top)
+}
+
+/// The stencil `s` after GL ES 1.1's operation `op` (issue 998), with the
+/// reference `r`, as `op::stencil::op` has it: kept, nought, the
+/// reference, one more or one less held to a byte, or turned over.
+#[lower]
+fn stencil_step(op: U<3>, s: U<8>, r: U<8>) -> U<8> {
+    let (z, top) = (U::<8>::from(0u8), U::<8>::from(255u8));
+    let inc = mux(Bit::from(s == top), top, s + U::<8>::from(1u8));
+    let dec = mux(Bit::from(s == z), z, s - U::<8>::from(1u8));
+    let one = Bit::from(op == U::<3>::from(1u8));
+    let two = Bit::from(op == U::<3>::from(2u8));
+    let three = Bit::from(op == U::<3>::from(3u8));
+    let four = Bit::from(op == U::<3>::from(4u8));
+    let five = Bit::from(op == U::<3>::from(5u8));
+    let flip = mux(five, s ^ top, s);
+    mux(one, z, mux(two, r, mux(three, inc, mux(four, dec, flip))))
 }
 
 /// Whether a pixel at depth `z` passes `func`, GL's comparisons from
@@ -1579,7 +1612,7 @@ impl<
                                               + ((self.insn.get() + 1)
                                                   .resize::<A>()
                                                   << SHIFT),
-                                          len: U::<8>::from(9u8),
+                                          len: U::<8>::from(11u8),
                                           size: U::<3>::from(2u8),
                                           burst: BurstKind::Incr,
                                           lock: Bit::Zero,
@@ -1715,6 +1748,40 @@ impl<
                                       with!(self <= {
                                           fon: w9.bit(0),
                                           fcol: w9.slice::<8, 24>(),
+                                      });
+                                      // The stencil, words 10 and 11 (issue
+                                      // 998).
+                                      until(DefaultClock::rising, || {
+                                          landing(
+                                              rdata.peek().is_some(),
+                                              release.ready(),
+                                              done.peek().is_some(),
+                                          )
+                                          .to_bool()
+                                      })
+                                      .await;
+                                      let w10 = rdata.head().data;
+                                      with!(self <= {
+                                          sten: w10.bit(0),
+                                          sfunc: w10.slice::<1, 3>(),
+                                          sref: w10.slice::<8, 8>(),
+                                          smask: w10.slice::<16, 8>(),
+                                          swmask: w10.slice::<24, 8>(),
+                                      });
+                                      until(DefaultClock::rising, || {
+                                          landing(
+                                              rdata.peek().is_some(),
+                                              release.ready(),
+                                              done.peek().is_some(),
+                                          )
+                                          .to_bool()
+                                      })
+                                      .await;
+                                      let w11 = rdata.head().data;
+                                      with!(self <= {
+                                          sfail: w11.slice::<0, 3>(),
+                                          szfail: w11.slice::<3, 3>(),
+                                          szpass: w11.slice::<6, 3>(),
                                       });
                                   }
                                   // A textured entry's two slots more
@@ -2626,15 +2693,26 @@ impl<
                                         });
                                         DefaultClock::rising().await;
                                         let src = self.srcq.get();
+                                        // The depth and the stencil
+                                        // there: the farthest and nought
+                                        // where the tile has not written.
+                                        let fresh =
+                                            self.dtag.get() == self.serial.get();
+                                        let dw = self.dread.get();
+                                        let d16 = mux(
+                                            fresh,
+                                            dw.slice::<0, 16>(),
+                                            U::<16>::from(0xffffu32),
+                                        );
+                                        let s8 = mux(
+                                            fresh,
+                                            dw.slice::<16, 8>(),
+                                            U::<8>::from(0u8),
+                                        );
                                         let deep = depth_pass(
                                             self.zfunc.get(),
                                             self.zq.get(),
-                                            mux(
-                                                self.dtag.get()
-                                                    == self.serial.get(),
-                                                self.dread.get(),
-                                                U::<16>::from(0xffffu32),
-                                            ),
+                                            d16,
                                         );
                                         let alpha = depth_pass(
                                             self.afunc.get(),
@@ -2642,6 +2720,47 @@ impl<
                                             self.aref.get().resize::<16>(),
                                         );
                                         let son = self.son.get();
+                                        // GL's order: the alpha test, the
+                                        // stencil test, the depth test
+                                        // (issue 998). The stencil takes
+                                        // the operation for how the pixel
+                                        // did, in the bits the write mask
+                                        // holds, wherever the alpha test
+                                        // passed; the depth is written
+                                        // only where all three passed.
+                                        let ston = son & self.sten.get();
+                                        let sm = self.smask.get();
+                                        let sr = self.sref.get();
+                                        let sok = depth_pass(
+                                            self.sfunc.get(),
+                                            (sr & sm).resize::<16>(),
+                                            (s8 & sm).resize::<16>(),
+                                        );
+                                        let apass =
+                                            !(son & self.aon.get()) | alpha;
+                                        let spass = !ston | sok;
+                                        let dpass = !self.zon.get() | deep;
+                                        let sop = mux(
+                                            sok,
+                                            mux(
+                                                dpass,
+                                                self.szpass.get(),
+                                                self.szfail.get(),
+                                            ),
+                                            self.sfail.get(),
+                                        );
+                                        let sn = stencil_step(sop, s8, sr);
+                                        let swm = self.swmask.get();
+                                        let sw = mux(
+                                            ston,
+                                            (s8 & !swm) | (sn & swm),
+                                            s8,
+                                        );
+                                        let zw = self.zon.get()
+                                            & self.zwrite.get()
+                                            & apass
+                                            & spass
+                                            & dpass;
                                         // The blend's factors, a channel
                                         // at a time, as `model::factor`
                                         // has them: the first of the
@@ -2685,9 +2804,13 @@ impl<
                                                 df, sb, db, sa, da, no,
                                             ));
                                         with!(self <= {
-                                            zpass: (!self.zon.get() | deep)
-                                                & (!(son & self.aon.get())
-                                                    | alpha),
+                                            zpass: apass & spass & dpass,
+                                            zsw: zw | (ston & apass),
+                                            zsv: sw.concat::<16, 24>(mux(
+                                                zw,
+                                                self.zq.get(),
+                                                d16,
+                                            )),
                                             fsq: fs,
                                             fdq: fd,
                                         });
@@ -2820,7 +2943,13 @@ impl<
                                     let none = son
                                         & Bit::from(self.cmask.get() == 0);
                                     let ckeep = (keep & !none) | load;
-                                    let zkeep = keep & zon & self.zwrite.get();
+                                    // The depth and the stencil, as the
+                                    // decide turn has them (issue 998).
+                                    let zkeep = hit
+                                        & (zon | son)
+                                        & self.zsw.get()
+                                        & !scrub
+                                        & !load;
                                     let tag = mux(
                                         scrub,
                                         U::<8>::from(0u8),
@@ -2846,7 +2975,7 @@ impl<
                                         ckeep ? { bank.at(at): word },
                                         ckeep ? { dbank.at(at): word },
                                         mkeep ? { mark.at(at): tag },
-                                        zkeep ? { zbank.at(pa): self.zq.get() },
+                                        zkeep ? { zbank.at(pa): self.zsv.get() },
                                         zmkeep ? { zmark.at(pa): tag },
                                     });
                                     let rest =
