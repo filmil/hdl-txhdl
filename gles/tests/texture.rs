@@ -616,3 +616,83 @@ fn the_paletted_formats_upload_as_gl_says() {
     );
     assert_eq!(g.get_error(), gl::INVALID_VALUE);
 }
+
+/// A point sprite (#998, `OES_point_sprite`): with `GL_POINT_SPRITE_OES`
+/// on and `GL_COORD_REPLACE_OES`, a point 32 pixels square is the
+/// texture across it, each pixel the texel GL's formula puts there,
+/// `s = 1/2 + (x - x_w + 1/2) / size` and `t = 1/2 - (y - y_w + 1/2) /
+/// size`, at the nearest under `GL_REPLACE`; without coordinate
+/// replacement it is the point's own colour, untextured, as before.
+#[test]
+fn a_point_sprite_is_the_texture_across_it() {
+    let draw = |replace: bool| {
+        let mut frame = vec![[0u32; WORDS]; 64];
+        let room: &'static mut [u32] =
+            Box::leak(vec![0u32; 1 << 16].into_boxed_slice());
+        let mut g = Gl::new(&mut frame, W, H);
+        g.texture_room(room, BUS);
+        let mut name = [0u32];
+        g.gen_textures(&mut name);
+        g.bind_texture(gl::TEXTURE_2D, name[0]);
+        let t2 = gl::TEXTURE_2D;
+        g.tex_parameter(t2, gl::TEXTURE_MIN_FILTER, gl::NEAREST);
+        g.tex_parameter(t2, gl::TEXTURE_MAG_FILTER, gl::NEAREST);
+        let img = image();
+        let (s, rgba, ub) = (SIDE as u32, gl::RGBA, gl::UNSIGNED_BYTE);
+        g.tex_image_2d(t2, 0, rgba, s, s, 0, rgba, ub, &img);
+        let mode = gl::REPLACE as Fx;
+        g.tex_env(gl::TEXTURE_ENV, gl::TEXTURE_ENV_MODE, &[mode]);
+        g.enable(gl::TEXTURE_2D);
+        g.enable(gl::POINT_SPRITE_OES);
+        let on = replace as Fx;
+        g.tex_env(gl::POINT_SPRITE_OES, gl::COORD_REPLACE_OES, &[on]);
+        assert!(g.is_enabled(gl::POINT_SPRITE_OES));
+        g.point_size(32 * ONE);
+        g.color(ONE, ONE / 2, 0, ONE);
+        g.draw_vertices(gl::POINTS, 1, |_| Vertex {
+            position: [0, 0, 0, ONE],
+            colour: None,
+            normal: None,
+            tex: None,
+        });
+        assert_eq!(g.get_error(), gl::NO_ERROR);
+        let n = g.frame().len();
+        let words = g.textures().unwrap().words().to_vec();
+        let list = decode_list(&frame[..n]);
+        let read = |a: u32| words[((a - BUS) / 4) as usize];
+        let t = Textures { mem: &read };
+        render_textured(
+            &list,
+            W as usize,
+            H as usize,
+            vec![0; 128 * 96],
+            Some(&t),
+        )
+    };
+    // The point at the window's centre, (64, 48) with GL's y up, 32
+    // square: Razboj's columns 48 to 79 and rows 32 to 63. At that size
+    // every pixel's centre is a texel's centre, so no rounding decides.
+    let fb = draw(true);
+    for j in 0..32usize {
+        for i in 0..32usize {
+            let (s, t) = ((i as f64 + 0.5) / 32.0, (j as f64 + 0.5) / 32.0);
+            let (ti, tj) =
+                ((s * SIDE as f64) as usize, (t * SIDE as f64) as usize);
+            let k = 4 * (tj * SIDE + ti);
+            let b = &image()[k..k + 4];
+            let want = (b[3] as u32) << 24
+                | (b[0] as u32) << 16
+                | (b[1] as u32) << 8
+                | b[2] as u32;
+            let got = fb[(32 + j) * W as usize + 48 + i];
+            assert_eq!(got, want, "pixel {i},{j} of the sprite");
+        }
+    }
+    // Outside the square nothing is drawn.
+    assert_eq!(fb.iter().filter(|&&p| p != 0).count(), 1024);
+    // Without coordinate replacement, the point's colour, untextured.
+    let fb = draw(false);
+    let colour = fb[(32 + 7) * W as usize + 48 + 7];
+    assert_eq!(colour & 0xff_ffff, 0xff_8000);
+    assert_eq!(fb.iter().filter(|&&p| p != 0).count(), 1024);
+}
