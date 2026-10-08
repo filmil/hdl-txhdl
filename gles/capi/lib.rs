@@ -705,14 +705,6 @@ pub unsafe extern "C" fn gles_texture_room(
     with(|g| g.texture_room(room, bus));
 }
 
-/// The textures' descriptor table's bus address, which Razboj is told,
-/// or nought with no room given. Not a GL call: EGL's.
-pub fn gles_texture_table() -> u32 {
-    current()
-        .and_then(|c| c.gl.textures().map(|s| s.table()))
-        .unwrap_or(0)
-}
-
 #[no_mangle]
 pub extern "C" fn glTexCoordPointer(
     size: i32,

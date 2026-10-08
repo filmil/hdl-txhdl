@@ -132,9 +132,9 @@ pub enum Op {
     },
 }
 
-/// How entries are textured (issue 997): the texture's descriptor index,
-/// the environment, `razboj_tile::tex::REPLACE` to `ADD`, and the
-/// environment's colour, `0xAARRGGBB`.
+/// How entries are textured (issue 997): the byte address of the texture's
+/// descriptor, the environment, `razboj_tile::tex::REPLACE` to `ADD`, and
+/// the environment's colour, `0xAARRGGBB`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TexMode {
     pub desc: u32,
@@ -282,16 +282,16 @@ pub struct Insn {
     pub aref: U<8>,
     pub cmask: U<4>,
     /// Texturing (issue 997): whether the entry is textured, which gives
-    /// it two slots more; its texture's descriptor index, environment and
-    /// environment colour; the planes `u q`, `v q` and `q`, 64 bits each,
-    /// which a triangle with texture coordinates carries whether textured
-    /// or not; and for the level of detail, the numerators of `du/dx`,
-    /// `dv/dx`, `du/dy` and `dv/dy`, each a value at the box's first pixel
-    /// and a step, down for the first two and right for the others, since
-    /// that is all each varies with, shifted right by `lodk`; see
-    /// `crate::tex::lod`.
+    /// it two slots more; its texture's descriptor's byte address, its
+    /// environment and environment colour; the planes `u q`, `v q` and
+    /// `q`, 64 bits each, which a triangle with texture coordinates
+    /// carries whether textured or not; and for the level of detail, the
+    /// numerators of `du/dx`, `dv/dx`, `du/dy` and `dv/dy`, each a value at
+    /// the box's first pixel and a step, down for the first two and right
+    /// for the others, since that is all each varies with, shifted right by
+    /// `lodk`; see `crate::tex::lod`.
     pub tex: Bit,
-    pub tdesc: U<16>,
+    pub tdesc: U<32>,
     pub tenv: U<3>,
     pub tenvc: U<32>,
     pub lodk: U<8>,

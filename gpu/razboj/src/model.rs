@@ -212,11 +212,10 @@ pub fn render_over(ops: &[Insn], w: usize, h: usize, fb: Vec<u32>) -> Vec<u32> {
 }
 
 /// Where a textured list's textures are (issue 997): the memory, a word
-/// at each byte address a multiple of four, and the byte address of the
-/// descriptor table.
+/// at each byte address a multiple of four, which holds each textured
+/// entry's descriptor at the address the entry names, and the texels.
 pub struct Textures<'a> {
     pub mem: &'a dyn Fn(u32) -> u32,
-    pub table: u32,
 }
 
 /// The same with textures: a textured entry's colour at a pixel is its
@@ -244,9 +243,7 @@ pub fn render_textured(
         let mask = op.mask();
         let tex = textures.filter(|_| op.tex.to_bool()).map(|t| {
             let d = op.tdesc.raw() as u32;
-            let words = core::array::from_fn(|k| {
-                (t.mem)(t.table + d * 64 + 4 * k as u32)
-            });
+            let words = core::array::from_fn(|k| (t.mem)(d + 4 * k as u32));
             (t, razboj_tile::tex::decode(&words))
         });
         let r64 = |u: U<64>| u.raw() as u64;

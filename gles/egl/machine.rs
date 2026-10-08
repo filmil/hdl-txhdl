@@ -32,9 +32,6 @@ pub trait Machine {
     fn textures(&mut self) -> Option<(&'static mut [u32], u32)> {
         None
     }
-    /// Tells Razboj where the textures' descriptor table is, before a
-    /// tile table that reads them is drawn. The default tells it nothing.
-    fn texture_table(&mut self, _table: u32) {}
     /// Points the scanout at the buffer whose first row is `row`, and
     /// shows the scanout.
     fn show(&mut self, row: u32);

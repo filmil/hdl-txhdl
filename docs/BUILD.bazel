@@ -1545,6 +1545,7 @@ waveform(
     from_tick = 0,
     until = 200,
     width = 8.2,
+    nvc_heap = "64m",
 )
 
 # Razboj's depth test (issue 992): in one tile, a clear of depth and two
@@ -1566,6 +1567,7 @@ waveform(
     from_tick = 0,
     until = 200,
     width = 8.2,
+    nvc_heap = "64m",
 )
 
 # Razboj's blending (issue 993): in one tile, a backdrop, then a list
@@ -1590,6 +1592,31 @@ waveform(
     from_tick = 0,
     until = 200,
     width = 8.2,
+    nvc_heap = "64m",
+)
+
+# Razboj's texturing (issue 997): in one tile, a floor of two triangles
+# in perspective, textured under GL_MODULATE with a texture repeated past
+# its edges. The rasteriser's netlist is replayed against the run under
+# nvc and Verilator: the slots and the descriptor, the reciprocal, the
+# texel's address, the cache's refills and hits, and the environment.
+waveform(
+    name = "razboj_tex",
+    example = "//gpu/razboj:trace_tex",
+    lowered = ("raster_tex", "raster"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//issue/tx_valid=>issue",
+        "//rdata/tx_valid=>rdata",
+        "//raster/tex_on=>tex_on",
+        "//raster/tok=>tok",
+        "//raster/y=>y",
+        "//idle=>idle",
+    ],
+    from_tick = 0,
+    until = 200,
+    width = 8.2,
+    nvc_heap = "64m",
 )
 
 # The demonstration's picture, rendered by Razboj and written by it.

@@ -304,26 +304,56 @@ in tiles as the model draws them, byte for byte, loaded and not, and
 \code{//docs:razboj\_blend} replays the netlist's load and blend under
 both simulators.
 
-Textures are next (issue~\#997), and so far they are a format and a
-model, not hardware. A texture is its levels in DDR3, each texel RGBA in
-32 bits as a pixel is, stored in blocks of four by four so that the
-texels a cache line holds are one burst; a table of descriptors, sixteen
-words each, says where each texture is and how to filter and wrap it.
-Bit 14 of word 15 says an entry is textured, and gives it the second
-slot and two more. They hold $uq$, $vq$ and $q$ as planes of 64 bits,
-$q$ being one over the clip $w$, so that a pixel's texel is $uq/q$
-there, correct in perspective; the texture's index, its environment
-and that environment's colour; and the numerators of the four
-derivatives GL takes the level of detail from, each of which varies
-along one axis of the box only. The model divides by $q$ with a table of
-1024 reciprocals and one Newton step, and takes the level of detail as
-a base-2 logarithm from a table of 256. It samples under GL's two
-magnification and six minification filters, repeats or clamps, and
+Textures come next (issue~\#997). A texture is its levels in DDR3,
+each texel RGBA in 32 bits as a pixel is, stored in blocks of four by
+four so that the texels a cache line holds are one burst; a
+descriptor of sixteen words, on a boundary of 64 bytes, says where the
+texture is and how to filter and wrap it. Bit 14 of word 15 says an
+entry is textured, and gives it the second slot and two more. They
+hold $uq$, $vq$ and $q$ as planes of 64 bits, $q$ being one over the
+clip $w$, so that a pixel's texel is $uq/q$ there, correct in
+perspective; the descriptor's byte address, so that the list says all
+the rasteriser reads; the environment and its colour; and the
+numerators of the four derivatives GL takes the level of detail from,
+each of which varies along one axis of the box only. The model divides
+by $q$ with a reciprocal whose first guess is a line in each of 32
+segments, and one Newton step, within $2^{-23}$; and takes the level of
+detail as a base-2 logarithm from a table of 256. It samples under GL's
+two magnification and six minification filters, repeats or clamps, and
 applies the five environments of GL ES~1.1 but \code{COMBINE}, before
 the alpha test. Over a floor in perspective it is within a fiftieth of a
-level of the level of detail in floating point. The rasteriser reads a
-textured entry's two extra slots and, until it samples, draws the entry
-as if it had no texture.
+level of the level of detail in floating point.
+
+In a tile the rasteriser samples as the model does, byte for byte, so
+far at the nearest texel of the base level, under \code{REPLACE} and
+\code{MODULATE}. It reads the two slots and the descriptor's first two
+words with the entry, and steps the three planes with the walk. A
+textured pixel then takes a turn for each step of the model's
+arithmetic: $q$'s leading zeros, the reciprocal's first guess from two
+\code{select!}s of 32 constants rather than a ROM, its Newton step in
+two turns, $uq$ and $vq$ times it, the shift back, and the wrap and the
+texel's address. The texel comes from a cache of 64 lines, each a block
+of four by four, direct mapped: a block RAM of 1024 words with one
+write, the refill's, and one read, the pixel's. A miss refills its line
+with one burst of sixteen beats and keeps its own word as it passes.
+Every line is forgotten when a list starts, since a program may change
+its textures between lists. The environment takes two turns more, its
+products and then their divide, and the colour goes on to the depth
+test and the blend as an untextured pixel's does. A textured pixel
+takes eleven cycles more than an untextured one when its texel is
+cached, and thirty when it refills, as
+\code{what\_a\_textured\_pixel\_costs} measures. A refill holds the link
+for sixteen beats at most once in thirty cycles, where a tile's
+write-out holds it for 64 beats a row, back to back, so texturing asks
+less of the DDR3 than the write-out Razboj already does; the scanout
+fetches its line in 1200 cycles of the 1587 it has with Razboj drawing
+(issue~\#1209), and a burst of sixteen ahead of one of its own delays it
+less than a write-out's burst of 64 does. A flat list has no
+texturing, as it has no depth, and draws a textured entry untextured.
+Scenes under every class of texel, both environments and both wrap
+modes are drawn in tiles as the model draws them, byte for byte, and
+\code{//docs:razboj\_tex} replays the netlist's texturing under both
+simulators.
 
 \section{The Rasteriser}
 \label{sec:g-raster}
@@ -477,8 +507,8 @@ architectural patterns. The baseline design renders one pixel per cycle (three
 cycles for depth-tested pixels and five for blended ones), restricts depth
 testing and blending to tiled modes, limits color interpolation to screen
 space without perspective correction, and gives a shaded triangle the alpha
-of its first vertex. Textures are in the format and the model, not yet in
-the rasteriser. The pipeline omits
+of its first vertex. It textures only in a tile, and so far at the nearest
+texel of the base level. The pipeline omits
 geometric clipping outside bounding boxes and issues single bursts
 sequentially.
 

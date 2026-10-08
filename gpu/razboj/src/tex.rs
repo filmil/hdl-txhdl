@@ -6,23 +6,46 @@
 //! A pixel's texture coordinates come from three planes the walk steps,
 //! `u q` and `v q` with 32 bits of fraction and `q` with 48 (see
 //! `razboj_tile::tex`): `u = (u q) / q`, through a reciprocal of `q` from
-//! a table of 1024 and one Newton step. The level of detail is
+//! a line in each of 32 segments and one Newton step. The level of detail is
 //! `log2` of the largest numerator of `u`'s and `v`'s derivatives, less
 //! twice `log2 q`, both through a table of 256 for the fraction. Then
 //! GL's filters, wrap modes and environments.
 use crate::model::div255;
+use crate::raster::{seed_fall, seed_start};
 use razboj_tile::tex::{
     level_base, side, texel_offset, Desc, ADD, ALPHA, BLEND, DECAL, LINEAR,
     LINEAR_MIPMAP_NEAREST, LUMINANCE, LUMINANCE_ALPHA, MODULATE, NEAREST,
     NEAREST_MIPMAP_LINEAR, NEAREST_MIPMAP_NEAREST, REPLACE, RGB,
 };
+use txhdl::types::U;
 
-/// The reciprocal's first guess for a mantissa whose ten bits below its
-/// leading one are `idx`: `2^48` over the middle of the interval, rounded,
-/// which is the reciprocal with 16 bits of fraction, between one and two.
-pub fn recip_table(idx: u32) -> u64 {
-    let mid = (1u64 << 31) + ((idx as u64) << 21) + (1 << 20);
-    ((1u64 << 48) + mid / 2) / mid
+/// The line a segment of the reciprocal's first guess follows, for the
+/// segment `k` of 32 between one and two: its value at the segment's
+/// start, `a`, and its fall over the segment's 1024 steps, `b` in 1024ths
+/// of a step, both with 16 bits of fraction. It is the chord of `2^17 /
+/// m` over the segment, lowered by half the most it lies above the curve,
+/// so that it errs as far each way.
+pub fn seed_line(k: u32) -> (u32, u32) {
+    let f =
+        |t: f64| (1u64 << 17) as f64 / (1.0 + (k as f64 + t / 1024.0) / 32.0);
+    let s = (f(0.0) - f(1024.0)) / 1024.0;
+    let over = (0..=1024)
+        .map(|t| f(0.0) - s * t as f64 - f(t as f64))
+        .fold(0f64, f64::max);
+    (
+        (f(0.0) - over / 2.0).round() as u32,
+        (s * 1024.0).round() as u32,
+    )
+}
+
+/// The reciprocal's first guess for the mantissa `x`, in `[2^31, 2^32)`,
+/// with 16 bits of fraction: the line of the segment its five bits below
+/// the leading one name, at the ten bits below those. The lines are the
+/// rasteriser's own, which a test holds to [`seed_line`].
+pub fn seed(x: u64) -> u64 {
+    let k = U::<5>::from(((x >> 26) & 31) as u32);
+    let (a, b) = (seed_start(k).raw() as u64, seed_fall(k).raw() as u64);
+    a - ((b * ((x >> 16) & 1023)) >> 10)
 }
 
 /// The fraction of `log2` for a mantissa whose eight bits below its
@@ -42,10 +65,10 @@ fn normal(q: u64) -> (u32, u64) {
 }
 
 /// The reciprocal of the mantissa `x`, in `[2^31, 2^32)`, with 24 bits of
-/// fraction: the table's guess, then one Newton step,
+/// fraction: the first guess, then one Newton step,
 /// `r (2 - x r)`.
 pub fn recip(x: u64) -> u64 {
-    let r0 = recip_table(((x >> 21) & 0x3ff) as u32);
+    let r0 = seed(x);
     let p = x * r0;
     let e = (1u64 << 49) - p;
     ((r0 as u128 * e as u128) >> 40) as u64
@@ -268,21 +291,35 @@ pub fn env(mode: u32, class: u32, cf: u32, ct: u32, cc: u32) -> u32 {
 mod tests {
     use super::*;
 
-    /// The reciprocal, through the table and one Newton step, is within
-    /// 2^-20 of the true one over every mantissa the table covers, at
-    /// both ends of each of its intervals.
+    /// The reciprocal, through the first guess and one Newton step, is
+    /// within 2^-23 of the true one over every mantissa, at both ends of
+    /// each step the guess takes, and the guess within 2^-12.
     #[test]
     fn the_reciprocal_is_close() {
-        let mut worst = 0f64;
-        for idx in 0..1024u64 {
-            for end in [0u64, (1 << 21) - 1] {
-                let x = (1u64 << 31) + (idx << 21) + end;
+        let (mut worst, mut first) = (0f64, 0f64);
+        for at in 0..(1u64 << 15) {
+            for end in [0u64, (1 << 16) - 1] {
+                let x = (1u64 << 31) + (at << 16) + end;
                 let got = recip(x) as f64 / (1u64 << 24) as f64;
                 let want = (1u64 << 32) as f64 / x as f64;
                 worst = worst.max(((got - want) / want).abs());
+                let guess = seed(x) as f64 / (1u64 << 16) as f64;
+                first = first.max(((guess - want) / want).abs());
             }
         }
-        assert!(worst < 1.0 / (1 << 20) as f64, "worst {worst:e}");
+        assert!(first < 1.0 / (1 << 12) as f64, "guess {first:e}");
+        assert!(worst < 1.0 / (1 << 23) as f64, "worst {worst:e}");
+    }
+
+    /// The rasteriser's lines for the first guess are the formula's.
+    #[test]
+    fn the_seed_lines_are_the_formula() {
+        for k in 0..32u32 {
+            let at = U::<5>::from(k);
+            let have =
+                (seed_start(at).raw() as u32, seed_fall(at).raw() as u32);
+            assert_eq!(have, seed_line(k), "segment {k}");
+        }
     }
 
     /// The texel coordinates are `(u q) / q` to well under a 256th of a
@@ -593,7 +630,7 @@ mod against_gl {
                 let (mem, d) = texture(min, mag, k % 2 == 1);
                 let ops = [
                     Op::Texture(Some(TexMode {
-                        desc: 0,
+                        desc: TABLE,
                         env,
                         env_colour,
                     })),
@@ -603,10 +640,7 @@ mod against_gl {
                 let list = assemble(&ops, W, H);
                 assert!(list.iter().all(|i| i.tex.to_bool()));
                 let read = |a: u32| *mem.get(&a).unwrap_or(&0);
-                let t = Textures {
-                    mem: &read,
-                    table: TABLE,
-                };
+                let t = Textures { mem: &read };
                 let got =
                     render_textured(&list, W, H, vec![0; W * H], Some(&t));
                 for y in 0..H {
@@ -705,7 +739,7 @@ mod against_gl {
         let (mem, _) = texture(LINEAR_MIPMAP_LINEAR, LINEAR, false);
         let ops = [
             Op::Texture(Some(TexMode {
-                desc: 0,
+                desc: TABLE,
                 env: MODULATE,
                 env_colour: 0,
             })),
@@ -714,10 +748,7 @@ mod against_gl {
         ];
         let list = assemble(&ops, W, H);
         let read = |a: u32| *mem.get(&a).unwrap_or(&0);
-        let t = Textures {
-            mem: &read,
-            table: TABLE,
-        };
+        let t = Textures { mem: &read };
         let draw = |l: &[crate::op::Insn]| {
             render_textured(l, W, H, vec![0; W * H], Some(&t))
         };

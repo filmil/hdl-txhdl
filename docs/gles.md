@@ -47,7 +47,7 @@ A later issue means the entry point is accepted from the start but does what tha
 | Scissor | `glScissor` | #990 |
 | Depth | `glDepthFunc`, `glDepthMask` | Now, from #1273, drawn in a tile table |
 | Blending and masks | `glBlendFunc`, `glAlphaFuncx`, `glColorMask` | Now, from #993, drawn in a tile table |
-| Textures | `glGenTextures`, `glDeleteTextures`, `glBindTexture`, `glTexImage2D`, `glTexParameteri`, `glTexParameterx`, `glTexEnvi`, `glTexEnvx`, `glTexEnvxv`, `glTexCoordPointer`, `glMultiTexCoord4x`, `glActiveTexture`, `glClientActiveTexture`, `glPixelStorei`; `GL_TEXTURE_2D` and `GL_TEXTURE_COORD_ARRAY` | From #997, one unit, drawn in a tile table; on Razboj's model until the rasteriser samples them |
+| Textures | `glGenTextures`, `glDeleteTextures`, `glBindTexture`, `glTexImage2D`, `glTexParameteri`, `glTexParameterx`, `glTexEnvi`, `glTexEnvx`, `glTexEnvxv`, `glTexCoordPointer`, `glMultiTexCoord4x`, `glActiveTexture`, `glClientActiveTexture`, `glPixelStorei`; `GL_TEXTURE_2D` and `GL_TEXTURE_COORD_ARRAY` | From #997, one unit, drawn in a tile table; the rasteriser samples the nearest texel of the base level under `GL_REPLACE` and `GL_MODULATE`, and the rest of the filters and environments on Razboj's model only |
 | Points and lines | `glPointSizex`, `glLineWidthx`, and the point and line modes of the draw calls | Now, from issue 994 |
 | Switches | `glEnable`, `glDisable`, `glIsEnabled` for `GL_LIGHTING`, `GL_LIGHT0` to `GL_LIGHT7`, `GL_CULL_FACE`, `GL_NORMALIZE`, `GL_RESCALE_NORMAL`, `GL_COLOR_MATERIAL`, `GL_CLIP_PLANE0`, `GL_DEPTH_TEST`, `GL_BLEND`, `GL_ALPHA_TEST`; and the rest as the issues above land | Now, and growing |
 | Queries and errors | `glGetError`, `glGetIntegerv`, `glGetFixedv`, `glGetBooleanv`, `glGetString`, `glGetPointerv` | Now |
@@ -345,10 +345,10 @@ The room's head is a table of 64 descriptors, one an object, and the texels foll
 It stores every texel as 32-bit RGBA in blocks of four by four, and the descriptor keeps the base format, since the environments read each format differently.
 Level 0 of a new size takes room for its whole chain of levels, and with `GL_GENERATE_MIPMAP` on it writes every level below it, each texel the rounded mean of the two by two above.
 An object whose levels are not all given, when its filter reads them, leaves texturing off, as GL says.
-A textured triangle carries two slots after its pixel's: the texture's index, its environment and colour, `s/w`, `t/w` and `1/w` as planes across the window in 64 bits, and the numerators Razboj takes the level of detail from.
+A textured triangle carries two slots after its pixel's: the byte address of the texture's descriptor, its environment and colour, `s/w`, `t/w` and `1/w` as planes across the window in 64 bits, and the numerators Razboj takes the level of detail from.
 The emitter works them out as Razboj's assembler does, bit for bit, which `//gles:model_test` holds it to.
 Texture coordinates go through the texture matrix, and points and lines are drawn untextured for now.
-A textured frame is binned into a tile table as one that tests depth is, and the swap tells the machine where the descriptors are, through `Machine::texture_table`.
+A textured frame is binned into a tile table as one that tests depth is; each entry names its descriptor by address, so Razboj needs nothing else to find it.
 `//gles:texture_test` draws a floor in perspective under each of six pairs of filters and the five environments, through Razboj's model, and holds it pixel by pixel to a reference that runs GL's pipeline in f64.
 Each of 77,760 pixels is within 3 a channel of what GL gives within the sixteenth of a pixel a snapped vertex moves, at a level of detail within 0.010 of GL's.
 `//gles:egl_test` uploads a texture through the C entry points into the machine's room and draws it through EGL.

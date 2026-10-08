@@ -130,10 +130,13 @@ pub fn run_lists_at<
 }
 
 /// A list as the rasteriser finds it in memory: the words at `DL`, and
-/// the count word at `CTRL` that says it is there.
+/// the count word at `CTRL` that says it is there; and words it reads
+/// elsewhere, such as a texture's (issue 997), each at its byte address,
+/// written before the count.
 pub struct Work {
     pub words: Vec<u32>,
     pub count: u32,
+    pub more: Vec<(usize, u32)>,
 }
 
 impl Work {
@@ -142,6 +145,7 @@ impl Work {
         Work {
             words: crate::dl::image(list),
             count: list.len() as u32,
+            more: Vec::new(),
         }
     }
 
@@ -149,7 +153,11 @@ impl Work {
     /// the count word that says so (issue 1255).
     pub fn tiled(list: &[Insn], sw: usize, sh: usize) -> Work {
         let (words, count) = crate::tiles::image(list, sw, sh);
-        Work { words, count }
+        Work {
+            words,
+            count,
+            more: Vec::new(),
+        }
     }
 }
 
@@ -174,6 +182,9 @@ pub fn run_works_at<
     let mut image = vec![U::<32>::new(0); N];
     for (i, word) in lists[0].words.iter().enumerate() {
         image[DL / 4 + i] = U::from(*word);
+    }
+    for (at, word) in &lists[0].more {
+        image[at / 4] = U::from(*word);
     }
     image[CTRL / 4] = U::from(lists[0].count);
     let UnitLink {
@@ -267,6 +278,11 @@ pub fn run_works_at<
             // memory takes one write a cycle, and the count last.
             for (i, word) in lists[next].words.iter().enumerate() {
                 pixels.write(DL / 4 + i, U::<32>::from(*word));
+                sim.cycle();
+                cycles += 1;
+            }
+            for (at, word) in &lists[next].more {
+                pixels.write(at / 4, U::<32>::from(*word));
                 sim.cycle();
                 cycles += 1;
             }
@@ -867,13 +883,19 @@ mod tests {
         assert!(changed >= 8, "the state mattered in {changed} rounds");
     }
 
-    /// A textured entry (issue 997) takes four slots, and the rasteriser,
-    /// which does not texture yet, passes over its texture's two and draws
-    /// it untextured, in a flat list and in tiles, among entries that are
-    /// not textured.
+    /// Texturing in tiles (issue 997): textured triangles in perspective,
+    /// flat and shaded, under every class of texel, `REPLACE` and
+    /// `MODULATE`, repeated and clamped, among entries that are not
+    /// textured and under a depth test in some rounds, sampled at the
+    /// nearest texel of the base level, are byte for byte the model's. A
+    /// flat list has no texturing, as it has no depth, and draws the same
+    /// entries untextured.
     #[test]
-    fn a_textured_entry_draws_untextured_for_now() {
-        use crate::op::TexMode;
+    fn texturing_in_tiles_is_the_models() {
+        use crate::model::{render_textured, Textures};
+        use crate::op::{DepthMode, TexMode, LESS};
+        use razboj_tile::tex::{encode, texel_offset, Desc, NEAREST};
+        use std::collections::HashMap;
         const A: usize = 20;
         const LOGW: usize = 7;
         const W: usize = 1 << LOGW;
@@ -881,45 +903,236 @@ mod tests {
         const N: usize = 16384;
         const DL: usize = 0xa000;
         const CTRL: usize = 0xfffc;
-        let q = |w: f64| ((1u64 << 48) as f64 / w) as u64;
-        let ops = [
-            Op::Clear { colour: 0x10_2030 },
-            Op::Texture(Some(TexMode {
-                desc: 0,
-                env: 1,
-                env_colour: 0,
-            })),
-            Op::TexTri {
-                a: (4 * 16, 4 * 16),
-                b: (120 * 16, 10 * 16),
-                c: (30 * 16, 60 * 16),
-                colours: [0xff40_80c0; 3],
-                shaded: false,
-                z: [0; 3],
-                uvq: [
-                    (0, 0, q(1.0)),
-                    (1 << 37, 0, q(2.0)),
-                    (0, 1 << 36, q(1.5)),
-                ],
-            },
-            Op::Rect {
+        // The descriptor, and the base level after it, both clear of the
+        // framebuffer and the list.
+        const DESC: u32 = 0x8000;
+        const BASE: u32 = 0x8040;
+        let texel = |i: u32, j: u32| {
+            ((0x80 + 4 * (i + j)) << 24)
+                | ((i * 8) << 16)
+                | ((j * 8) << 8)
+                | ((i ^ j) * 8)
+        };
+        let mut x = 0x2545_f491u32;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x
+        };
+        let (mut textured, mut flat) = (0, 0);
+        for round in 0..10u32 {
+            let d = Desc {
+                base: BASE,
+                log_w: 5,
+                log_h: 5,
+                levels: 1,
+                clamp_s: round % 3 == 1,
+                clamp_t: round % 4 == 2,
+                min: NEAREST,
+                mag: NEAREST,
+                class: round % 5,
+            };
+            let mut more: Vec<(usize, u32)> = encode(&d)
+                .iter()
+                .enumerate()
+                .map(|(k, w)| (DESC as usize + 4 * k, *w))
+                .collect();
+            for j in 0..32 {
+                for i in 0..32 {
+                    let at = BASE + texel_offset(&d, 0, i, j);
+                    more.push((at as usize, texel(i, j)));
+                }
+            }
+            let mem: HashMap<u32, u32> =
+                more.iter().map(|&(a, w)| (a as u32, w)).collect();
+            let deep = round % 3 == 2;
+            let mut ops = vec![
+                Op::Clear {
+                    colour: 0x8010_2030,
+                },
+                Op::Depth(deep.then_some(DepthMode {
+                    func: LESS,
+                    write: true,
+                })),
+                Op::Texture(Some(TexMode {
+                    desc: DESC,
+                    env: round % 2,
+                    env_colour: 0,
+                })),
+            ];
+            for k in 0..4 {
+                // Each vertex: where it is, its clip w, and its texel
+                // coordinates, some past the texture's edges; then `u q`,
+                // `v q` and `q` with the largest `q` one.
+                let vs: Vec<((i32, i32), f64, f64, f64)> = (0..3)
+                    .map(|_| {
+                        let (r, s) = (next(), next());
+                        (
+                            (
+                                (r % (W as u32 * 16)) as i32 - 32,
+                                ((r >> 12) % (H as u32 * 16)) as i32 - 32,
+                            ),
+                            1.0 + (s % 300) as f64 / 100.0,
+                            (s >> 9) as f64 % 96.0 - 32.0,
+                            (s >> 17) as f64 % 96.0 - 32.0,
+                        )
+                    })
+                    .collect();
+                let near = vs.iter().map(|v| v.1).fold(f64::MAX, f64::min);
+                let uvq = core::array::from_fn(|n| {
+                    let (_, w, u, v) = vs[n];
+                    let q = near / w;
+                    (
+                        (u * q * (1u64 << 32) as f64) as i64,
+                        (v * q * (1u64 << 32) as f64) as i64,
+                        (q * (1u64 << 48) as f64) as u64,
+                    )
+                });
+                let (r, s) = (next(), next());
+                ops.push(Op::TexTri {
+                    a: vs[0].0,
+                    b: vs[1].0,
+                    c: vs[2].0,
+                    colours: [r | 0x40 << 24, s, r ^ s],
+                    shaded: k % 2 == 1,
+                    z: [r & 0xffff, s & 0xffff, (r ^ s) >> 16],
+                    uvq,
+                });
+            }
+            ops.push(Op::Rect {
                 colour: 0xffc0_4020,
-                x: 60,
-                y: 20,
-                w: 30,
-                h: 30,
-            },
-        ];
-        let list = assemble(&ops, W, H);
-        assert!(list.iter().any(|i| i.tex.to_bool()));
-        let want = model::render(&list, W, H);
-        let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
-            &[Work::flat(&list), Work::tiled(&list, W, H)],
-            false,
-            false,
+                x: (next() % 100) as i32,
+                y: (next() % 40) as i32,
+                w: 24,
+                h: 20,
+            });
+            let list = assemble(&ops, W, H);
+            assert!(list.iter().any(|i| i.tex.to_bool()));
+            let tiled = Work {
+                more: more.clone(),
+                ..Work::tiled(&list, W, H)
+            };
+            let plain = Work {
+                more,
+                ..Work::flat(&list)
+            };
+            let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
+                &[tiled, plain],
+                false,
+                false,
+            );
+            let read = |a: u32| *mem.get(&a).unwrap_or(&0);
+            let t = Textures { mem: &read };
+            let want = render_textured(&list, W, H, vec![0; W * H], Some(&t));
+            let at = want.iter().zip(&runs[0].fb).position(|(p, q)| p != q);
+            assert_eq!(
+                at,
+                None,
+                "round {round}: in tiles, {:08x} not {:08x}",
+                at.map_or(0, |a| runs[0].fb[a]),
+                at.map_or(0, |a| want[a])
+            );
+            let bare = model::render(&list, W, H);
+            textured += (want != bare) as u32;
+            if !deep {
+                assert_eq!(runs[1].fb, bare, "round {round}: flat, untextured");
+                flat += 1;
+            }
+        }
+        assert!(textured >= 9, "the texture mattered in {textured} rounds");
+        assert!(flat >= 6, "{flat} flat rounds");
+    }
+
+    /// What a textured pixel costs (issue 997), and what its refills ask
+    /// of the link: one tile of 64 by 64 textured whole, against the same
+    /// tile untextured, the difference shared among its pixels. Once with
+    /// every pixel on one texel, so that the cache misses once, and once
+    /// with a pixel sixteen texels across from the last on a texture 1024
+    /// wide, so that a row's 64 blocks share 16 lines and nearly every
+    /// pixel misses and refills a line. A refill is one burst of sixteen beats.
+    #[test]
+    fn what_a_textured_pixel_costs() {
+        use crate::op::{Op, TexMode};
+        use razboj_tile::tex::{encode, Desc, NEAREST};
+        const A: usize = 20;
+        const LOGW: usize = 6;
+        const W: usize = 1 << LOGW;
+        const H: usize = 64;
+        const N: usize = 16384;
+        const DL: usize = 0xa000;
+        const CTRL: usize = 0xfffc;
+        const DESC: u32 = 0x4000;
+        const BASE: u32 = 0x4040;
+        let d = Desc {
+            base: BASE,
+            log_w: 10,
+            log_h: 0,
+            levels: 1,
+            min: NEAREST,
+            mag: NEAREST,
+            ..Desc::default()
+        };
+        let more: Vec<(usize, u32)> = encode(&d)
+            .iter()
+            .enumerate()
+            .map(|(k, w)| (DESC as usize + 4 * k, *w))
+            .collect();
+        // A square of two triangles with `u` growing by `step` texels a
+        // pixel across, and `q` one throughout.
+        let square = |textured: bool, step: i64| {
+            let q = 1u64 << 48;
+            let u = |x: i64| (x * step) << 32;
+            let s = 64 * 16;
+            let mut ops = vec![
+                Op::Clear { colour: 0 },
+                Op::Texture(textured.then_some(TexMode {
+                    desc: DESC,
+                    env: 0,
+                    env_colour: 0,
+                })),
+            ];
+            for (a, b, c) in
+                [((0, 0), (s, 0), (s, s)), ((0, 0), (s, s), (0, s))]
+            {
+                let at = |p: (i32, i32)| (u(p.0 as i64 / 16), 0, q);
+                ops.push(Op::TexTri {
+                    a,
+                    b,
+                    c,
+                    colours: [0xff80_8080; 3],
+                    shaded: false,
+                    z: [0; 3],
+                    uvq: [at(a), at(b), at(c)],
+                });
+            }
+            let list = assemble(&ops, W, H);
+            Work {
+                more: more.clone(),
+                ..Work::tiled(&list, W, H)
+            }
+        };
+        let cost = |step: i64| {
+            let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
+                &[square(false, step), square(true, step)],
+                false,
+                false,
+            );
+            let px = (W * H) as u64;
+            let cycles = runs[1].cycles - 2 * runs[0].cycles;
+            let beats = runs[1].reads.1 - 2 * runs[0].reads.1;
+            (cycles as f64 / px as f64, beats as f64 / px as f64)
+        };
+        let (hit, hit_beats) = cost(0);
+        let (miss, miss_beats) = cost(16);
+        println!(
+            "a textured pixel: {hit:.1} cycles on a hit, {miss:.1} on a \
+             miss, whose refill is {miss_beats:.1} beats ({hit_beats:.3} \
+             a pixel on hits)"
         );
-        assert_eq!(runs[0].fb, want, "flat");
-        assert_eq!(runs[1].fb, want, "in tiles");
+        assert!(hit < 16.0, "{hit:.1} cycles a hit");
+        assert!(miss_beats > 12.0 && miss_beats <= 16.0, "{miss_beats}");
+        assert!(miss < hit + 40.0, "{miss:.1} cycles a miss");
     }
 
     /// What a load costs (issue 993): the same tile table drawn with its
@@ -957,6 +1170,7 @@ mod tests {
         let mut plain = Work {
             words: loaded.words.clone(),
             count: loaded.count,
+            more: Vec::new(),
         };
         for t in 0..tiles {
             plain.words[2 * t + 1] &= !LOAD;

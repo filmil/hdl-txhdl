@@ -135,6 +135,20 @@ rust_binary(
     ],
 )
 
+# The traced run of texturing (issue 997), with the rasteriser's
+# netlist, so the build replays the slots, the reciprocal, the cache and
+# the environment.
+rust_binary(
+    name = "trace_tex",
+    srcs = ["src/trace_tex.rs"],
+    edition = "2021",
+    deps = [
+        ":razboj",
+        ":tile",
+        "//lib:txhdl",
+    ],
+)
+
 # The traced run of blending (issue 993), with the rasteriser's
 # netlist, so the build replays the load, the blend, the alpha test
 # and the mask.

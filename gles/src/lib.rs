@@ -1411,7 +1411,7 @@ impl<'a> Gl<'a> {
             emit::state(&mut w, &mut p, pixel);
         }
         emit::textured_bit(&mut w);
-        ta[13] = self.bound - 1;
+        ta[13] = self.store.as_ref().map_or(0, |s| s.desc_at(self.bound));
         ta[14] = self.env;
         ta[15] = colour_word(&self.env_colour);
         if self.frame.len() - self.used < 4 {

@@ -225,7 +225,7 @@ pub fn decode_tex(i: &mut Insn, a: &[u32; WORDS], b: &[u32; WORDS]) {
     (i.nux, i.nuxd, i.nvx, i.nvxd) = (n(0), n(1), n(2), n(3));
     (i.nuy, i.nuyd, i.nvy, i.nvyd) = (n(4), n(5), n(6), n(7));
     i.lodk = U::from(a[12] & 0xff);
-    i.tdesc = U::from(a[13] & 0xffff);
+    i.tdesc = U::from(a[13]);
     i.tenv = U::from(a[14] & 7);
     i.tenvc = U::from(a[15]);
 }
