@@ -140,6 +140,37 @@ fn texel_bytes(format: u32, type_: u32) -> Option<usize> {
     }
 }
 
+/// A paletted format of `OES_compressed_paletted_texture` (#998): the
+/// bits of an index, and the uncompressed format and type its palette's
+/// entries are laid out as; `None` for any other.
+fn palette_format(internal: u32) -> Option<(u32, u32, u32)> {
+    let (rgb, rgba) = (gl::RGB, gl::RGBA);
+    let layout = match internal {
+        gl::PALETTE4_RGB8_OES | gl::PALETTE8_RGB8_OES => {
+            (rgb, gl::UNSIGNED_BYTE)
+        }
+        gl::PALETTE4_RGBA8_OES | gl::PALETTE8_RGBA8_OES => {
+            (rgba, gl::UNSIGNED_BYTE)
+        }
+        gl::PALETTE4_R5_G6_B5_OES | gl::PALETTE8_R5_G6_B5_OES => {
+            (rgb, gl::UNSIGNED_SHORT_5_6_5)
+        }
+        gl::PALETTE4_RGBA4_OES | gl::PALETTE8_RGBA4_OES => {
+            (rgba, gl::UNSIGNED_SHORT_4_4_4_4)
+        }
+        gl::PALETTE4_RGB5_A1_OES | gl::PALETTE8_RGB5_A1_OES => {
+            (rgba, gl::UNSIGNED_SHORT_5_5_5_1)
+        }
+        _ => return None,
+    };
+    let bits = if internal <= gl::PALETTE4_RGB5_A1_OES {
+        4
+    } else {
+        8
+    };
+    Some((bits, layout.0, layout.1))
+}
+
 impl<'a> Store<'a> {
     /// A store over `mem`, which Razboj reads at `bus`, with no objects.
     /// The descriptor table is cleared, so that a store reopened over the
@@ -338,14 +369,36 @@ impl<'a> Store<'a> {
         align: usize,
     ) -> Result<(), u32> {
         let bytes = texel_bytes(format, type_).ok_or(gl::INVALID_ENUM)?;
-        let (lw, lh) = match (log2(width), log2(height)) {
-            (Some(w), Some(h)) => (w, h),
-            _ => return Err(gl::INVALID_VALUE),
-        };
+        if log2(width).is_none() || log2(height).is_none() {
+            return Err(gl::INVALID_VALUE);
+        }
         let row = (width as usize * bytes).div_ceil(align) * align;
         if pixels.len() < row * (height as usize - 1) + width as usize * bytes {
             return Err(gl::INVALID_VALUE);
         }
+        let at = |i: u32, j: u32| j as usize * row + i as usize * bytes;
+        self.image_with(name, level, format, width, height, &|i, j| {
+            texel(format, type_, pixels, at(i, j))
+        })
+    }
+
+    /// A level of `name` written texel by texel from `t`, which gives the
+    /// texel `(i, j)` as a word, `width` by `height` in `format`: what
+    /// [`Store::image`] does once it has read the pixels, and what a
+    /// compressed image does once it has looked its indices up.
+    fn image_with(
+        &mut self,
+        name: u32,
+        level: u32,
+        format: u32,
+        width: u32,
+        height: u32,
+        t: &dyn Fn(u32, u32) -> u32,
+    ) -> Result<(), u32> {
+        let (lw, lh) = match (log2(width), log2(height)) {
+            (Some(w), Some(h)) => (w, h),
+            _ => return Err(gl::INVALID_VALUE),
+        };
         let o = *self.object(name).ok_or(gl::INVALID_OPERATION)?;
         // The base level's sides this level belongs to.
         let base = if level == 0 {
@@ -374,9 +427,7 @@ impl<'a> Store<'a> {
         let d = self.desc_of(&o);
         for j in 0..height {
             for i in 0..width {
-                let at = j as usize * row + i as usize * bytes;
-                let t = texel(format, type_, pixels, at);
-                self.put(&d, level, i, j, t);
+                self.put(&d, level, i, j, t(i, j));
             }
         }
         o.defined |= 1 << level;
@@ -388,6 +439,63 @@ impl<'a> Store<'a> {
         }
         self.objects[name as usize - 1] = o;
         self.publish(name);
+        Ok(())
+    }
+
+    /// `glCompressedTexImage2D` in one of the ten paletted formats of
+    /// `OES_compressed_paletted_texture` (#998), into the object `name`:
+    /// `data` is the palette, then each level's indices, which this
+    /// looks up and writes as [`Store::image`] writes texels, every
+    /// level the data holds. `level` is nought for the base alone, or
+    /// less, `-level` more levels following it. A palette's entries are
+    /// read as the uncompressed format of the same layout reads a texel;
+    /// a level's indices are packed with no padding, a 4-bit pair a byte
+    /// with the first in the high bits, and the next level starts on a
+    /// byte.
+    pub fn compressed(
+        &mut self,
+        name: u32,
+        level: i32,
+        internal: u32,
+        width: u32,
+        height: u32,
+        data: &[u8],
+    ) -> Result<(), u32> {
+        let (bits, format, type_) =
+            palette_format(internal).ok_or(gl::INVALID_ENUM)?;
+        let entry = texel_bytes(format, type_).ok_or(gl::INVALID_ENUM)?;
+        if level > 0 || log2(width).is_none() || log2(height).is_none() {
+            return Err(gl::INVALID_VALUE);
+        }
+        let palette = (1usize << bits) * entry;
+        let levels = (1 - level) as u32;
+        let side = |s: u32, l: u32| (s >> l).max(1);
+        let size = |l: u32| {
+            let n = side(width, l) as usize * side(height, l) as usize;
+            (n * bits as usize).div_ceil(8)
+        };
+        let total: usize = palette + (0..levels).map(size).sum::<usize>();
+        if data.len() < total {
+            return Err(gl::INVALID_VALUE);
+        }
+        let mut at = palette;
+        for l in 0..levels {
+            let (w, h) = (side(width, l), side(height, l));
+            let index = |i: u32, j: u32| {
+                let k = (j * w + i) as usize;
+                if bits == 8 {
+                    data[at + k] as usize
+                } else {
+                    let b = data[at + k / 2];
+                    (if k.is_multiple_of(2) { b >> 4 } else { b & 15 }) as usize
+                }
+            };
+            let t = |i: u32, j: u32| {
+                texel(format, type_, data, index(i, j) * entry)
+            };
+            self.image_with(name, l, format, w, h, &t)?;
+            at += size(l);
+        }
         Ok(())
     }
 

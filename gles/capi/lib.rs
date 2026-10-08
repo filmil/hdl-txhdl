@@ -1220,6 +1220,36 @@ pub unsafe extern "C" fn glTexImage2D(
     });
 }
 
+/// `glCompressedTexImage2D`, the paletted formats only (#998): `size`
+/// bytes from `data`, the palette and the levels' indices.
+#[no_mangle]
+pub unsafe extern "C" fn glCompressedTexImage2D(
+    target: u32,
+    level: i32,
+    internal: u32,
+    width: i32,
+    height: i32,
+    border: i32,
+    size: i32,
+    data: *const c_void,
+) {
+    if width < 1 || height < 1 || border != 0 || size < 0 || data.is_null() {
+        return gles_record_error(gl::INVALID_VALUE);
+    }
+    let bytes = core::slice::from_raw_parts(data as *const u8, size as usize);
+    with(|g| {
+        g.compressed_tex_image_2d(
+            target,
+            level,
+            internal,
+            width as u32,
+            height as u32,
+            0,
+            bytes,
+        )
+    });
+}
+
 #[no_mangle]
 pub extern "C" fn glTexParameteri(target: u32, pname: u32, param: i32) {
     with(|g| g.tex_parameter(target, pname, param as u32));

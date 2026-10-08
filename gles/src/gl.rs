@@ -138,6 +138,17 @@ pub const UNSIGNED_BYTE: u32 = 0x1401;
 pub const UNSIGNED_SHORT_4_4_4_4: u32 = 0x8033;
 pub const UNSIGNED_SHORT_5_5_5_1: u32 = 0x8034;
 pub const UNSIGNED_SHORT_5_6_5: u32 = 0x8363;
+/// The paletted formats of `OES_compressed_paletted_texture` (#998).
+pub const PALETTE4_RGB8_OES: u32 = 0x8B90;
+pub const PALETTE4_RGBA8_OES: u32 = 0x8B91;
+pub const PALETTE4_R5_G6_B5_OES: u32 = 0x8B92;
+pub const PALETTE4_RGBA4_OES: u32 = 0x8B93;
+pub const PALETTE4_RGB5_A1_OES: u32 = 0x8B94;
+pub const PALETTE8_RGB8_OES: u32 = 0x8B95;
+pub const PALETTE8_RGBA8_OES: u32 = 0x8B96;
+pub const PALETTE8_R5_G6_B5_OES: u32 = 0x8B97;
+pub const PALETTE8_RGBA4_OES: u32 = 0x8B98;
+pub const PALETTE8_RGB5_A1_OES: u32 = 0x8B99;
 
 /// The largest texture's side, Razboj's: ten bits of coordinate.
 pub const MAX_TEXTURE_SIZE: u32 = 1024;

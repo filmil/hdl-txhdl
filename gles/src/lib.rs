@@ -724,6 +724,41 @@ impl<'a> Gl<'a> {
         }
     }
 
+    /// `glCompressedTexImage2D` (#998): one of the ten paletted formats of
+    /// `OES_compressed_paletted_texture`, its palette and every level
+    /// `data` holds, `-level` levels after the base when `level` is below
+    /// nought, into the texture bound. Any other format is an error, as
+    /// GL ES 1.1 has no other compressed format.
+    #[allow(clippy::too_many_arguments)] // GL's own arguments, in its order.
+    pub fn compressed_tex_image_2d(
+        &mut self,
+        target: u32,
+        level: i32,
+        internal: u32,
+        width: u32,
+        height: u32,
+        border: u32,
+        data: &[u8],
+    ) {
+        if target != gl::TEXTURE_2D {
+            return self.fail(gl::INVALID_ENUM);
+        }
+        if border != 0 {
+            return self.fail(gl::INVALID_VALUE);
+        }
+        let name = self.bound;
+        let r = match self.store.as_mut() {
+            Some(s) if name != 0 => {
+                s.compressed(name, level, internal, width, height, data)
+            }
+            Some(_) => Err(gl::INVALID_OPERATION),
+            None => Err(gl::OUT_OF_MEMORY),
+        };
+        if let Err(e) = r {
+            self.fail(e);
+        }
+    }
+
     /// `glTexParameteri` and `glTexParameterx` on the texture bound.
     pub fn tex_parameter(&mut self, target: u32, pname: u32, value: u32) {
         if target != gl::TEXTURE_2D {
