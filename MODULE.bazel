@@ -82,6 +82,41 @@ http_archive(
     ],
 )
 
+# The RISC-V architectural tests (issue 1442), as vreteno-conformance
+# builds them: GCC 15, which the tests ask for together with binutils
+# 2.44 or later, beside the GCC 14 above that builds the core's
+# programs; the Sail reference model, which computes the results each
+# test checks itself against; and the tests, at a named commit, whose
+# headers `//cpu/vreteno/act:repo.bzl` reads into a catalog.
+http_archive(
+    name = "riscv_gcc15",
+    build_file = "//third_party/riscv_gcc:BUILD.toolchain",
+    sha256 = "aaaa8060c914851a3e5ee1ba82cc3d6f80972f90638a05c6e823a37557a33758",
+    strip_prefix = "xpack-riscv-none-elf-gcc-15.2.0-1",
+    urls = [
+        "https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases/download/v15.2.0-1/xpack-riscv-none-elf-gcc-15.2.0-1-linux-x64.tar.gz",
+    ],
+)
+
+http_archive(
+    name = "sail_riscv",
+    build_file = "//third_party/sail:BUILD.sail",
+    sha256 = "8bb3626a6ce5d45c1d1fa7b907f9d9602cc23270883e470db5d6401f26a2e143",
+    strip_prefix = "sail-riscv-Linux-x86_64",
+    urls = [
+        "https://github.com/riscv/sail-riscv/releases/download/0.15/sail-riscv-Linux-x86_64.tar.gz",
+    ],
+)
+
+act_tests = use_repo_rule("//cpu/vreteno/act:repo.bzl", "act_tests")
+
+act_tests(
+    name = "riscv_arch_test",
+    sha256 = "f7a1d312bbb1d88b14d4ee0eb9dce61b56acfbc88c7db65980b065910853167d",
+    strip_prefix = "riscv-arch-test-a215271eab1270afb9c97b713753f6da658ac0d5",
+    url = "https://github.com/riscv-non-isa/riscv-arch-test/archive/a215271eab1270afb9c97b713753f6da658ac0d5.tar.gz",
+)
+
 # Doom (issue 1177): doomgeneric, the portable Doom whose platform is five
 # functions, fetched by checksum at a pinned commit and built from there.
 # It is GPL-2.0 and this repository is Apache-2.0, so it is not copied
