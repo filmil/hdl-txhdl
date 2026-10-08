@@ -103,3 +103,95 @@ vreteno_cc_image = rule(
         ),
     },
 )
+
+# A C program of many files, loaded rather than built into the boot
+# memory (issue 1177): what `-Os` and the sections are for above, less
+# the C++ ones. `-ffreestanding` is left out, since the program has the
+# standard library, newlib's, as the toolchain carries it; the program
+# gives newlib its system calls.
+_C_FLAGS = [
+    "-Os",
+    "-ffunction-sections",
+    "-fdata-sections",
+]
+
+def _vreteno_c_program_impl(ctx):
+    toolchain = ctx.attr._toolchain.files
+    gcc = ctx.file._gcc
+    hdrs = depset(transitive = [h.files for h in ctx.attr.hdrs])
+    dirs = {}
+    for h in hdrs.to_list():
+        dirs[h.dirname] = True
+    includes = ["-I" + d for d in dirs.keys()]
+    objects = []
+    for src in ctx.files.srcs:
+        if src.extension == "h":
+            continue
+        obj = ctx.actions.declare_file(
+            "_objs/{}/{}.o".format(ctx.label.name, src.short_path.replace("/", "_")),
+        )
+        ctx.actions.run(
+            inputs = depset([src], transitive = [hdrs, toolchain]),
+            outputs = [obj],
+            executable = gcc,
+            arguments = _ARCH + _C_FLAGS + ctx.attr.copts + includes + [
+                "-c",
+                src.path,
+                "-o",
+                obj.path,
+            ],
+            mnemonic = "VretenoCc",
+            progress_message = "Compiling %s for Vreteno" % src.short_path,
+        )
+        objects.append(obj)
+    elf = ctx.actions.declare_file(ctx.label.name + ".elf")
+    ctx.actions.run(
+        inputs = depset(objects + [ctx.file.linker_script], transitive = [toolchain]),
+        outputs = [elf],
+        executable = gcc,
+        arguments = _ARCH + [
+            "-nostartfiles",
+            "-static",
+            "-specs=nano.specs",
+            "-Wl,--gc-sections",
+            "-T",
+            ctx.file.linker_script.path,
+            "-o",
+            elf.path,
+        ] + [o.path for o in objects] + ["-lc", "-lm", "-lgcc"],
+        mnemonic = "VretenoLink",
+        progress_message = "Linking %s for Vreteno" % ctx.label.name,
+    )
+    flat = ctx.actions.declare_file(ctx.label.name + ".bin")
+    ctx.actions.run(
+        inputs = [elf],
+        outputs = [flat],
+        executable = ctx.file._objcopy,
+        arguments = ["-O", "binary", elf.path, flat.path],
+        mnemonic = "VretenoFlat",
+        progress_message = "Making the flat image of %s" % ctx.label.name,
+    )
+    return [DefaultInfo(files = depset([flat, elf]))]
+
+vreteno_c_program = rule(
+    implementation = _vreteno_c_program_impl,
+    doc = "A C program of many files compiled for the core with newlib, " +
+          "linked as the linker script says and made a flat image, " +
+          "`<name>.bin`, which the serial loader or fastboot's boot runs, " +
+          "beside its ELF, `<name>.elf`.",
+    attrs = {
+        "srcs": attr.label_list(allow_files = [".c", ".S", ".h"], mandatory = True),
+        "hdrs": attr.label_list(allow_files = [".h"]),
+        "copts": attr.string_list(),
+        "linker_script": attr.label(allow_single_file = [".ld"], mandatory = True),
+        "_toolchain": attr.label(default = "@riscv_none_elf_gcc//:all"),
+        "_gcc": attr.label(
+            default = "@riscv_none_elf_gcc//:gcc",
+            allow_single_file = True,
+        ),
+        "_objcopy": attr.label(
+            default = "@riscv_none_elf_gcc//:objcopy",
+            allow_single_file = True,
+        ),
+    },
+)

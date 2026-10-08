@@ -22,6 +22,12 @@ filegroup(
     srcs = ["bin/riscv-none-elf-g++"],
 )
 
+# The C driver, for a C program of many files (issue 1177).
+filegroup(
+    name = "gcc",
+    srcs = ["bin/riscv-none-elf-gcc"],
+)
+
 # The assembler and the disassembler, which the core's decoder of
 # compressed instructions is checked against.
 filegroup(
