@@ -93,6 +93,9 @@ pub struct Pixel {
     pub blend: Option<(u32, u32)>,
     pub alpha: Option<(u32, u32)>,
     pub mask: u32,
+    /// The logic operation in place of the blend (Razboj's #998), GL's
+    /// `GL_CLEAR` to `GL_SET` less `0x1500`.
+    pub logic: Option<u32>,
 }
 
 impl Pixel {
@@ -101,11 +104,13 @@ impl Pixel {
         blend: None,
         alpha: None,
         mask: 0xf,
+        logic: None,
     };
 }
 
 /// An instruction's word 15 told it has the pixel's state `p`, and its
-/// second slot, `slot`, given it in words 3 and 4 (Razboj's #993).
+/// second slot, `slot`, given it in words 3 and 4 (Razboj's #993) and the
+/// logic operation in word 5 (#998).
 pub fn state(w: &mut [u32; WORDS], slot: &mut [u32; WORDS], p: Pixel) {
     w[15] |= 1 << 13;
     slot[3] = p
@@ -115,6 +120,7 @@ pub fn state(w: &mut [u32; WORDS], slot: &mut [u32; WORDS], p: Pixel) {
         .alpha
         .map_or(0, |(f, r)| 1 | (f & 7) << 1 | (r & 0xff) << 8)
         | (p.mask & 0xf) << 16;
+    slot[5] = p.logic.map_or(0, |op| 1 | (op & 0xf) << 1);
 }
 
 /// A depth plane's slot for a depth `z` everywhere, of sixteen bits:

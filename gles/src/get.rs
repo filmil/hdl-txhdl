@@ -245,6 +245,8 @@ impl Gl<'_> {
             gl::LIGHT_MODEL_AMBIENT => u(&self.scene_ambient),
             gl::LIGHT_MODEL_TWO_SIDE => b(&[self.two_side]),
             // Polygon offset (#998).
+            // The logic operation (#998).
+            gl::LOGIC_OP_MODE => i(&[(gl::CLEAR + self.logic) as i64]),
             // The scissor and the hints (#1490).
             SCISSOR_BOX => {
                 let (x, y, w, h) = self.scissor;

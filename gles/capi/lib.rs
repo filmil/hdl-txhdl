@@ -514,6 +514,11 @@ pub extern "C" fn glClear(mask: u32) {
 }
 
 #[no_mangle]
+pub extern "C" fn glLogicOp(op: u32) {
+    with(|g| g.logic_op(op));
+}
+
+#[no_mangle]
 pub extern "C" fn glScissor(x: i32, y: i32, w: i32, h: i32) {
     with(|g| g.scissor(x, y, w, h));
 }
