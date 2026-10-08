@@ -1958,6 +1958,44 @@ fn the_loader_loads_a_program_and_runs_it() {
     assert!(ran.halted_at.is_some(), "the loaded program halted");
 }
 
+/// A loaded program that traps comes back to the loader, which says
+/// so on the serial line and keeps the trap at `0x1000`, where a
+/// debugger reads it by system bus access once the line has been lost
+/// (issue 1411): the magic, a count of one, and the cause and the
+/// address of the `ebreak` that trapped.
+#[test]
+fn the_loader_keeps_the_last_trap_for_a_debugger() {
+    let addr = 0x4000_0000;
+    let image = [vreteno32::isa::ebreak()];
+    let plan = [
+        Op::Wait(300_000),
+        Op::Read(0x1000),
+        Op::Read(0x1004),
+        Op::Read(0x1008),
+        Op::Read(0x100c),
+    ];
+    let ran = run_all(
+        boot_program::TEXT,
+        boot_program::DATA,
+        &stream(addr, &image),
+        &blocks(image.len()),
+        400_000,
+        Net::default(),
+        &plan,
+    );
+    assert!(
+        ran.said.contains("trap 00000003 at 40000000\n"),
+        "the loader said the trap: {}",
+        ran.said
+    );
+    assert_eq!(
+        ran.got,
+        vec![0x5041_5254, 1, 3, 0x4000_0000],
+        "the kept trap, after: {}",
+        ran.said
+    );
+}
+
 /// A stream whose checksum does not match is refused, and the loader
 /// waits for another rather than jumping into whatever arrived.
 #[test]
