@@ -11,6 +11,7 @@ NAME_timing.tex.
 """
 
 load("//tools:quiet.bzl", "quiet_cmd")
+load("//tools:sized_test.bzl", "sized_test")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@rules_nvc//nvc:rules.bzl", "vhdl_test")
@@ -27,7 +28,8 @@ def waveform(
         width = None,
         foreign_vhdl = [],
         foreign_verilog = [],
-        nvc_heap = None):
+        nvc_heap = None,
+        sim_size = None):
     """`lowered = (entity, unit)` also takes the example's VHDL and
     Verilog and simulates each against the trace: NAME.vhd, NAME.v and
     NAME.vhd.ports from the run, NAME_tb.vhd, NAME_tb.v and its
@@ -43,7 +45,10 @@ def waveform(
     that language, since the netlist names them and does not write
     them.
     `nvc_heap` is the heap the VHDL replay gives nvc, such as "64m",
-    for a netlist that does not elaborate in nvc's 16 MiB."""
+    for a netlist that does not elaborate in nvc's 16 MiB.
+    `sim_size` is the nvc replay's test size, "large" for one that
+    takes more than a fifth of the medium size's 300 seconds alone, as
+    a loaded host runs it up to five times slower (issue 1448)."""
     outs = ["out_" + name + ".txt", name + ".fst", name + ".fst.names"]
     env = "TXHDL_FST=$(RULEDIR)/" + name + ".fst"
     if lowered:
@@ -72,13 +77,24 @@ def waveform(
                       " $(location " + name + ".vhd.ports) " + entity + " " + unit + " > $@",
                 tools = ["//tools/fst2tb"],
             )
+            # vhdl_test takes no size (filmil/bazel_rules_nvc issue
+            # 110), so a sized replay is made under another name,
+            # manual, and run under its own name by sized_test.
+            sim = name + "_sim" + tag
             vhdl_test(
-                name = name + "_sim" + tag,
+                name = sim + "_nvc" if sim_size else sim,
                 srcs = foreign_vhdl + [name + ".vhd", tb + ".vhd"],
                 deps = [],
                 entities = [entity + "_tb"],
                 global_args = ["-H", nvc_heap] if nvc_heap else [],
+                tags = ["manual"] if sim_size else [],
             )
+            if sim_size:
+                sized_test(
+                    name = sim + "_" + entity + "_tb_test",
+                    size = sim_size,
+                    test = sim + "_nvc_" + entity + "_tb_test",
+                )
             # The Verilog testbench is a loop over a file of vectors,
             # one a cycle, which the test opens from its runfiles by the
             # path it has in the workspace (issue 601).
