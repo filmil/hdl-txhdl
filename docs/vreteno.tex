@@ -527,6 +527,14 @@ and 7088 from the DDR3, and \code{ethperf.rs} copies a full frame into
 a DDR3 slot in 20\,142 where the board took 19\,926. A cold run misses
 by the instruction cache's fills, which the model does not have, and a
 transmit by the engine, which it does not time.
+With \code{--profile} the machine writes what each address cost, and
+with \code{--watch} who reached an address and with what length; against
+a program's symbols they say where its time goes whatever the cable's
+pacing (issue~1434). They showed the fastboot server's receive path
+paying per fragment of a frame: at Zephyr's default buffers of 128 bytes
+a segment was a dozen allocations, cursor steps and locks. A buffer a
+frame, and room in \code{recv} for more than one segment, took the
+model's download from 77.4 cycles a byte to 60.4.
 \code{boot\_net\_test} boots an image whose command line asks
 \code{/init} for the network, and passes when Linux has pinged that
 station and had its replies.
