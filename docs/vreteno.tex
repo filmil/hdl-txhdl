@@ -200,10 +200,12 @@ dropped; clear, which reset leaves, either is an access fault, as
 Section~\ref{sec:v-core} says.
 
 Five more say what the machine is rather than what it is doing.
-\code{misa} reports RV32IMAC with supervisor and user mode, and \code{mvendorid}, \code{marchid},
-\code{mimpid} and \code{mhartid} read as zero: an unassigned vendor,
-an unspecified architecture and implementation, and one hart, which is
-hart zero. They are there because a stock kernel reads one of them
+\code{misa} reports RV32IMAC with supervisor and user mode;
+\code{mvendorid}, \code{marchid} and \code{mimpid} read as zero, an
+unassigned vendor and an unspecified architecture and implementation;
+and \code{mhartid} reads the hart's number, which the core takes as a
+parameter, zero unless it is built as another hart (issue~\#1408).
+They are there because a stock kernel reads one of them
 before it does anything else. Zephyr's reset code begins
 \code{csrr a0, mhartid}, and until the core answered it that
 instruction was an illegal one, so the kernel's first act was a trap

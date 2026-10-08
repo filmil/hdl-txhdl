@@ -22,12 +22,19 @@ use crate::core::{Vreteno, Writeback};
 /// The core and its unit, eight entries in each of the unit's two
 /// translation buffers.
 #[derive(Trace, Default)]
-pub struct Hart<const IW: usize, const DW: usize = 16384, const IC: usize = 1> {
+pub struct Hart<
+    const IW: usize,
+    const DW: usize = 16384,
+    const IC: usize = 1,
+    const HID: usize = 0,
+> {
     pub mmu: Mmu8,
-    pub core: Vreteno<IW, DW, IC>,
+    pub core: Vreteno<IW, DW, IC, HID>,
 }
 
-impl<const IW: usize, const DW: usize, const IC: usize> Hart<IW, DW, IC> {
+impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize>
+    Hart<IW, DW, IC, HID>
+{
     /// A hart whose core has its program loaded.
     pub fn with(program: &[u32]) -> Self {
         Hart {
@@ -39,8 +46,8 @@ impl<const IW: usize, const DW: usize, const IC: usize> Hart<IW, DW, IC> {
 
 // begin{run}
 #[lower]
-impl<const IW: usize, const DW: usize, const IC: usize> Unit
-    for Hart<IW, DW, IC>
+impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize> Unit
+    for Hart<IW, DW, IC, HID>
 {
     async fn run(
         &mut self,

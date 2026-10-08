@@ -521,10 +521,12 @@ pub struct Csrs {
     pub stval: U<32>,
     pub satp: U<32>,
     pub time: U<64>,
+    /// `mhartid`, the hart's number (issue 1408).
+    pub hartid: U<32>,
 }
 
 /// Which of the CSRs that read as anything but zero a number names:
-/// one to thirty-seven, in the order [`csr_read_at`] reads them, and
+/// one to thirty-eight, in the order [`csr_read_at`] reads them, and
 /// zero for every other number, which reads as zero. The core finds it
 /// from the instruction register, into a register of its own, so that
 /// the read is a select on a register rather than the number's decode
@@ -570,6 +572,7 @@ fn csr_index(f12: U<12>) -> U<6> {
         0xc82 => U::<6>::from(35u8),
         0x30a => U::<6>::from(36u8),
         0x10a => U::<6>::from(37u8),
+        0xf14 => U::<6>::from(38u8),
         _ => U::<6>::from(0u8),
     })
 }
@@ -617,6 +620,7 @@ fn csr_read_at(at: U<6>, c: Csrs) -> U<32> {
         35 => c.minstret.slice::<32, 32>(),
         36 => c.menv_fiom.zext::<32>(),
         37 => c.senv_fiom.zext::<32>(),
+        38 => c.hartid,
         _ => U::<32>::from(0u32),
     })
 }
@@ -790,6 +794,7 @@ pub struct Vreteno<
     const IW: usize,
     const DW: usize = 16384,
     const IC: usize = 1,
+    const HID: usize = 0,
 > {
     pub pc: Reg<U<32>>,
     pub ir: Reg<U<32>>,
@@ -1149,7 +1154,9 @@ pub struct Vreteno<
     // end{vm}
 }
 
-impl<const IW: usize, const DW: usize, const IC: usize> Vreteno<IW, DW, IC> {
+impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize>
+    Vreteno<IW, DW, IC, HID>
+{
     /// The data RAM's depth is a power of two, since its addresses are
     /// masked to it with `DW - 1` (issue 1275).
     const DW_POW2: () = assert!(
@@ -1185,8 +1192,8 @@ impl<const IW: usize, const DW: usize, const IC: usize> Vreteno<IW, DW, IC> {
 }
 
 #[lower]
-impl<const IW: usize, const DW: usize, const IC: usize> Unit
-    for Vreteno<IW, DW, IC>
+impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize> Unit
+    for Vreteno<IW, DW, IC, HID>
 {
     async fn run(
         &mut self,
@@ -1826,6 +1833,7 @@ impl<const IW: usize, const DW: usize, const IC: usize> Unit
                     stval: self.stval.get(),
                     satp: self.satp.get(),
                     time: time.get(),
+                    hartid: U::<32>::from(HID as u32),
                 },
             );
             let csr_known = csr_known(f12);
