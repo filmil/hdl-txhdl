@@ -233,7 +233,7 @@ fn the_textured_frame_on_the_rasteriser_is_the_models() {
         0,
         Box::SCREEN,
         true,
-        Some((&mut room, TEX)),
+        Some((&mut room, TEX, true)),
         &mut out,
     );
     let list = insns(&out[..n]);
@@ -264,4 +264,28 @@ fn the_textured_frame_on_the_rasteriser_is_the_models() {
         "{} cycles, {} read bursts, {} slots",
         runs[0].cycles, runs[0].reads.0, n
     );
+}
+
+/// A frame that finds the texture an earlier frame uploaded (#1433)
+/// writes the same list, word for word, as one that uploads it, at every
+/// angle tried and in either buffer.
+#[test]
+fn a_kept_texture_draws_as_an_uploaded_one() {
+    const TEX: u32 = 0x38_0000;
+    let m = Model::new(&Solid::new());
+    let mut room = vec![0u32; ico_gl::TEX_ROOM];
+    for step in 0..16 {
+        let (ay, ax) = ((step * 16) & 255, (step * 9) & 255);
+        let dy = (step & 1) * SECOND;
+        let mut up = [[0u32; WORDS]; ico_gl::MOST];
+        let mut kept = [[0u32; WORDS]; ico_gl::MOST];
+        let tex = Some((&mut room[..], TEX, true));
+        let (nu, _) =
+            ico_gl::frame(&m, ay, ax, dy, Box::SCREEN, true, tex, &mut up);
+        let tex = Some((&mut room[..], TEX, false));
+        let (nk, _) =
+            ico_gl::frame(&m, ay, ax, dy, Box::SCREEN, true, tex, &mut kept);
+        assert_eq!(nu, nk, "slots at {ay},{ax}");
+        assert!(up[..nu] == kept[..nk], "the lists differ at {ay},{ax}");
+    }
 }

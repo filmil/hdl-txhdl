@@ -261,6 +261,9 @@ fn main() -> ! {
                 )
             },
             TEX,
+            // The first frame uploads the texture, and every frame after it
+            // finds it where it is (#1433).
+            frames == 0,
         ));
         #[cfg(gl)]
         let (n, filled) = ico_gl::frame(

@@ -7,8 +7,9 @@
 //!
 //! At each of the four angles the board's cycles lines fall on, every
 //! 64th frame, it times:
-//! * the frame's list untextured and textured, as `ico_gl::frame`
-//!   builds each, the second as `ico_tex_hdmi` builds it;
+//! * the frame's list untextured, textured with the texture uploaded,
+//!   and textured with the texture kept from before, as `ico_gl::frame`
+//!   builds each (#1433);
 //! * the texture's setup and upload alone, `ico_gl::texture` in a new
 //!   context;
 //! * each list binned into a tile table where `ico_hdmi` puts one, and
@@ -79,7 +80,7 @@ fn main() -> ! {
     let mut plain = [[0u32; WORDS]; ico_gl::MOST];
     let mut tex = [[0u32; WORDS]; ico_gl::MOST];
     Uart::say(
-        b"ico cost: angle plain textured upload bin_plain bin_tex tiles\n",
+        b"ico cost: angle plain textured kept upload bin_plain bin_tex tiles\n",
     );
     for k in 0..4i32 {
         // The board's lines come every 64 frames, from the frame that
@@ -111,10 +112,25 @@ fn main() -> ! {
             dy,
             Box::SCREEN,
             true,
-            Some((room, TEX)),
+            Some((room, TEX, true)),
             &mut tex,
         );
         let t2 = mcycle();
+        let room = unsafe {
+            core::slice::from_raw_parts_mut(TEX as *mut u32, ico_gl::TEX_ROOM)
+        };
+        let (nk, _) = ico_gl::frame(
+            &model,
+            ay,
+            ax,
+            dy,
+            Box::SCREEN,
+            true,
+            Some((room, TEX, false)),
+            &mut tex,
+        );
+        let t2k = mcycle();
+        let _ = nk;
         let room = unsafe {
             core::slice::from_raw_parts_mut(TEX as *mut u32, ico_gl::TEX_ROOM)
         };
@@ -122,6 +138,7 @@ fn main() -> ! {
         let mut g = Gl::new(&mut scratch, ico_list::W as u32, sh);
         ico_gl::texture(&mut g, room, TEX);
         let t3 = mcycle();
+        let upload = t3.wrapping_sub(t2k);
         let _ = binned(&plain, np, sh);
         let t4 = mcycle();
         let tiles = binned(&tex, nt, sh);
@@ -131,7 +148,8 @@ fn main() -> ! {
         say(k as u32);
         say(t1.wrapping_sub(t0));
         say(t2.wrapping_sub(t1));
-        say(t3.wrapping_sub(t2));
+        say(t2k.wrapping_sub(t2));
+        say(upload);
         say(t4.wrapping_sub(t3));
         say(t5.wrapping_sub(t4));
         say(tiles as u32);
