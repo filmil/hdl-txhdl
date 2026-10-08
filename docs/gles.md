@@ -23,7 +23,7 @@ Everything before the pixel is the library's: vertices, matrices, lighting, clip
 Everything from the pixel on is Razboj's: coverage, the fill rule, interpolating colour across a triangle, and later depth and blending.
 
 It is not conformant ES 1.1, and does not claim to be.
-ES 1.1 requires texturing, which issue 997 adds with one texture unit, and the library leaves out fog, stencil, logic operations and point sprites, which wait for issue 998.
+ES 1.1 requires texturing, which issue 997 adds with one texture unit, and the library leaves out fog, stencil and logic operations, which wait for issue 998.
 The conformance run is issue 999.
 Until then `glGetString(GL_VERSION)` says what the library is, "Common-Lite, one texture unit, not conformant", rather than claim the profile.
 
@@ -48,13 +48,13 @@ A later issue means the entry point is accepted from the start but does what tha
 | Depth | `glDepthFunc`, `glDepthMask`, `glPolygonOffsetx`; `GL_POLYGON_OFFSET_FILL` | Now, from #1273, drawn in a tile table; polygon offset from #998 |
 | Blending and masks | `glBlendFunc`, `glAlphaFuncx`, `glColorMask` | Now, from #993, drawn in a tile table |
 | Textures | `glGenTextures`, `glDeleteTextures`, `glBindTexture`, `glTexImage2D`, `glTexParameteri`, `glTexParameterx`, `glTexEnvi`, `glTexEnvx`, `glTexEnvxv`, `glTexCoordPointer`, `glMultiTexCoord4x`, `glActiveTexture`, `glClientActiveTexture`, `glPixelStorei`; `GL_TEXTURE_2D` and `GL_TEXTURE_COORD_ARRAY` | From #997, one unit, drawn in a tile table; the rasteriser samples under every filter, mipmapped, and every environment but `GL_COMBINE`, as Razboj's model does |
-| Points and lines | `glPointSizex`, `glLineWidthx`, and the point and line modes of the draw calls | Now, from issue 994 |
+| Points and lines | `glPointSizex`, `glLineWidthx`, and the point and line modes of the draw calls; `GL_POINT_SPRITE_OES` and `GL_COORD_REPLACE_OES` | Now, from issue 994; point sprites from #998 |
 | Switches | `glEnable`, `glDisable`, `glIsEnabled` for `GL_LIGHTING`, `GL_LIGHT0` to `GL_LIGHT7`, `GL_CULL_FACE`, `GL_NORMALIZE`, `GL_RESCALE_NORMAL`, `GL_COLOR_MATERIAL`, `GL_CLIP_PLANE0`, `GL_DEPTH_TEST`, `GL_BLEND`, `GL_ALPHA_TEST`; and the rest as the issues above land | Now, and growing |
 | Queries and errors | `glGetError`, `glGetIntegerv`, `glGetFixedv`, `glGetBooleanv`, `glGetString`, `glGetPointerv` | Now, the queries from #1484 (section 10) |
 | Completion | `glFlush`, `glFinish` | Now (section 7) |
 | Hints | `glHint` | Accepted and ignored, as the specification allows |
 
-Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit, which wait for a program that needs them; fog (#998), stencil (#998), `glLogicOp` (#998), point sprites (#998), and `glReadPixels`, which needs a read path from the framebuffer that nothing has asked for yet.
+Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit, which wait for a program that needs them; fog (#998), stencil (#998), `glLogicOp` (#998), and `glReadPixels`, which needs a read path from the framebuffer that nothing has asked for yet.
 An entry point that is left out still exists, so that a program links, and sets `GL_INVALID_ENUM` or `GL_INVALID_OPERATION` as the specification says for an unsupported value.
 
 The limits the library reports are the specification's minimums: a modelview stack of 16, projection and texture stacks of 2, eight lights, one clip plane.
@@ -324,6 +324,11 @@ That parallelogram is two of Razboj's triangles, shaded smooth from one end's co
 With the top-left rule, every column of such a line between its ends, or row when it is more down than across, holds exactly as many pixels as the line is wide.
 `//gles:prims_test` checks that through Razboj's model at 120 slopes and four widths, with every pixel within half the width of the line.
 It also checks points of sizes 1 to 8 at sub-pixel positions against GL's square, and the segments each mode makes.
+With `GL_POINT_SPRITE_OES` on and `GL_COORD_REPLACE_OES` set by `glTexEnv`, a point drawn while a texture is bound and complete is a point sprite (#998).
+It is the same square, as two textured triangles with `s` from nought at its left edge to one at its right and `t` from nought at its top to one at its bottom.
+So a pixel's coordinates are GL's `1/2 + (x - x_w + 1/2) / size` and `1/2 - (y - y_w + 1/2) / size`, and `q` is one.
+Its level of detail is the square's against the texture's, so a mipmapped sprite reads the level its size asks for.
+`//gles:texture_test`'s `a_point_sprite_is_the_texture_across_it` holds a sprite 32 pixels square to that formula, texel by texel, and the same point without coordinate replacement to its own colour.
 GL's own rule for a line one pixel wide, the diamond exit, differs from this at the ends and on ties; it is left for the conformance tests, issue 999, to ask for.
 
 Depth is issue 1273's, on #992's depth test in Razboj's tile buffer.
