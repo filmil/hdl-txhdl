@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Freedoom 0.13.0 as fetched: the first game's data, the IWAD Doom loads.
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["freedoom1.wad"])

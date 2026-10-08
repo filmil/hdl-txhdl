@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: Apache-2.0
+# Doom (issue 1177): doomgeneric's game, fetched, with platforms of this
+# repository's. What links the game is GPL-2.0, as the game is; the
+# platform files here are Apache-2.0 on their own.
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//cpu/vreteno/cpp:defs.bzl", "vreteno_c_program")
+
+cc_library(
+    name = "png",
+    srcs = ["png.c"],
+    hdrs = ["png.h"],
+)
+
+# Doom on the host with no screen and no keyboard: simulated time, a
+# script of keys, and PNGs of the frames.
+#   bazel run //demo/doom:host -- $PWD/<wad> /tmp/doom 400
+cc_binary(
+    name = "host",
+    srcs = ["host.c"],
+    deps = [
+        ":png",
+        "@doomgeneric//:game",
+    ],
+)
+
+# Doom on the board, bare metal: the game, this platform, newlib's
+# system calls, the WAD read from where fastboot staged it.
+#   fastboot -s tcp:192.168.1.50 boot doom.bin freedoom1.wad
+vreteno_c_program(
+    name = "doom",
+    srcs = [
+        "board.c",
+        "board.h",
+        "start.S",
+        "syscalls.c",
+        "@doomgeneric//:srcs",
+    ],
+    hdrs = [
+        "board.h",
+        "//zephyr:regs_scan",
+        "//zephyr:regs_uart",
+        "@doomgeneric//:hdrs",
+    ],
+    copts = [
+        "-w",
+        "-DNORMALUNIX",
+        "-D_DEFAULT_SOURCE",
+        "-DDOOMGENERIC_RESX=320",
+        "-DDOOMGENERIC_RESY=200",
+    ],
+    linker_script = "doom.ld",
+    tags = ["manual"],
+)
