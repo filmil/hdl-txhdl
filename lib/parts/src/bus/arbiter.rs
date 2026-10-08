@@ -53,6 +53,17 @@ use txhdl::{lower, with, Trace};
 /// won. With `FIXED` not zero it is fixed priority instead, and the
 /// lowest numbered host that is offering always wins. At most eight
 /// hosts, since the turn is three bits.
+///
+/// With `HOLD` not zero the arbiter keeps an exclusive pair whole
+/// (issue 1408). When it grants a read with `lock` set, it takes the
+/// hold for that host: no other host's write address phase is granted
+/// until it grants that host's write with `lock` set, or 128 cycles
+/// pass. A write already granted keeps its beats, so the writes in
+/// flight drain while the hold stands. Reads are never held. A host
+/// that takes an exclusive read while another holds goes without the
+/// hold; the same host's next exclusive read takes it again. With
+/// `HOLD` zero, as everywhere but where two harts share memory, the
+/// hold never starts and synthesis folds its registers away.
 #[derive(Trace, Default)]
 pub struct Arbiter<
     const N: usize,
@@ -62,6 +73,7 @@ pub struct Arbiter<
     const I: usize,
     const J: usize,
     const FIXED: usize,
+    const HOLD: usize = 0,
 > {
     /// A write burst's beats are going out; another host's address
     /// phase waits, since AXI4 puts no identifier on `w`.
@@ -73,6 +85,15 @@ pub struct Arbiter<
     pub rturn: Reg<U<3>>,
     /// The same, for the next write address phase.
     pub wturn: Reg<U<3>>,
+    /// Whether the exclusive hold stands.
+    pub hold: Reg<Bit>,
+    /// The host the hold is for.
+    pub howner: Reg<U<3>>,
+    /// The cycles the hold has left.
+    pub hleft: Reg<U<7>>,
+    /// How many holds ran out rather than ending at their host's
+    /// exclusive write, which a test reads.
+    pub htimeouts: Reg<U<16>>,
 }
 
 /// Two hosts.
@@ -152,7 +173,8 @@ impl<
         const I: usize,
         const J: usize,
         const FIXED: usize,
-    > Unit for Arbiter<N, A, D, S, I, J, FIXED>
+        const HOLD: usize,
+    > Unit for Arbiter<N, A, D, S, I, J, FIXED, HOLD>
 {
     async fn run(
         &mut self,
@@ -178,6 +200,9 @@ impl<
             let wturn = self.wturn.get();
             let wbusy = self.wbusy.get();
             let wsel = self.wsel.get();
+            // The exclusive hold, only where `HOLD` builds it.
+            let held = self.hold.get() & Bit::from(HOLD != 0);
+            let howner = self.howner.get();
             // Round robin: a host is eligible when it is at or after
             // the turn, and the grant is the first eligible one that
             // offers, or the first of any when none is eligible. Under
@@ -199,7 +224,9 @@ impl<
                 let ar_any = ar_off & !ar_lo;
                 ar_lo_who = mux(ar_any, U::<3>::from(i), ar_lo_who);
                 ar_lo = ar_lo | ar_any;
-                let aw_off = Bit::from(aws[i].peek().is_some());
+                // A host's write waits while another holds.
+                let aw_off = Bit::from(aws[i].peek().is_some())
+                    & !(held & (howner != i));
                 let aw_first = aw_off & !aw_hi & (fixed | (wturn <= i));
                 aw_hi_who = mux(aw_first, U::<3>::from(i), aw_hi_who);
                 aw_hi = aw_hi | aw_first;
@@ -356,11 +383,28 @@ impl<
             let last = U::<3>::from(N - 1);
             let ar_next = mux(ar_who == last, U::<3>::from(0u8), ar_who + 1);
             let aw_next = mux(aw_who == last, U::<3>::from(0u8), aw_who + 1);
+            // The hold ends at its host's exclusive write or when its
+            // cycles run out, and starts at an exclusive read from a
+            // host when nobody else holds; a host's second exclusive
+            // read starts it again.
+            let hleft = self.hleft.get();
+            let h_end = held & aw_go & (aw_who == howner) & aw_lock;
+            let h_out = held & !h_end & Bit::from(hleft == 0);
+            let h_start = (ar_go & ar_lock & Bit::from(HOLD != 0))
+                & (!held | h_end | h_out | (ar_who == howner));
             with!(self <= {
                 (ar_go & !fixed) ? { rturn: ar_next },
                 (aw_go & !fixed) ? { wturn: aw_next },
                 aw_go ? { wbusy: Bit::One, wsel: won_aw },
                 w_done ? { wbusy: Bit::Zero },
+                held ? hleft: hleft - 1,
+                (h_end | h_out) ? hold: Bit::Zero,
+                h_out ? htimeouts: self.htimeouts.get() + 1,
+                h_start ? {
+                    hold: Bit::One,
+                    howner: ar_who,
+                    hleft: U::<7>::from(127u8)
+                },
             });
         }
     }
@@ -373,14 +417,14 @@ impl<
 /// host is starved while another keeps asking.
 #[cfg(test)]
 mod tests {
-    use super::{Arbiter2, Arbiter4};
+    use super::{Arbiter, Arbiter4};
     use crate::bus::axi::{
         axi, AxiHost, AxiPer, Host, Per, Rd, Resp, Wr, Xact,
     };
     use std::cell::RefCell;
     use std::rc::Rc;
-    use txhdl::comp::{join2, Running, Unit};
-    use txhdl::types::U;
+    use txhdl::comp::{join2, now, Clock, DefaultClock, Running, Unit};
+    use txhdl::types::{Bit, U};
 
     /// A host's identifier is two bits, the peripheral side's five,
     /// which leaves three for the port number: more than the two
@@ -435,6 +479,16 @@ mod tests {
         b: impl FnOnce(Client) -> Boxed,
         n: usize,
     ) -> Seen {
+        two_with::<0>(a, b, n).0
+    }
+
+    /// The same with the exclusive hold built or not, and the holds
+    /// that ran out.
+    fn two_with<const HOLD: usize>(
+        a: impl FnOnce(Client) -> Boxed,
+        b: impl FnOnce(Client) -> Boxed,
+        n: usize,
+    ) -> (Seen, u16) {
         let l0 = axi::<16, 32, 4, 2, 8>();
         let l1 = axi::<16, 32, 4, 2, 8>();
         let lp = axi::<16, 32, 4, 5, 8>();
@@ -442,7 +496,8 @@ mod tests {
         let mut h0 = HostUnit::default();
         let mut h1 = HostUnit::default();
         let mut pu = PerUnit::default();
-        let mut arb = Arbiter2::<16, 32, 4, 2, 5, 0>::default();
+        let mut arb = Arbiter::<2, 16, 32, 4, 2, 5, 0, HOLD>::default();
+        let timeouts = arb.htimeouts;
         let hardware = join2(
             join2(
                 h0.run(l0.host_in, l0.host_out),
@@ -476,7 +531,99 @@ mod tests {
         for _ in 0..n {
             sim.cycle();
         }
-        seen
+        (seen, timeouts.get().raw() as u16)
+    }
+
+    /// `n` cycles of the clock, in a client.
+    async fn wait(n: usize) {
+        for _ in 0..n {
+            DefaultClock::rising().await;
+        }
+    }
+
+    /// The exclusive hold (issue 1408). Host 1's burst of eight is
+    /// granted first and host 0's exclusive read comes while its beats
+    /// are going out: the burst still finishes, since only a new grant
+    /// is held. Host 1's next write is offered while host 0 computes,
+    /// and with the hold it waits for host 0's exclusive write; without
+    /// it, it goes first. No hold runs out.
+    #[test]
+    fn an_exclusive_pair_holds_the_other_hosts_writes() {
+        let order = |held: bool| {
+            let a = |host: Client| -> Boxed {
+                Box::new(Box::pin(async move {
+                    wait(3).await;
+                    let rd = Rd {
+                        lock: Bit::One,
+                        ..Rd::at(0x100u32, 1)
+                    };
+                    host.read(rd).await.done().await;
+                    wait(30).await;
+                    let wr = Wr {
+                        lock: Bit::One,
+                        ..Wr::at(0x100u32)
+                    };
+                    host.write(wr, &[U::from(7u32)]).await.done().await;
+                }))
+            };
+            let b = |host: Client| -> Boxed {
+                Box::new(Box::pin(async move {
+                    let burst: Vec<U<32>> = (0..8u32).map(U::from).collect();
+                    let first = host.write(Wr::at(0x900u32), &burst).await;
+                    wait(20).await;
+                    let nine = [U::from(9u32)];
+                    let second = host.write(Wr::at(0x980u32), &nine);
+                    second.await.done().await;
+                    first.done().await;
+                }))
+            };
+            let (seen, timeouts) = if held {
+                two_with::<1>(a, b, 400)
+            } else {
+                two_with::<0>(a, b, 400)
+            };
+            let at: Vec<u128> = seen.0.borrow().iter().map(|w| w.0).collect();
+            (at, timeouts)
+        };
+        let (held, timeouts) = order(true);
+        assert_eq!(held, vec![0x900, 0x100, 0x980], "held: the pair whole");
+        assert_eq!(timeouts, 0, "the hold ended at the exclusive write");
+        let (free, _) = order(false);
+        assert_eq!(free, vec![0x900, 0x980, 0x100], "free: the write between");
+    }
+
+    /// A hold whose host never writes runs out after 128 cycles, and the
+    /// other host's write is granted then, not before.
+    #[test]
+    fn a_hold_without_its_write_runs_out() {
+        let done_at = Rc::new(RefCell::new(0u64));
+        let d = done_at.clone();
+        let (seen, timeouts) = two_with::<1>(
+            |host| {
+                Box::new(Box::pin(async move {
+                    let rd = Rd {
+                        lock: Bit::One,
+                        ..Rd::at(0x100u32, 1)
+                    };
+                    host.read(rd).await.done().await;
+                }))
+            },
+            move |host| {
+                Box::new(Box::pin(async move {
+                    // The clock runs on across runs in one thread.
+                    let t0 = now();
+                    wait(10).await;
+                    let nine = [U::from(9u32)];
+                    let w = host.write(Wr::at(0x980u32), &nine);
+                    w.await.done().await;
+                    *d.borrow_mut() = (now() - t0) / DefaultClock::PERIOD;
+                }))
+            },
+            600,
+        );
+        assert_eq!(timeouts, 1, "one hold ran out");
+        assert_eq!(seen.0.borrow().len(), 1, "and the write went then");
+        assert!(*done_at.borrow() > 120, "not before: {}", done_at.borrow());
     }
 
     /// Two hosts read at once. Each gets its own answer back: the
