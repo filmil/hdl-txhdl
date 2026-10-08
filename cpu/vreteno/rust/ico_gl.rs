@@ -219,18 +219,7 @@ pub fn frame<'a>(
     g.shade_model(gl::FLAT);
     let textured = tex.is_some();
     if let Some((room, bus)) = tex {
-        g.texture_room(room, bus);
-        let mut name = [0u32];
-        g.gen_textures(&mut name);
-        g.bind_texture(gl::TEXTURE_2D, name[0]);
-        let t2 = gl::TEXTURE_2D;
-        g.tex_parameter(t2, gl::TEXTURE_MIN_FILTER, gl::NEAREST);
-        g.tex_parameter(t2, gl::TEXTURE_MAG_FILTER, gl::NEAREST);
-        let (s, rgba, ub) = (TEX_SIDE, gl::RGBA, gl::UNSIGNED_BYTE);
-        g.tex_image_2d(t2, 0, rgba, s, s, 0, rgba, ub, &CHECKER);
-        let modulate = gl::MODULATE as Fx;
-        g.tex_env(gl::TEXTURE_ENV, gl::TEXTURE_ENV_MODE, &[modulate]);
-        g.enable(gl::TEXTURE_2D);
+        texture(&mut g, room, bus);
     }
 
     // `ico_list` turns about y and then about x.
@@ -277,4 +266,21 @@ pub fn frame<'a>(
         k += 1 + (second + texture) as usize;
     }
     (1 + drawn.len(), b)
+}
+
+/// The checker uploaded into `room`, which Razboj reads at `bus`, and
+/// bound as `g`'s texture: nearest, the lighting modulating it, on.
+pub fn texture<'a>(g: &mut Gl<'a>, room: &'a mut [u32], bus: u32) {
+    g.texture_room(room, bus);
+    let mut name = [0u32];
+    g.gen_textures(&mut name);
+    g.bind_texture(gl::TEXTURE_2D, name[0]);
+    let t2 = gl::TEXTURE_2D;
+    g.tex_parameter(t2, gl::TEXTURE_MIN_FILTER, gl::NEAREST);
+    g.tex_parameter(t2, gl::TEXTURE_MAG_FILTER, gl::NEAREST);
+    let (s, rgba, ub) = (TEX_SIDE, gl::RGBA, gl::UNSIGNED_BYTE);
+    g.tex_image_2d(t2, 0, rgba, s, s, 0, rgba, ub, &CHECKER);
+    let modulate = gl::MODULATE as Fx;
+    g.tex_env(gl::TEXTURE_ENV, gl::TEXTURE_ENV_MODE, &[modulate]);
+    g.enable(gl::TEXTURE_2D);
 }
