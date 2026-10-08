@@ -48,6 +48,8 @@ VRETENO_RAM_FLAGS = [
     "-Cpanic=abort",
     "-Clinker=rust-lld",
     "-Clink-arg=-Tcpu/vreteno/rust/vreteno_ram.ld",
+    # A program loaded into the DDR3 reports its own faults (issue 1413).
+    "--cfg=vreteno_ram",
 ]
 
 rust_binary(

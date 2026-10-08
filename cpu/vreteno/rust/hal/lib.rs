@@ -499,6 +499,13 @@ pub fn halt() -> ! {
 /// zero, which sets the stack pointer, zeroes the uninitialised data,
 /// and jumps to `main`, which does not return. The three symbols come
 /// from the linker script.
+///
+/// A program built to be loaded into the DDR3, with `--cfg=vreteno_ram`,
+/// installs [`trap::say_faults`] before `main`, so a fault reports itself
+/// on the program's own line rather than landing in the loader through
+/// `mtvec` zero, where it once read as a jump to zero with no trap
+/// (#1317, issue 1413). A program for the boot memory's 4 KiB does not
+/// pay for it.
 #[macro_export]
 macro_rules! entry {
     ($main:path) => {
@@ -515,10 +522,17 @@ macro_rules! entry {
                 "addi t0, t0, 4",
                 "j 1b",
                 "2:",
-                "j {main}",
-                main = sym $main,
+                "j {start}",
+                start = sym __vreteno_main,
                 options(noreturn)
             )
+        }
+
+        #[allow(unexpected_cfgs)]
+        unsafe extern "C" fn __vreteno_main() -> ! {
+            #[cfg(vreteno_ram)]
+            $crate::trap::say_faults();
+            $main()
         }
     };
 }
