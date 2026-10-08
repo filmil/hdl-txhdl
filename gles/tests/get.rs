@@ -154,3 +154,16 @@ fn the_limits_are_the_libraries() {
     assert_eq!(g.get_error(), gl::INVALID_ENUM);
     assert_eq!(v, [7, 7], "an unknown name writes nothing");
 }
+
+/// The compressed formats the library takes (#998): the ten paletted
+/// ones, listed in GL's order.
+#[test]
+fn the_compressed_formats_are_the_paletted_ones() {
+    let mut frame = vec![[0u32; WORDS]; 16];
+    let mut g = context(&mut frame);
+    assert_eq!(ints(&mut g, name::NUM_COMPRESSED_TEXTURE_FORMATS, 1), [10]);
+    let want: Vec<i32> = (0..10)
+        .map(|k| (gl::PALETTE4_RGB8_OES + k) as i32)
+        .collect();
+    assert_eq!(ints(&mut g, name::COMPRESSED_TEXTURE_FORMATS, 10), want);
+}

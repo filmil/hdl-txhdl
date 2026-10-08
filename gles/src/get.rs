@@ -234,8 +234,13 @@ impl Gl<'_> {
             TEXTURE_BINDING_2D => i(&[self.bound as i64]),
             ACTIVE_TEXTURE => i(&[TEXTURE0 as i64]),
             MAX_TEXTURE_UNITS => i(&[1]),
-            NUM_COMPRESSED_TEXTURE_FORMATS => i(&[0]),
-            COMPRESSED_TEXTURE_FORMATS => i(&[]),
+            // The ten paletted formats (#998), GL's values in GL's order.
+            NUM_COMPRESSED_TEXTURE_FORMATS => i(&[10]),
+            COMPRESSED_TEXTURE_FORMATS => {
+                let first = gl::PALETTE4_RGB8_OES as i64;
+                let v: [i64; 10] = core::array::from_fn(|k| first + k as i64);
+                i(&v)
+            }
             gl::LIGHT_MODEL_AMBIENT => u(&self.scene_ambient),
             gl::LIGHT_MODEL_TWO_SIDE => b(&[self.two_side]),
             cap => self.enabled(cap).and_then(|on| b(&[on])),
