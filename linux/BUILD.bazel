@@ -302,6 +302,8 @@ sh_test(
         ":model_boot",
         "//cpu/vreteno:machine",
     ],
+    # The kernel brings up the second hart (issue 1408).
+    env = {"EXPECT": "smp: Brought up 1 node, 2 CPUs"},
     tags = ["manual"],
 )
 
