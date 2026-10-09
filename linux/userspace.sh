@@ -221,7 +221,7 @@ busybox)
   cp "$out/.config" "$config_out"
   ;;
 initramfs)
-  busybox=$root/$1 init=$root/$2 linux=$root/$3 out=$4
+  busybox=$root/$1 init=$root/$2 linux=$root/$3 smpcount=$root/$4 out=$5
   work=$root/.uinit
   rm -rf "$work" && mkdir -p "$work"
   # The kernel's own packer, built for the host: it writes the newc
@@ -244,6 +244,7 @@ dir /root 0700 0 0
 file /bin/busybox $busybox 0755 0 0
 slink /bin/sh busybox 0777 0 0
 file /init $init 0755 0 0
+file /bin/smpcount $smpcount 0755 0 0
 EOF
   # Every entry at time nought, so the archive is the same each build.
   "$work/gen_init_cpio" -t 0 "$work/list" >"$out"
@@ -384,6 +385,16 @@ dynprog)
   $(cross_cc "$work/sysroot" "$work/rd") $dyn_ld -O2 "$c" -o "$work/prog"
   llvm-strip -o "$out" "$work/prog"
   ;;
+staticprog)
+  # A C program linked statically against musl, for the initramfs,
+  # which has no shared library: the threads of issue 1408.
+  tarball=$root/$1 c=$root/$2 out=$3
+  work=$root/.ustat
+  unpack_sysroot "$tarball" "$work"
+  # shellcheck disable=SC2046
+  $(cross_cc "$work/sysroot" "$work/rd") -static -O2 "$c" -o "$work/prog"
+  llvm-strip -o "$out" "$work/prog"
+  ;;
 musl_so)
   # musl's shared library out of the sysroot, for the root's /lib, where
   # its loader's name links to it (issue 1439).
@@ -394,7 +405,7 @@ musl_so)
   llvm-strip -o "$out" "$work/sysroot/lib/libc.so"
   ;;
 *)
-  echo "userspace.sh: sysroot, busybox, initramfs, nfsboot, roottar, dropbear, dynprog or musl_so, not $what" >&2
+  echo "userspace.sh: sysroot, busybox, initramfs, nfsboot, roottar, dropbear, dynprog, staticprog or musl_so, not $what" >&2
   exit 2
   ;;
 esac
