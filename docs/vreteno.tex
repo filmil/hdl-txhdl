@@ -2707,6 +2707,26 @@ takes about 1300 and no column starves, which
 burst late on the board is a stall this simulation's memory, which
 answers every read in 24 cycles, does not have.
 
+So the pair can now ask for a line two rows ahead rather than one,
+which bit 1 of \code{ctrl} turns on from the next frame. The line then
+has two rows to come, some 6400 cycles rather than 3200, and waits
+whole in the crossing until the row before its own, when the half it
+is shown from is the one filling; the halves still change places at
+every row's start, the blanking's too, so a line's words are let in by
+the row each line owed is for. The flagship's crossing holds 2048
+words, so that a waiting line, some 1030 words at the most with the
+next arriving behind it, never fills it and holds up the bus's one
+stream of read data. Two words say how close the scanout comes:
+\code{worst}, the longest any line took from being asked for to its
+last word, in pixels, and \code{lates}, how many lines had not come
+whole when their rows began, which counts lines that still kept ahead
+of the beam as well.
+\code{a\_stalled\_read\_is\_late\_one\_row\_ahead\_and\_not\_two}
+stalls one line's reads for 4000 cycles: one row ahead, two whole rows
+show \code{LATE}, the stalled line's and the next, whose words wait
+behind the first's as the pair takes them a pixel at a time; two rows
+ahead, none does, and every row shows its own line.
+
 \code{vreteno\_board\_jtag.v} is the top with the master, the board's
 own top with one block added, and every other top ties the pins off,
 so the shipping bitstreams are unchanged in what they do.
