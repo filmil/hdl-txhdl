@@ -1,45 +1,21 @@
 # The conformance suite's failures on the host (#999), each with the issue
 # that records it. conform_test fails on a failure not listed here, and on
 # one listed here that passes.
-state.CLIENT_ACTIVE_TEXTURE              #1505
-state.VERTEX_ARRAY_TYPE                  #1505
-state.NORMAL_ARRAY_TYPE                  #1505
-state.COLOR_ARRAY_TYPE                   #1505
-state.TEXTURE_COORD_ARRAY_TYPE           #1505
 state.POINT_SIZE_ARRAY_OES               #1507
 state.POINT_SIZE_ARRAY_TYPE_OES          #1507
 state.POINT_SIZE_ARRAY_STRIDE_OES        #1507
 state.POINT_SIZE_ARRAY_BUFFER_BINDING_OES #1507
-state.MATRIX_MODE                        #1505
-state.FOG_MODE                           #1505
-state.SHADE_MODEL                        #1505
 state.POINT_SMOOTH                       #1513
 state.POINT_SIZE_MIN                     #1508
 state.POINT_FADE_THRESHOLD_SIZE          #1508
 state.POINT_DISTANCE_ATTENUATION         #1508
 state.LINE_SMOOTH                        #1513
-state.CULL_FACE_MODE                     #1505
-state.FRONT_FACE                         #1505
 state.MULTISAMPLE                        #1509
 state.SAMPLE_ALPHA_TO_COVERAGE           #1509
 state.SAMPLE_ALPHA_TO_ONE                #1509
 state.SAMPLE_COVERAGE                    #1509
 state.SAMPLE_COVERAGE_VALUE              #1509
 state.SAMPLE_COVERAGE_INVERT             #1509
-state.ACTIVE_TEXTURE                     #1505
-state.ALPHA_TEST_FUNC                    #1505
-state.STENCIL_FUNC                       #1505
-state.STENCIL_FAIL                       #1505
-state.STENCIL_PASS_DEPTH_FAIL            #1505
-state.STENCIL_PASS_DEPTH_PASS            #1505
-state.DEPTH_FUNC                         #1505
-state.BLEND_SRC                          #1505
-state.LOGIC_OP_MODE                      #1505
-state.PERSPECTIVE_CORRECTION_HINT        #1505
-state.POINT_SMOOTH_HINT                  #1505
-state.LINE_SMOOTH_HINT                   #1505
-state.FOG_HINT                           #1505
-state.GENERATE_MIPMAP_HINT               #1505
 state.MAX_TEXTURE_UNITS                  #1510
 state.SAMPLE_BUFFERS                     #1509
 state.SAMPLES                            #1509

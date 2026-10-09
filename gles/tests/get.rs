@@ -111,8 +111,9 @@ fn the_state_reads_back_as_set() {
 
 /// The conversions of section 6.1.2: a colour asked for as integers
 /// maps one to the largest and nought to nought, a fixed value is
-/// rounded, an integer asked for as fixed is that many ones, and
-/// anything not nought is true.
+/// rounded, an integer asked for as fixed is that many ones, an
+/// enumerant asked for as fixed is itself, unscaled (#1505), and anything
+/// not nought is true.
 #[test]
 fn the_three_calls_convert_as_gl_says() {
     let mut frame = vec![[0u32; WORDS]; 16];
@@ -131,6 +132,14 @@ fn the_three_calls_convert_as_gl_says() {
     assert_eq!(bools(&mut g, name::MAX_LIGHTS, 1), [true]);
     assert_eq!(bools(&mut g, name::STENCIL_BITS, 1), [true], "eight bits");
     assert_eq!(fixed(&mut g, gl::LIGHTING, 1), [0]);
+    g.fog(gl::FOG_MODE, gl::LINEAR as Fx);
+    assert_eq!(fixed(&mut g, gl::FOG_MODE, 1), [gl::LINEAR as Fx]);
+    assert_eq!(ints(&mut g, gl::FOG_MODE, 1), [gl::LINEAR as i32]);
+    assert_eq!(
+        fixed(&mut g, name::ACTIVE_TEXTURE, 1),
+        [name::TEXTURE0 as Fx],
+        "past 32767, unscaled and unsaturated"
+    );
 }
 
 /// The limits this implementation states, and an unknown name.
