@@ -72,6 +72,7 @@ fn every_entry_a_boot_needs_is_there() {
         ("bin", 0o40755),
         ("bin/busybox", 0o100755),
         ("bin/sh", 0o120777),
+        ("bin/smpcount", 0o100755),
         ("proc", 0o40755),
         ("sys", 0o40755),
         ("tmp", 0o41777),
@@ -116,9 +117,17 @@ fn init_says_the_userspace_is_up() {
     assert!(init.contains("while :; do"), "and starts it again");
 }
 
+/// BusyBox, and the two threads' counter (issue 1408), are static
+/// programs for the core.
 #[test]
 fn busybox_is_a_static_program_for_the_core() {
-    let elf = archive()["bin/busybox"].data.clone();
+    for name in ["bin/busybox", "bin/smpcount"] {
+        static_for_the_core(name);
+    }
+}
+
+fn static_for_the_core(name: &str) {
+    let elf = archive()[name].data.clone();
     let u16_at = |at: usize| u16::from_le_bytes([elf[at], elf[at + 1]]);
     let u32_at =
         |at: usize| u32::from_le_bytes(elf[at..at + 4].try_into().unwrap());

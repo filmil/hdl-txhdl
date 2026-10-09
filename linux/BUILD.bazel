@@ -319,8 +319,12 @@ sh_test(
         ":model_boot",
         "//cpu/vreteno:machine",
     ],
-    # The kernel brings up the second hart (issue 1408).
-    env = {"EXPECT": "smp: Brought up 1 node, 2 CPUs"},
+    # The kernel brings up the second hart, and two threads, one on
+    # each, keep three counts exact (issue 1408).
+    env = {
+        "EXPECT": "smp: Brought up 1 node, 2 CPUs",
+        "EXPECT_ALSO": "txhdl: smp count right on two harts",
+    },
     tags = ["manual"],
 )
 
