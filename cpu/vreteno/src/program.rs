@@ -570,6 +570,12 @@ pub fn in_memory() -> (Vec<u32>, Vec<u32>) {
 /// the two lengths are mixed and a thirty-two bit instruction often
 /// starts in the upper half of a word. `seed` is the whole of it.
 pub fn random(seed: u64, len: usize) -> Vec<u32> {
+    random_at(seed, len, DATA_BASE)
+}
+
+/// The same with its data at `base`, whose page its loads, stores and
+/// atomics then reach: the DDR3's, through the data cache (issue 1443).
+pub fn random_at(seed: u64, len: usize, base: u32) -> Vec<u32> {
     let mut s = seed.wrapping_mul(0x9e3779b97f4a7c15) | 1;
     let mut next = move || {
         s ^= s << 13;
@@ -590,7 +596,7 @@ pub fn random(seed: u64, len: usize) -> Vec<u32> {
     let prv = [3u32, 1, 0][(seed % 3) as usize];
     let medeleg = (seed >> 2 & 1) as i32 * 4 + (seed >> 3 & 1) as i32 * 0x100;
     let dsoft = seed >> 4 & 1 == 1;
-    a.emit(lui(2, DATA_BASE >> 12));
+    a.emit(lui(2, base >> 12));
     a.abs(handler, |h| addi(31, 0, h as i32));
     a.emit(csrrw(0, CSR_MTVEC, 31));
     a.abs(s_handler, |h| addi(31, 0, h as i32));
