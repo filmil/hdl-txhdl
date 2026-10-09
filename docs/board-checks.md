@@ -154,7 +154,8 @@ bazel run //cpu/vreteno/board/remote:load -- \
     2>&1 | tee board-550-hello.log
 ```
 
-Pass: the loader answers `ok` and the address it loaded to, `40000000`, and then the program prints `hello from rust`; `ok` comes only when the loader's sum matches, which is otherwise `bad sum`.
+Pass: the loader answers `mem` with the sum it read back from the memory, then `ok` and the address it loaded to, `40000000`, and then the program prints `hello from rust`.
+`ok` comes only when the sum of the words that arrived matches, which is otherwise `bad sum`, and when the sum read back from the memory matches it too, which is otherwise `bad mem` (#1555).
 Run it three times with `--reset`; the fence is about an order that a single run can get right by luck.
 Capture: `board-550-hello.log`, and the bitstream's sha256 from section 10, since the fence is in the boot memory and so in the bitstream.
 

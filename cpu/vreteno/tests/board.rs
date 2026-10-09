@@ -2040,12 +2040,14 @@ fn the_loader_loads_a_program_and_runs_it() {
         400_000,
     );
     // The loader says `boot`, then `load` when the header arrives, then
-    // one `K` for the header and one for each word, then `ok` with the
+    // one `K` for the header and one for each word, then `mem` with the
+    // sum it reads back from the memory (issue 1555) and `ok` with the
     // address it jumps to; the program it loaded says `hi`.
     let acks = "K".repeat(payload().len() + 1);
+    let sum = payload().iter().fold(0u32, |s, w| s.wrapping_add(*w));
     assert_eq!(
         ran.said,
-        format!("boot\nload\n{acks}ok 40000000\nhi\n"),
+        format!("boot\nload\n{acks}mem {sum:08x}\nok 40000000\nhi\n"),
         "typed {} of {} bytes, the last at cycle {} of {}",
         ran.typed,
         stream(addr, &payload()).len(),
@@ -2116,6 +2118,44 @@ fn the_loader_refuses_a_stream_whose_sum_is_wrong() {
         "it waits for another: {}",
         ran.said
     );
+    assert!(ran.halted_at.is_none(), "nothing was jumped into");
+}
+
+/// A stream that arrived whole but whose words the memory does not
+/// hold is refused too (issue 1555): the loader reads what it wrote
+/// back from the DDR3 and says `bad mem` rather than jumping. Another
+/// host, the debugger's bus, changes the first word after the loader
+/// has written it and before the read-back, which is what a store lost
+/// or changed in the memory looks like to the loader. A clean run says
+/// when those two moments are.
+#[test]
+fn the_loader_refuses_an_image_the_memory_does_not_hold() {
+    let addr = 0x4000_0000;
+    let words = payload();
+    let clean = run_paced(
+        boot_program::TEXT,
+        boot_program::DATA,
+        &stream(addr, &words),
+        &blocks(words.len()),
+        400_000,
+    );
+    // The second `K` follows the first word; `mem` follows the read-back.
+    let k2 = clean.said.match_indices('K').nth(1).expect("two K").0;
+    let m = clean.said.find("mem ").expect("a clean load says mem");
+    let (written, read) = (clean.said_at[k2], clean.said_at[m]);
+    assert!(written < read, "the word is written before it is read back");
+    let plan = [Op::Wait((written + read) / 2), Op::Write(addr, !words[0])];
+    let ran = run_all(
+        boot_program::TEXT,
+        boot_program::DATA,
+        &stream(addr, &words),
+        &blocks(words.len()),
+        400_000,
+        Net::default(),
+        &plan,
+    );
+    assert!(ran.said.contains("bad mem "), "{}", ran.said);
+    assert!(!ran.said.contains("ok 40000000"), "{}", ran.said);
     assert!(ran.halted_at.is_none(), "nothing was jumped into");
 }
 

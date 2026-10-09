@@ -36,8 +36,10 @@
 //!
 //! Every step says something on the serial port, so a load that failed
 //! is never confused with a program that loaded and then crashed:
-//! `boot` when it is waiting, `load` when a header arrived, `ok` before
-//! it jumps, and `bad len` or `bad sum` when it will not. A stream
+//! `boot` when it is waiting, `load` when a header arrived, `mem` with
+//! the sum of what it reads back from the memory and then `ok` before
+//! it jumps, and `bad len`, `bad sum` or `bad mem` when it will not
+//! (issue 1555). A stream
 //! without the magic word is never refused: the loader reads on until
 //! it finds one.
 //! After a refusal it waits for another stream rather than stopping,
@@ -285,6 +287,47 @@ extern "C" fn main() -> ! {
             put(b'\n');
             continue;
         }
+
+        // What reached the memory, read back from it (issue 1555): the
+        // sum above is of the words as they arrived, so it proves the
+        // line and not the memory. A `fence` first, so every store has
+        // been answered; then each word with `lr.w`, which goes around
+        // the data cache and takes the line out of it, since that cache
+        // is written through and holds the core's own stores whether or
+        // not they reached the DDR3. The loader is built without the A
+        // extension, so the instruction is spelled out. Plain loads
+        // would not do: the loader also runs after a trap and after a
+        // refused stream, when the cache may hold lines from before.
+        // On a board with two harts each `lr.w` restarts the arbiter's
+        // exclusive hold, so other hosts' writes wait while this runs
+        // and `htimeouts` counts one when it ends; nothing else writes
+        // while the loader runs.
+        unsafe { core::arch::asm!("fence") };
+        let mut mem: u32 = 0;
+        let mut at = addr;
+        while at < end {
+            let w: u32;
+            unsafe {
+                core::arch::asm!(
+                    ".insn r 0x2f, 2, 0x08, {w}, {a}, x0",
+                    w = out(reg) w,
+                    a = in(reg) at,
+                )
+            };
+            mem = mem.wrapping_add(w);
+            at += 4;
+        }
+        if mem != sum {
+            say(b"bad mem ");
+            say_hex(mem);
+            put(b' ');
+            say_hex(sum);
+            put(b'\n');
+            continue;
+        }
+        say(b"mem ");
+        say_hex(mem);
+        put(b'\n');
 
         say(b"ok ");
         say_hex(addr);
