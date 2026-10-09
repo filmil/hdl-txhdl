@@ -84,7 +84,7 @@ mod ico_gl;
 #[cfg_attr(gl, allow(dead_code))]
 mod ico_list;
 
-use core::ptr::{read_volatile, write_volatile};
+use core::ptr::write_volatile;
 #[cfg(gl)]
 use core::sync::atomic::{AtomicU32, Ordering};
 #[cfg(not(gl))]
@@ -132,8 +132,8 @@ fn mcycle() -> u32 {
 }
 
 /// The first `n` entries of `list`, where the rasteriser reads them,
-/// then the count. The last word is read back first, so that the posted
-/// stores have landed before the count says the list is there.
+/// then the count, which [`Razboj::ring`] writes once the stores are
+/// answered (issue 1553).
 fn draw(list: &[[u32; WORDS]], n: usize) {
     while Razboj::count() != 0 {}
     let base = Razboj::LIST as *mut u32;
@@ -146,7 +146,6 @@ fn draw(list: &[[u32; WORDS]], n: usize) {
         }
         e += 1;
     }
-    let _ = unsafe { read_volatile(base.add(n * WORDS - 1)) };
     Razboj::ring(n as u32);
     while Razboj::count() != 0 || !Razboj::idle() {}
 }
@@ -164,7 +163,6 @@ const HALF: usize = ROOM / 2;
 struct Binned {
     tiles: [[u32; razboj_tile::TILE_WORDS]; razboj_tile::MAX_TILES],
     count: usize,
-    last: usize,
 }
 
 /// The first `n` slots of `list`, a frame that tests depth on a screen
@@ -186,7 +184,6 @@ fn bin_tiled(list: &[[u32; WORDS]], n: usize, sh: u32, half: usize) -> Binned {
     let mut b = Binned {
         tiles: [[0u32; TILE_WORDS]; MAX_TILES],
         count: 0,
-        last: at,
     };
     let Ok(r) = bin(&list[..n], ico_list::W as u32, sh, room, &mut b.tiles)
     else {
@@ -199,14 +196,13 @@ fn bin_tiled(list: &[[u32; WORDS]], n: usize, sh: u32, half: usize) -> Binned {
         t += 1;
     }
     b.count = r.tiles;
-    b.last = at + r.entries * WORDS * 4 - 4;
     b
 }
 
 /// A binned frame's records at the list, then the count with the bit
-/// that says it is a tile table. The last entry is read back first, so
-/// that the posted stores have landed before the count says it is there.
-/// It does not wait for the drawing.
+/// that says it is a tile table, which [`Razboj::ring`] writes once the
+/// records' and the entries' stores are answered (issue 1553). It does
+/// not wait for the drawing.
 #[cfg(gl)]
 fn ring_tiled(b: &Binned) {
     use razboj_tile::{TILED, TILE_WORDS};
@@ -221,7 +217,6 @@ fn ring_tiled(b: &Binned) {
         }
         t += 1;
     }
-    let _ = unsafe { read_volatile(b.last as *const u32) };
     Razboj::ring(b.count as u32 | TILED);
 }
 
@@ -256,7 +251,6 @@ static DRAWN: AtomicU32 = AtomicU32::new(0);
 static mut ODD: Binned = Binned {
     tiles: [[0; razboj_tile::TILE_WORDS]; razboj_tile::MAX_TILES],
     count: 0,
-    last: 0,
 };
 #[cfg(gl)]
 static ODD_READY: AtomicU32 = AtomicU32::new(0);
@@ -283,9 +277,10 @@ fn texture(upload: bool) -> Option<(&'static mut [u32], u32, bool)> {
 
 /// Hart 1 (#1408): the odd frames, each built into its buffer and binned
 /// into the second half of the room once the frame before last, which
-/// took that half, is drawn, then left for hart 0 to ring. Its entries
-/// are read back before it says they are there, so that they have
-/// landed when Razboj reads them.
+/// took that half, is drawn, then left for hart 0 to ring. Its entries'
+/// stores are answered before it says they are there: a release store
+/// is a fence first, and the core's fence waits for the stores posted
+/// (issue 1553).
 #[cfg(gl)]
 extern "C" fn odd_frames(_hart: u32, _arg: u32) -> ! {
     ALIVE.store(1, Ordering::Release);
@@ -303,7 +298,6 @@ extern "C" fn odd_frames(_hart: u32, _arg: u32) -> ! {
         while DRAWN.load(Ordering::Acquire) < f - 1 {}
         let sh = (ico_list::H + SECOND) as u32;
         let b = bin_tiled(&list, n, sh, 1);
-        let _ = unsafe { read_volatile(b.last as *const u32) };
         while ODD_READY.load(Ordering::Acquire) != 0 {}
         // SAFETY: hart 0 reads the records only while they are ready.
         unsafe { core::ptr::addr_of_mut!(ODD).write(b) };
