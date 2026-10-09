@@ -4305,6 +4305,56 @@ fn a_hart_woken_as_a_write_lands_sees_it() {
     }
 }
 
+/// The same with one read (issue 1408, hil's review of the wake): hart
+/// 1's first job caches the word's line and goes back to wait; hart 0
+/// writes the word, fences, and only then wakes hart 1, whose second job
+/// reads the word once and reports what it read. That one read must be
+/// the new word: a hart that polled could read a stale word first and
+/// still pass.
+#[test]
+fn a_woken_harts_first_read_is_the_new_word() {
+    use vreteno32::isa::{beq, jalr, lw, sw};
+    const CODE: u32 = 0x4002_0000;
+    const CODE2: u32 = 0x4002_1000;
+    const WORD: u32 = 0x4000_0a00;
+    const FLAG: u32 = 0x4000_0b00;
+    let mut a = Checked::new();
+    a.li(29, WORD)
+        .op(lw(30, 29, 0))
+        .li(28, 1)
+        .op(sw(28, 11, 0))
+        .op(jalr(0, 0, 0));
+    let first = a.p.clone();
+    let mut b = Checked::new();
+    b.li(29, WORD)
+        .op(lw(30, 29, 0))
+        .op(sw(30, 11, 4))
+        .li(28, 2)
+        .op(sw(28, 11, 0))
+        .op(jalr(0, 0, 0));
+    let second = b.p.clone();
+    let mut c = Checked::new();
+    c.li(12, FLAG).op(sw(0, 12, 0));
+    c.li(8, CODE);
+    place(&mut c, 8, &first);
+    start_hart1(&mut c, 8, 12);
+    c.op(lw(15, 12, 0)).op(beq(15, 0, -4));
+    c.li(8, CODE2);
+    place(&mut c, 8, &second);
+    c.li(16, WORD)
+        .li(17, 0x77)
+        .op(sw(17, 16, 0))
+        .op(vreteno32::isa::fence());
+    start_hart1(&mut c, 8, 12);
+    c.li(18, 2)
+        .op(lw(15, 12, 0))
+        .op(vreteno32::isa::bne(15, 18, -4))
+        .op(lw(19, 12, 4))
+        .eq(19, 0x77);
+    let ran = run_debugged(&c.done(), &[], 200_000, &[]);
+    assert!(ran.halted_at.is_some(), "hart 1's first read was stale");
+}
+
 /// Hart 1 takes an external interrupt through its own target of the
 /// interrupt controller (issue 1408). Hart 0 gives the board's `irq`
 /// input, source 2, a priority and enables it for hart 1's machine

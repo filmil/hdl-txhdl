@@ -2914,8 +2914,12 @@ impl<
                 },
                 dc_beat_r ? dc_beat: self.dc_beat.get() + 1,
                 // A line named while its fill is out, before the first
-                // beat as after it, is not kept (issue 1429).
-                Bit::from(dc_st != 0) ? dc_kill: dc_kill_now,
+                // beat as after it, is not kept (issue 1429); nor is one
+                // whose fill is out as the whole cache is forgotten. A
+                // wake cannot meet a fill today, since a fill holds
+                // execute and wfi does not retire past one, but the cache
+                // does not lean on that (issue 1408).
+                Bit::from(dc_st != 0) ? dc_kill: dc_kill_now | dc_all,
                 dc_last ? dc_st: U::<2>::from(0u8),
                 ic_clr2: ic_clearing,
                 rst ? {
