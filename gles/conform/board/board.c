@@ -32,6 +32,29 @@ static void uart_put(char c) {
   wr(UART_AT + UART_TXDATA, (unsigned char)c);
 }
 
+static void uart_hex(uint32_t v) {
+  for (int s = 28; s >= 0; s -= 4)
+    uart_put("0123456789abcdef"[(v >> s) & 15]);
+}
+
+static void uart_say(const char *s) {
+  while (*s)
+    uart_put(*s++);
+}
+
+/* What `start.S`'s trap says (#1536), a line of its own, written to the
+ * serial port directly rather than through the C library, which the
+ * trap may have come from. */
+void conform_trap(uint32_t cause, uint32_t pc, uint32_t value) {
+  uart_say("\r\nTRAP mcause 0x");
+  uart_hex(cause);
+  uart_say(" mepc 0x");
+  uart_hex(pc);
+  uart_say(" mtval 0x");
+  uart_hex(value);
+  uart_say("\r\n");
+}
+
 extern char __heap_start[], __heap_end[];
 static char *brk = __heap_start;
 
