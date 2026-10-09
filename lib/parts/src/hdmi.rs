@@ -383,16 +383,22 @@ impl<
 // begin{table}
 /// The SiI9134's configuration, one register write per entry: the
 /// chip's I2C address as eight bits, write bit included, the register,
-/// and the value. No document this part was written from states the
-/// chip's registers, so the values are to be confirmed against the
-/// chip's documentation or the board vendor's example before the board
-/// is expected to show a picture.
+/// and the value. The values are those public code for the chip writes
+/// (issue 1525): an FPGA colour-bar example's system control, and a
+/// Linux driver's packing.
 pub const SII9134_WRITES: [(u8, u8, u8); 2] = [
-    // System control: out of power down, with the input bus as the
-    // board wires it.
-    (0x72, 0x08, 0x35),
-    // The output as DVI: no HDMI packets, only the picture.
-    (0x7a, 0x2f, 0x00),
+    // System control: out of power down, the 24-bit bus, the syncs
+    // followed, and the input latched on IDCK's rising edge, mid-pixel,
+    // as n111116/SiI9134_clor_bar's `sii9134_cfg.v` writes it. 0x35 had
+    // the falling edge, the pixel clock's rise.
+    (0x72, 0x08, 0x37),
+    // The output as DVI, no HDMI packets, with 24 bits a pixel and no
+    // packing in bits 5 to 3, as starsoc/linux-star-x7's `sii9134.c`
+    // writes them with HDMI on (0x21). 0x00 left those bits nought, a
+    // packing the chip does not define, and while it did the board's
+    // recordings showed each line's last four pixels at the start of
+    // the next (issue 1525).
+    (0x7a, 0x2f, 0x20),
 ];
 
 /// The address of entry `e`.
@@ -417,8 +423,8 @@ fn table_reg(e: U<3>) -> U<8> {
 #[lower]
 fn table_val(e: U<3>) -> U<8> {
     select!(e.raw() => {
-        0 => U::<8>::from(0x35u8),
-        _ => U::<8>::from(0x00u8),
+        0 => U::<8>::from(0x37u8),
+        _ => U::<8>::from(0x20u8),
     })
 }
 // end{table}
