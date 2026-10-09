@@ -2695,10 +2695,19 @@ long as its list, and binning from a list in the DDR3 costs 0.86
 million against 0.38 from the data memory. With each hart building
 and binning every other frame in its own memory, a frame takes 1.05
 million: half of one hart's, and under the 1.67 million cycles of a
-frame at 60\,Hz. \code{ico\_hdmi} does the second. Hart 1 draws the
-odd frames into the second framebuffer and bins them into the second
-half of the room; hart 0 does the even ones, and still rings every
-frame in order and moves the scanout. The machine has no contention on
+frame at 60\,Hz. \code{ico\_hdmi} does the second. The first frame, and every even one, is drawn into
+the second framebuffer; hart 1 draws the odd frames into the first and
+bins them into the second half of the room, and hart 0 does the even
+ones, and still rings every frame in order and moves the scanout. Hart
+1 once drew its frames into the second framebuffer too, so the first
+held only the logo and was shown every other frame, while the second
+was drawn into on the screen (issue~\#1551).
+\code{two\_buffers\_test} runs the program on the machine, both harts,
+with Razboj a stand-in that is done at once and keeps, for every ring
+of its doorbell, the rows its tile table's tiles start at and where
+the scanout showed from. Every frame must be drawn into the buffer not
+on the screen, and both buffers drawn; the program as it was fails
+that on every other ring. The machine has no contention on
 the DDR3 path, and with both harts storing the stores above took 29
 cycles more, so the board's frame will be somewhat longer.
 
