@@ -51,6 +51,7 @@ int main(void) {
   }
   conform_state();
   conform_errors();
+  conform_render();
   printf("DONE %d passed, %d failed\n", passed, failed);
   return 0;
 }

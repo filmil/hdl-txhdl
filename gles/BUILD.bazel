@@ -317,9 +317,11 @@ cc_binary(
         "conform/conform.h",
         "conform/errors.c",
         "conform/main.c",
+        "conform/render.c",
         "conform/state.c",
     ],
     copts = ["-std=c11"],
+    linkopts = ["-lm"],
     deps = [
         ":conform_static",
         ":conform_stubs",

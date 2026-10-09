@@ -29,5 +29,6 @@ extern void conform_machine(void);
 /* The groups. */
 void conform_state(void);
 void conform_errors(void);
+void conform_render(void);
 
 #endif
