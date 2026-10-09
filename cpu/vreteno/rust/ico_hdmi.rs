@@ -443,6 +443,10 @@ fn main() -> ! {
     logo(SECOND as u32);
     Scan::base(Razboj::FRAME);
     Scan::show(true);
+    // Built with `ahead`, the scanout asks for its lines two rows ahead
+    // rather than one (#1523).
+    #[cfg(ahead)]
+    Scan::two_ahead(true);
 
     // What the solid filled last time in each frame: nothing yet.
     let mut last = [CORNER, CORNER];
@@ -576,6 +580,15 @@ fn main() -> ! {
             Uart::put_decimal(pair);
             #[cfg(diag)]
             diag(rung, which ^ 1, seen);
+            // How close the scanout came since the last line: its
+            // longest line, in pixels, and its lines late at their rows
+            // (#1523).
+            let (worst, lates) = Scan::timing();
+            Uart::say(b" worst ");
+            Uart::put_decimal(worst);
+            Uart::say(b" lates ");
+            Uart::put_decimal(lates);
+            Scan::clear();
             Uart::put(b'\n');
         }
         frames = frames.wrapping_add(1);
