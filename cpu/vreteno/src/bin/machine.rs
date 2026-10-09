@@ -20,7 +20,10 @@
 //! the board's costs (issue 1392), so `mcycle` reads cycles and the
 //! machine says the total when it stops. `--ddr3-store N` charges a
 //! store into the DDR3 `N` cycles instead of the board's, to ask what a
-//! dearer store would cost a run (issue 1408).
+//! dearer store would cost a run (issue 1408). `--dcache` charges a load
+//! the core's data cache would hold as a hit rather than the DDR3's 40,
+//! which without the costs it does not yet model leaves a run well under
+//! the board's time (issue 1554).
 //!
 //! `--fastboot-peer BYTES` puts a fastboot client on the cable instead
 //! (issue 1390), smoltcp's TCP/IP at 192.168.1.1 with a client on top,
@@ -100,6 +103,7 @@ fn main() {
     let mut profile: Option<String> = None;
     let mut watch: Option<u32> = None;
     let mut ddr3_store: Option<u64> = None;
+    let mut dcache = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         let mut val =
@@ -114,6 +118,7 @@ fn main() {
             "--eth-peer" => peer = true,
             "--timing" => timing = true,
             "--ddr3-store" => ddr3_store = Some(number(&val())),
+            "--dcache" => dcache = true,
             "--fastboot-peer" => fastboot = Some(number(&val()) as usize),
             // Stop once the console has said this, and say how far the
             // run got, which times a boot to a line of its log (issue
@@ -150,6 +155,9 @@ fn main() {
                     r.3 = n;
                 }
             }
+        }
+        if dcache {
+            t.hit = Some(1);
         }
         m.model.timing = Some(t);
     }

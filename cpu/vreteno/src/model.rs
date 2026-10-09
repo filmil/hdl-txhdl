@@ -232,6 +232,18 @@ pub struct Model {
     /// writes its word (issue 1408).
     pub wrote: Option<u32>,
     pub rsv_pa: Option<u32>,
+    /// The step's exclusive access, `lr.w` 1, `sc.w` 2 or an AMO 3, and its
+    /// physical word, for the timing mode (issue 1554).
+    pub excl: std::cell::Cell<Option<(u8, u32)>>,
+    /// The data cache's lines in the timing mode: each the line's address
+    /// plus one, or zero when empty (issue 1554).
+    pub dc: Vec<u32>,
+    /// Whether the step was a `wfi`, and the cycle count at the last one;
+    /// and whether the other hart runs beside this one, which the
+    /// machine sets (issue 1554).
+    pub wfi_now: std::cell::Cell<bool>,
+    pub last_wfi: u64,
+    pub contended: bool,
 }
 
 /// What a step costs in the timing mode (issue 1392): a base an
@@ -249,6 +261,18 @@ pub struct Timing {
     pub regions: Vec<(u32, u32, u64, u64)>,
     /// A load or a store anywhere else, the peripherals among it.
     pub other: (u64, u64),
+    /// What `lr.w`, `sc.w` and an AMO cost, more than a step, on a word
+    /// the data cache would hold, where each is an exclusive pair on the
+    /// bus (issue 1554); elsewhere each is a load or a store.
+    pub excl: (u64, u64, u64),
+    /// A load that hits the data cache, more than a step (issue 1554):
+    /// the core's, direct-mapped, 256 lines of 16 bytes, over the DDR3.
+    /// A load that misses costs its region's and fills the line. None
+    /// models no cache, every load its region's.
+    pub hit: Option<u64>,
+    /// What a store, an `sc.w` and an AMO cost more while the other hart
+    /// runs and shares the DDR3's path with it (issue 1554).
+    pub contention: (u64, u64, u64),
 }
 
 impl Timing {
@@ -275,6 +299,18 @@ impl Timing {
                 (0x4000_0000, 0x8000_0000, 40, 3),
             ],
             other: (8, 2),
+            // `board_test`'s `exclusive_costs_on_the_ddr3` (issue 1554):
+            // `lr.w` 34 cycles, `lr.w` and `sc.w` 51, `amoadd.w` 50 and a
+            // load the cache holds 2, a step included; with the other
+            // hart storing all the while a store 0.9 more, the pair 11
+            // and the AMO 8.
+            excl: (33, 16, 49),
+            // The cache is not charged by default: without the costs it
+            // hides, a missed instruction line, a page walk, a division,
+            // the board's cycles an instruction come out well under
+            // (issue 1554); `machine --dcache` asks for it.
+            hit: None,
+            contention: (1, 11, 8),
         }
     }
 
@@ -323,6 +359,11 @@ impl Default for Model {
             access: std::cell::Cell::new(None),
             wrote: None,
             rsv_pa: None,
+            excl: std::cell::Cell::new(None),
+            dc: Vec::new(),
+            wfi_now: std::cell::Cell::new(false),
+            last_wfi: 0,
+            contended: false,
             dcsr: 0x4000_0003,
             step_armed: false,
             stepped: false,
@@ -410,6 +451,12 @@ pub fn misaligned(kind: Kind, addr: u32) -> bool {
 /// beyond is a device's, and what a load there answers is what the bus
 /// gave the core, which the caller hands over.
 const DEVICES: u32 = DATA_BASE + DATA_BYTES;
+
+/// Whether the core's data cache would hold the word at physical
+/// `pa`: the DDR3's quarter of the map (issue 1554).
+fn cached(pa: u32) -> bool {
+    pa >> 30 == 1
+}
 
 /// Whether a data access at addr is the data RAM's (issue 1275).
 fn in_dram(addr: u32) -> bool {
@@ -1031,6 +1078,8 @@ impl Model {
         // In the timing mode the step is charged what the core would
         // spend on it (issue 1392).
         self.access.set(None);
+        self.excl.set(None);
+        self.wfi_now.set(false);
         let pc = self.pc;
         self.execute(imem, interrupt);
         let t = self.timing.as_ref().expect("timing");
@@ -1038,10 +1087,56 @@ impl Model {
         if self.pc != pc.wrapping_add(4) && self.pc != pc.wrapping_add(2) {
             c += t.taken;
         }
-        if let Some((addr, store)) = self.access.get() {
-            c += t.access(addr, store);
+        let busy = self.contended as u64;
+        let (hit, excl, contention) = (t.hit, t.excl, t.contention);
+        if let Some((kind, pa)) = self.excl.get().filter(|(_, pa)| cached(*pa))
+        {
+            // An exclusive pair on the bus, which leaves its line out of
+            // the cache.
+            c += match kind {
+                1 => excl.0,
+                2 => excl.1 + busy * contention.1,
+                _ => excl.2 + busy * contention.2,
+            };
+            if hit.is_some() {
+                self.dc_forget(pa);
+            }
+        } else if let Some((addr, store)) = self.access.get() {
+            let line = (addr >> 4) + 1;
+            let slot = ((addr >> 4) & 255) as usize;
+            let held = cached(addr) && self.dc.get(slot) == Some(&line);
+            c += match hit {
+                Some(h) if !store && held => h,
+                _ => t.access(addr, store),
+            };
+            if store && cached(addr) {
+                c += busy * contention.0;
+            }
+            if hit.is_some() && !store && cached(addr) {
+                if self.dc.len() != 256 {
+                    self.dc = vec![0; 256];
+                }
+                self.dc[slot] = line;
+            }
+        }
+        // A hart but the first forgets its data cache as it wakes from
+        // `wfi`, whatever woke it (issue 1408).
+        if self.wfi_now.get() {
+            self.last_wfi = self.cycles;
+            if self.hartid != 0 {
+                self.dc.clear();
+            }
         }
         self.cycles += c;
+    }
+
+    /// The data cache in the timing mode no longer holds the line of
+    /// `pa`: another hart wrote it, or an exclusive went round it.
+    pub fn dc_forget(&mut self, pa: u32) {
+        let slot = ((pa >> 4) & 255) as usize;
+        if self.dc.get(slot) == Some(&((pa >> 4) + 1)) {
+            self.dc[slot] = 0;
+        }
     }
 
     /// One instruction, or the trap taken instead of it.
@@ -1223,6 +1318,7 @@ impl Model {
                     }
                 };
                 self.rsv_pa = Some(pa);
+                self.excl.set(Some((1, pa)));
                 if pa >= DEVICES && self.dev_err && !self.csr.busquiet {
                     self.trap(CAUSE_LOAD_ACCESS, a);
                     return;
@@ -1249,6 +1345,7 @@ impl Model {
                         return;
                     }
                 };
+                self.excl.set(Some((2, pa)));
                 if held {
                     if self.word(imem, pa).is_none() {
                         self.halted = Some(Halt::Fault(a));
@@ -1278,6 +1375,7 @@ impl Model {
                     self.trap(CAUSE_STORE_ACCESS, a);
                     return;
                 }
+                self.excl.set(Some((3, pa)));
                 let Some(old) = self.word(imem, pa) else {
                     self.trap(CAUSE_STORE_ACCESS, a);
                     return;
@@ -1386,6 +1484,7 @@ impl Model {
                     self.trap(CAUSE_ILLEGAL, w);
                     return;
                 }
+                self.wfi_now.set(true);
             }
             // `mret` only in machine mode and `sret` not in user mode;
             // each returns to the mode it saved and leaves user mode
