@@ -23,7 +23,7 @@
 //! Four bursts may be noted at once; a fifth waits at its address
 //! phase. Each host's identifiers are its own and none is reused while
 //! its burst is out, so a response is matched by its identifier alone.
-use txhdl::comp::{mux, Clock, DefaultClock, Out, Reg, Rx, Tx, Unit};
+use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 use txhdl_parts::bus::axi::{Aw, B, W};
@@ -54,6 +54,8 @@ pub struct DcSnoop<const P1: usize = 0> {
     pub pt2: Reg<U<3>>,
     pub pt3: Reg<U<3>>,
     pub wport: Reg<U<3>>,
+    /// Whether the walk's lines go to the second hart too.
+    pub wtell1: Reg<Bit>,
     /// The walk over a burst's lines: whether one is on, the next line,
     /// how many are left, and the slot it empties at the end; and the
     /// cycle after it, in which the response still waits.
@@ -68,7 +70,12 @@ pub struct DcSnoop<const P1: usize = 0> {
 impl<const P1: usize> Unit for DcSnoop<P1> {
     async fn run(
         &mut self,
-        (aw_in, w_in, b_in): (Rx<Aw<32, 5>>, Rx<W<32, 4>>, Rx<B<5>>),
+        (aw_in, w_in, b_in, asleep1): (
+            Rx<Aw<32, 5>>,
+            Rx<W<32, 4>>,
+            Rx<B<5>>,
+            In<Bit>,
+        ),
         (aw_out, w_out, b_out, inv, inv1): (
             Tx<Aw<32, 5>>,
             Tx<W<32, 4>>,
@@ -122,8 +129,27 @@ impl<const P1: usize> Unit for DcSnoop<P1> {
             let hit = m0 | m1 | m2 | m3;
             let walking = self.walking.get();
             let busy = walking | self.settle;
-            let start = b_here & hit & !busy;
-            let b_go = b_here & !hit & !busy & b_out.ready();
+            let from = mux(
+                m0,
+                self.pt0.get(),
+                mux(
+                    m1,
+                    self.pt1.get(),
+                    mux(m2, self.pt2.get(), self.pt3.get()),
+                ),
+            );
+            // Whom a noted write's lines go to, decided as its answer
+            // comes, when it has landed: the first hart unless it wrote
+            // them, the second unless it wrote them or waits in `wfi`,
+            // which forgets its cache as it wakes (issue 1408). A write
+            // nobody is to be told of is answered at once.
+            let tell0 = Bit::from(from != 0);
+            let tell1 =
+                Bit::from(from != P1) & Bit::from(P1 != 0) & !asleep1.get();
+            let need = tell0 | tell1;
+            let start = b_here & hit & need & !busy;
+            let b_go = b_here & (!hit | !need) & !busy & b_out.ready();
+            let skip = b_go & hit;
             let _ = b_in.recv_if(b_go);
             if b_go.to_bool() {
                 b_out.send(b);
@@ -146,15 +172,6 @@ impl<const P1: usize> Unit for DcSnoop<P1> {
                     mux(m2, self.cnt2.get(), self.cnt3.get()),
                 ),
             );
-            let from = mux(
-                m0,
-                self.pt0.get(),
-                mux(
-                    m1,
-                    self.pt1.get(),
-                    mux(m2, self.pt2.get(), self.pt3.get()),
-                ),
-            );
             let slot = mux(
                 m0,
                 U::<2>::from(0u8),
@@ -173,15 +190,11 @@ impl<const P1: usize> Unit for DcSnoop<P1> {
             let named = U::<1>::from(1u8).concat::<_, 9>(self.wline.get());
             let none = U::<9>::from(0u16);
             inv.set(mux(walking & Bit::from(wport != 0), named, none));
-            inv1.set(mux(
-                walking & Bit::from(wport != P1) & Bit::from(P1 != 0),
-                named,
-                none,
-            ));
-            let e0 = last & Bit::from(wslot == 0);
-            let e1 = last & Bit::from(wslot == 1);
-            let e2 = last & Bit::from(wslot == 2);
-            let e3 = last & Bit::from(wslot == 3);
+            inv1.set(mux(walking & self.wtell1, named, none));
+            let e0 = (last & Bit::from(wslot == 0)) | (skip & m0);
+            let e1 = (last & Bit::from(wslot == 1)) | (skip & m1);
+            let e2 = (last & Bit::from(wslot == 2)) | (skip & m2);
+            let e3 = (last & Bit::from(wslot == 3)) | (skip & m3);
             with!(self <= {
                 v0: mux(s0, Bit::One, mux(e0, Bit::Zero, v0)),
                 v1: mux(s1, Bit::One, mux(e1, Bit::Zero, v1)),
@@ -196,7 +209,8 @@ impl<const P1: usize> Unit for DcSnoop<P1> {
                     wline: first,
                     wleft: count,
                     wslot: slot,
-                    wport: from
+                    wport: from,
+                    wtell1: tell1
                 },
                 walking ? {
                     wline: self.wline.get() + 1,
@@ -220,9 +234,13 @@ mod tests {
     /// write one word of a line of their own: hart 0 is told of the
     /// lines ports 7 and 3 wrote, hart 1 of those ports 0 and 3 wrote,
     /// and each answer passes once its lines are told.
-    #[test]
-    fn each_hart_is_told_of_the_others_writes() {
+    /// Ports 0, 7 and 3 each write one word of a line of their own,
+    /// with hart 1 awake or waiting: the lines told to each hart, the
+    /// answers that passed, and the cycle port 0's answer did.
+    fn run(asleep: bool) -> (Vec<u128>, Vec<u128>, usize, usize) {
         let mut s = DcSnoop::<7>::default();
+        let (sleep_o, sleep) = signal::<Bit, DefaultClock>();
+        sleep_o.set(Bit::from(asleep));
         let (aw_tx, aw_in) = chan::<Addr<32, 5>, DefaultClock>();
         let (w_tx, w_in) = chan::<W<32, 4>, DefaultClock>();
         let (b_tx, b_in) = chan::<B<5>, DefaultClock>();
@@ -231,10 +249,12 @@ mod tests {
         let (b_out, b_rx) = chan();
         let (inv, inv_rx) = signal::<U<9>, DefaultClock>();
         let (inv1, inv1_rx) = signal::<U<9>, DefaultClock>();
-        let mut sim = Running::new(
-            s.run((aw_in, w_in, b_in), (aw_out, w_out, b_out, inv, inv1)),
-        );
+        let mut sim = Running::new(s.run(
+            (aw_in, w_in, b_in, sleep),
+            (aw_out, w_out, b_out, inv, inv1),
+        ));
         let (mut told0, mut told1, mut answers) = (vec![], vec![], 0);
+        let mut port0_at = 0;
         for (port, line) in [(0u8, 0x10u32), (7, 0x20), (3, 0x30)] {
             let id = U::<5>::from(port << 2);
             aw_tx.send(Addr {
@@ -247,7 +267,7 @@ mod tests {
                 strb: U::from(0xfu8),
                 last: Bit::One,
             });
-            for _ in 0..12 {
+            for c in 0..12 {
                 sim.cycle();
                 // The DDR3: it answers a write once its address passed.
                 if aw_rx.recv().is_some() {
@@ -259,6 +279,9 @@ mod tests {
                 let _ = w_rx.recv();
                 if b_rx.recv().is_some() {
                     answers += 1;
+                    if port == 0 {
+                        port0_at = c;
+                    }
                 }
                 let (a, b) = (inv_rx.get(), inv1_rx.get());
                 if a.bit(8).to_bool() {
@@ -269,8 +292,33 @@ mod tests {
                 }
             }
         }
+        (told0, told1, answers, port0_at)
+    }
+
+    /// With a second hart on port 7 (issue 1408), awake: hart 0 is told
+    /// of the lines ports 7 and 3 wrote, hart 1 of those ports 0 and 3
+    /// wrote, and each answer passes once its lines are told.
+    #[test]
+    fn each_hart_is_told_of_the_others_writes() {
+        let (told0, told1, answers, _) = run(false);
         assert_eq!(told0, vec![0x20, 0x30], "hart 0: ports 7 and 3");
         assert_eq!(told1, vec![0x10, 0x30], "hart 1: ports 0 and 3");
         assert_eq!(answers, 3, "every answer passed");
+    }
+
+    /// With hart 1 waiting in `wfi`, it is told of nothing, which it
+    /// makes up for by forgetting its cache as it wakes; port 0's write
+    /// then has nobody to tell, and its answer is not held for a walk.
+    #[test]
+    fn a_waiting_hart_is_told_nothing() {
+        let (told0, told1, answers, asleep_at) = run(true);
+        let (_, _, _, awake_at) = run(false);
+        assert_eq!(told0, vec![0x20, 0x30], "hart 0 as before");
+        assert_eq!(told1, Vec::<u128>::new(), "hart 1 nothing");
+        assert_eq!(answers, 3, "every answer passed");
+        assert!(
+            asleep_at < awake_at,
+            "port 0's answer at {asleep_at}, against {awake_at} awake"
+        );
     }
 }

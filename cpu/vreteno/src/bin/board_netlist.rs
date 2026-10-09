@@ -29,6 +29,19 @@ fn load(net: &mut Lowered, text: &[u32], data: &[u8]) {
                     }
                 }
             }
+            // The second hart's is where it waits to be started, and
+            // not the program (issue 1408).
+            "cpu1" => {
+                let park: Vec<u128> = vreteno32::park::text()
+                    .iter()
+                    .map(|&w| w as u128)
+                    .collect();
+                for c in &mut inst.unit.instances {
+                    if c.name == "core" {
+                        c.unit.init("imem", &park);
+                    }
+                }
+            }
             // The same words again, on the bus, read-only.
             "rom" => inst.unit.init("words", &text),
             "dmem" => {

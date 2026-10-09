@@ -11,6 +11,7 @@ pub mod isa;
 pub mod machine;
 pub mod model;
 pub mod pair;
+pub mod park;
 pub mod program;
 pub mod rom;
 pub mod run;

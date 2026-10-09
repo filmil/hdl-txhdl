@@ -219,6 +219,9 @@ fn lockstep_hart<const HID: usize>(
     let (dbg_wdata_o, dbg_wdata) = signal::<U<32>, DefaultClock>();
     let (dbg_we_o, dbg_we) = signal::<Bit, DefaultClock>();
     let (dbg_rdata_o, _dbg_rdata) = signal::<U<32>, DefaultClock>();
+    // Whether the hart waits in `wfi`, which nothing here reads (issue
+    // 1408).
+    let (asleep_o, _asleep) = signal::<Bit, DefaultClock>();
     // The core's link, and one per peripheral, with the router
     // between the core's tracker and the three peripherals'.
     let cl = axi_units::<32, 32, 4, IW>();
@@ -275,6 +278,7 @@ fn lockstep_hart<const HID: usize>(
                         release,
                         debug_out,
                         dbg_rdata_o,
+                        asleep_o,
                     ),
                 ),
             ),

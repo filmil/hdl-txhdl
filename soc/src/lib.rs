@@ -220,6 +220,9 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let (_dbg_wdata_o, dbg_wdata) = signal::<U<32>, DefaultClock>();
     let (_dbg_we_o, dbg_we) = signal::<Bit, DefaultClock>();
     let (dbg_rdata_o, _dbg_rdata) = signal::<U<32>, DefaultClock>();
+    // Whether the hart waits in `wfi`, which nothing here reads (issue
+    // 1408).
+    let (asleep_o, _asleep) = signal::<Bit, DefaultClock>();
     let (instr_out, _instr) = signal::<U<32>, DefaultClock>();
     let (wb_out, _wb) = signal::<Writeback, DefaultClock>();
 
@@ -354,6 +357,7 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
                     release,
                     debug_o,
                     dbg_rdata_o,
+                    asleep_o,
                 ),
             ),
             raster.run(

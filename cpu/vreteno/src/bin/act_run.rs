@@ -216,6 +216,9 @@ fn simulate<const EXCL: usize>(
     let (_dbg_we_o, dbg_we) = signal::<Bit, DefaultClock>();
     let (debug_o, _debug) = signal::<Bit, DefaultClock>();
     let (dbg_rdata_o, _dbg_rdata) = signal::<U<32>, DefaultClock>();
+    // Whether the hart waits in `wfi`, which nothing here reads (issue
+    // 1408).
+    let (asleep_o, _asleep) = signal::<Bit, DefaultClock>();
     let (halt_out, _halt) = signal::<Bit, DefaultClock>();
     let (instr_out, _instr) = signal::<U<32>, DefaultClock>();
     let (wb_out, _wb) = signal::<Writeback, DefaultClock>();
@@ -275,6 +278,7 @@ fn simulate<const EXCL: usize>(
                 release,
                 debug_o,
                 dbg_rdata_o,
+                asleep_o,
             ),
         ),
         hardware,
