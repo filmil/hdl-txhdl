@@ -1486,9 +1486,16 @@ impl<
             // `m_b` already say the number is the one written and not x0,
             // and a refused load, `wb_fault`, need not be ruled out, since
             // the instruction in execute is then not live and is squashed,
-            // so what it would have been given is never used.
-            let fwd_a = wb_here & self.m_a;
-            let fwd_b = wb_here & self.m_b;
+            // so what it would have been given is never used. The same
+            // holds of the waits in writeback, a device load's, an AMO's
+            // and an exclusive sc.w's: each is ORed into the stall, so the
+            // instruction in execute is not live while one stands, and the
+            // cycle it ends the word forwarded is the right one. Kept out
+            // of the select, they are off the path through the ALU into
+            // the fetch, where the sc.w's wait was the flagship's worst
+            // (issue 1549).
+            let fwd_a = self.wb_valid & self.m_a;
+            let fwd_b = self.wb_valid & self.m_b;
             let stall_ld = self.valid & self.wb_load & (fwd_a | fwd_b);
             // The M extension is a sequencer: a multiply is one step in
             // the part's multipliers, a division thirty-two restoring
