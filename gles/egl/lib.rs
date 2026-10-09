@@ -249,7 +249,11 @@ fn attribute(attribute: EGLint) -> Option<EGLint> {
     Some(match attribute {
         BUFFER_SIZE => 32,
         RED_SIZE | GREEN_SIZE | BLUE_SIZE | ALPHA_SIZE => 8,
-        DEPTH_SIZE | STENCIL_SIZE | SAMPLES | SAMPLE_BUFFERS | LEVEL => 0,
+        // The depth of a tile table (#1273), as GL_DEPTH_BITS says (#1502).
+        DEPTH_SIZE => 16,
+        // The stencil, beside each depth in the tile (#998).
+        STENCIL_SIZE => 8,
+        SAMPLES | SAMPLE_BUFFERS | LEVEL => 0,
         CONFIG_CAVEAT | TRANSPARENT_TYPE => NONE,
         CONFIG_ID => 1,
         NATIVE_RENDERABLE => FALSE as EGLint,

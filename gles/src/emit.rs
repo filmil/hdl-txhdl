@@ -96,6 +96,22 @@ pub struct Pixel {
     /// The logic operation in place of the blend (Razboj's #998), GL's
     /// `GL_CLEAR` to `GL_SET` less `0x1500`.
     pub logic: Option<u32>,
+    /// The stencil test and its operations (Razboj's #998).
+    pub stencil: Option<Stencil>,
+}
+
+/// The stencil as Razboj's list says it (#998): the comparison, from
+/// nought for `GL_NEVER`; the reference, the value mask and the write
+/// mask, a byte each; and the operations for a stencil failure, a depth
+/// failure and a pass, from nought for `GL_KEEP` to five for
+/// `GL_INVERT`, as `razboj::op::stencil` numbers them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stencil {
+    pub func: u32,
+    pub reference: u32,
+    pub mask: u32,
+    pub write_mask: u32,
+    pub ops: [u32; 3],
 }
 
 impl Pixel {
@@ -105,12 +121,13 @@ impl Pixel {
         alpha: None,
         mask: 0xf,
         logic: None,
+        stencil: None,
     };
 }
 
 /// An instruction's word 15 told it has the pixel's state `p`, and its
-/// second slot, `slot`, given it in words 3 and 4 (Razboj's #993) and the
-/// logic operation in word 5 (#998).
+/// second slot, `slot`, given it in words 3 and 4 (Razboj's #993), the
+/// logic operation in word 5 and the stencil in words 10 and 11 (#998).
 pub fn state(w: &mut [u32; WORDS], slot: &mut [u32; WORDS], p: Pixel) {
     w[15] |= 1 << 13;
     slot[3] = p
@@ -121,6 +138,14 @@ pub fn state(w: &mut [u32; WORDS], slot: &mut [u32; WORDS], p: Pixel) {
         .map_or(0, |(f, r)| 1 | (f & 7) << 1 | (r & 0xff) << 8)
         | (p.mask & 0xf) << 16;
     slot[5] = p.logic.map_or(0, |op| 1 | (op & 0xf) << 1);
+    if let Some(s) = p.stencil {
+        slot[10] = 1
+            | (s.func & 7) << 1
+            | (s.reference & 0xff) << 8
+            | (s.mask & 0xff) << 16
+            | (s.write_mask & 0xff) << 24;
+        slot[11] = (s.ops[0] & 7) | (s.ops[1] & 7) << 3 | (s.ops[2] & 7) << 6;
+    }
 }
 
 /// Fog's words in a second slot (Razboj's #998), its words 6 to 9: the

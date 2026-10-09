@@ -120,6 +120,9 @@ pub enum Op {
     /// with `None` (issue 998): after its texture and before the alpha
     /// test, as GL orders it. Tiled lists only.
     Fog(Option<Fog>),
+    /// From here on, test and write the stencil as `mode` says, or not at
+    /// all with `None` (issue 998). Tiled lists only, as depth is.
+    Stencil(Option<StencilMode>),
     /// From here on, texture the entries that carry texture coordinates
     /// as `mode` says, or not at all with `None` (issue 997). Tiled lists
     /// only.
@@ -210,6 +213,51 @@ pub fn logic(op: u32, s: u32, d: u32) -> u32 {
 pub struct Fog {
     pub colour: u32,
     pub f: [u32; 3],
+}
+
+/// How an entry tests and writes the stencil (issue 998), GL ES 1.1's
+/// `glStencilFunc`, `glStencilOp` and `glStencilMask`: a pixel passes when
+/// `reference & mask` passes `func`, [`NEVER`] to [`ALWAYS`] as depth's,
+/// against `stencil & mask`; and the stencil there becomes `fail`'s
+/// operation of it when the pixel fails the stencil test, `zfail`'s when it
+/// passes that and fails the depth test, and `zpass`'s when it passes both,
+/// in the bits `write_mask` holds. Each operation is [`stencil::KEEP`] to
+/// [`stencil::INVERT`]; a byte each for the rest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StencilMode {
+    pub func: u32,
+    pub reference: u32,
+    pub mask: u32,
+    pub write_mask: u32,
+    pub fail: u32,
+    pub zfail: u32,
+    pub zpass: u32,
+}
+
+/// GL ES 1.1's six stencil operations (issue 998), as the list numbers
+/// them, and what each makes of a stencil.
+pub mod stencil {
+    /// The stencil kept, nought, the reference, one more and one less,
+    /// each held to a byte, and its bits turned over.
+    pub const KEEP: u32 = 0;
+    pub const ZERO: u32 = 1;
+    pub const REPLACE: u32 = 2;
+    pub const INCR: u32 = 3;
+    pub const DECR: u32 = 4;
+    pub const INVERT: u32 = 5;
+
+    /// What the operation `op` makes of the stencil `s`, a byte, with the
+    /// reference `r`.
+    pub fn op(op: u32, s: u32, r: u32) -> u32 {
+        match op {
+            ZERO => 0,
+            REPLACE => r & 0xff,
+            INCR => (s + 1).min(255),
+            DECR => s.saturating_sub(1),
+            INVERT => !s & 0xff,
+            _ => s,
+        }
+    }
 }
 
 /// An alpha test (issue 993): a pixel is kept when its alpha passes the
@@ -337,6 +385,18 @@ pub struct Insn {
     pub f0: U<32>,
     pub fdx: U<32>,
     pub fdy: U<32>,
+    /// The stencil (issue 998): whether the entry tests it, the comparison,
+    /// the reference, the value mask and the write mask, and the three
+    /// operations, as [`StencilMode`] has them. An entry with the stencil
+    /// has the pixel's state.
+    pub sten: Bit,
+    pub sfunc: U<3>,
+    pub sref: U<8>,
+    pub smask: U<8>,
+    pub swmask: U<8>,
+    pub sfail: U<3>,
+    pub szfail: U<3>,
+    pub szpass: U<3>,
     /// Texturing (issue 997): whether the entry is textured, which gives
     /// it two slots more; its texture's descriptor's byte address, its
     /// environment and environment colour; the planes `u q`, `v q` and
@@ -540,6 +600,7 @@ impl Op {
             | Op::ColourMask(_)
             | Op::LogicOp(_)
             | Op::Fog(_)
+            | Op::Stencil(_)
             | Op::Texture(_) => None,
         }
     }
@@ -834,6 +895,7 @@ pub fn assemble(ops: &[Op], sw: usize, sh: usize) -> Vec<Insn> {
             Op::AlphaTest(test) => pixel.alpha = test,
             Op::ColourMask(mask) => pixel.mask = mask & 0xf,
             Op::LogicOp(op) => pixel.logic = op.map(|o| o & 0xf),
+            Op::Stencil(mode) => pixel.stencil = mode,
             Op::Texture(mode) => texture = mode,
             _ => {
                 if let Some(mut insn) =
@@ -902,14 +964,16 @@ fn fogged(insn: &mut Insn, op: &Op, f: Fog, mask: u32) {
 }
 
 /// What happens to each pixel an entry draws after its coverage and
-/// before its depth (issue 993): the blend, the alpha test and the
-/// colour mask the assembler holds as state.
+/// before its depth (issue 993): the blend, the alpha test, the colour
+/// mask, the logic operation and the stencil (issue 998) the assembler
+/// holds as state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pixel {
     pub blend: Option<BlendMode>,
     pub alpha: Option<AlphaTest>,
     pub mask: u32,
     pub logic: Option<u32>,
+    pub stencil: Option<StencilMode>,
 }
 
 impl Default for Pixel {
@@ -919,6 +983,7 @@ impl Default for Pixel {
             alpha: None,
             mask: 0xf,
             logic: None,
+            stencil: None,
         }
     }
 }
@@ -945,6 +1010,16 @@ impl Pixel {
         if let Some(op) = self.logic {
             insn.logic = Bit::One;
             insn.lop = U::from(op);
+        }
+        if let Some(s) = self.stencil {
+            insn.sten = Bit::One;
+            insn.sfunc = U::from(s.func & 7);
+            insn.sref = U::from(s.reference & 0xff);
+            insn.smask = U::from(s.mask & 0xff);
+            insn.swmask = U::from(s.write_mask & 0xff);
+            insn.sfail = U::from(s.fail & 7);
+            insn.szfail = U::from(s.zfail & 7);
+            insn.szpass = U::from(s.zpass & 7);
         }
     }
 }
@@ -1017,6 +1092,22 @@ mod tests {
         let clear = Op::Clear { colour: 0 };
         let i = super::assemble(&[Op::Fog(Some(fog)), clear], 16, 16)[0];
         assert!(!i.fog.to_bool(), "a clear is not fogged");
+    }
+
+    /// The six stencil operations are GL ES 1.1's, the two that count
+    /// held to a byte (issue 998).
+    #[test]
+    fn the_stencil_operations_are_gls() {
+        use super::stencil::{op, DECR, INCR, INVERT, KEEP, REPLACE, ZERO};
+        let r = 0x5a;
+        for s in [0u32, 1, 0x80, 0xfe, 0xff] {
+            assert_eq!(op(KEEP, s, r), s);
+            assert_eq!(op(ZERO, s, r), 0);
+            assert_eq!(op(REPLACE, s, r), r);
+            assert_eq!(op(INCR, s, r), (s + 1).min(255));
+            assert_eq!(op(DECR, s, r), s.max(1) - 1);
+            assert_eq!(op(INVERT, s, r), 255 - s);
+        }
     }
 
     /// A texture's plane from the area's reciprocal is within two units

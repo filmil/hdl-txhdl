@@ -129,7 +129,7 @@ fn the_three_calls_convert_as_gl_says() {
         [gl::MAX_TEXTURE_SIZE as Fx * ONE]
     );
     assert_eq!(bools(&mut g, name::MAX_LIGHTS, 1), [true]);
-    assert_eq!(bools(&mut g, name::STENCIL_BITS, 1), [false]);
+    assert_eq!(bools(&mut g, name::STENCIL_BITS, 1), [true], "eight bits");
     assert_eq!(fixed(&mut g, gl::LIGHTING, 1), [0]);
 }
 

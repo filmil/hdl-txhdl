@@ -23,7 +23,7 @@ Everything before the pixel is the library's: vertices, matrices, lighting, clip
 Everything from the pixel on is Razboj's: coverage, the fill rule, interpolating colour across a triangle, and later depth and blending.
 
 It is not conformant ES 1.1, and does not claim to be.
-ES 1.1 requires texturing, which issue 997 adds with one texture unit, and the library leaves out stencil, which waits for issue 998.
+ES 1.1 requires texturing, which issue 997 adds with one texture unit, and the per-pixel steps, which issue 998 completes with the stencil.
 The conformance run is issue 999.
 Until then `glGetString(GL_VERSION)` says what the library is, "Common-Lite, one texture unit, not conformant", rather than claim the profile.
 
@@ -43,19 +43,20 @@ A later issue means the entry point is accepted from the start but does what tha
 | Shading and faces | `glShadeModel`, `glFrontFace`, `glCullFace` | Now |
 | Lighting | `glLightx`, `glLightxv`, `glLightModelx`, `glLightModelxv`, `glMaterialx`, `glMaterialxv` | Now |
 | Clip planes | `glClipPlanex` | Now, one plane at least |
-| Clearing | `glClearColorx`, `glClear`; `glClearDepthx` | Now, under the colour and depth masks |
+| Clearing | `glClearColorx`, `glClear`; `glClearDepthx`, `glClearStencil` | Now, under the colour, depth and stencil masks |
 | Scissor | `glScissor`; `GL_SCISSOR_TEST` | Now, from #1490, clipped by the library |
 | Depth | `glDepthFunc`, `glDepthMask`, `glPolygonOffsetx`; `GL_POLYGON_OFFSET_FILL` | Now, from #1273, drawn in a tile table; polygon offset from #998 |
 | Blending and masks | `glBlendFunc`, `glAlphaFuncx`, `glColorMask`, `glLogicOp`; `GL_COLOR_LOGIC_OP` | Now, from #993, drawn in a tile table; the logic operations from #998 |
 | Fog | `glFogx`, `glFogxv`; `GL_FOG` | From #998, drawn in a tile table, its factor worked out at each vertex |
+| Stencil | `glStencilFunc`, `glStencilOp`, `glStencilMask`, `glClearStencil`; `GL_STENCIL_TEST` | From #998, 8 bits, drawn in a tile table |
 | Textures | `glGenTextures`, `glDeleteTextures`, `glBindTexture`, `glTexImage2D`, `glTexParameteri`, `glTexParameterx`, `glTexEnvi`, `glTexEnvx`, `glTexEnvxv`, `glTexCoordPointer`, `glMultiTexCoord4x`, `glActiveTexture`, `glClientActiveTexture`, `glPixelStorei`; `GL_TEXTURE_2D` and `GL_TEXTURE_COORD_ARRAY` | From #997, one unit, drawn in a tile table; the rasteriser samples under every filter, mipmapped, and every environment but `GL_COMBINE`, as Razboj's model does |
 | Points and lines | `glPointSizex`, `glLineWidthx`, and the point and line modes of the draw calls; `GL_POINT_SPRITE_OES` and `GL_COORD_REPLACE_OES` | Now, from issue 994; point sprites from #998 |
-| Switches | `glEnable`, `glDisable`, `glIsEnabled` for `GL_LIGHTING`, `GL_LIGHT0` to `GL_LIGHT7`, `GL_CULL_FACE`, `GL_NORMALIZE`, `GL_RESCALE_NORMAL`, `GL_COLOR_MATERIAL`, `GL_CLIP_PLANE0`, `GL_DEPTH_TEST`, `GL_BLEND`, `GL_ALPHA_TEST`, `GL_DITHER`, `GL_SCISSOR_TEST`, `GL_FOG`; and the rest as the issues above land | Now, and growing |
+| Switches | `glEnable`, `glDisable`, `glIsEnabled` for `GL_LIGHTING`, `GL_LIGHT0` to `GL_LIGHT7`, `GL_CULL_FACE`, `GL_NORMALIZE`, `GL_RESCALE_NORMAL`, `GL_COLOR_MATERIAL`, `GL_CLIP_PLANE0`, `GL_DEPTH_TEST`, `GL_BLEND`, `GL_ALPHA_TEST`, `GL_DITHER`, `GL_SCISSOR_TEST`, `GL_FOG`, `GL_STENCIL_TEST`; and the rest as the issues above land | Now, and growing |
 | Queries and errors | `glGetError`, `glGetIntegerv`, `glGetFixedv`, `glGetBooleanv`, `glGetString`, `glGetPointerv` | Now, the queries from #1484 (section 10) |
 | Completion | `glFlush`, `glFinish` | Now (section 7) |
 | Hints | `glHint` | Accepted and ignored, as the specification allows, from #1490 |
 
-Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit, which wait for a program that needs them; stencil (#998), and `glReadPixels`, which needs a read path from the framebuffer that nothing has asked for yet.
+Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit, which wait for a program that needs them; and `glReadPixels`, which needs a read path from the framebuffer that nothing has asked for yet.
 An entry point that is left out still exists, so that a program links, and sets `GL_INVALID_ENUM` or `GL_INVALID_OPERATION` as the specification says for an unsupported value.
 
 The limits the library reports are the specification's minimums: a modelview stack of 16, projection and texture stacks of 2, eight lights, one clip plane.
@@ -360,9 +361,14 @@ The library works the factor out at each vertex, with the eye distance as `|z_e|
 Razboj fogs a pixel after its texture and before the alpha test, its red, green and blue and not its alpha, and a clear is not fogged.
 `//gles:fog_test` holds the three modes at distances from before a linear fog starts to past where it ends, a ramp across the window, and a point to a reference in f64, a channel within two of it.
 
+The stencil is #998's last, `glStencilFunc`, `glStencilOp`, `glStencilMask`, `glClearStencil` and `GL_STENCIL_TEST`, eight bits beside each depth in Razboj's tile.
+An entry with the test on carries it in its second slot's words 10 and 11, and `glClear`'s stencil bit is a rectangle that writes the clear's value through the write mask and leaves the depth, unless the depth is cleared with it.
+EGL's configuration says 16 bits of depth and 8 of stencil.
+`//gles:stencil_test` draws, under each of the eight comparisons, with an operation for each outcome, masks of all bits and of some, and a depth test that fails half the window in some rounds, and holds the picture to a reference that keeps its own stencil; then it draws a colour for each stencil value only where the stencil is that value, so the picture shows the stencil itself.
+
 The queries are issue 1484's.
 `glGetIntegerv`, `glGetFixedv` and `glGetBooleanv` answer every name the library keeps state for: the viewport and the depth range, the matrix mode, the three matrices and their stacks' depths, the current colour, normal and texture coordinates, the clears, the depth, blend, alpha test and colour mask settings, the faces and the shading, the point size and the line width, the bound texture, the unpack alignment, the light model, and every switch `glIsEnabled` knows.
-They also give the limits: the stacks, 8 lights, 1 clip plane, textures to 1024, 1 texture unit, 4 bits under the pixel, 8 bits a channel and 16 of depth, no stencil, and sizes from 1 to 64.
+They also give the limits: the stacks, 8 lights, 1 clip plane, textures to 1024, 1 texture unit, 4 bits under the pixel, 8 bits a channel, 16 of depth and 8 of stencil, and sizes from 1 to 64.
 Each finds its values once, in the kind GL keeps them in, and each call converts them as GL ES 1.1's section 6.1.2 says.
 A boolean is one or nought; a fixed value asked for as an integer is rounded; a colour, a normal, a depth range, the depth's clear value and the alpha reference asked for as integers map minus one to one onto the integers' whole range; an integer asked for as fixed is that many ones; and anything not nought is true.
 The C entry points add the client arrays' own state, each array's switch, size, type and stride, and `glGetPointerv` gives back each array's pointer.

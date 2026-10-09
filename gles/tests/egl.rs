@@ -141,7 +141,13 @@ fn a_program_draws_and_swaps_without_tearing() {
         let (mut major, mut minor) = (0, 0);
         assert_eq!(eglInitialize(dpy, &mut major, &mut minor), 1);
         assert_eq!((major, minor), (1, 4));
-        let want = [0x3024, 8, 0x3023, 8, 0x3022, 8, 0x3033, 4, 0x3038];
+        // Eight bits a channel, a window, a depth buffer of 16 bits,
+        // which a program that tests depth asks for (#1502), and a stencil of
+        // 8 (#998).
+        let want = [
+            0x3024, 8, 0x3023, 8, 0x3022, 8, 0x3033, 4, 0x3025, 16, 0x3026, 8,
+            0x3038,
+        ];
         let mut config = core::ptr::null_mut();
         let mut n = 0;
         assert_eq!(
@@ -149,6 +155,11 @@ fn a_program_draws_and_swaps_without_tearing() {
             1
         );
         assert_eq!(n, 1, "one configuration fits");
+        let mut depth = 0;
+        assert_eq!(eglGetConfigAttrib(dpy, config, 0x3025, &mut depth), 1);
+        assert_eq!(depth, 16, "the depth's bits");
+        assert_eq!(eglGetConfigAttrib(dpy, config, 0x3026, &mut depth), 1);
+        assert_eq!(depth, 8, "the stencil's bits");
         let surface = eglCreateWindowSurface(
             dpy,
             config,

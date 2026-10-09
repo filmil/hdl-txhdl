@@ -114,6 +114,14 @@ fn main() {
     // density.
     println!("fog colour {} {} 0 {}", ONE / 2, ONE, ONE);
     println!("fog {:04x} end {} density {}", gl::LINEAR, 8 * ONE, ONE / 4);
+    // The stencil's state (#998), as draw.c sets it.
+    println!(
+        "stencil {:04x} 5 15 ops {:04x} {:04x} {:04x} mask 60 clear 3",
+        gl::GEQUAL,
+        gl::INCR,
+        gl::DECR,
+        gl::INVERT
+    );
 
     // Buffer objects (#1488): the quad in a new context, scaled by a half,
     // its colours per vertex, as draw.c draws it from its buffers.

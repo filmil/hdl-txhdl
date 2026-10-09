@@ -148,6 +148,20 @@ pub struct Gl<'a> {
     fog_start: Fx,
     fog_end: Fx,
     fog_colour: [Fx; 4],
+    /// The stencil (#998): its switch; its comparison, Razboj's, from
+    /// nought for `GL_NEVER`, `GL_ALWAYS` at first; the reference and the
+    /// value mask as given; the operations for a stencil failure, a depth
+    /// failure and a pass, Razboj's, `GL_KEEP` at first; the write mask;
+    /// and the clear's value. The buffer has eight bits, so the reference
+    /// is held to nought and 255 where it is used, and the masks' and the
+    /// clear's low eight bits count.
+    stencil_on: bool,
+    stencil_func: u32,
+    stencil_ref: i32,
+    stencil_mask: u32,
+    stencil_ops: [u32; 3],
+    stencil_write: u32,
+    clear_stencil: i32,
     /// The scissor (#1490): its switch, and its box in GL's window,
     /// the first column and row from the bottom left and the size.
     scissor_on: bool,
@@ -236,6 +250,13 @@ impl<'a> Gl<'a> {
             fog_start: 0,
             fog_end: ONE,
             fog_colour: [0; 4],
+            stencil_on: false,
+            stencil_func: gl::ALWAYS - gl::NEVER,
+            stencil_ref: 0,
+            stencil_mask: u32::MAX,
+            stencil_ops: [0; 3],
+            stencil_write: u32::MAX,
+            clear_stencil: 0,
             scissor_on: false,
             scissor: (0, 0, sw as i32, sh as i32),
             hints: [gl::DONT_CARE; 5],
@@ -435,6 +456,7 @@ impl<'a> Gl<'a> {
             gl::DITHER => self.dither = on,
             gl::COLOR_LOGIC_OP => self.logic_on = on,
             gl::FOG => self.fog_on = on,
+            gl::STENCIL_TEST => self.stencil_on = on,
             gl::SCISSOR_TEST => self.scissor_on = on,
             gl::BLEND => self.blend_on = on,
             gl::ALPHA_TEST => self.alpha_on = on,
@@ -468,6 +490,7 @@ impl<'a> Gl<'a> {
             gl::DITHER => self.dither,
             gl::COLOR_LOGIC_OP => self.logic_on,
             gl::FOG => self.fog_on,
+            gl::STENCIL_TEST => self.stencil_on,
             gl::SCISSOR_TEST => self.scissor_on,
             gl::BLEND => self.blend_on,
             gl::ALPHA_TEST => self.alpha_on,
@@ -751,6 +774,74 @@ impl<'a> Gl<'a> {
             .then(|| emit::fog(w, v, at.map(|a| self.fog_factor(a)), colour))
     }
 
+    /// `glStencilFunc` (#998): the comparison, `GL_NEVER` to `GL_ALWAYS`,
+    /// of `reference & mask` with the stencil there under `mask`.
+    pub fn stencil_func(&mut self, func: u32, reference: i32, mask: u32) {
+        match func {
+            gl::NEVER..=gl::ALWAYS => {
+                self.stencil_func = func - gl::NEVER;
+                self.stencil_ref = reference;
+                self.stencil_mask = mask;
+            }
+            _ => self.fail(gl::INVALID_ENUM),
+        }
+    }
+
+    /// `glStencilOp` (#998): what a stencil failure, a depth failure and
+    /// a pass each do to the stencil, every one of the three one of
+    /// `GL_KEEP`, `GL_ZERO`, `GL_REPLACE`, `GL_INCR`, `GL_DECR` and
+    /// `GL_INVERT`, or none of them changes.
+    pub fn stencil_op(&mut self, fail: u32, zfail: u32, zpass: u32) {
+        let code = |op: u32| {
+            [
+                gl::KEEP,
+                gl::ZERO,
+                gl::REPLACE,
+                gl::INCR,
+                gl::DECR,
+                gl::INVERT,
+            ]
+            .iter()
+            .position(|&o| o == op)
+            .map(|k| k as u32)
+        };
+        match (code(fail), code(zfail), code(zpass)) {
+            (Some(f), Some(z), Some(p)) => self.stencil_ops = [f, z, p],
+            _ => self.fail(gl::INVALID_ENUM),
+        }
+    }
+
+    /// `glStencilMask` (#998): the stencil's bits that drawing and a clear
+    /// may write.
+    pub fn stencil_mask(&mut self, mask: u32) {
+        self.stencil_write = mask;
+    }
+
+    /// `glClearStencil` (#998): the stencil a clear writes.
+    pub fn clear_stencil(&mut self, s: i32) {
+        self.clear_stencil = s;
+    }
+
+    /// The stencil's state as Razboj's list says it, with the comparison
+    /// `func` and the operations `ops`, Razboj's codes, and the context's
+    /// reference and masks: what drawing tests and does while the test is
+    /// on, and with `GL_ALWAYS` and `GL_REPLACE` by the clear's value, what
+    /// a clear does.
+    fn stencil_with(
+        &self,
+        func: u32,
+        reference: i32,
+        ops: [u32; 3],
+    ) -> emit::Stencil {
+        emit::Stencil {
+            func,
+            reference: reference.clamp(0, 255) as u32,
+            mask: self.stencil_mask & 0xff,
+            write_mask: self.stencil_write & 0xff,
+            ops,
+        }
+    }
+
     /// `glDepthFunc`: the comparison a pixel's depth makes with the
     /// depth already there, `GL_NEVER` to `GL_ALWAYS`.
     pub fn depth_func(&mut self, func: u32) {
@@ -1015,19 +1106,23 @@ impl<'a> Gl<'a> {
         self.depth_range = (near.clamp(0, ONE), far.clamp(0, ONE));
     }
 
-    /// `glClear` of the colour buffer, the depth buffer, or both, at
-    /// this point of the frame, as one rectangle of the window. The clear
-    /// writes the channels `glColorMask` allows and the depth if
-    /// `glDepthMask` does, and neither blends, tests alpha nor tests
+    /// `glClear` of the colour buffer, the depth buffer and the stencil, any
+    /// of the three, at this point of the frame, as one rectangle of the
+    /// window. The clear writes the channels `glColorMask` allows, the depth
+    /// if `glDepthMask` does, and the stencil's bits `glStencilMask` allows
+    /// (#998), and neither blends, tests alpha, tests the stencil nor tests
     /// depth.
     ///
-    /// A tile's depth starts at the farthest (#992), so a clear of the
-    /// depth to the farthest before anything in the frame has tested
-    /// depth has nothing to do. A clear of the depth alone is a rectangle
-    /// that writes no channel (#993).
+    /// A tile's depth starts at the farthest (#992) and its stencil at
+    /// nought, so a clear of the depth to the farthest, or of the stencil
+    /// to nought, before anything in the frame has had a second slot has
+    /// nothing to do. A clear of the depth or the stencil alone is a
+    /// rectangle that writes no channel (#993).
     pub fn clear(&mut self, mask: u32) {
-        let both = gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT;
-        if mask & !both != 0 {
+        let all = gl::COLOR_BUFFER_BIT
+            | gl::DEPTH_BUFFER_BIT
+            | gl::STENCIL_BUFFER_BIT;
+        if mask & !all != 0 {
             return self.fail(gl::INVALID_VALUE);
         }
         let z = depth_units(self.clear_depth);
@@ -1039,12 +1134,20 @@ impl<'a> Gl<'a> {
         } else {
             0
         };
-        if colour_mask == 0 && !depth {
+        let stencil = mask & gl::STENCIL_BUFFER_BIT != 0
+            && self.stencil_write & 0xff != 0
+            && (self.deep || self.clear_stencil & 0xff != 0);
+        if colour_mask == 0 && !depth && !stencil {
             return;
         }
         let colour = colour_word(&self.clear_colour);
+        let (always, replace) = (gl::ALWAYS - gl::NEVER, 2);
         let pixel = emit::Pixel {
             mask: colour_mask,
+            stencil: stencil.then(|| {
+                let s = self.clear_stencil & 0xff;
+                self.stencil_with(always, s, [0, 0, replace])
+            }),
             ..emit::Pixel::DEFAULT
         };
         // Razboj's clear is of its own screen, the rows from zero; a
@@ -1148,6 +1251,13 @@ impl<'a> Gl<'a> {
             alpha: self.alpha_on.then_some(self.alpha),
             mask: self.colour_mask,
             logic: self.logic_on.then_some(self.logic),
+            stencil: self.stencil_on.then(|| {
+                self.stencil_with(
+                    self.stencil_func,
+                    self.stencil_ref,
+                    self.stencil_ops,
+                )
+            }),
         }
     }
 

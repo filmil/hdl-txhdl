@@ -3,14 +3,17 @@
 //! a list without a clear, so that the tile is loaded from the
 //! framebuffer first. The list's two triangles are blended over the
 //! backdrop at half their alpha, one tests alpha, a rectangle writes
-//! only some channels, one is under `GL_XOR` and the last is fogged
-//! (issue 998). It writes the trace and the rasteriser's netlist, so the
-//! build replays the netlist under nvc and Verilator against this run:
-//! the load, the colour bank's copy, the blend, the alpha test, the mask,
-//! the logic operation and the fog. It checks the picture against the
+//! only some channels, one is under `GL_XOR`, one is fogged, and the
+//! last two write the stencil and draw where it says (issue 998). It
+//! writes the trace and the rasteriser's netlist, so the build replays
+//! the netlist under nvc and Verilator against this run: the load, the
+//! colour bank's copy, the blend, the alpha test, the mask, the logic
+//! operation, the fog and the stencil. It checks the picture against the
 //! model.
 use razboj::model;
-use razboj::op::{assemble, AlphaTest, BlendMode, Fog, Op, GREATER};
+use razboj::op::stencil::{KEEP, REPLACE};
+use razboj::op::{assemble, AlphaTest, BlendMode, Fog, Op, StencilMode};
+use razboj::op::{ALWAYS, EQUAL, GREATER};
 use razboj::op::{ONE_MINUS_SRC_ALPHA, SRC_ALPHA, XOR};
 use razboj::raster::Raster;
 use razboj::sim::{self, Work};
@@ -98,6 +101,43 @@ fn main() {
             b: (62 * 16, 30 * 16),
             c: (30 * 16, 36 * 16),
             colours: [0xffff_4000, 0xff40_ff40, 0xff40_40ff],
+        },
+        // A square of stencil and no colour, then a rectangle drawn only
+        // where the stencil is the square's.
+        Op::Fog(None),
+        Op::ColourMask(0),
+        Op::Stencil(Some(StencilMode {
+            func: ALWAYS,
+            reference: 7,
+            mask: 0xff,
+            write_mask: 0xff,
+            fail: KEEP,
+            zfail: KEEP,
+            zpass: REPLACE,
+        })),
+        Op::Rect {
+            colour: 0,
+            x: 2,
+            y: 22,
+            w: 12,
+            h: 12,
+        },
+        Op::ColourMask(0xf),
+        Op::Stencil(Some(StencilMode {
+            func: EQUAL,
+            reference: 7,
+            mask: 0xff,
+            write_mask: 0,
+            fail: KEEP,
+            zfail: KEEP,
+            zpass: KEEP,
+        })),
+        Op::Rect {
+            colour: 0xff_c0c0c0,
+            x: 0,
+            y: 16,
+            w: 30,
+            h: 24,
         },
     ];
     let (first, list) = (assemble(&backdrop, W, H), assemble(&ops, W, H));

@@ -218,8 +218,10 @@ pub fn render(ops: &[Insn], w: usize, h: usize) -> Vec<u32> {
 
 /// The same over a framebuffer that already holds `fb`. Each pixel goes
 /// through GL's steps in GL's order (issue 993): fog (issue 998), the
-/// alpha test, the depth test, the blend with the colour there or the
-/// logic operation, and the colour mask.
+/// alpha test, the stencil test (issue 998), the depth test, the blend
+/// with the colour there or the logic operation, and the colour mask. The
+/// stencil starts at nought, and changes as the stencil's operations say
+/// whether or not the pixel is written.
 /// A pixel that fails a test writes nothing, its depth included.
 pub fn render_over(ops: &[Insn], w: usize, h: usize, fb: Vec<u32>) -> Vec<u32> {
     render_textured(ops, w, h, fb, None)
@@ -245,6 +247,8 @@ pub fn render_textured(
 ) -> Vec<u32> {
     let mut fb = fb;
     let mut zb = vec![0xffffu32; w * h];
+    // The stencil (issue 998), nought at first, as a tile's is.
+    let mut sb = vec![0u32; w * h];
     for op in ops {
         let (x0, y0, x1, y1) = box_of(op, w, h);
         let on = op.depth.to_bool();
@@ -254,6 +258,9 @@ pub fn render_textured(
         let atest = state && op.atest.to_bool();
         let blending = state && op.blend.to_bool();
         let fogged = state && op.fog.to_bool();
+        let sten = state && op.sten.to_bool();
+        let (sref, smask) = (op.sref.raw() as u32, op.smask.raw() as u32);
+        let swmask = op.swmask.raw() as u32;
         let logic =
             (state && op.logic.to_bool()).then_some(op.lop.raw() as u32);
         let (sf, df) = (op.sfactor.raw() as u32, op.dfactor.raw() as u32);
@@ -300,7 +307,25 @@ pub fn render_textured(
                 }
                 let z =
                     depth(raw(op.z0), raw(op.zdx), raw(op.zdy), x - x0, y - y0);
-                if on && !passes(func, z, zb[at]) {
+                let deep = !on || passes(func, z, zb[at]);
+                // The stencil test, then the depth test, and the stencil's
+                // operation for how the pixel did in them (issue 998).
+                if sten {
+                    let s = sb[at];
+                    let ok =
+                        passes(op.sfunc.raw() as u32, sref & smask, s & smask);
+                    let o = match (ok, deep) {
+                        (false, _) => op.sfail,
+                        (true, false) => op.szfail,
+                        (true, true) => op.szpass,
+                    };
+                    let new = crate::op::stencil::op(o.raw() as u32, s, sref);
+                    sb[at] = (s & !swmask) | (new & swmask);
+                    if !ok {
+                        continue;
+                    }
+                }
+                if !deep {
                     continue;
                 }
                 let dst = fb[at];

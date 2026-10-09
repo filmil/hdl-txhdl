@@ -213,8 +213,9 @@ fn reads_dst(e: &[u32; WORDS], ext: &[u32; WORDS]) -> bool {
 
 /// Whether an entry, clipped to the tile `within`, writes every pixel of
 /// it in full, whatever was there: a clear, or a rectangle over the
-/// whole tile, that neither blends, tests alpha, has a logic operation
-/// nor masks a channel, and passes every depth test it makes.
+/// whole tile, that neither blends, tests alpha or the stencil, has a
+/// logic operation nor masks a channel, and passes every depth test it
+/// makes.
 fn covers(
     e: &[u32; WORDS],
     ext: Option<&[u32; WORDS]>,
@@ -233,6 +234,7 @@ fn covers(
             x[3] & 1 == 0
                 && x[4] & 1 == 0
                 && x[5] & 1 == 0
+                && x[10] & 1 == 0
                 && (x[4] >> 16) & 0xf == 0xf
         });
     let depth = (e[15] >> 8) & 1 == 0 || (e[15] >> 9) & 7 == 7;

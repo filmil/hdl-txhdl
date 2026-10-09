@@ -271,8 +271,8 @@ fn a_clear_writes_depth_only_when_it_has_to() {
     assert_eq!(plane, 32768, "half of 65535, rounded");
     g.depth_func(gl::ALWAYS + 1);
     assert_eq!(g.get_error(), gl::INVALID_ENUM);
-    // GL_STENCIL_BUFFER_BIT: there is no stencil.
-    g.clear(0x0400);
+    // A bit that names no buffer.
+    g.clear(0x8000);
     assert_eq!(g.get_error(), gl::INVALID_VALUE);
 }
 
