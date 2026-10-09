@@ -102,6 +102,12 @@ pub struct Move {
     pub len: u32,
 }
 
+/// The timer's page, hart 1's `msip` in it, and the mailbox by which hart
+/// 0 tells hart 1 where to start and with what (issue 1408).
+pub const CLINT: u32 = 0x0200_0000;
+pub const MSIP1: u32 = 4;
+pub const MAILBOX: u32 = CLINT + 0xc000;
+
 /// The scanout's registers: the third slot's upper half, `0x3280`, the
 /// base at its first word and the control, whose bit 0 shows the
 /// scanout, at its second (`txhdl_parts::scanout`'s `scan` map).
@@ -128,7 +134,10 @@ pub fn shim_words(moves: usize) -> usize {
 /// address and its control bit set, so the screen shows the frame there
 /// before Linux starts, as a simple-framebuffer console expects of the
 /// firmware (issue 1440); without, the same six words do nothing, so the
-/// shim is one length either way. Then `a0 = 0`, `a1 = DTB`,
+/// shim is one length either way. Then hart 1 is started at OpenSBI
+/// with the tree, as the board's `park` starts it: the mailbox written,
+/// a fence, and its `msip` raised (issue 1408). The tree says hart 0
+/// boots cold, so hart 1 waits in OpenSBI for the kernel. Then `a0 = 0`, `a1 = DTB`,
 /// `t0 = OPENSBI`, and a jump to `t0`. Every address it names has low
 /// twelve bits of zero, or is within twelve bits of one that has, so a
 /// `lui` loads each.
@@ -228,6 +237,15 @@ pub fn shim(moves: &[Move], scanout: Option<u32>) -> Vec<u32> {
         None => w.extend([addi(0, 0, 0); 6]),
     }
     w.extend([
+        lui(t2, MAILBOX), // t2 = the mailbox
+        lui(t1, OPENSBI),
+        sw(t1, t2, 0), // where hart 1 starts
+        lui(t1, DTB),
+        sw(t1, t2, 4),     // and its a1
+        0x0ff0_000f,       // fence
+        lui(t0, CLINT),    // t0 = the timer's page
+        addi(t1, 0, 1),    //
+        sw(t1, t0, MSIP1), // hart 1's msip: go
         addi(10, 0, 0),    // a0 = 0
         lui(11, DTB),      // a1 = DTB
         lui(t0, OPENSBI),  // t0 = OPENSBI
@@ -478,7 +496,8 @@ mod tests {
     /// The shim's words are the instructions they claim to be: run in
     /// the machine model, they leave `a0` 0 and `a1` the tree's address
     /// and land at OpenSBI, where a stand-in halts. Every part is where
-    /// the layout says, read back from the model's memory.
+    /// the layout says, read back from the model's memory. Hart 1 was
+    /// started at OpenSBI too, with its number and the tree (issue 1408).
     #[test]
     fn the_image_boots_in_the_machine_model() {
         let mhalt =
@@ -500,6 +519,11 @@ mod tests {
         assert_eq!(m.model.pc, OPENSBI + 4, "at OpenSBI, past its halt");
         assert_eq!(m.model.x[10], 0, "a0 is hart 0");
         assert_eq!(m.model.x[11], DTB, "a1 is the tree");
+        assert!(!m.parked1, "hart 1 started");
+        assert!(m.model1.halted.is_some(), "hart 1 at the stand-in too");
+        assert_eq!(m.model1.pc, OPENSBI + 4, "hart 1 at OpenSBI");
+        assert_eq!(m.model1.x[10], 1, "its a0 is hart 1");
+        assert_eq!(m.model1.x[11], DTB, "its a1 is the tree");
         let b = &m.board;
         use vreteno32::model::Bus;
         assert_eq!(b.load(DTB), Some(0xd0d0_d0d0));
@@ -607,6 +631,9 @@ mod tests {
         assert_eq!(PLIC_ENABLE - PLIC, plic::ENABLE[0]);
         assert_eq!(PLIC_THRESHOLD - PLIC, plic::THRESHOLD[0]);
         assert_eq!(PLIC_THRESHOLD - PLIC + PLIC_CLAIM, plic::CLAIM[0]);
+        assert_eq!(CLINT, vreteno32::isa::CLINT_BASE);
+        assert_eq!(MAILBOX, vreteno32::park::MAILBOX);
+        assert_eq!(d.clint.0, CLINT);
     }
 
     /// The serial port as the loader leaves it on the board (issue
