@@ -1106,6 +1106,67 @@ mod tests {
     use crate::hdmi::{vga, Raster};
     use txhdl::comp::Running;
 
+    /// `ctrl` reads back as written, both its bits, so a host may set
+    /// one and keep the other (issue 1523): the HAL's `show` and
+    /// `two_ahead` each read `ctrl` and write it back with their own bit
+    /// changed.
+    #[test]
+    fn ctrl_reads_back_as_written() {
+        use crate::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
+        let mut ctl = ScanCtl::default();
+        let (aw_tx, aw) = chan::<LiteAw<32>, DefaultClock>();
+        let (ar_tx, ar) = chan::<LiteAr<32>, DefaultClock>();
+        let (w_tx, w) = chan::<LiteW<32, 4>, DefaultClock>();
+        let (b, b_rx) = chan::<LiteB, DefaultClock>();
+        let (r, r_rx) = chan::<LiteR<32>, DefaultClock>();
+        let (_tap_tx, tap_rx) = chan::<ScanState, DefaultClock>();
+        let (base_o, _base) = signal::<U<32>, DefaultClock>();
+        let (mode_o, mode) = signal::<Bit, DefaultClock>();
+        let (clear_o, _clear) = signal::<Bit, DefaultClock>();
+        let (two_o, two) = signal::<Bit, DefaultClock>();
+        let mut sim = Running::new(ctl.run(
+            LitePort { aw, ar, w, b, r },
+            (tap_rx, base_o, mode_o, clear_o, two_o),
+        ));
+        let at = |word: u32| LiteAw::<32> {
+            addr: U::<32>::from(4 * word),
+            prot: U::<3>::from(0u8),
+        };
+        let write = |sim: &mut Running<_>, word: u32, v: u32| {
+            aw_tx.send(at(word));
+            w_tx.send(LiteW {
+                data: U::<32>::from(v),
+                strb: U::<4>::from(0xfu8),
+            });
+            for _ in 0..20 {
+                sim.cycle();
+                if b_rx.recv_if(true).is_some() {
+                    return;
+                }
+            }
+            panic!("no answer to a write");
+        };
+        let read = |sim: &mut Running<_>, word: u32| -> u32 {
+            ar_tx.send(at(word));
+            for _ in 0..20 {
+                sim.cycle();
+                if let Some(a) = r_rx.recv_if(true) {
+                    return a.data.raw() as u32;
+                }
+            }
+            panic!("no answer to a read");
+        };
+        for v in [1u32, 3, 2, 0, 1] {
+            write(&mut sim, 1, v);
+            for _ in 0..4 {
+                sim.cycle();
+            }
+            assert_eq!(read(&mut sim, 1), v, "ctrl after writing {v}");
+            assert_eq!(mode.get().to_bool(), v & 1 == 1, "show for {v}");
+            assert_eq!(two.get().to_bool(), v & 2 == 2, "ahead for {v}");
+        }
+    }
+
     /// The flagship's frame, 480 rows of 525, its words given as fast as
     /// the pair takes them, one row ahead and two (issue 1523): from the
     /// second frame on, no line is late at its row and no column is

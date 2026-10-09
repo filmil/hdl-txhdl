@@ -502,6 +502,11 @@ struct Scan {
     /// the line counted first, for the cycles counted second, no word of
     /// the scanout's leaves the board, as if its reads waited that long.
     stall: Option<(usize, u64)>,
+    /// A second frame: from the first frame shown, a program moves the
+    /// base between `base` and this one in the middle of every frame,
+    /// as the demos flip their two buffers, for the pair to take at the
+    /// next vertical sync.
+    flip: Option<u32>,
 }
 
 /// The run's line in the board's cycles: 800 columns of the pixel clock,
@@ -559,9 +564,10 @@ struct ScanLog {
     /// (issue 1523).
     worst: u32,
     lates: u32,
-    /// The first pixel of every visible row shown, with the cycle and
-    /// its row: what says the pair shows each row's own line.
-    firsts: Vec<(u64, u32, u32)>,
+    /// The first pixel of every visible row shown, with the cycle, its
+    /// row and the base the pair took at the last vertical sync: what
+    /// says the pair shows each row's own line, from its own frame.
+    firsts: Vec<(u64, u32, u32, u32)>,
 }
 
 /// The words the flagship's crossing holds: two lines and room to
@@ -627,6 +633,9 @@ fn run_all_in<const LO: usize, const HI: usize>(
     // The raster, as `txhdl_parts::hdmi::Raster` counts, a column a
     // pixel: the column and row the pair is shown next.
     let (mut hc, mut vc) = (0u32, 0u32);
+    // The base given to the pair, and the one it took at the last
+    // vertical sync.
+    let (mut given, mut taken) = (0u32, 0u32);
     let mut pair = ScanPair::<LO, HI>::default();
     base_o.set(U::<32>::from(0u32));
     clear_o.set(Bit::Zero);
@@ -1067,6 +1076,7 @@ fn run_all_in<const LO: usize, const HI: usize>(
                 (r_tile.get().raw() as u32, r_tiles.get().raw() as u32);
             if cycle == s.show_at || Some(cycle) == shown_again {
                 base_o.set(U::<32>::from(s.base));
+                given = s.base;
                 show_o.set(Bit::One);
             }
             if reset_from == Some(cycle) {
@@ -1132,6 +1142,7 @@ fn run_all_in<const LO: usize, const HI: usize>(
                         cycle,
                         shown_vc,
                         pix.get().raw() as u32,
+                        taken,
                     ));
                 }
                 if shown < SCAN_VIS_COLS
@@ -1152,6 +1163,17 @@ fn run_all_in<const LO: usize, const HI: usize>(
                 line_o.set(Bit::from_bool(hc == 0));
                 row_o.set(U::<12>::from(vc));
                 frame_o.set(Bit::from_bool(hc == 0 && vc == SCAN_VIS_ROWS));
+                if hc == 0 && vc == SCAN_VIS_ROWS {
+                    taken = given;
+                }
+                // A flip in the middle of the frame, taken at the next
+                // vertical sync.
+                if let Some(other) = s.flip {
+                    if hc == 0 && vc == 1 && cycle > s.show_at {
+                        given = if given == s.base { other } else { s.base };
+                        base_o.set(U::<32>::from(given));
+                    }
+                }
                 if h_last {
                     vc = (vc + 1) % SCAN_ROWS;
                 }
@@ -3311,6 +3333,7 @@ fn a_stalled_read_is_late_one_row_ahead_and_not_two() {
                 show_at: 6 * SCAN_LINE,
                 two,
                 stall: Some((8, 4000)),
+                ..Scan::default()
             }),
             ..Net::default()
         };
@@ -3330,12 +3353,12 @@ fn a_stalled_read_is_late_one_row_ahead_and_not_two() {
             .scan
             .firsts
             .iter()
-            .filter(|&&(at, _, p)| {
+            .filter(|&&(at, _, p, _)| {
                 at > first && p != txhdl_parts::scanout::LATE
             })
             .collect();
         assert!(shown.len() >= 10, "rows shown: {:x?}", ran.scan.firsts);
-        for &&(_, row, p) in &shown {
+        for &&(_, row, p, _) in &shown {
             assert_eq!(p, mark(row), "row {row} showed another's line");
         }
         eprintln!(
@@ -3359,6 +3382,65 @@ fn a_stalled_read_is_late_one_row_ahead_and_not_two() {
             for &(_, from, cols) in &ran.scan.late_rows {
                 assert!(from == 0 && cols == 640, "a row from {from}");
             }
+        }
+    }
+}
+
+/// The demos' two buffers, flipped in the middle of every frame and
+/// taken at the next vertical sync (issue 1523): one row ahead and two,
+/// every row shows its own line from the frame the pair took last. On
+/// the board, two rows ahead showed one frame for ever.
+#[test]
+fn a_flipped_frame_is_shown_one_row_ahead_and_two() {
+    let (a, b) = (0x4200_0000u32, 0x4220_0000u32);
+    let mark = |base: u32, row: u32| (base >> 12) | row;
+    let plan: Vec<Op> = [a, b]
+        .iter()
+        .flat_map(|&base| {
+            (0..SCAN_VIS_ROWS)
+                .map(move |row| Op::Write(base + 4096 * row, mark(base, row)))
+        })
+        .collect();
+    for two in [false, true] {
+        let net = Net {
+            scan: Some(Scan {
+                base: a,
+                show_at: 6 * SCAN_LINE,
+                two,
+                flip: Some(b),
+                ..Scan::default()
+            }),
+            ..Net::default()
+        };
+        let ran = run_all(
+            hello_program::TEXT,
+            hello_program::DATA,
+            b"",
+            &[],
+            40 * SCAN_LINE,
+            net,
+            &plan,
+        );
+        let first = ran.scan.lines.first().map_or(u64::MAX, |l| l.1);
+        // From the second frame the pair asked for, whose base is one a
+        // sync took.
+        let shown: Vec<_> = ran
+            .scan
+            .firsts
+            .iter()
+            .filter(|&&(at, _, _, _)| at > first + 6 * SCAN_LINE)
+            .collect();
+        eprintln!(
+            "flip, {} ahead: {:x?}",
+            if two { "two" } else { "one" },
+            shown
+        );
+        assert!(shown.len() >= 12, "rows shown: {}", shown.len());
+        let bases: std::collections::HashSet<u32> =
+            shown.iter().map(|r| r.3).collect();
+        assert_eq!(bases.len(), 2, "both buffers were taken");
+        for &&(_, row, p, base) in &shown {
+            assert_eq!(p, mark(base, row), "row {row} of {base:#x}");
         }
     }
 }
