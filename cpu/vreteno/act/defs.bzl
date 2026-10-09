@@ -415,7 +415,10 @@ def act_suite(
             )
             act_test(
                 name = "%s_%s_test" % (t["name"], p),
-                size = "small",
+                # Medium, not small: the slowest, Zalrsc-sc.w-00 from the DDR3
+                # uncached, take about 15 s alone and ran past 60 s at a load
+                # of 35, when every run shares the machine (issue 1408).
+                size = "medium",
                 elf = ":%s_%s" % (t["name"], p),
                 test_name = "%s_%s" % (t["name"], p),
                 expect = "fail" if "%s_%s" % (t["name"], p) in known_failures else "pass",
