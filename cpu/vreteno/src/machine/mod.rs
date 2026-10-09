@@ -85,6 +85,8 @@ pub struct Map {
     pub trng: (u32, u32),
     /// The third slot, where the video peripheral and the scanout are.
     pub video: (u32, u32),
+    /// Razboj's doorbell (issue 1551).
+    pub doorbell: (u32, u32),
     /// Where the Ethernet port's slots are in the DDR3.
     pub eth_bufs: u32,
 }
@@ -101,6 +103,7 @@ impl Map {
             eth: range::<10, SlotMap>("Ethernet port's registers"),
             trng: range::<10, SlotMap>("entropy source"),
             video: range::<10, SlotMap>("third slot"),
+            doorbell: range::<10, SlotMap>("doorbell"),
             eth_bufs: crate::isa::ETH_BUF_BASE,
         }
     }
@@ -129,6 +132,13 @@ pub struct Devices {
     /// the scanout at a frame and shows it runs here, and nothing is
     /// shown.
     pub video: [u32; 64],
+    /// Razboj as a stand-in (issue 1551): it draws nothing and is done at
+    /// once, its count reading zero and its status idle, and it keeps
+    /// each ring's word with where the scanout showed from as it came,
+    /// so a test sees what each frame was drawn into against what was on
+    /// the screen: for a tile table, the first and last rows its tiles
+    /// start at, read from its records at `RAZBOJ_LIST`.
+    pub rings: Vec<(u32, Option<u32>, Option<(u32, u32)>)>,
     /// The lines the PLIC drives, as last worked out, and whether they
     /// have to be worked out again: they change only when a program
     /// reaches the PLIC or the serial port, or when a byte arrives, so
@@ -162,6 +172,17 @@ impl Devices {
     }
 }
 
+/// The stand-in raster's frame and vertical blanking, in steps (issue
+/// 1551).
+const RASTER: u64 = 100_000;
+const BLANKING: u64 = 5_000;
+
+/// Where a program puts Razboj's list and tile table, the HAL's
+/// `Razboj::LIST`, and the count's bit that says it rang a tile table
+/// (`razboj_tile::TILED`).
+const RAZBOJ_LIST: u32 = 0x4280_0000;
+const TILED: u32 = 1 << 31;
+
 /// The bus the model reaches the devices through.
 #[derive(Debug)]
 pub struct Board(pub RefCell<Devices>);
@@ -194,7 +215,21 @@ impl Bus for Board {
             return Some(d.trng.load(off));
         }
         if let Some(off) = inside(map.video, addr) {
+            // The video peripheral's status: a raster of a frame every
+            // hundred thousand steps (or cycles in the timing mode), the
+            // last five thousand of it the vertical blanking, and the
+            // frames counted in the top half, so a program that waits for
+            // the blanking runs here (issue 1551).
+            if off == 0 {
+                let (frame, at) = (d.steps / RASTER, d.steps % RASTER);
+                let blank = (at >= RASTER - BLANKING) as u32;
+                return Some(((frame as u32 & 0xffff) << 16) | blank);
+            }
             return Some(d.video[(off / 4) as usize % 64]);
+        }
+        if let Some(off) = inside(map.doorbell, addr) {
+            // The count, zero: drawn; and the status, idle.
+            return Some((off == 4) as u32);
         }
         None
     }
@@ -247,6 +282,25 @@ impl Bus for Board {
             d.video[(off / 4) as usize % 64] = v;
             return true;
         }
+        if let Some(off) = inside(map.doorbell, addr) {
+            if off == 0 {
+                let shown = d.scanout();
+                // A tile table's records, the second word of each the
+                // tile's origin, its row in bits 25 to 16.
+                let rows = (v & TILED != 0).then(|| {
+                    let n = v & 0xffff;
+                    (0..n)
+                        .map(|t| {
+                            d.ddr.load(RAZBOJ_LIST + 8 * t + 4) >> 16 & 0x3ff
+                        })
+                        .fold((u32::MAX, 0), |(lo, hi), y| {
+                            (lo.min(y), hi.max(y))
+                        })
+                });
+                d.rings.push((v, shown, rows));
+            }
+            return true;
+        }
         false
     }
 }
@@ -286,6 +340,7 @@ impl Machine {
             eth: eth::Eth::default(),
             trng: trng::Trng::default(),
             video: [0; 64],
+            rings: Vec::new(),
             meip: false,
             seip: false,
             meip1: false,
