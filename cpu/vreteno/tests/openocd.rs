@@ -509,6 +509,9 @@ fn openocd_halts_the_core_reads_pc_and_memory_and_resumes() {
         log.contains("Examined RISC-V core"),
         "the hart examined:\n{log}"
     );
+    // Its scan of the harts ends at hart 1, which says it does not exist
+    // (issue 1408).
+    assert!(log.contains("found 1 harts"), "one hart:\n{log}");
     assert!(log.contains("state halted"), "halted:\n{log}");
     assert!(log.contains("pc (/32): 0x"), "pc read:\n{log}");
     assert!(
