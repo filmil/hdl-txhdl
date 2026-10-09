@@ -52,7 +52,8 @@
 //! outside the timing mode) and how many times it ran (issue 1434).
 //! Against a program's symbols that is a flat profile, and a function's
 //! first address counts its calls, which a cable's pacing does not
-//! change.
+//! change. Once the second hart has run, its profile is beside it in
+//! `FILE.hart1` (issue 1408).
 //!
 //! `--watch ADDR` says, when the run stops, who reached `ADDR`: each
 //! return address in `ra` there, how many times, and the sum of `a2`,
@@ -154,6 +155,7 @@ fn main() {
     }
     if profiling {
         m.profile = Some(Default::default());
+        m.profile1 = Some(Default::default());
     }
     if let Some(at) = watch {
         m.watch = Some((at, Default::default()));
@@ -263,7 +265,16 @@ fn main() {
             None => eprintln!("screen: the scanout is not shown"),
         }
     }
-    if let (Some(path), Some(p)) = (&profile, &m.profile) {
+    // Hart 0's in FILE, and hart 1's beside it in FILE.hart1 once it ran
+    // (issue 1408).
+    let hart1 = profile.as_ref().map(|p| format!("{p}.hart1"));
+    for (path, p) in [(&profile, &m.profile), (&hart1, &m.profile1)] {
+        let (Some(path), Some(p)) = (path, p) else {
+            continue;
+        };
+        if p.is_empty() {
+            continue;
+        }
         let mut rows: Vec<_> = p.iter().collect();
         rows.sort();
         let text: String = rows
