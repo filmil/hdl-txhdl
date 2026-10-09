@@ -21,6 +21,8 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
+/* TxHDL (#999): this test's names in the suite, by the shim. */
+#define PIGLIT_PORT paletted
 #include "piglit-util-gl.h"
 
 PIGLIT_GL_TEST_CONFIG_BEGIN

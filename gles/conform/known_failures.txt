@@ -43,3 +43,5 @@ state.MODELVIEW_MATRIX_FLOAT_AS_INT_BITS_OES #1522
 state.PROJECTION_MATRIX_FLOAT_AS_INT_BITS_OES #1522
 state.TEXTURE_MATRIX_FLOAT_AS_INT_BITS_OES #1522
 state.EXTENSION_OES_point_size_array     #1507
+piglit.oes_matrix_get-api                #1522
+piglit.arb_point_sprite-checkerboard_gles1 #1508

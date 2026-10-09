@@ -11,6 +11,17 @@
 #include "conform.h"
 
 static int passed, failed;
+static EGLDisplay dpy;
+static EGLSurface surface;
+static EGLContext context;
+
+/* GL's initial state again: the context made not current and current
+ * again, which EGL starts anew, as a new context would be. Each group
+ * and each of piglit's tests begins with it. */
+void conform_fresh(void) {
+  eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+  eglMakeCurrent(dpy, surface, surface, context);
+}
 
 void conform_pass(const char *group, const char *name) {
   printf("PASS %s.%s\n", group, name);
@@ -29,7 +40,7 @@ void conform_fail(const char *group, const char *name, const char *fmt, ...) {
 
 int main(void) {
   conform_machine();
-  EGLDisplay dpy = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+  dpy = eglGetDisplay(EGL_DEFAULT_DISPLAY);
   EGLint major, minor;
   static const EGLint want[] = {EGL_RED_SIZE,     8, EGL_GREEN_SIZE, 8,
                                 EGL_BLUE_SIZE,    8, EGL_DEPTH_SIZE, 16,
@@ -42,16 +53,19 @@ int main(void) {
     printf("FAIL egl.setup: no configuration, error %04x\n", eglGetError());
     return 1;
   }
-  EGLSurface surface = eglCreateWindowSurface(dpy, config, 0, 0);
-  EGLContext context = eglCreateContext(dpy, config, EGL_NO_CONTEXT, es1);
+  surface = eglCreateWindowSurface(dpy, config, 0, 0);
+  context = eglCreateContext(dpy, config, EGL_NO_CONTEXT, es1);
   if (surface == EGL_NO_SURFACE || context == EGL_NO_CONTEXT ||
       !eglMakeCurrent(dpy, surface, surface, context)) {
     printf("FAIL egl.setup: no window, error %04x\n", eglGetError());
     return 1;
   }
   conform_state();
+  conform_fresh();
   conform_errors();
+  conform_fresh();
   conform_render();
+  conform_piglit();
   printf("DONE %d passed, %d failed\n", passed, failed);
   return 0;
 }

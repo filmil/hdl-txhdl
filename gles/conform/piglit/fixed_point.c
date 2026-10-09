@@ -32,6 +32,8 @@
  * This tests Mesa commit 7a9f4d3e for Intel gen4+.
  */
 
+/* TxHDL (#999): this test's names in the suite, by the shim. */
+#define PIGLIT_PORT fixed_point
 #include "piglit-util-gl.h"
 
 PIGLIT_GL_TEST_CONFIG_BEGIN
@@ -87,7 +89,8 @@ piglit_display(void)
 {
 	bool pass = true;
 
-	glClearColor(0, 0, 0, 1);
+	/* TxHDL (#999): the fixed-point form, as Common-Lite has it. */
+	glClearColorx(0, 0, 0, ONE);
 	glClear(GL_COLOR_BUFFER_BIT);
 
 	glEnableClientState(GL_VERTEX_ARRAY);
@@ -123,5 +126,6 @@ piglit_display(void)
 void
 piglit_init(int argc, char **argv)
 {
-	piglit_require_extension("GL_OES_fixed_point");
+	/* TxHDL (#999): OES_fixed_point is a core addition in ES 1.1
+	 * (Table C.2), so it is not in the EXTENSIONS string. */
 }

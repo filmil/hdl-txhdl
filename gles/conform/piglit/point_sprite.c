@@ -28,6 +28,8 @@
  * \author Ben Holmes
  */
 
+/* TxHDL (#999): this test's names in the suite, by the shim. */
+#define PIGLIT_PORT point_sprite
 #include "piglit-util-gl.h"
 
 #define BOX_SIZE 64
@@ -68,16 +70,23 @@ piglit_init(int argc, char **argv)
 	piglit_ortho_projection(piglit_width, piglit_height, GL_FALSE);
 
 	glEnable(GL_TEXTURE_2D);
-	glEnable(GL_POINT_SPRITE);
+	/* TxHDL (#999): ES 1.1's names, of OES_point_sprite. */
+	glEnable(GL_POINT_SPRITE_OES);
 
-	glGetFloatv(GL_POINT_SIZE_MAX, &realMaxSize);
+	/* TxHDL (#999): the fixed-point forms, as Common-Lite has them. */
+	{
+		GLfixed x = 0;
+
+		glGetFixedv(GL_POINT_SIZE_MAX, &x);
+		realMaxSize = x / 65536.0f;
+	}
 	maxSize = (realMaxSize > BOX_SIZE) ? BOX_SIZE : realMaxSize;
 
-	glClearColor(0.2, 0.2, 0.2, 1.0);
-	glColor4f(1.0, 1.0, 1.0, 1.0);
+	glClearColorx(13107, 13107, 13107, 65536);
+	glColor4x(65536, 65536, 65536, 65536);
 
 	tex = piglit_checkerboard_texture(0, 0, 2, 2, 1, 1, black, white);
-	glTexEnvi(GL_POINT_SPRITE, GL_COORD_REPLACE, GL_TRUE);
+	glTexEnvi(GL_POINT_SPRITE_OES, GL_COORD_REPLACE_OES, GL_TRUE);
 
 	if (!piglit_automatic)
 		printf("Maximum point size is %f, using %f\n", 
@@ -94,6 +103,8 @@ piglit_display(void)
 #endif
 	static const GLenum origins[2] = { GL_UPPER_LEFT, GL_LOWER_LEFT	};
 	GLboolean pass = GL_TRUE;
+	/* TxHDL (#999): how many points were drawn and probed. */
+	unsigned drawn = 0;
 	unsigned i;
 	unsigned j;
 
@@ -127,19 +138,20 @@ piglit_display(void)
 			if (size < 2.0)
 				continue;
 
-			glPointSize(size - 0.2);
+			glPointSizex((GLfixed)((size - 0.2) * 65536));
 
 			/* Vertex arrays are overkill for this case,
 			 * but they are necessary for OpenGL ES 1.x.
 			 */
-			GLfloat tcp[] = { 1.5, 1.5 };
-			GLfloat vp[] = { x, y };
+			GLfixed tcp[] = { 98304, 98304 };
+			GLfixed vp[] = { (GLfixed)(x * 65536), (GLfixed)(y * 65536) };
 
 			glEnableClientState(GL_VERTEX_ARRAY);
 			glEnableClientState(GL_TEXTURE_COORD_ARRAY);
 
-			glTexCoordPointer(2, GL_FLOAT, 0, tcp);
-			glVertexPointer(2, GL_FLOAT, 0, vp);
+			glTexCoordPointer(2, GL_FIXED, 0, tcp);
+			glVertexPointer(2, GL_FIXED, 0, vp);
+			drawn++;
 			glDrawArrays(GL_POINTS, 0, 1);
 
 			glDisableClientState(GL_VERTEX_ARRAY);
@@ -169,6 +181,13 @@ piglit_display(void)
 	}
 
 	piglit_present_results();
+
+	/* TxHDL (#999): a test that probed no point has tested nothing, as
+	 * when GL_POINT_SIZE_MAX cannot be read. */
+	if (drawn == 0) {
+		printf("# No point drawn: the largest size is %f\n", maxSize);
+		pass = GL_FALSE;
+	}
 
 	return pass ? PIGLIT_PASS : PIGLIT_FAIL;
 }

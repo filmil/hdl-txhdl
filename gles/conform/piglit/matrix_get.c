@@ -25,6 +25,8 @@
  * Test the queries added by GL_OES_matrix_get.
  */
 
+/* TxHDL (#999): this test's names in the suite, by the shim. */
+#define PIGLIT_PORT matrix_get
 #include "piglit-util-gl.h"
 
 PIGLIT_GL_TEST_CONFIG_BEGIN
@@ -63,11 +65,21 @@ piglit_init(int argc, char **argv)
 	unsigned i;
 	bool pass = true;
 
-	piglit_require_extension("GL_OES_matrix_get");
+	/* TxHDL (#999): OES_matrix_get is a core addition in ES 1.1
+	 * (Table C.2), so it is not in the EXTENSIONS string. */
 
 	for (i = 0; i < ARRAY_SIZE(test_vectors); i++) {
 		glMatrixMode(test_vectors[i].set);
-		glLoadMatrixf(m);
+		/* TxHDL (#999): the fixed-point form, the elements being whole
+		 * numbers, as Common-Lite has it. */
+		{
+			GLfixed mx[ARRAY_SIZE(m)];
+			unsigned k;
+
+			for (k = 0; k < ARRAY_SIZE(m); k++)
+				mx[k] = (GLfixed)(m[k] * 65536);
+			glLoadMatrixx(mx);
+		}
 
 		memset(got, 0, sizeof(got));
 		glGetIntegerv(test_vectors[i].get, (GLint *) got);
