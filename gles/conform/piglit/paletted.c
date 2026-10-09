@@ -65,7 +65,11 @@ piglit_display(void)
 void
 piglit_init(int argc, char **argv)
 {
-	GLubyte buffer[512 + (16 * 16)];
+	/* TxHDL (#1536): room for the largest image the test gives GL, the
+	 * PALETTE8_RGBA8 palette of 1024 bytes and the 17 by 17 indices of the
+	 * border case, and zeroed. piglit's 768 bytes are read past by most
+	 * PALETTE8 call, which on the board runs off the data memory. */
+	GLubyte buffer[1024 + (17 * 17)] = { 0 };
 	GLuint tex;
 	GLsizei size;
 	unsigned i;
