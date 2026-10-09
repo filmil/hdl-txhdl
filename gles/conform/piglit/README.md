@@ -12,4 +12,7 @@ They are the four of piglit's nine ES 1 programs that test what the GL library h
 
 The first commit that adds them adds them as piglit has them.
 The changes since are marked in each file with `TxHDL (#999):`: piglit's float calls become their fixed-point forms, since the library is the Common-Lite profile, and the requirements of extensions that ES 1.1 makes core additions are dropped.
+One more, marked `TxHDL (#1536):`, is a fix to piglit's own test: `paletted.c`'s buffer is 768 bytes, but it hands `glCompressedTexImage2D` images of up to 1313, so GL reads past it, and on the board that read runs off the core's data memory.
+The buffer here holds the largest image and is zeroed.
+The overrun is upstream's too, and #1536 tracks the report to piglit.
 `piglit-util-gl.h` and `piglit.c` give the parts of piglit's utility library the four use, and run them within the conformance suite.
