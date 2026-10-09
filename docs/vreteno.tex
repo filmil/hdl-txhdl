@@ -608,6 +608,14 @@ paying per fragment of a frame: at Zephyr's default buffers of 128 bytes
 a segment was a dozen allocations, cursor steps and locks. A buffer a
 frame, and room in \code{recv} for more than one segment, took the
 model's download from 77.4 cycles a byte to 60.4.
+Before \code{boot} jumps, the server sums the staged image as the DDR3
+holds it and holds it to the sum of what arrived, and refuses on a
+mismatch (issue~1556): the words are read with \code{lr.w}, which goes
+around the data cache that a plain load may be answered from, after a
+fence that waits for the stores. Each byte counts in its lane of the
+word it lands in, so the sum of the received pieces, whatever their
+size, is the sum of the words; \code{fastboot\_core\_test} holds the two
+to each other at every length to 40 and every piece size to 7.
 \code{boot\_net\_test} boots an image whose command line asks
 \code{/init} for the network, and passes when Linux has pinged that
 station and had its replies.

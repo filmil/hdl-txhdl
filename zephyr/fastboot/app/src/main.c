@@ -190,6 +190,25 @@ static void prof_end(void)
 
 #define PORT 5554
 
+/*
+ * A word as the DDR3 holds it: `lr.w` goes around the data cache, which
+ * a plain load may answer from (issue 1556). It also takes the
+ * arbiter's hold (issue 1408), so a run of them keeps every other
+ * host's writes waiting, the Ethernet engines' included, until the run
+ * ends; at `boot` nothing else is wanted of them.
+ */
+static uint32_t ddr3_load(const volatile uint32_t *w)
+{
+	uint32_t v;
+
+	__asm__ volatile("lr.w %0, (%1)" : "=r"(v) : "r"(w) : "memory");
+	return v;
+}
+
+/* The sum of the download as it was received, for `boot` to hold the
+ * staged image to (issue 1556). */
+static uint32_t received_sum;
+
 extern const uint8_t fb_jump[];
 extern const uint8_t fb_jump_end[];
 
@@ -206,6 +225,11 @@ static int board_write(void *ctx, uint32_t offset, const uint8_t *p,
 	}
 	uint32_t t0 = PROF_NOW();
 
+	/* A download starts at the staging area's first byte. */
+	if (offset == 0) {
+		received_sum = 0;
+	}
+	received_sum = fb_sum_add(received_sum, offset, p, n);
 	/* A word at a time whatever the alignment: `memcpy` copied a byte
 	 * at a time when the framing left the two unaligned, 265 cycles a
 	 * byte into the DDR3 (issue 1230). */
@@ -246,6 +270,21 @@ static void boot(uint32_t staged)
 {
 	const uint8_t *img = (const uint8_t *)STAGE_BASE;
 	uint32_t off, size;
+
+	/* The staged image as the DDR3 holds it, which is what will run, not
+	 * as it was received (issue 1556): the stores are answered first, a
+	 * fence waiting for every one posted, and the words are read around
+	 * the data cache. A mismatch is a memory fault, and is refused. */
+	__asm__ volatile("fence" ::: "memory");
+	uint32_t held = fb_sum_words((const volatile uint32_t *)STAGE_BASE,
+				     staged, ddr3_load);
+
+	printk("fastboot: %u bytes received, sum 0x%08x; staged, sum 0x%08x\n",
+	       staged, received_sum, held);
+	if (held != received_sum) {
+		printk("fastboot: the staged image is not what was received\n");
+		return;
+	}
 
 	if (fb_kernel(img, staged, &off, &size) || size == 0 ||
 	    size > MAX_PROGRAM) {
