@@ -559,6 +559,9 @@ struct ScanLog {
     /// Razboj's tile, and its tiles, when the scanout was shown and when
     /// the run ended: whether it drew while the scanout was watched.
     razboj_tile: [(u32, u32); 2],
+    /// The first and the last cycle Razboj's tile moved on: its draw,
+    /// less the first tile (issue 1523).
+    razboj_span: Option<(u64, u64)>,
     /// What the pair said at the end: the longest a line took to come
     /// whole, in pixels, and how many lines were late at their rows
     /// (issue 1523).
@@ -1072,8 +1075,12 @@ fn run_all_in<const LO: usize, const HI: usize>(
                 scan_log.razboj_tile[0] =
                     (r_tile.get().raw() as u32, r_tiles.get().raw() as u32);
             }
-            scan_log.razboj_tile[1] =
-                (r_tile.get().raw() as u32, r_tiles.get().raw() as u32);
+            let now = (r_tile.get().raw() as u32, r_tiles.get().raw() as u32);
+            if now.0 != scan_log.razboj_tile[1].0 {
+                let first = scan_log.razboj_span.map_or(cycle, |s| s.0);
+                scan_log.razboj_span = Some((first, cycle));
+            }
+            scan_log.razboj_tile[1] = now;
             if cycle == s.show_at || Some(cycle) == shown_again {
                 base_o.set(U::<32>::from(s.base));
                 given = s.base;
@@ -3482,6 +3489,68 @@ fn a_flipped_frame_is_shown_one_row_ahead_and_two() {
         for &&(_, row, p, base) in &shown {
             assert_eq!(p, mark(base, row), "row {row} of {base:#x}");
         }
+    }
+}
+
+/// The scanout while Razboj draws the GL demo's icosahedron in tiles
+/// into the frame it shows, and the core and the Ethernet port load the
+/// DDR3 (issue 1523): on the board, rows went LATE only while Razboj
+/// drew. Prints, one row ahead and two, the lines' times, the pair's
+/// figures and Razboj's draw, for the arbiter with and without the
+/// scanout's priority (`SCAN_PRIO`). Every line must come well inside
+/// its row and no column starve, which this memory, at 24 cycles a
+/// read, allows either way.
+#[test]
+fn the_scanout_while_razboj_draws_the_icosahedron() {
+    use razboj::dl::decode;
+    use razboj::op::Insn;
+    let (sw, sh) = (1024usize, 480usize);
+    let solid = ico_list::Solid::new();
+    let mut out = [[0u32; ico_list::WORDS]; ico_list::MOST];
+    let (n, _) =
+        ico_list::frame(&solid, 0, 0, 0, ico_list::Box::SCREEN, &mut out);
+    let ico: Vec<Insn> = out[..n].iter().map(|w| decode(w)).collect();
+    let (words, count) = razboj::tiles::image(&ico, sw, sh);
+    let plan = razboj_plan(&words, &[], count);
+    let planned = 40 * plan.len() as u64;
+    for two in [false, true] {
+        let net = Net {
+            scan: Some(Scan {
+                base: 0x4200_0000,
+                show_at: planned.min(6 * SCAN_LINE),
+                two,
+                ..Scan::default()
+            }),
+            ..Net::default()
+        };
+        let ran = run_all(
+            &load_program(false),
+            hello_program::DATA,
+            b"",
+            &[],
+            planned + 1_000_000,
+            net,
+            &plan,
+        );
+        let (max, mean, late, n) = line_times(&ran.scan);
+        let span = ran.scan.razboj_span.map(|(a, b)| b - a);
+        eprintln!(
+            "razboj ico, priority port {}, {} ahead: {n} lines, longest \
+             {max} cycles, mean {mean}, {late} past a line, pair's longest \
+             {} px, {} late, rows LATE {}, Razboj tiles {:?} over {:?} \
+             cycles",
+            vreteno32::board::SCAN_PRIO,
+            if two { "two" } else { "one" },
+            ran.scan.worst,
+            ran.scan.lates,
+            ran.scan.late_rows.len(),
+            ran.scan.razboj_tile,
+            span,
+        );
+        let [_, (t1, tiles)] = ran.scan.razboj_tile;
+        assert!(tiles > 0 && t1 + 1 >= tiles, "Razboj drew: {t1} of {tiles}");
+        assert_eq!(ran.scan.starved, None, "a column starved");
+        assert!(2 * max < SCAN_LINE, "the longest line took {max}");
     }
 }
 

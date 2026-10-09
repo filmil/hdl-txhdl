@@ -64,6 +64,12 @@ use txhdl::{lower, with, Trace};
 /// hold; the same host's next exclusive read takes it again. With
 /// `HOLD` zero, as everywhere but where two harts share memory, the
 /// hold never starts and synthesis folds its registers away.
+///
+/// `PRIO` names a host whose read address phase wins whenever it offers
+/// one, ahead of the round robin, which goes on as before among the
+/// others (issue 1523): the flagship's scanout, whose line has a
+/// deadline the others' reads do not. Eight, the default, names none.
+/// Writes are not affected.
 #[derive(Trace, Default)]
 pub struct Arbiter<
     const N: usize,
@@ -74,6 +80,7 @@ pub struct Arbiter<
     const J: usize,
     const FIXED: usize,
     const HOLD: usize = 0,
+    const PRIO: usize = 8,
 > {
     /// A write burst's beats are going out; another host's address
     /// phase waits, since AXI4 puts no identifier on `w`.
@@ -174,7 +181,8 @@ impl<
         const J: usize,
         const FIXED: usize,
         const HOLD: usize,
-    > Unit for Arbiter<N, A, D, S, I, J, FIXED, HOLD>
+        const PRIO: usize,
+    > Unit for Arbiter<N, A, D, S, I, J, FIXED, HOLD, PRIO>
 {
     async fn run(
         &mut self,
@@ -216,8 +224,11 @@ impl<
             let mut aw_hi_who = U::<3>::from(0u8);
             let mut aw_lo = Bit::Zero;
             let mut aw_lo_who = U::<3>::from(0u8);
+            // The host `PRIO` names, offering a read.
+            let mut ar_prio = Bit::Zero;
             for i in 0..N {
                 let ar_off = Bit::from(ars[i].peek().is_some());
+                ar_prio = ar_prio | (ar_off & Bit::from(i == PRIO));
                 let ar_first = ar_off & !ar_hi & (fixed | (rturn <= i));
                 ar_hi_who = mux(ar_first, U::<3>::from(i), ar_hi_who);
                 ar_hi = ar_hi | ar_first;
@@ -234,7 +245,11 @@ impl<
                 aw_lo_who = mux(aw_any, U::<3>::from(i), aw_lo_who);
                 aw_lo = aw_lo | aw_any;
             }
-            let ar_who = mux(ar_hi, ar_hi_who, ar_lo_who);
+            let ar_who = mux(
+                ar_prio,
+                U::<3>::from(PRIO & 7),
+                mux(ar_hi, ar_hi_who, ar_lo_who),
+            );
             let aw_who = mux(aw_hi, aw_hi_who, aw_lo_who);
             // Several reads may be outstanding at once, each carrying
             // its own identifier, so a host wins on any cycle the

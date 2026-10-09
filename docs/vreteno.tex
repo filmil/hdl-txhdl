@@ -2783,6 +2783,12 @@ stalls one line's reads for 4000 cycles: one row ahead, two whole rows
 show \code{LATE}, the stalled line's and the next, whose words wait
 behind the first's as the pair takes them a pixel at a time; two rows
 ahead, none does, and every row shows its own line.
+The board's late rows fall only while Razboj draws, about the first
+third of a frame, where the arbiter's round robin gives the scanout one
+turn in eight. The arbiter takes \code{PRIO}, a host whose read wins
+whenever it offers one, ahead of the round robin among the others, and
+the board names the scanout's port, \code{SCAN\_PRIO} (issue~\#1523).
+Writes keep their turns, and a burst already granted runs to its end.
 
 \code{vreteno\_board\_jtag.v} is the top with the master, the board's
 own top with one block added, and every other top ties the pins off,
