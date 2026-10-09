@@ -43,6 +43,7 @@ pub const DEPTH_TEST: u32 = 0x0B71;
 pub const POLYGON_OFFSET_FILL: u32 = 0x8037;
 pub const POLYGON_OFFSET_FACTOR: u32 = 0x8038;
 pub const POLYGON_OFFSET_UNITS: u32 = 0x2A00;
+pub const DITHER: u32 = 0x0BD0;
 pub const NEVER: u32 = 0x0200;
 pub const LESS: u32 = 0x0201;
 pub const EQUAL: u32 = 0x0202;
