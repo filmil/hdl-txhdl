@@ -2603,6 +2603,13 @@ does not start it, the stores take nine again; with both running they
 take 29. A test wakes the second hart on either side of the cycle a
 write to a word it had cached is answered, and it reads the new word
 every time; without the forgetting it reads the old one for ever.
+A second test writes the word, fences and only then wakes the hart,
+whose one read must be the new word. Every wake empties the cache, a timer's
+tick as much as a start through the mailbox, so a hart that sleeps in
+\code{wfi} between ticks starts each with an empty data cache. A fill
+cannot be out as the hart wakes, since a fill holds the core and
+\code{wfi} does not retire past one; a fill that were out would still
+not be kept.
 
 The first program to use the second hart is the flagship's
 icosahedron built through GL (issue~\#1408). A frame's work on the
