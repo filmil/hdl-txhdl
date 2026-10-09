@@ -474,8 +474,17 @@ impl<'a> Gl<'a> {
         }
     }
 
-    pub fn is_enabled(&self, cap: u32) -> bool {
-        self.enabled(cap).unwrap_or(false)
+    /// `glIsEnabled`: whether `cap` is on; for a name that is not a switch
+    /// GL ES 1.1 has or this library keeps, false and `GL_INVALID_ENUM`, as
+    /// section 6.1.1 says (#1514).
+    pub fn is_enabled(&mut self, cap: u32) -> bool {
+        match self.enabled(cap) {
+            Some(on) => on,
+            None => {
+                self.fail(gl::INVALID_ENUM);
+                false
+            }
+        }
     }
 
     /// Whether `cap` is on, or `None` for a switch GL ES 1.1 does not have
