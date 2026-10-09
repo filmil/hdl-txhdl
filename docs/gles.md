@@ -389,8 +389,6 @@ Of 196 checks, 160 pass. The 36 failures fall under six issues:
 | #1512 | 16 | `GL_COMBINE` |
 | #1513 | 2 | `GL_POINT_SMOOTH` and `GL_LINE_SMOOTH` |
 
-`glIsEnabled` of a name it does not know says false with no error, #1514, which is why some of those switches pass through it and fail through `glGetBooleanv`.
-
 The queries are issue 1484's.
 `glGetIntegerv`, `glGetFixedv` and `glGetBooleanv` answer every name the library keeps state for: the viewport and the depth range, the matrix mode, the three matrices and their stacks' depths, the current colour, normal and texture coordinates, the clears, the depth, blend, alpha test and colour mask settings, the faces and the shading, the point size and the line width, the bound texture, the unpack alignment, the light model, and every switch `glIsEnabled` knows.
 They also give the limits: the stacks, 8 lights, 1 clip plane, textures to 1024, 1 texture unit, 4 bits under the pixel, 8 bits a channel, 16 of depth and 8 of stencil, and sizes from 1 to 64.

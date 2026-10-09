@@ -162,6 +162,12 @@ fn the_limits_are_the_libraries() {
     g.get_integer(0x1234, &mut v);
     assert_eq!(g.get_error(), gl::INVALID_ENUM);
     assert_eq!(v, [7, 7], "an unknown name writes nothing");
+    // glIsEnabled of a name that is no switch is false and an error
+    // (#1514); of a switch, neither.
+    assert!(!g.is_enabled(0x1234));
+    assert_eq!(g.get_error(), gl::INVALID_ENUM, "not a switch");
+    assert!(!g.is_enabled(gl::FOG));
+    assert_eq!(g.get_error(), gl::NO_ERROR);
 }
 
 /// The compressed formats the library takes (#998): the ten paletted
