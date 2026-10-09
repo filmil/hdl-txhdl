@@ -485,7 +485,15 @@ impl Razboj {
 
     /// Draw the first `entries` of the list. Write the list first, and
     /// ring only once [`Razboj::count`] reads zero.
+    ///
+    /// The list's stores are posted, and the doorbell is on another path,
+    /// so a fence comes first: the core's waits until every store posted
+    /// is answered, and Razboj then reads all of them (issue 1553). A
+    /// read of the list's last word does not do it, since with the data
+    /// cache a load that hits does not wait for the stores.
     pub fn ring(entries: u32) {
+        // SAFETY: a fence has no effect but the order.
+        unsafe { core::arch::asm!("fence w, o") };
         wr(Self::COUNT, entries);
     }
 
