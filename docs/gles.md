@@ -378,15 +378,16 @@ The conformance suite is #999's, our own tests of GL ES 1.1's specification, sin
 Its C programs, in `gles/conform`, take a window and a context through EGL as any program does and print one line a test, `PASS` or `FAIL` with the reason.
 On the host they draw through Razboj's model as EGL's machine, and `//gles:conform_test` holds the run to `gles/conform/known_failures.txt`, which names an issue for every failure, so that a new failure fails the test and so does a known one that passes.
 The first group is the state tables of the specification's section 6.2: every state variable's initial value, through the query its table names and through the others with section 6.1.2's conversions, and every implementation-dependent value against its minimum.
-Of 196 checks, 160 pass. The 36 failures fall under six issues:
+The second is the errors: for each command, the error section 2.5 and the command's own section give a bad argument, each recorded once, and that the command changes nothing.
+Of 196 state checks, 160 pass, and of 100 error checks, 99. The 37 failures fall under six issues:
 
-| Issue | Rows | What is missing |
+| Issue | Checks | What is missing or wrong |
 |---|---|---|
 | #1507 | 5 | `OES_point_size_array` |
 | #1508 | 4 | `glPointParameterx` |
 | #1509 | 8 | The multisampling state |
 | #1510 | 1 | A second texture unit |
-| #1512 | 16 | `GL_COMBINE` |
+| #1512 | 17 | `GL_COMBINE`, its state and its scales |
 | #1513 | 2 | `GL_POINT_SMOOTH` and `GL_LINE_SMOOTH` |
 
 The queries are issue 1484's.
