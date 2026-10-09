@@ -10,8 +10,8 @@
 //! as a foreign module.
 use std::collections::{HashMap, VecDeque};
 use txhdl::comp::{
-    chan, join2, pad, set_reset, signal, DefaultClock, In, Out, Running, Rx,
-    Tx, Unit,
+    chan, join2, pad, set_reset, signal, Clock, DefaultClock, In, Out, Running,
+    Rx, Tx, Unit,
 };
 use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
@@ -20,7 +20,6 @@ use txhdl_parts::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
 use txhdl_parts::bus::axi_pins::AxiHostPins;
 use txhdl_parts::dtm::Tck;
 use txhdl_parts::eth::EthByte;
-use txhdl_parts::hdmi::Raster;
 use txhdl_parts::mdio::sim::MdioPhy;
 use txhdl_parts::remote::eth::{FRAME_LEN, KIND_ANSWER, KIND_ASK};
 use txhdl_parts::scanout::LinePair;
@@ -486,31 +485,48 @@ struct Net<'a> {
 }
 
 /// A scanout's pixel side on the board's `scan_req` and `scan_words`:
-/// the flagship's `LinePair` and a raster to drive it, on the board's
-/// clock, with frames of six rows so that a run sees several. A row is
-/// as long in the board's cycles as the flagship's is, [`SCAN_LINE`],
-/// so a line has as long to arrive as on the board (issue 1209). From the reset it has no base, as on the board after every
-/// reset; at `show_at` a program gives it `base`.
+/// the flagship's `LinePair` on a pixel clock, [`Pix`], driven by a
+/// raster the run keeps, with frames of six rows so that a run sees
+/// several, and the flagship's crossing between the pair and the board.
+/// A row is about as long in the board's cycles as the flagship's is,
+/// [`SCAN_LINE`], so a line has as long to arrive as on the board
+/// (issue 1209). From the reset it has no base, as on the board after
+/// every reset; at `show_at` a program gives it `base`.
 struct Scan {
     base: u32,
     show_at: u64,
 }
 
-/// The flagship's line in the board's cycles: 800 columns of the 25.2
-/// MHz pixel clock, at 100 MHz.
-const SCAN_LINE: u64 = 3175;
+/// The run's line in the board's cycles: 800 columns of the pixel clock,
+/// four cycles each. The flagship's is 3175, at 25.2 MHz.
+const SCAN_LINE: u64 = 3200;
 
-/// The raster and the pair: the flagship's line of 640 words, 4096
-/// bytes apart, a row of [`SCAN_LINE`] cycles, its back porch long
-/// enough to make it so, and four visible rows of six. The 640 words
-/// are read here a word a cycle rather than one every four, so the tail
-/// of a line is held to a harder deadline than on the board.
-type ScanRaster = Raster<640, 16, 96, 2423, 4, 1, 1, 0, 10>;
-const _: () = assert!(640 + 16 + 96 + 2423 == SCAN_LINE as usize);
-/// The frame's memory is the board's, the gigabyte from `0x4000_0000`,
-/// unless a run gives another (issue 1382).
+/// The pair: the flagship's line of 640 words, 4096 bytes apart, and
+/// four visible rows of six. The frame's memory is the board's, the
+/// gigabyte from `0x4000_0000`, unless a run gives another (issue
+/// 1382).
 type ScanPair<const LO: usize, const HI: usize> =
-    LinePair<640, 10, 4, 6, 4096, LO, HI, DefaultClock>;
+    LinePair<640, 10, 4, 6, 4096, LO, HI, Pix>;
+
+/// The pixel clock: one edge in four of the board's, 25 MHz to its 100,
+/// as the flagship's 25.2 MHz is to its 100 (issue 1523). The pair runs
+/// on it, so it takes a word a pixel, as on the board, and not a word a
+/// cycle, which let a late line catch up here and not there.
+struct Pix;
+impl Clock for Pix {
+    const NAME: &'static str = "clk_pix";
+    const PERIOD: u64 = 4 * DefaultClock::PERIOD;
+}
+
+/// The columns of a row and the rows of a frame, blanking included, of
+/// the raster the run drives the pair with: the flagship's 800 columns,
+/// 640 visible, and frames of six rows, four visible, so that a run sees
+/// several.
+const SCAN_COLS: u32 = 800;
+const SCAN_VIS_COLS: u32 = 640;
+const SCAN_ROWS: u32 = 6;
+const SCAN_VIS_ROWS: u32 = 4;
+const _: () = assert!(4 * SCAN_COLS as u64 == SCAN_LINE);
 
 /// What a scanout asked for and when its words came: the address, the
 /// cycle the board took the request, and the cycle its last word
@@ -524,6 +540,13 @@ struct ScanLog {
     /// The first cycle the pair said a column was shown before its word
     /// had arrived (issue 1209).
     starved: Option<u64>,
+    /// Every visible row that showed `LATE`, as the board's recordings
+    /// count them (issue 1523): the cycle the row began, its first
+    /// column shown `LATE`, and how many were.
+    late_rows: Vec<(u64, u32, u32)>,
+    /// Razboj's tile, and its tiles, when the scanout was shown and when
+    /// the run ended: whether it drew while the scanout was watched.
+    razboj_tile: [(u32, u32); 2],
 }
 
 fn run_all(
@@ -564,21 +587,23 @@ fn run_all_in<const LO: usize, const HI: usize>(
     // run sees what was asked for and what came back.
     let (scan_req_tx, scan_req) = chan::<U<32>, DefaultClock>();
     let (scan_words, scan_words_rx) = chan::<U<32>, DefaultClock>();
-    let (pair_req, pair_req_rx) = chan::<U<32>, DefaultClock>();
-    let (pair_inp_tx, pair_inp) = chan::<U<32>, DefaultClock>();
-    let (col_o, col) = signal::<U<10>, DefaultClock>();
-    let (vis_o, vis) = signal::<Bit, DefaultClock>();
-    let (line_o, line) = signal::<Bit, DefaultClock>();
-    let (row_o, row) = signal::<U<12>, DefaultClock>();
-    let (frame_o, frame) = signal::<Bit, DefaultClock>();
-    let (base_o, base) = signal::<U<32>, DefaultClock>();
-    let (clear_o, clear) = signal::<Bit, DefaultClock>();
-    let (show_o, show) = signal::<Bit, DefaultClock>();
-    let (pix_o, _pix) = signal::<U<32>, DefaultClock>();
-    let (starved_o, starved) = signal::<Bit, DefaultClock>();
-    let (stuck_o, stuck) = signal::<Bit, DefaultClock>();
-    let (stuck_at_o, stuck_at) = signal::<U<32>, DefaultClock>();
-    let mut raster = ScanRaster::default();
+    let (pair_req, pair_req_rx) = chan::<U<32>, Pix>();
+    let (pair_inp_tx, pair_inp) = chan::<U<32>, Pix>();
+    let (col_o, col) = signal::<U<10>, Pix>();
+    let (vis_o, vis) = signal::<Bit, Pix>();
+    let (line_o, line) = signal::<Bit, Pix>();
+    let (row_o, row) = signal::<U<12>, Pix>();
+    let (frame_o, frame) = signal::<Bit, Pix>();
+    let (base_o, base) = signal::<U<32>, Pix>();
+    let (clear_o, clear) = signal::<Bit, Pix>();
+    let (show_o, show) = signal::<Bit, Pix>();
+    let (pix_o, pix) = signal::<U<32>, Pix>();
+    let (starved_o, starved) = signal::<Bit, Pix>();
+    let (stuck_o, stuck) = signal::<Bit, Pix>();
+    let (stuck_at_o, stuck_at) = signal::<U<32>, Pix>();
+    // The raster, as `txhdl_parts::hdmi::Raster` counts, a column a
+    // pixel: the column and row the pair is shown next.
+    let (mut hc, mut vc) = (0u32, 0u32);
     let mut pair = ScanPair::<LO, HI>::default();
     base_o.set(U::<32>::from(0u32));
     clear_o.set(Bit::Zero);
@@ -602,6 +627,7 @@ fn run_all_in<const LO: usize, const HI: usize>(
         ..Default::default()
     };
     let (xfails, htimeouts) = (board.exmon.fails, board.arb.htimeouts);
+    let (r_tile, r_tiles) = (board.raster.tile, board.raster.tiles);
     let core = &board.cpu.core;
     let (amo_ph, f_wait, p_wait, ic_st) =
         (core.amo_ph, core.f_wait, core.p_wait, core.ic_st);
@@ -831,12 +857,9 @@ fn run_all_in<const LO: usize, const HI: usize>(
     );
     let mut sim = Running::new(join2(
         board,
-        join2(
-            raster.run((), (col_o, vis_o, line_o, row_o, frame_o)),
-            pair.run(
-                (pair_inp, col, vis, line, row, frame, base, clear, show),
-                (pix_o, pair_req, starved_o, stuck_o, stuck_at_o),
-            ),
+        pair.run(
+            (pair_inp, col, vis, line, row, frame, base, clear, show),
+            (pix_o, pair_req, starved_o, stuck_o, stuck_at_o),
         ),
     ));
     rst_o.set(Bit::One);
@@ -871,7 +894,7 @@ fn run_all_in<const LO: usize, const HI: usize>(
     }
     let mut words: HashMap<u32, u32> = HashMap::new();
     let mut sent: Vec<Vec<u8>> = Vec::new();
-    // The crossing's FIFOs, for a run with a reset in it.
+    // The crossing's FIFOs.
     let mut req_cdc: VecDeque<U<32>> = VecDeque::new();
     let mut words_cdc: VecDeque<U<32>> = VecDeque::new();
     let mut master = Master::default();
@@ -1007,6 +1030,12 @@ fn run_all_in<const LO: usize, const HI: usize>(
             let shown_again = reset_from
                 .zip(reset_at)
                 .map(|(f, (_, n))| f + n + 6 * SCAN_LINE);
+            if cycle == s.show_at {
+                scan_log.razboj_tile[0] =
+                    (r_tile.get().raw() as u32, r_tiles.get().raw() as u32);
+            }
+            scan_log.razboj_tile[1] =
+                (r_tile.get().raw() as u32, r_tiles.get().raw() as u32);
             if cycle == s.show_at || Some(cycle) == shown_again {
                 base_o.set(U::<32>::from(s.base));
                 show_o.set(Bit::One);
@@ -1016,59 +1045,72 @@ fn run_all_in<const LO: usize, const HI: usize>(
                 show_o.set(Bit::Zero);
             }
             // The pair's requests to the board, and the board's words
-            // to the pair, a cycle each way through the taps. A run with
-            // a reset in it puts the flagship's crossing between them as
-            // well: `chan_cdc`'s FIFOs, of 4 requests and 1024 words,
-            // which nothing resets (issue 1317).
-            if reset_at.is_some() {
-                if req_cdc.len() < 4 {
-                    if let Some(at) = pair_req_rx.recv_if(true) {
-                        req_cdc.push_back(at);
-                    }
+            // to the pair, through the flagship's crossing: `chan_cdc`'s
+            // FIFOs, of 4 requests and 1024 words, which nothing resets
+            // (issue 1317). A line has come, for the log, when its last
+            // word is in the crossing, as the board sent it.
+            if req_cdc.len() < 4 {
+                if let Some(at) = pair_req_rx.recv_if(true) {
+                    req_cdc.push_back(at);
                 }
-                if words_cdc.len() < 1024 {
-                    if let Some(w) = scan_words_rx.recv_if(true) {
-                        words_cdc.push_back(w);
+            }
+            if words_cdc.len() < 1024 {
+                if let Some(w) = scan_words_rx.recv_if(true) {
+                    words_cdc.push_back(w);
+                    scan_words_in += 1;
+                    if scan_words_in.is_multiple_of(640) {
+                        if let Some(l) = scan_log.lines.get_mut(scan_got) {
+                            l.2 = Some(cycle);
+                        }
+                        scan_got += 1;
                     }
                 }
             }
-            let req_ready = scan_req_tx.ready().to_bool();
-            if reset_at.is_some() {
-                if req_ready {
-                    if let Some(at) = req_cdc.pop_front() {
-                        scan_req_tx.send(at);
-                        scan_log.lines.push((at.raw() as u32, cycle, None));
+            if scan_req_tx.ready().to_bool() {
+                if let Some(at) = req_cdc.pop_front() {
+                    scan_req_tx.send(at);
+                    scan_log.lines.push((at.raw() as u32, cycle, None));
+                }
+            }
+            // A pixel in four cycles: the pair takes a word, the raster
+            // moves on a column, and the pixel it showed is counted.
+            // Whatever the phase, one edge of the pixel clock falls in
+            // each four cycles, so the pair sees each column once.
+            if cycle % 4 == 0 {
+                if pair_inp_tx.ready().to_bool() {
+                    if let Some(w) = words_cdc.pop_front() {
+                        pair_inp_tx.send(w);
                     }
                 }
-            } else if pair_req_rx.peek().is_some() && req_ready {
-                let at = pair_req_rx.recv_if(true).unwrap();
-                scan_req_tx.send(at);
-                scan_log.lines.push((at.raw() as u32, cycle, None));
-            }
-            // The pixel side takes a word a pixel, one in four of the
-            // board's cycles, so the words' FIFO fills under a burst.
-            let word = if reset_at.is_some() {
-                if cycle % 4 == 0 && pair_inp_tx.ready().to_bool() {
-                    words_cdc.pop_front()
+                // The pixel shown for the column before this one.
+                let shown = (hc + SCAN_COLS - 1) % SCAN_COLS;
+                let shown_vc = if hc == 0 {
+                    (vc + SCAN_ROWS - 1) % SCAN_ROWS
                 } else {
-                    None
-                }
-            } else if scan_words_rx.peek().is_some()
-                && pair_inp_tx.ready().to_bool()
-            {
-                scan_words_rx.recv_if(true)
-            } else {
-                None
-            };
-            if let Some(w) = word {
-                pair_inp_tx.send(w);
-                scan_words_in += 1;
-                if scan_words_in.is_multiple_of(640) {
-                    if let Some(l) = scan_log.lines.get_mut(scan_got) {
-                        l.2 = Some(cycle);
+                    vc
+                };
+                if shown < SCAN_VIS_COLS
+                    && shown_vc < SCAN_VIS_ROWS
+                    && pix.get().raw() as u32 == txhdl_parts::scanout::LATE
+                {
+                    let row_at = cycle - 4 * u64::from(shown);
+                    match scan_log.late_rows.last_mut() {
+                        Some(r) if r.0 == row_at => r.2 += 1,
+                        _ => scan_log.late_rows.push((row_at, shown, 1)),
                     }
-                    scan_got += 1;
                 }
+                let h_last = hc == SCAN_COLS - 1;
+                col_o.set(U::<10>::from(hc & 0x3ff));
+                vis_o.set(Bit::from_bool(
+                    hc < SCAN_VIS_COLS && vc < SCAN_VIS_ROWS,
+                ));
+                line_o.set(Bit::from_bool(hc == 0));
+                row_o.set(U::<12>::from(vc));
+                frame_o.set(Bit::from_bool(hc == 0 && vc == SCAN_VIS_ROWS));
+                if h_last {
+                    vc = (vc + 1) % SCAN_ROWS;
+                }
+                hc = if h_last { 0 } else { hc + 1 };
             }
         }
         if until_planned {
@@ -2991,9 +3033,10 @@ fn line_times(log: &ScanLog) -> (u64, u64, usize, usize) {
 /// longest line took 1964 cycles idle, 4682 under the load and 4754
 /// with Razboj too, against a line of 3175: every line late under load,
 /// as the board showed. With the flagship's bursts of 64 the same runs
-/// take 974, 1206 and 1200; with bursts of 128 they took 809, 942 and
-/// 904, at a cost to the core that `a_core_load_waits_behind_the_scanout`
-/// measures.
+/// took 974, 1206 and 1200, and take 974, 1231 and 1222 with the pair
+/// on its pixel clock (issue 1523); with bursts of 128 they took 809,
+/// 942 and 904, at a cost to the core that
+/// `a_core_load_waits_behind_the_scanout` measures.
 ///
 /// Each run is some 25 lines. Over 77 the longest line came first at
 /// line 0 idle, at line 8 under the load, and at line 44 with Razboj,
@@ -3040,6 +3083,151 @@ fn the_scanout_keeps_up_with_the_boards_load() {
             "{what}: the longest line took {max} of {SCAN_LINE} cycles"
         );
     }
+}
+
+/// Where the trilinear floor's texture is: its descriptor, then its
+/// levels, clear of the halves `load_program` copies between.
+const FLOOR_DESC: u32 = 0x4380_0000;
+
+/// The plan that has Razboj draw a floor receding over the frame the
+/// scanout shows (issue 1523), as the mipmapped demo does on the board:
+/// its 32 by 32 checker of six levels, filtered with
+/// `LINEAR_MIPMAP_LINEAR`, repeated across, in tiles. The debugger
+/// writes the texture and the list, and rings.
+fn floor_plan() -> Vec<Op> {
+    use razboj::op::{assemble, Op as Draw, TexMode};
+    use razboj_tile::tex::{
+        encode, level_base, side, texel_offset, Desc, LINEAR,
+        LINEAR_MIPMAP_LINEAR, MODULATE,
+    };
+    let (sw, sh) = (1024usize, 480usize);
+    let d = Desc {
+        base: FLOOR_DESC + 0x40,
+        log_w: 5,
+        log_h: 5,
+        levels: 6,
+        min: LINEAR_MIPMAP_LINEAR,
+        mag: LINEAR,
+        ..Desc::default()
+    };
+    let mut plan: Vec<Op> = encode(&d)
+        .iter()
+        .enumerate()
+        .map(|(k, w)| Op::Write(FLOOR_DESC + 4 * k as u32, *w))
+        .collect();
+    for l in 0..d.levels {
+        for j in 0..side(d.log_h, l) {
+            for i in 0..side(d.log_w, l) {
+                let c = if ((i ^ j) >> 3) & 1 == 1 { 0xe0 } else { 0x30 };
+                let texel = 0xff00_0000 | (c << 16) | (c << 8) | c;
+                let at = level_base(&d, l) + texel_offset(&d, l, i, j);
+                plan.push(Op::Write(at, texel));
+            }
+        }
+    }
+    // A floor from the bottom of the frame to a horizon a quarter of
+    // the way down, its far edge four times as far as its near one,
+    // and the checker repeated sixteen times across.
+    let corners = [
+        ((0, 479 * 16), 1.0, (0.0, 0.0)),
+        ((639 * 16, 479 * 16), 1.0, (512.0, 0.0)),
+        ((639 * 16, 120 * 16), 4.0, (512.0, 512.0)),
+        ((0, 120 * 16), 4.0, (0.0, 512.0)),
+    ];
+    let uvq = |k: usize| {
+        let (_, w, (u, v)) = corners[k];
+        let q = 1.0 / w;
+        (
+            (u * q * (1u64 << 32) as f64) as i64,
+            (v * q * (1u64 << 32) as f64) as i64,
+            (q * (1u64 << 48) as f64) as u64,
+        )
+    };
+    let tri = |a: usize, b: usize, c: usize| Draw::TexTri {
+        a: corners[a].0,
+        b: corners[b].0,
+        c: corners[c].0,
+        colours: [0xffff_ffff; 3],
+        shaded: false,
+        z: [0; 3],
+        uvq: [uvq(a), uvq(b), uvq(c)],
+    };
+    let list = assemble(
+        &[
+            Draw::Clear {
+                colour: 0xff10_1820,
+            },
+            Draw::Texture(Some(TexMode {
+                desc: FLOOR_DESC,
+                env: MODULATE,
+                env_colour: 0,
+            })),
+            tri(0, 1, 2),
+            tri(0, 2, 3),
+        ],
+        sw,
+        sh,
+    );
+    let (words, count) = razboj::tiles::image(&list, sw, sh);
+    plan.extend(razboj_plan(&words, &[], count));
+    plan
+}
+
+/// The scanout while Razboj draws the mipmapped floor and the core and
+/// the Ethernet port load the DDR3 as in
+/// `the_scanout_keeps_up_with_the_boards_load` (issue 1523): the
+/// board's recordings of the mipmapped demo showed rows `LATE` from a
+/// burst's boundary to the line's end. Here every line comes in about
+/// 1300 cycles of its 3200 and none starves, with Razboj drawing
+/// throughout, so what the board meets is a stall this memory model
+/// does not have: it answers every read in 24 cycles.
+#[test]
+fn the_scanout_against_a_trilinear_floor() {
+    let plan = floor_plan();
+    // The debugger's writes take some 30 cycles each; the scanout is
+    // shown once they are done, and watched for forty rows.
+    let planned = 40 * plan.len() as u64;
+    let rows = 40;
+    let net = Net {
+        scan: Some(Scan {
+            base: 0x4200_0000,
+            show_at: planned,
+        }),
+        ..Net::default()
+    };
+    let ran = run_all(
+        &load_program(false),
+        hello_program::DATA,
+        b"",
+        &[],
+        planned + (rows + 6) * SCAN_LINE,
+        net,
+        &plan,
+    );
+    let (max, mean, late, n) = line_times(&ran.scan);
+    eprintln!(
+        "scan trilinear: {} writes, {n} lines, longest {max} cycles, mean \
+         {mean}, {late} longer than a line of {SCAN_LINE}, starved {:?}, \
+         Razboj's tile and tiles {:?}",
+        plan.len(),
+        ran.scan.starved,
+        ran.scan.razboj_tile,
+    );
+    for (at, col, n) in &ran.scan.late_rows {
+        eprintln!("row from {at}: LATE from column {col}, {n} columns");
+    }
+    let [(t0, _), (t1, tiles)] = ran.scan.razboj_tile;
+    assert!(
+        t1 > t0 && t1 < tiles,
+        "Razboj drew while watched: {t0} {t1}"
+    );
+    assert!(n >= 20, "only {n} lines came");
+    assert_eq!(ran.scan.starved, None, "a column starved");
+    assert!(ran.scan.late_rows.is_empty(), "rows shown LATE");
+    assert!(
+        2 * max < SCAN_LINE,
+        "the longest line took {max} of {SCAN_LINE} cycles"
+    );
 }
 
 /// The serial line's reset, in the flagship's cycles: a pulse of

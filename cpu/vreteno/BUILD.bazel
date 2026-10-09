@@ -168,6 +168,7 @@ rust_test(
         ":vreteno32",
         "//ddr3",
         "//gpu/razboj",
+        "//gpu/razboj:tile",
         "//cpu/vreteno/rust:boot_program",
         "//cpu/vreteno/rust:ddr3_program",
         "//cpu/vreteno/rust:ethrx_program",
