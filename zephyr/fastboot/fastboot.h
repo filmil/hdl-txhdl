@@ -112,4 +112,24 @@ int fb_kernel(const uint8_t *img, uint32_t len, uint32_t *offset,
  */
 void fb_copy(uint8_t *dst, const uint8_t *src, size_t n);
 
+/*
+ * The wrapping sum of the little-endian words that `n` bytes make where
+ * they land, `offset` bytes into an image, added to `sum`: each byte is
+ * shifted to its lane, so the bytes of one word may come in any number
+ * of pieces and still add up to that word (issue 1556). A byte never
+ * given counts as zero.
+ */
+uint32_t fb_sum_add(uint32_t sum, uint32_t offset, const uint8_t *p,
+		    size_t n);
+
+/*
+ * The same sum read from memory: the words of the first `len` bytes at
+ * `w`, each read by `load`, the last word's bytes past `len` taken as
+ * zero. For an image whose bytes were all given to fb_sum_add, the two
+ * agree exactly when the memory holds what was given. The board reads
+ * with a load that goes around its data cache.
+ */
+uint32_t fb_sum_words(const volatile uint32_t *w, uint32_t len,
+		      uint32_t (*load)(const volatile uint32_t *));
+
 #endif
