@@ -945,3 +945,20 @@ sh_test(
         "//cpu/vreteno/rust:ethperf_ram_bin",
     ],
 )
+
+# The GL icosahedron on two harts draws every frame into the buffer not
+# on the screen, and both buffers (issue 1551): the program runs on the
+# machine with a stand-in Razboj, which says where each ring drew and
+# what the scanout showed.
+sh_test(
+    name = "two_buffers_test",
+    srcs = ["two_buffers_test.sh"],
+    args = [
+        "$(rootpath :machine)",
+        "$(rootpath //cpu/vreteno/rust:ico_gl_hdmi_bin)",
+    ],
+    data = [
+        ":machine",
+        "//cpu/vreteno/rust:ico_gl_hdmi_bin",
+    ],
+)
