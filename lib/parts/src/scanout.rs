@@ -1106,6 +1106,91 @@ mod tests {
     use crate::hdmi::{vga, Raster};
     use txhdl::comp::Running;
 
+    /// The flagship's frame, 480 rows of 525, its words given as fast as
+    /// the pair takes them, one row ahead and two (issue 1523): from the
+    /// second frame on, no line is late at its row and no column is
+    /// shown before its word, so a late line on the board is a late
+    /// word and not the frame's own shape.
+    #[test]
+    fn a_frame_with_its_words_on_time_has_no_late_line() {
+        type R = Raster<
+            { vga::HV },
+            { vga::HFP },
+            { vga::HSW },
+            { vga::HBP },
+            { vga::VV },
+            { vga::VFP },
+            { vga::VSW },
+            { vga::VBP },
+            10,
+        >;
+        type P = LinePair<
+            { vga::HV },
+            10,
+            { vga::VV },
+            525,
+            4096,
+            0x4000_0000,
+            0x8000_0000,
+            DefaultClock,
+        >;
+        for ahead in [false, true] {
+            let mut raster = R::default();
+            let mut pair = P::default();
+            let (col_o, col) = signal::<U<10>, DefaultClock>();
+            let (vis_o, vis) = signal::<Bit, DefaultClock>();
+            let (line_o, line) = signal::<Bit, DefaultClock>();
+            let (row_o, row) = signal::<U<12>, DefaultClock>();
+            let (frame_o, frame) = signal::<Bit, DefaultClock>();
+            let (base_o, base) = signal::<U<32>, DefaultClock>();
+            let (clear_o, clear) = signal::<Bit, DefaultClock>();
+            let (show_o, show) = signal::<Bit, DefaultClock>();
+            let (pix_o, _pix) = signal::<U<32>, DefaultClock>();
+            let (starved_o, starved) = signal::<Bit, DefaultClock>();
+            let (stuck_o, stuck) = signal::<Bit, DefaultClock>();
+            let (stuck_at_o, _stuck_at) = signal::<U<32>, DefaultClock>();
+            let (worst_o, worst) = signal::<U<16>, DefaultClock>();
+            let (lates_o, lates) = signal::<U<16>, DefaultClock>();
+            let (two_o, two) = signal::<Bit, DefaultClock>();
+            let (words_tx, words) = chan::<U<32>, DefaultClock>();
+            let (req, req_rx) = chan::<U<32>, DefaultClock>();
+            base_o.set(U::<32>::from(0x4100_0000u32));
+            clear_o.set(Bit::Zero);
+            show_o.set(Bit::One);
+            two_o.set(Bit::from_bool(ahead));
+            let mut sim = Running::new(join2(
+                raster.run((), (col_o, vis_o, line_o, row_o, frame_o)),
+                pair.run(
+                    (words, col, vis, line, row, frame, base, clear, show, two),
+                    (
+                        pix_o, req, starved_o, stuck_o, stuck_at_o, worst_o,
+                        lates_o,
+                    ),
+                ),
+            ));
+            let frame_len = 525 * 800;
+            let mut owed = 0usize;
+            for c in 0..3 * frame_len {
+                // The bits are cleared once the first frame is over.
+                clear_o.set(Bit::from_bool(c == frame_len + 1000));
+                if req_rx.recv_if(true).is_some() {
+                    owed += vga::HV;
+                }
+                if owed > 0 && words_tx.ready().to_bool() {
+                    words_tx.send(U::<32>::from(owed as u32));
+                    owed -= 1;
+                }
+                sim.cycle();
+            }
+            let n = lates.get().raw();
+            assert_eq!(n, 0, "two ahead {ahead}: {n} lines late");
+            assert!(!starved.get().to_bool(), "two ahead {ahead}: starved");
+            assert!(!stuck.get().to_bool(), "two ahead {ahead}: stuck");
+            let w = worst.get().raw();
+            assert!(w < 2 * 800 + 640, "two ahead {ahead}: longest {w}");
+        }
+    }
+
     /// The flagship's pair and raster, a line of 640 words in 800
     /// columns: the beam names columns 640 to 799 in the blanking, past
     /// the line, and the pair must not read its line there (issue 1194).
