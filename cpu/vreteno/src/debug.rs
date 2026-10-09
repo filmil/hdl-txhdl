@@ -16,8 +16,10 @@
 //! | number | register     | what                                          |
 //! |--------|--------------|-----------------------------------------------|
 //! | `0x04` | `data0`      | the abstract command's one data word           |
-//! | `0x10` | `dmcontrol`  | `haltreq` 31, `resumereq` 30, `dmactive` 0     |
-//! | `0x11` | `dmstatus`   | halted, running, resume acknowledged, version  |
+//! | `0x10` | `dmcontrol`  | `haltreq` 31, `resumereq` 30, `hartsello` 25  |
+//! |        |              | to 16, `dmactive` 0                           |
+//! | `0x11` | `dmstatus`   | halted, running, resume acknowledged, absent, |
+//! |        |              | version                                       |
 //! | `0x12` | `hartinfo`   | zero: no scratch registers, no data window     |
 //! | `0x16` | `abstractcs` | `busy` 12, `cmderr` 10 to 8, `datacount` 1    |
 //! | `0x17` | `command`    | access register, 32 bits, `regno` 15 to 0      |
@@ -26,7 +28,17 @@
 //! | `0x3c` | `sbdata0`    | the word a system bus access reads or writes   |
 //! | `0x40` | `haltsum0`   | bit 0, the one hart, halted                    |
 //!
-//! One hart, so `hartsel` is not decoded. The abstract command is the
+//! The module serves one hart, hart 0 (issue 1408). `hartsello` is kept
+//! and reads back, ten bits, and `hartselhi` reads zero, so a debugger
+//! finds ten bits of selection. With any hart but 0 selected, `dmstatus`
+//! says it does not exist, `anynonexistent` and `allnonexistent`, and
+//! nothing else about it; a halt or resume request written for it does
+//! not reach hart 0; and an abstract command for it is refused with
+//! `cmderr` 4. So OpenOCD's scan of the harts stops at hart 1 and finds
+//! one. `hasel` reads zero, and `hawindowsel` and `hawindow` are not
+//! there, so they read zero too: there is no array of harts to select.
+//!
+//! The abstract command is the
 //! access-register command for a general register, `0x1000` to
 //! `0x101f`, or a CSR, which the core reads for it and, for `dpc` and
 //! `dcsr`, writes for it; any other command is refused with
@@ -94,6 +106,8 @@ pub const fn at(number: u32) -> u32 {
 pub const HALTREQ: u32 = 1 << 31;
 pub const RESUMEREQ: u32 = 1 << 30;
 pub const DMACTIVE: u32 = 1;
+/// `hartsello`'s place in `dmcontrol`, ten bits from bit 16.
+pub const HARTSELLO: u32 = 16;
 
 /// `dmstatus` bits: `allhalted` and `anyhalted`, `allrunning` and
 /// `anyrunning`, `allresumeack` and `anyresumeack`, `authenticated`,
@@ -101,6 +115,8 @@ pub const DMACTIVE: u32 = 1;
 pub const ALLHALTED: u32 = 3 << 8;
 pub const ALLRUNNING: u32 = 3 << 10;
 pub const ALLRESUMEACK: u32 = 3 << 16;
+/// `allnonexistent` and `anynonexistent`: the selected hart is not one.
+pub const NONEXISTENT: u32 = 3 << 14;
 pub const AUTHENTICATED: u32 = 1 << 7;
 pub const VERSION: u32 = 2;
 
@@ -120,6 +136,8 @@ pub const fn access(regno: u32, write: bool) -> u32 {
 pub struct Dm {
     /// `dmactive`: the module is in use; clear, it holds nothing.
     pub active: Reg<Bit>,
+    /// `hartsello`: the hart selected; only hart 0 is there.
+    pub hartsel: Reg<U<10>>,
     /// `haltreq`, as the debugger wrote it.
     pub haltreq: Reg<Bit>,
     /// `resumereq`, until the core has resumed.
@@ -164,6 +182,9 @@ impl Unit for Dm {
             let cmderr = self.cmderr.get();
             let stage = self.stage.get();
             let busy = Bit::from(stage != 0);
+            let hartsel = self.hartsel.get();
+            // Hart 0 is selected: the one hart there is.
+            let here = Bit::from(hartsel == 0);
             // The bus: one read and one write a cycle, as any of the
             // small peripherals; the number is the word address.
             let arh = bus.ar.head();
@@ -183,12 +204,16 @@ impl Unit for Dm {
             let dmcontrol = hreq
                 .zext::<1>()
                 .concat::<1, 2>(rreq.zext::<1>())
-                .concat::<29, 31>(U::<29>::from(0u8))
+                .concat::<4, 6>(U::<4>::from(0u8))
+                .concat::<10, 16>(hartsel)
+                .concat::<15, 31>(U::<15>::from(0u8))
                 .concat::<1, 32>(active.zext::<1>());
-            let dmstatus = U::<32>::from(VERSION | AUTHENTICATED)
+            let hart0 = U::<32>::from(VERSION | AUTHENTICATED)
                 | mux(halted, U::<32>::from(ALLHALTED), U::<32>::from(0u8))
                 | mux(halted, U::<32>::from(0u8), U::<32>::from(ALLRUNNING))
                 | mux(rack, U::<32>::from(ALLRESUMEACK), U::<32>::from(0u8));
+            let absent = U::<32>::from(VERSION | AUTHENTICATED | NONEXISTENT);
+            let dmstatus = mux(here, hart0, absent);
             let abstractcs = U::<32>::from(1u8)
                 | (cmderr.zext::<32>() << 8)
                 | (busy.zext::<32>() << 12);
@@ -205,6 +230,9 @@ impl Unit for Dm {
             // when nothing is in flight and no error stands.
             let ctl = wgo & (wsel == DMCONTROL);
             let on = ctl & wd.bit(0);
+            // The write's own selection says whom its requests are for.
+            let sel = wd.slice::<16, 10>();
+            let for0 = on & Bit::from(sel == 0);
             let cmd = wgo & (wsel == COMMAND) & active & (cmderr == 0);
             let cmdtype = wd.slice::<24, 8>();
             let aarsize = wd.slice::<20, 3>();
@@ -220,9 +248,10 @@ impl Unit for Dm {
                 & (aarsize == 2)
                 & (is_gpr | (is_csr & (!wr | csr_writable)));
             let err_busy = cmd & busy;
-            let err_unsupported = cmd & !busy & !supported;
-            let err_running = cmd & !busy & supported & !halted;
-            let go = cmd & !busy & supported & halted & transfer;
+            let err_absent = cmd & !busy & !here;
+            let err_unsupported = cmd & !busy & here & !supported;
+            let err_running = cmd & !busy & here & supported & !halted;
+            let go = cmd & !busy & here & supported & halted & transfer;
             // The core reads a register from a number it took a cycle
             // before (issue 1130), so the answer is taken a stage later:
             // asking, waiting, answered.
@@ -242,9 +271,11 @@ impl Unit for Dm {
                 // as the write lands and does nothing if it is running, a
                 // zero does nothing, and either way the one clears the
                 // acknowledgement.
-                on ? haltreq: wd.bit(31),
-                on & wd.bit(30) ? resumeack: Bit::Zero,
-                on & wd.bit(30) & halted ? resumereq: Bit::One,
+                // Only hart 0's, and only when the write selects it.
+                on ? hartsel: sel,
+                for0 ? haltreq: wd.bit(31),
+                for0 & wd.bit(30) ? resumeack: Bit::Zero,
+                for0 & wd.bit(30) & halted ? resumereq: Bit::One,
                 // `data0` is the debugger's between commands; touched while
                 // one is in flight, the access is the busy error and
                 // writes nothing, as the specification says.
@@ -255,6 +286,7 @@ impl Unit for Dm {
                 err_busy ? cmderr: U::<3>::from(1u8),
                 err_unsupported ? cmderr: U::<3>::from(2u8),
                 err_running ? cmderr: U::<3>::from(4u8),
+                err_absent ? cmderr: U::<3>::from(4u8),
                 go ? { stage: U::<2>::from(1u8), regno: rn, write: wr },
                 asking ? stage: U::<2>::from(2u8),
                 waiting ? stage: U::<2>::from(3u8),
@@ -262,6 +294,7 @@ impl Unit for Dm {
                 answered & !self.write ? data0: rdata.get(),
                 // Inactive, the module holds nothing.
                 !active & !on ? {
+                    hartsel: U::<10>::from(0u8),
                     haltreq: Bit::Zero,
                     resumereq: Bit::Zero,
                     resumeack: Bit::Zero,
@@ -534,6 +567,46 @@ mod tests {
             write(h, at(ABSTRACTCS), 7 << 8).await;
             write(h, at(COMMAND), 1 << 24).await;
             assert_eq!(read(h, at(ABSTRACTCS)).await >> 8 & 7, 2);
+        });
+    }
+
+    /// Hart selection (issue 1408): ten bits of `hartsello` read back and
+    /// `hasel` and `hartselhi` do not, as OpenOCD finds the width; with
+    /// hart 1 selected `dmstatus` says it does not exist and nothing else,
+    /// its halt request does not reach hart 0, and its command is refused
+    /// with `cmderr` 4; `hawindowsel` reads zero; and with hart 0 selected
+    /// again, everything is as it was.
+    #[test]
+    fn only_hart_0_is_there() {
+        run(|rig| async move {
+            let h = &rig.host;
+            write(h, at(DMCONTROL), 0x07ff_ffc0 | DMACTIVE).await;
+            assert_eq!(
+                read(h, at(DMCONTROL)).await,
+                0x3ff << HARTSELLO | DMACTIVE,
+                "ten bits of hartsello, no hasel, no hartselhi"
+            );
+            write(h, at(DMCONTROL), 1 << HARTSELLO | DMACTIVE).await;
+            let s = read(h, at(DMSTATUS)).await;
+            assert_eq!(s, NONEXISTENT | AUTHENTICATED | VERSION, "{s:#x}");
+            write(h, at(DMCONTROL), HALTREQ | 1 << HARTSELLO | DMACTIVE).await;
+            cycles(2).await;
+            assert!(!bit(&rig.haltreq), "not hart 0's request");
+            rig.halted.set(Bit::One);
+            cycles(2).await;
+            write(h, at(COMMAND), access(REGNO_GPR + 1, false)).await;
+            assert_eq!(read(h, at(ABSTRACTCS)).await >> 8 & 7, 4);
+            write(h, at(ABSTRACTCS), 7 << 8).await;
+            assert_eq!(read(h, at(0x14)).await, 0, "hawindowsel");
+            write(h, at(DMCONTROL), DMACTIVE).await;
+            let s = read(h, at(DMSTATUS)).await;
+            assert_eq!(s & NONEXISTENT, 0, "{s:#x}");
+            assert_eq!(s & ALLHALTED, ALLHALTED, "{s:#x}");
+            rig.rdata.set(U::from(5u32));
+            write(h, at(COMMAND), access(REGNO_GPR + 1, false)).await;
+            cycles(2).await;
+            assert_eq!(read(h, at(ABSTRACTCS)).await >> 8 & 7, 0);
+            assert_eq!(read(h, at(DATA0)).await, 5);
         });
     }
 
