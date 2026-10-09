@@ -2605,6 +2605,22 @@ words of a line that came after its start went into the half filling
 for the next row, which then showed them as its own, one row low
 (issue~\#1233).
 
+The board later showed rows of \code{LATE} that start at a burst's
+first column and run to the row's end (issue~\#1523). On the board the
+pair is on the pixel clock and takes a word a pixel, as fast as the
+beam reads them, so once a burst comes after its columns are due, the
+rest of the row stays behind. The simulation had run the pair on the
+board's clock, a word a cycle, four times as fast, and there a late
+line caught up at once. The simulation now runs the pair on a pixel
+clock of its own, a quarter of the board's, behind a model of the
+flagship's crossing, 1024 words and four requests. Under it the same
+three runs take 974, 1231 and 1222 cycles of a line of 3200, and with
+Razboj drawing a mipmapped floor, filtered trilinearly, the longest line
+takes about 1300 and no column starves, which
+\code{the\_scanout\_against\_a\_trilinear\_floor} holds. So what makes a
+burst late on the board is a stall this simulation's memory, which
+answers every read in 24 cycles, does not have.
+
 \code{vreteno\_board\_jtag.v} is the top with the master, the board's
 own top with one block added, and every other top ties the pins off,
 so the shipping bitstreams are unchanged in what they do.
