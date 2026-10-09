@@ -332,7 +332,7 @@ It is the same square, as two textured triangles with `s` from nought at its lef
 So a pixel's coordinates are GL's `1/2 + (x - x_w + 1/2) / size` and `1/2 - (y - y_w + 1/2) / size`, and `q` is one.
 Its level of detail is the square's against the texture's, so a mipmapped sprite reads the level its size asks for.
 `//gles:texture_test`'s `a_point_sprite_is_the_texture_across_it` holds a sprite 32 pixels square to that formula, texel by texel, and the same point without coordinate replacement to its own colour.
-GL's own rule for a line one pixel wide, the diamond exit, differs from this at the ends and on ties; it is left for the conformance tests, issue 999, to ask for.
+GL's own rule for a line one pixel wide, the diamond exit, differs from this at the ends and on ties, which section 3.4.1 allows of another algorithm within four rules; #999's conformance suite holds the library's lines to them, and they keep all four.
 
 Depth is issue 1273's, on #992's depth test in Razboj's tile buffer.
 A vertex's window depth is its z over its w carried into the depth range, as sixteen bits.
@@ -379,7 +379,8 @@ Its C programs, in `gles/conform`, take a window and a context through EGL as an
 On the host they draw through Razboj's model as EGL's machine, and `//gles:conform_test` holds the run to `gles/conform/known_failures.txt`, which names an issue for every failure, so that a new failure fails the test and so does a known one that passes.
 The first group is the state tables of the specification's section 6.2: every state variable's initial value, through the query its table names and through the others with section 6.1.2's conversions, and every implementation-dependent value against its minimum.
 The second is the errors: for each command, the error section 2.5 and the command's own section give a bad argument, each recorded once, and that the command changes nothing.
-Of 196 state checks, 160 pass, and of 100 error checks, 99. The 37 failures fall under six issues:
+The third is the rendering: scenes read back with `glReadPixels` and held, pixel for pixel, to a reference in double precision that follows the specification's rules for points, polygons, lines by the four rules section 3.4.1 sets an algorithm other than the diamond exit, the viewport, smooth shading, every per-fragment test and operation, fog, the texture environments and lighting, skipping only a pixel whose centre lies on an edge, which GL leaves to the implementation.
+Of 196 state checks, 160 pass; of 100 error checks, 99; and of 81 rendering checks, 80. The 38 failures fall under seven issues:
 
 | Issue | Checks | What is missing or wrong |
 |---|---|---|
@@ -389,6 +390,7 @@ Of 196 state checks, 160 pass, and of 100 error checks, 99. The 37 failures fall
 | #1510 | 1 | A second texture unit |
 | #1512 | 17 | `GL_COMBINE`, its state and its scales |
 | #1513 | 2 | `GL_POINT_SMOOTH` and `GL_LINE_SMOOTH` |
+| #1520 | 1 | Smooth shading of alpha, which Razboj takes from the first vertex |
 
 The queries are issue 1484's.
 `glGetIntegerv`, `glGetFixedv` and `glGetBooleanv` answer every name the library keeps state for: the viewport and the depth range, the matrix mode, the three matrices and their stacks' depths, the current colour, normal and texture coordinates, the clears, the depth, blend, alpha test and colour mask settings, the faces and the shading, the point size and the line width, the bound texture, the unpack alignment, the light model, and every switch `glIsEnabled` knows.
