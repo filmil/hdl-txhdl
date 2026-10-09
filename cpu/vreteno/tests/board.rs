@@ -3716,6 +3716,27 @@ fn a_base_outside_the_ddr3_keeps_the_order_inside_it() {
     }
 }
 
+/// A device's load does not wait for the stores the core has posted
+/// (issue 1463): only a DDR3 word can be one of them. A hundred rounds
+/// of a store to the timer's compare register and a load of its count
+/// take 1709 cycles; with the wait they took 2609, and before the data
+/// cache took every load 1609.
+#[test]
+fn a_device_load_does_not_wait_for_posted_stores() {
+    use vreteno32::isa::{addi, bne, halt, lui, lw, sw};
+    let mut p = vec![
+        lui(6, 0x0200_c000 >> 12),
+        addi(6, 6, -8),
+        lui(8, 0x0200_4000 >> 12),
+        addi(10, 0, 100),
+    ];
+    p.extend([sw(0, 8, 0), lw(7, 6, 0), addi(10, 10, -1), bne(10, 0, -12)]);
+    p.push(halt());
+    let ran = run_debugged(&p, &[], 200_000, &[]);
+    let took = ran.halted_at.expect("the loop halts");
+    assert!(took <= 1800, "a hundred device rounds took {took} cycles");
+}
+
 /// A random mix of loads and stores of every width over two lines of
 /// the DDR3 and the same two lines a page on, which share their places
 /// in the data cache, so lines are filled, hit, written into and put
