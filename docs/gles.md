@@ -38,23 +38,23 @@ A later issue means the entry point is accepted from the start but does what tha
 | Viewport | `glViewport`, `glDepthRangex` | Now; the depth range places a vertex's window depth, from #1273 |
 | Matrices | `glMatrixMode`, `glLoadIdentity`, `glLoadMatrixx`, `glMultMatrixx`, `glPushMatrix`, `glPopMatrix`, `glTranslatex`, `glRotatex`, `glScalex`, `glFrustumx`, `glOrthox` | Now |
 | Vertex arrays | `glVertexPointer`, `glColorPointer`, `glNormalPointer`, `glEnableClientState`, `glDisableClientState`, `glDrawArrays`, `glDrawElements` | Now, for points, lines, line strips and loops, triangles, strips and fans |
-| Buffer objects | `glGenBuffers`, `glBindBuffer`, `glBufferData`, `glBufferSubData`, `glDeleteBuffers` | Now; they are core in 1.1, and here they are memory the library owns |
+| Buffer objects | `glGenBuffers`, `glBindBuffer`, `glBufferData`, `glBufferSubData`, `glDeleteBuffers`, `glIsBuffer`, `glGetBufferParameteriv` | Now, from #1488; they are core in 1.1, and their stores live in room the machine gives at `eglMakeCurrent` |
 | Current values | `glColor4x`, `glColor4ub`, `glNormal3x` | Now |
 | Shading and faces | `glShadeModel`, `glFrontFace`, `glCullFace` | Now |
 | Lighting | `glLightx`, `glLightxv`, `glLightModelx`, `glLightModelxv`, `glMaterialx`, `glMaterialxv` | Now |
 | Clip planes | `glClipPlanex` | Now, one plane at least |
 | Clearing | `glClearColorx`, `glClear`; `glClearDepthx` | Now, under the colour and depth masks |
 | Scissor | `glScissor` | #990 |
-| Depth | `glDepthFunc`, `glDepthMask` | Now, from #1273, drawn in a tile table |
+| Depth | `glDepthFunc`, `glDepthMask`, `glPolygonOffsetx`; `GL_POLYGON_OFFSET_FILL` | Now, from #1273, drawn in a tile table; polygon offset from #998 |
 | Blending and masks | `glBlendFunc`, `glAlphaFuncx`, `glColorMask` | Now, from #993, drawn in a tile table |
 | Textures | `glGenTextures`, `glDeleteTextures`, `glBindTexture`, `glTexImage2D`, `glTexParameteri`, `glTexParameterx`, `glTexEnvi`, `glTexEnvx`, `glTexEnvxv`, `glTexCoordPointer`, `glMultiTexCoord4x`, `glActiveTexture`, `glClientActiveTexture`, `glPixelStorei`; `GL_TEXTURE_2D` and `GL_TEXTURE_COORD_ARRAY` | From #997, one unit, drawn in a tile table; the rasteriser samples under every filter, mipmapped, and every environment but `GL_COMBINE`, as Razboj's model does |
 | Points and lines | `glPointSizex`, `glLineWidthx`, and the point and line modes of the draw calls | Now, from issue 994 |
 | Switches | `glEnable`, `glDisable`, `glIsEnabled` for `GL_LIGHTING`, `GL_LIGHT0` to `GL_LIGHT7`, `GL_CULL_FACE`, `GL_NORMALIZE`, `GL_RESCALE_NORMAL`, `GL_COLOR_MATERIAL`, `GL_CLIP_PLANE0`, `GL_DEPTH_TEST`, `GL_BLEND`, `GL_ALPHA_TEST`; and the rest as the issues above land | Now, and growing |
-| Queries and errors | `glGetError`, `glGetIntegerv`, `glGetFixedv`, `glGetBooleanv`, `glGetString`, `glGetPointerv` | Now |
+| Queries and errors | `glGetError`, `glGetIntegerv`, `glGetFixedv`, `glGetBooleanv`, `glGetString`, `glGetPointerv` | Now, the queries from #1484 (section 10) |
 | Completion | `glFlush`, `glFinish` | Now (section 7) |
 | Hints | `glHint` | Accepted and ignored, as the specification allows |
 
-Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed textures, and a second texture unit, which wait for a program that needs them; fog (#998), stencil (#998), `glLogicOp` (#998), `glPolygonOffsetx` (#998), point sprites (#998), and `glReadPixels`, which needs a read path from the framebuffer that nothing has asked for yet.
+Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit, which wait for a program that needs them; fog (#998), stencil (#998), `glLogicOp` (#998), point sprites (#998), and `glReadPixels`, which needs a read path from the framebuffer that nothing has asked for yet.
 An entry point that is left out still exists, so that a program links, and sets `GL_INVALID_ENUM` or `GL_INVALID_OPERATION` as the specification says for an unsupported value.
 
 The limits the library reports are the specification's minimums: a modelview stack of 16, projection and texture stacks of 2, eight lights, one clip plane.
@@ -278,13 +278,17 @@ Each step is a pull request, checked before the next.
    The cycles on the board wait for a board session.
 6. **The C ABI.**
    The user chose Rust inside with C at the edge (section 9), and this is the edge, issue 1224, which EGL (issue 996) needs.
-   `gles/capi/lib.rs` has `extern "C"` functions with the names and types of Khronos's `GLES/gl.h` for the 64 entry points the library implements, over a current context and its client arrays.
+   `gles/capi/lib.rs` has `extern "C"` functions with the names and types of Khronos's `GLES/gl.h` for the entry points the library implements, over a current context, its client arrays and its buffer objects.
    The client arrays are read a vertex at a time, in the types Common-Lite allows, through `Gl::draw_vertices`, so nothing is copied or allocated.
+   Buffer objects are the C API's too (#1488): up to 64 names, each a store in room the machine gives at `eglMakeCurrent` through `Machine::buffers`, as it gives the textures', handed out in order and never given back; a machine that gives none leaves `glBufferData` failing with `GL_OUT_OF_MEMORY`, and the board's gives none yet, as it gives no textures.
+   An array given while a buffer is bound to `GL_ARRAY_BUFFER` reads that buffer's store, its pointer an offset into it, and `glDrawElements` reads its indices from the buffer bound to `GL_ELEMENT_ARRAY_BUFFER` the same way; binding a name not yet in use makes an object of it, and deleting one unbinds it everywhere, as GL ES 1.1 says.
+   The queries give the two bindings and the buffer each array was given under.
    `GLES/gl.h`, `GLES/glplatform.h` and `KHR/khrplatform.h` are not copied into the tree: `MODULE.bazel` fetches them from Khronos's OpenGL-Registry and EGL-Registry at pinned commits, by their sha256, and `//third_party/khronos:gles1` lays them out for `#include <GLES/gl.h>`.
-   The other 81 entry points gl.h declares, the floating-point ones among them, are C that `gles/capi/stubs.sh` writes from gl.h itself, leaving out every name `lib.rs` defines; each sets `GL_INVALID_OPERATION`, so every GL ES 1.1 program links and is told what it asked for is not there.
+   The other entry points gl.h declares, the floating-point ones among them, are C that `gles/capi/stubs.sh` writes from gl.h itself, leaving out every name `lib.rs` defines; each sets `GL_INVALID_OPERATION`, so every GL ES 1.1 program links and is told what it asked for is not there.
    `glGetString(GL_VERSION)` says "OpenGL ES-CL 1.1 TxHDL, Common-Lite, one texture unit, not conformant", which answers the last question of section 11 for now.
    It departs from the plan in one place: making a context current is EGL's, so until issue 996 lands `gles_make_current` does it over a frame its caller owns, and `glFlush` and `glFinish` leave the frame for EGL to hand to Razboj.
    `//gles:capi_test` draws one scene in C through `:gles_c` and through the Rust API, and holds the two frames to each other word for word, with what an unimplemented entry point and `glGetString` say.
+   It then draws the quad again in C from a vertex buffer, its colours at an offset into the same store, and an element buffer, against the same quad drawn from Rust's arrays.
 7. **EGL, in the model.**
    Issue 996: `gles/egl/lib.rs` has Khronos's `EGL/egl.h` calls a GL ES 1.1 program makes, as `extern "C"` functions over the C entry points, Rust inside as the library is.
    There is one display, one configuration and one window of 640 by 480, double buffered in Razboj's framebuffer at rows 0 and 512, as issue 986's icosahedron is.
@@ -331,12 +335,23 @@ So a frame that tests depth anywhere is binned at the swap and drawn as a tile t
 A clear of both the colour and the depth to another depth, or after depth has been tested, is one rectangle that writes both.
 A clear of the depth alone is a rectangle that writes no channel, since issue 993 gave Razboj the colour mask.
 `//gles:depth_test` holds forty scenes of triangles crossing in depth, in perspective, to a reference in f64, pixel by pixel, through Razboj's model.
+With `GL_POLYGON_OFFSET_FILL` on, a filled polygon's depth gains `glPolygonOffsetx`'s factor times its largest slope plus its units times one step of the sixteen bits (#998).
+The depth plane is affine, so the library adds that to the plane's start and leaves its steps, and the lines and points the library draws are not offset, as GL ES 1.1 has only the fill mode.
+`polygon_offset_is_gls_formula` holds the offset to that formula over forty triangles, and `an_offset_polygon_wins_over_its_own_depth` draws a polygon over itself, which loses every pixel under `GL_LESS` without the offset and wins every one with it.
 The GL icosahedron hides its back faces by depth rather than culling them, binned into a tile table on the board, and its picture is the culled one but for pixels on the solid's outline.
 
 Blending, the alpha test and the colour mask are issue 993's, on the same tile buffer.
 With any of them on, a primitive carries the pixel's state in its second slot, and the frame is binned into a tile table as one that tests depth is.
 `glClear` writes the channels the colour mask allows and the depth when the depth mask does, as GL says.
 `//gles:blend_test` holds a scene for each of the 72 pairs of factors GL ES 1.1 allows to a reference that blends in f64, pixel by pixel, through Razboj's model.
+
+The queries are issue 1484's.
+`glGetIntegerv`, `glGetFixedv` and `glGetBooleanv` answer every name the library keeps state for: the viewport and the depth range, the matrix mode, the three matrices and their stacks' depths, the current colour, normal and texture coordinates, the clears, the depth, blend, alpha test and colour mask settings, the faces and the shading, the point size and the line width, the bound texture, the unpack alignment, the light model, and every switch `glIsEnabled` knows.
+They also give the limits: the stacks, 8 lights, 1 clip plane, textures to 1024, 1 texture unit, 4 bits under the pixel, 8 bits a channel and 16 of depth, no stencil, and sizes from 1 to 64.
+Each finds its values once, in the kind GL keeps them in, and each call converts them as GL ES 1.1's section 6.1.2 says.
+A boolean is one or nought; a fixed value asked for as an integer is rounded; a colour, a normal, a depth range, the depth's clear value and the alpha reference asked for as integers map minus one to one onto the integers' whole range; an integer asked for as fixed is that many ones; and anything not nought is true.
+The C entry points add the client arrays' own state, each array's switch, size, type and stride, and `glGetPointerv` gives back each array's pointer.
+`//gles:get_test` reads back what each setter leaves, the conversions and the limits, and `//gles:capi_test` asks the same through the C entry points.
 
 Textures are issue 997's, one texture unit, in the layout `razboj_tile::tex` gives Razboj.
 The machine gives the context room for them at `eglMakeCurrent`, words of DDR3 with the bus address Razboj reads them at, through `Machine::textures`.
@@ -345,6 +360,11 @@ The room's head is a table of 64 descriptors, one an object, and the texels foll
 It stores every texel as 32-bit RGBA in blocks of four by four, and the descriptor keeps the base format, since the environments read each format differently.
 Level 0 of a new size takes room for its whole chain of levels, and with `GL_GENERATE_MIPMAP` on it writes every level below it, each texel the rounded mean of the two by two above.
 An object whose levels are not all given, when its filter reads them, leaves texturing off, as GL says.
+`glCompressedTexImage2D` takes the ten paletted formats of `OES_compressed_paletted_texture` (#998), the compressed formats GL ES 1.1 requires, and no others.
+Its data is the palette of 16 or 256 entries, then each level's indices, `-level` levels after the base when `level` is below nought.
+The library looks every index up when it uploads and stores the texels as `glTexImage2D` does, an entry read as the uncompressed format of the same layout reads a texel, so the texture costs Razboj what an uncompressed one does.
+A level's indices are packed with no padding, two 4-bit indices a byte with the first in the high bits, and the next level starts on a byte.
+`the_paletted_formats_upload_as_gl_says` uploads each of the ten formats with four levels and holds every texel to GL's conversion of its entry.
 A textured triangle carries two slots after its pixel's: the byte address of the texture's descriptor, its environment and colour, `s/w`, `t/w` and `1/w` as planes across the window in 64 bits, and the numerators Razboj takes the level of detail from.
 The emitter works them out as Razboj's assembler does, bit for bit, which `//gles:model_test` holds it to.
 Texture coordinates go through the texture matrix, and points and lines are drawn untextured for now.

@@ -54,6 +54,9 @@ struct Array {
     stride: usize,
     at: *const u8,
     on: bool,
+    /// The buffer object bound to `GL_ARRAY_BUFFER` when it was given,
+    /// whose store `at` is an offset into; nought for none (#1488).
+    buffer: u32,
 }
 
 impl Array {
@@ -63,6 +66,7 @@ impl Array {
         stride: 0,
         at: core::ptr::null(),
         on: false,
+        buffer: 0,
     };
 
     /// The bytes one component takes.
@@ -106,6 +110,7 @@ struct Arrays {
 struct Context {
     gl: Gl<'static>,
     arrays: Arrays,
+    buffers: Buffers,
 }
 
 /// The one context current, on the one core this runs on.
@@ -138,6 +143,7 @@ pub unsafe extern "C" fn gles_make_current(
             normal: Array::OFF,
             texcoord: Array::OFF,
         },
+        buffers: Buffers::NONE,
     });
 }
 
@@ -280,8 +286,123 @@ pub extern "C" fn glIsEnabled(cap: u32) -> u8 {
         VERTEX_ARRAY => c.arrays.vertex.on as u8,
         COLOR_ARRAY => c.arrays.colour.on as u8,
         NORMAL_ARRAY => c.arrays.normal.on as u8,
+        gl::TEXTURE_COORD_ARRAY => c.arrays.texcoord.on as u8,
         _ => c.gl.is_enabled(cap) as u8,
     })
+}
+
+/// The client arrays' state, which the C API keeps rather than the
+/// library (#1484): each array's switch, and its size, type and stride as
+/// given, and the buffer objects' bindings (#1488), by GL ES 1.1's names
+/// for them; `None` for any other name.
+fn array_state(a: &Arrays, b: &Buffers, pname: u32) -> Option<i64> {
+    let size = |x: &Array| x.size as i64;
+    let kind = |x: &Array| x.kind as i64;
+    let stride = |x: &Array| x.stride as i64;
+    Some(match pname {
+        VERTEX_ARRAY => a.vertex.on as i64,
+        NORMAL_ARRAY => a.normal.on as i64,
+        COLOR_ARRAY => a.colour.on as i64,
+        gl::TEXTURE_COORD_ARRAY => a.texcoord.on as i64,
+        0x807A => size(&a.vertex),
+        0x807B => kind(&a.vertex),
+        0x807C => stride(&a.vertex),
+        0x807E => kind(&a.normal),
+        0x807F => stride(&a.normal),
+        0x8081 => size(&a.colour),
+        0x8082 => kind(&a.colour),
+        0x8083 => stride(&a.colour),
+        0x8088 => size(&a.texcoord),
+        0x8089 => kind(&a.texcoord),
+        0x808A => stride(&a.texcoord),
+        // GL_CLIENT_ACTIVE_TEXTURE: the one unit's.
+        0x84E1 => 0x84C0,
+        // The buffer bindings (#1488): the two targets', and the buffer
+        // each array was given under.
+        0x8894 => b.array as i64,
+        0x8895 => b.element as i64,
+        0x8896 => a.vertex.buffer as i64,
+        0x8897 => a.normal.buffer as i64,
+        0x8898 => a.colour.buffer as i64,
+        0x889A => a.texcoord.buffer as i64,
+        _ => return None,
+    })
+}
+
+/// A query (#1484): the client arrays' own state, or the library's.
+/// `put` writes the values; an unknown name is `GL_INVALID_ENUM`.
+unsafe fn query(pname: u32, put: impl FnOnce(&gles::get::Got)) {
+    let Some(c) = current() else {
+        return;
+    };
+    if let Some(v) = array_state(&c.arrays, &c.buffers, pname) {
+        let kind = gles::get::Kind::Integer;
+        let mut values = [0i64; 16];
+        values[0] = v;
+        return put(&gles::get::Got {
+            kind,
+            values,
+            len: 1,
+        });
+    }
+    match c.gl.get(pname) {
+        Some(g) => put(&g),
+        None => c.gl.record_error(gl::INVALID_ENUM),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn glGetIntegerv(pname: u32, out: *mut i32) {
+    if out.is_null() {
+        return;
+    }
+    query(pname, |g| {
+        g.integers(core::slice::from_raw_parts_mut(out, g.len))
+    });
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn glGetFixedv(pname: u32, out: *mut Fx) {
+    if out.is_null() {
+        return;
+    }
+    query(pname, |g| {
+        g.fixed(core::slice::from_raw_parts_mut(out, g.len))
+    });
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn glGetBooleanv(pname: u32, out: *mut u8) {
+    if out.is_null() {
+        return;
+    }
+    query(pname, |g| {
+        let mut b = [false; 16];
+        g.booleans(&mut b[..g.len]);
+        for (k, &v) in b[..g.len].iter().enumerate() {
+            *out.add(k) = v as u8;
+        }
+    });
+}
+
+/// `glGetPointerv` (#1484): where each client array points, as given.
+#[no_mangle]
+pub unsafe extern "C" fn glGetPointerv(pname: u32, out: *mut *mut c_void) {
+    let Some(c) = current() else {
+        return;
+    };
+    if out.is_null() {
+        return;
+    }
+    let a = &c.arrays;
+    let at = match pname {
+        0x808E => a.vertex.at,
+        0x808F => a.normal.at,
+        0x8090 => a.colour.at,
+        0x8092 => a.texcoord.at,
+        _ => return c.gl.record_error(gl::INVALID_ENUM),
+    };
+    *out = at as *mut c_void;
 }
 
 #[no_mangle]
@@ -395,6 +516,11 @@ pub extern "C" fn glClear(mask: u32) {
 #[no_mangle]
 pub extern "C" fn glDepthFunc(func: u32) {
     with(|g| g.depth_func(func));
+}
+
+#[no_mangle]
+pub extern "C" fn glPolygonOffsetx(factor: Fx, units: Fx) {
+    with(|g| g.polygon_offset(factor, units));
 }
 
 #[no_mangle]
@@ -523,9 +649,11 @@ fn pointer(
     if !kinds.contains(&kind) {
         return c.gl.record_error(gl::INVALID_ENUM);
     }
+    let buffer = c.buffers.array;
     if let Some(a) = array(c, which) {
         (a.size, a.kind, a.stride, a.at) =
             (size as usize, kind, stride as usize, at as *const u8);
+        a.buffer = buffer;
     }
 }
 
@@ -638,6 +766,16 @@ unsafe fn fetch(c: &Arrays, i: usize) -> Vertex {
     }
 }
 
+/// The client arrays as a draw reads them: each one given while a buffer
+/// object was bound read from that buffer's store (#1488).
+fn resolved(c: &mut Context) -> Arrays {
+    let mut a = c.arrays;
+    for x in [&mut a.vertex, &mut a.colour, &mut a.normal, &mut a.texcoord] {
+        x.at = c.buffers.resolve(x.buffer, x.at);
+    }
+    a
+}
+
 #[no_mangle]
 pub extern "C" fn glDrawArrays(mode: u32, first: i32, count: i32) {
     let Some(c) = current() else {
@@ -650,7 +788,7 @@ pub extern "C" fn glDrawArrays(mode: u32, first: i32, count: i32) {
         return;
     }
     let (first, count) = (first as usize, count as usize);
-    let arrays = c.arrays;
+    let arrays = resolved(c);
     // SAFETY: the arrays were given by the caller for this draw, as GL
     // has it, and cover `first + count` elements.
     c.gl.draw_vertices(mode, count, |k| unsafe { fetch(&arrays, first + k) });
@@ -679,13 +817,299 @@ pub unsafe extern "C" fn glDrawElements(
         size: 1,
         kind,
         stride: 0,
-        at: indices as *const u8,
+        at: c.buffers.resolve(c.buffers.element, indices as *const u8),
         on: true,
+        buffer: 0,
     };
-    let arrays = c.arrays;
+    let arrays = resolved(c);
     c.gl.draw_vertices(mode, count as usize, |k| {
         fetch(&arrays, index.raw(k, 0) as usize)
     });
+}
+
+/// Buffer objects (#1488): the names a context can hold, GL ES 1.1's
+/// targets, usages and queries.
+const BUFFERS: usize = 64;
+const ARRAY_BUFFER: u32 = 0x8892;
+const ELEMENT_ARRAY_BUFFER: u32 = 0x8893;
+const STATIC_DRAW: u32 = 0x88E4;
+const DYNAMIC_DRAW: u32 = 0x88E8;
+const BUFFER_SIZE: u32 = 0x8764;
+const BUFFER_USAGE: u32 = 0x8765;
+
+/// A buffer object: whether its name is in use, where its store starts
+/// in the context's room and how long it is, and its usage.
+#[derive(Clone, Copy)]
+struct Buffer {
+    live: bool,
+    at: usize,
+    size: usize,
+    usage: u32,
+}
+
+impl Buffer {
+    const NONE: Buffer = Buffer {
+        live: false,
+        at: 0,
+        size: 0,
+        usage: STATIC_DRAW,
+    };
+}
+
+/// A context's buffer objects: the room their stores live in, which the
+/// machine gives as it gives the textures' (`gles_buffer_room`), handed
+/// out in order and never given back, as the textures' is; the objects;
+/// and the two bindings.
+struct Buffers {
+    room: *mut u8,
+    len: usize,
+    used: usize,
+    objects: [Buffer; BUFFERS],
+    array: u32,
+    element: u32,
+}
+
+impl Buffers {
+    const NONE: Buffers = Buffers {
+        room: core::ptr::null_mut(),
+        len: 0,
+        used: 0,
+        objects: [Buffer::NONE; BUFFERS],
+        array: 0,
+        element: 0,
+    };
+
+    /// The object called `name`, if it is in use.
+    fn object(&mut self, name: u32) -> Option<&mut Buffer> {
+        let o = self.objects.get_mut((name as usize).checked_sub(1)?)?;
+        o.live.then_some(o)
+    }
+
+    /// Where an array or the indices start: `at` itself when no buffer
+    /// was bound as they were given, or `at` bytes into that buffer's
+    /// store, as GL has it.
+    fn resolve(&mut self, buffer: u32, at: *const u8) -> *const u8 {
+        let room = self.room;
+        match self.object(buffer) {
+            Some(o) if buffer != 0 && !room.is_null() => {
+                // SAFETY: the store lies inside the room, and GL leaves an
+                // offset past it to the caller.
+                unsafe { room.add(o.at + at as usize) as *const u8 }
+            }
+            _ => at,
+        }
+    }
+
+    /// The binding of `target`.
+    fn bound(&mut self, target: u32) -> Option<&mut u32> {
+        match target {
+            ARRAY_BUFFER => Some(&mut self.array),
+            ELEMENT_ARRAY_BUFFER => Some(&mut self.element),
+            _ => None,
+        }
+    }
+}
+
+/// Gives the current context room for its buffer objects' stores (#1488):
+/// `bytes` bytes at `mem`. Not a GL call: EGL's, at `eglMakeCurrent`.
+/// Without it `glBufferData` fails with `GL_OUT_OF_MEMORY`.
+///
+/// # Safety
+/// `mem` must be `bytes` bytes the context may keep for as long as it
+/// lives, which nothing else writes.
+#[no_mangle]
+pub unsafe extern "C" fn gles_buffer_room(mem: *mut u8, bytes: usize) {
+    if let Some(c) = current() {
+        (c.buffers.room, c.buffers.len, c.buffers.used) = (mem, bytes, 0);
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn glGenBuffers(n: i32, out: *mut u32) {
+    let Some(c) = current() else {
+        return;
+    };
+    if n < 0 {
+        return c.gl.record_error(gl::INVALID_VALUE);
+    }
+    let objects = &mut c.buffers.objects;
+    let free = objects.iter().filter(|o| !o.live).count();
+    if (n as usize) > free {
+        return c.gl.record_error(gl::OUT_OF_MEMORY);
+    }
+    let mut k = 0;
+    for (i, o) in objects.iter_mut().enumerate() {
+        if k == n as usize {
+            break;
+        }
+        if !o.live {
+            *o = Buffer {
+                live: true,
+                ..Buffer::NONE
+            };
+            *out.add(k) = i as u32 + 1;
+            k += 1;
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn glDeleteBuffers(n: i32, names: *const u32) {
+    let Some(c) = current() else {
+        return;
+    };
+    if n < 0 {
+        return c.gl.record_error(gl::INVALID_VALUE);
+    }
+    for k in 0..n as usize {
+        let name = *names.add(k);
+        if let Some(o) = c.buffers.object(name) {
+            o.live = false;
+            // A deleted buffer is unbound wherever it was bound.
+            for b in [&mut c.buffers.array, &mut c.buffers.element] {
+                if *b == name {
+                    *b = 0;
+                }
+            }
+            let a = &mut c.arrays;
+            for x in
+                [&mut a.vertex, &mut a.colour, &mut a.normal, &mut a.texcoord]
+            {
+                if x.buffer == name {
+                    x.buffer = 0;
+                }
+            }
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn glIsBuffer(name: u32) -> u8 {
+    current().map_or(0, |c| c.buffers.object(name).is_some() as u8)
+}
+
+#[no_mangle]
+pub extern "C" fn glBindBuffer(target: u32, name: u32) {
+    let Some(c) = current() else {
+        return;
+    };
+    // GL ES 1.1 makes an object of a name not yet in use as it is bound.
+    let made = match (name as usize).checked_sub(1) {
+        Some(i) if i < BUFFERS => {
+            let o = &mut c.buffers.objects[i];
+            if !o.live {
+                *o = Buffer {
+                    live: true,
+                    ..Buffer::NONE
+                };
+            }
+            true
+        }
+        Some(_) => false,
+        None => true,
+    };
+    if !made {
+        return c.gl.record_error(gl::OUT_OF_MEMORY);
+    }
+    match c.buffers.bound(target) {
+        Some(b) => *b = name,
+        None => c.gl.record_error(gl::INVALID_ENUM),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn glBufferData(
+    target: u32,
+    size: isize,
+    data: *const c_void,
+    usage: u32,
+) {
+    let Some(c) = current() else {
+        return;
+    };
+    if size < 0 {
+        return c.gl.record_error(gl::INVALID_VALUE);
+    }
+    if usage != STATIC_DRAW && usage != DYNAMIC_DRAW {
+        return c.gl.record_error(gl::INVALID_ENUM);
+    }
+    let name = match c.buffers.bound(target) {
+        Some(&mut n) => n,
+        None => return c.gl.record_error(gl::INVALID_ENUM),
+    };
+    let (room, len, used) = (c.buffers.room, c.buffers.len, c.buffers.used);
+    let at = used.div_ceil(4) * 4;
+    let fits = !room.is_null() && at + size as usize <= len;
+    let Some(o) = c.buffers.object(name) else {
+        return c.gl.record_error(gl::INVALID_OPERATION);
+    };
+    if !fits {
+        return c.gl.record_error(gl::OUT_OF_MEMORY);
+    }
+    (o.at, o.size, o.usage) = (at, size as usize, usage);
+    if !data.is_null() {
+        core::ptr::copy_nonoverlapping(
+            data as *const u8,
+            room.add(at),
+            size as usize,
+        );
+    }
+    c.buffers.used = at + size as usize;
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn glBufferSubData(
+    target: u32,
+    offset: isize,
+    size: isize,
+    data: *const c_void,
+) {
+    let Some(c) = current() else {
+        return;
+    };
+    let name = match c.buffers.bound(target) {
+        Some(&mut n) => n,
+        None => return c.gl.record_error(gl::INVALID_ENUM),
+    };
+    let room = c.buffers.room;
+    let Some(o) = c.buffers.object(name) else {
+        return c.gl.record_error(gl::INVALID_OPERATION);
+    };
+    let inside = offset >= 0 && size >= 0 && (offset + size) as usize <= o.size;
+    if !inside || data.is_null() {
+        return c.gl.record_error(gl::INVALID_VALUE);
+    }
+    core::ptr::copy_nonoverlapping(
+        data as *const u8,
+        room.add(o.at + offset as usize),
+        size as usize,
+    );
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn glGetBufferParameteriv(
+    target: u32,
+    pname: u32,
+    out: *mut i32,
+) {
+    let Some(c) = current() else {
+        return;
+    };
+    let name = match c.buffers.bound(target) {
+        Some(&mut n) => n,
+        None => return c.gl.record_error(gl::INVALID_ENUM),
+    };
+    let Some(o) = c.buffers.object(name) else {
+        return c.gl.record_error(gl::INVALID_OPERATION);
+    };
+    let v = match pname {
+        BUFFER_SIZE => o.size as i32,
+        BUFFER_USAGE => o.usage as i32,
+        _ => return c.gl.record_error(gl::INVALID_ENUM),
+    };
+    if !out.is_null() {
+        *out = v;
+    }
 }
 
 /// Gives the current context room for its textures (#997): `words` words
@@ -797,6 +1221,36 @@ pub unsafe extern "C" fn glTexImage2D(
             format,
             kind,
             data,
+        )
+    });
+}
+
+/// `glCompressedTexImage2D`, the paletted formats only (#998): `size`
+/// bytes from `data`, the palette and the levels' indices.
+#[no_mangle]
+pub unsafe extern "C" fn glCompressedTexImage2D(
+    target: u32,
+    level: i32,
+    internal: u32,
+    width: i32,
+    height: i32,
+    border: i32,
+    size: i32,
+    data: *const c_void,
+) {
+    if width < 1 || height < 1 || border != 0 || size < 0 || data.is_null() {
+        return gles_record_error(gl::INVALID_VALUE);
+    }
+    let bytes = core::slice::from_raw_parts(data as *const u8, size as usize);
+    with(|g| {
+        g.compressed_tex_image_2d(
+            target,
+            level,
+            internal,
+            width as u32,
+            height as u32,
+            0,
+            bytes,
         )
     });
 }

@@ -32,6 +32,12 @@ pub trait Machine {
     fn textures(&mut self) -> Option<(&'static mut [u32], u32)> {
         None
     }
+    /// Room for the buffer objects' stores (#1488): none, the default,
+    /// leaves `glBufferData` failing with `GL_OUT_OF_MEMORY`. Only the core
+    /// reads it, so it needs no bus address.
+    fn buffers(&mut self) -> Option<&'static mut [u8]> {
+        None
+    }
     /// Points the scanout at the buffer whose first row is `row`, and
     /// shows the scanout.
     fn show(&mut self, row: u32);

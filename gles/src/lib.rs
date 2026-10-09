@@ -27,6 +27,7 @@
 
 pub mod emit;
 pub mod fixed;
+pub mod get;
 pub mod gl;
 pub mod light;
 pub mod matrix;
@@ -122,6 +123,10 @@ pub struct Gl<'a> {
     depth_mask: bool,
     clear_depth: Fx,
     depth_range: (Fx, Fx),
+    /// Polygon offset (#998): its switch for filled polygons, and its
+    /// factor and units, in 16.16.
+    offset_on: bool,
+    offset: (Fx, Fx),
     /// Whether the frame holds an entry that tests depth, which Razboj
     /// draws only from a tile table.
     deep: bool,
@@ -188,6 +193,8 @@ impl<'a> Gl<'a> {
             colour_material: false,
             depth_test: false,
             depth_func: gl::LESS - gl::NEVER,
+            offset_on: false,
+            offset: (0, 0),
             depth_mask: true,
             clear_depth: ONE,
             depth_range: (0, ONE),
@@ -207,6 +214,31 @@ impl<'a> Gl<'a> {
             store: None,
             unpack: 4,
             error: gl::NO_ERROR,
+        }
+    }
+
+    /// `glGetIntegerv` (#1484): `pname`'s values as integers into `out`,
+    /// as many as it has; `GL_INVALID_ENUM` for a name it does not know.
+    pub fn get_integer(&mut self, pname: u32, out: &mut [i32]) {
+        match self.get(pname) {
+            Some(g) => g.integers(out),
+            None => self.fail(gl::INVALID_ENUM),
+        }
+    }
+
+    /// `glGetFixedv` (#1484), the same in 16.16.
+    pub fn get_fixed(&mut self, pname: u32, out: &mut [Fx]) {
+        match self.get(pname) {
+            Some(g) => g.fixed(out),
+            None => self.fail(gl::INVALID_ENUM),
+        }
+    }
+
+    /// `glGetBooleanv` (#1484), the same as booleans.
+    pub fn get_boolean(&mut self, pname: u32, out: &mut [bool]) {
+        match self.get(pname) {
+            Some(g) => g.booleans(out),
+            None => self.fail(gl::INVALID_ENUM),
         }
     }
 
@@ -353,6 +385,7 @@ impl<'a> Gl<'a> {
             gl::RESCALE_NORMAL => self.rescale = on,
             gl::COLOR_MATERIAL => self.colour_material = on,
             gl::DEPTH_TEST => self.depth_test = on,
+            gl::POLYGON_OFFSET_FILL => self.offset_on = on,
             gl::BLEND => self.blend_on = on,
             gl::ALPHA_TEST => self.alpha_on = on,
             gl::TEXTURE_2D => self.texture_on = on,
@@ -366,7 +399,13 @@ impl<'a> Gl<'a> {
     }
 
     pub fn is_enabled(&self, cap: u32) -> bool {
-        match cap {
+        self.enabled(cap).unwrap_or(false)
+    }
+
+    /// Whether `cap` is on, or `None` for a switch GL ES 1.1 does not have
+    /// or this library does not keep.
+    pub(crate) fn enabled(&self, cap: u32) -> Option<bool> {
+        Some(match cap {
             gl::CULL_FACE => self.cull_on,
             gl::CLIP_PLANE0 => self.plane_on,
             gl::LIGHTING => self.lighting,
@@ -374,6 +413,7 @@ impl<'a> Gl<'a> {
             gl::RESCALE_NORMAL => self.rescale,
             gl::COLOR_MATERIAL => self.colour_material,
             gl::DEPTH_TEST => self.depth_test,
+            gl::POLYGON_OFFSET_FILL => self.offset_on,
             gl::BLEND => self.blend_on,
             gl::ALPHA_TEST => self.alpha_on,
             gl::TEXTURE_2D => self.texture_on,
@@ -382,8 +422,8 @@ impl<'a> Gl<'a> {
             {
                 self.lights[(l - gl::LIGHT0) as usize].on
             }
-            _ => false,
-        }
+            _ => return None,
+        })
     }
 
     pub fn front_face(&mut self, mode: u32) {
@@ -560,6 +600,13 @@ impl<'a> Gl<'a> {
         }
     }
 
+    /// `glPolygonOffsetx` (#998): what filled polygons add to their depth
+    /// while `GL_POLYGON_OFFSET_FILL` is on, `factor` times the depth's
+    /// largest slope plus `units` times its least step, in 16.16.
+    pub fn polygon_offset(&mut self, factor: Fx, units: Fx) {
+        self.offset = (factor, units);
+    }
+
     /// `glBlendFunc`: the source's factor and the destination's (#993),
     /// as GL ES 1.1 allows them: the source's not a source colour, the
     /// destination's not a destination colour nor the saturate.
@@ -684,6 +731,41 @@ impl<'a> Gl<'a> {
             Some(s) if name != 0 => s.image(
                 name, level, format, width, height, type_, pixels, align,
             ),
+            Some(_) => Err(gl::INVALID_OPERATION),
+            None => Err(gl::OUT_OF_MEMORY),
+        };
+        if let Err(e) = r {
+            self.fail(e);
+        }
+    }
+
+    /// `glCompressedTexImage2D` (#998): one of the ten paletted formats of
+    /// `OES_compressed_paletted_texture`, its palette and every level
+    /// `data` holds, `-level` levels after the base when `level` is below
+    /// nought, into the texture bound. Any other format is an error, as
+    /// GL ES 1.1 has no other compressed format.
+    #[allow(clippy::too_many_arguments)] // GL's own arguments, in its order.
+    pub fn compressed_tex_image_2d(
+        &mut self,
+        target: u32,
+        level: i32,
+        internal: u32,
+        width: u32,
+        height: u32,
+        border: u32,
+        data: &[u8],
+    ) {
+        if target != gl::TEXTURE_2D {
+            return self.fail(gl::INVALID_ENUM);
+        }
+        if border != 0 {
+            return self.fail(gl::INVALID_VALUE);
+        }
+        let name = self.bound;
+        let r = match self.store.as_mut() {
+            Some(s) if name != 0 => {
+                s.compressed(name, level, internal, width, height, data)
+            }
             Some(_) => Err(gl::INVALID_OPERATION),
             None => Err(gl::OUT_OF_MEMORY),
         };
@@ -1377,6 +1459,7 @@ impl<'a> Gl<'a> {
             } else {
                 emit::triangle(flat, a, b, c, None, z, screen)
             };
+            let w = w.map(|(w, s)| (w, s.map(|s| self.offset_depth(s))));
             let tex = texture.and_then(|(lw, lh)| {
                 let t = uvq([&poly[0], &poly[k], &poly[k + 1]], lw, lh)?;
                 emit::textured([a, b, c], t, screen)
@@ -1385,6 +1468,23 @@ impl<'a> Gl<'a> {
                 self.push_textured(w, slot, tex);
             }
         }
+    }
+
+    /// A depth slot with the polygon offset added (#998) while it is on:
+    /// to the plane's start, since the offset is the same at every pixel.
+    /// The slope is the larger of the plane's two steps, in its own units,
+    /// and the least step is one of the depth's 65535, `1 << ZFRAC` of
+    /// them.
+    fn offset_depth(&self, mut s: [u32; WORDS]) -> [u32; WORDS] {
+        if !self.offset_on {
+            return s;
+        }
+        let (dx, dy) = (s[1] as i32 as i64, s[2] as i32 as i64);
+        let slope = dx.abs().max(dy.abs());
+        let (factor, units) = (self.offset.0 as i64, self.offset.1 as i64);
+        let o = (factor * slope + (units << emit::ZFRAC)) >> 16;
+        s[0] = (s[0] as i32 as i64 + o) as i32 as u32;
+        s
     }
 
     /// The bound texture's log2 sides, when texturing is on and the

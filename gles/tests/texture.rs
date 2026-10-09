@@ -468,3 +468,151 @@ fn the_formats_upload_as_gl_says() {
     );
     assert_eq!(g.get_error(), gl::INVALID_VALUE);
 }
+
+/// The paletted formats of `OES_compressed_paletted_texture` (#998):
+/// each of the ten, with a palette of random entries and random indices
+/// over a texture eight by four and its three levels below, uploads as
+/// GL says: each texel its index's entry, a channel of `n` bits taken
+/// as `c / (2^n - 1)` of 255, within one; a format of three channels
+/// fills alpha with 255. A positive level and data short of the
+/// levels it names are `GL_INVALID_VALUE`.
+#[test]
+fn the_paletted_formats_upload_as_gl_says() {
+    use razboj_tile::tex::texel_offset;
+    let mut frame = vec![[0u32; WORDS]; 4];
+    let room: &'static mut [u32] =
+        Box::leak(vec![0u32; 1 << 14].into_boxed_slice());
+    let mut g = Gl::new(&mut frame, W, H);
+    g.texture_room(room, BUS);
+    let mut name = [0u32];
+    g.gen_textures(&mut name);
+    g.bind_texture(gl::TEXTURE_2D, name[0]);
+    let mut x = 0x9a1e_77e5u32;
+    let mut next = || {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        x
+    };
+    // Each format: its bits an index, the bytes an entry, and an entry's
+    // channels from its bytes, each a value and its bits.
+    type Entry = fn(&[u8]) -> [(u32, u32); 4];
+    let rgb8: Entry = |b| {
+        [
+            (b[0] as u32, 8),
+            (b[1] as u32, 8),
+            (b[2] as u32, 8),
+            (255, 8),
+        ]
+    };
+    let rgba8: Entry = |b| {
+        [
+            (b[0] as u32, 8),
+            (b[1] as u32, 8),
+            (b[2] as u32, 8),
+            (b[3] as u32, 8),
+        ]
+    };
+    let r565: Entry = |b| {
+        let s = b[0] as u32 | (b[1] as u32) << 8;
+        [(s >> 11, 5), ((s >> 5) & 63, 6), (s & 31, 5), (255, 8)]
+    };
+    let rgba4: Entry = |b| {
+        let s = b[0] as u32 | (b[1] as u32) << 8;
+        [
+            (s >> 12, 4),
+            ((s >> 8) & 15, 4),
+            ((s >> 4) & 15, 4),
+            (s & 15, 4),
+        ]
+    };
+    let r5a1: Entry = |b| {
+        let s = b[0] as u32 | (b[1] as u32) << 8;
+        [
+            (s >> 11, 5),
+            ((s >> 6) & 31, 5),
+            ((s >> 1) & 31, 5),
+            (s & 1, 1),
+        ]
+    };
+    let formats: [(u32, u32, usize, Entry); 10] = [
+        (gl::PALETTE4_RGB8_OES, 4, 3, rgb8),
+        (gl::PALETTE4_RGBA8_OES, 4, 4, rgba8),
+        (gl::PALETTE4_R5_G6_B5_OES, 4, 2, r565),
+        (gl::PALETTE4_RGBA4_OES, 4, 2, rgba4),
+        (gl::PALETTE4_RGB5_A1_OES, 4, 2, r5a1),
+        (gl::PALETTE8_RGB8_OES, 8, 3, rgb8),
+        (gl::PALETTE8_RGBA8_OES, 8, 4, rgba8),
+        (gl::PALETTE8_R5_G6_B5_OES, 8, 2, r565),
+        (gl::PALETTE8_RGBA4_OES, 8, 2, rgba4),
+        (gl::PALETTE8_RGB5_A1_OES, 8, 2, r5a1),
+    ];
+    let sides = [(8u32, 4u32), (4, 2), (2, 1), (1, 1)];
+    for (format, bits, entry, channels) in formats {
+        let entries = 1usize << bits;
+        let mut data: Vec<u8> =
+            (0..entries * entry).map(|_| next() as u8).collect();
+        let mut indices = Vec::new();
+        for &(w, h) in &sides {
+            let k: Vec<usize> =
+                (0..w * h).map(|_| next() as usize % entries).collect();
+            if bits == 8 {
+                data.extend(k.iter().map(|&i| i as u8));
+            } else {
+                data.extend(k.chunks(2).map(|p| {
+                    (p[0] << 4 | p.get(1).copied().unwrap_or(0)) as u8
+                }));
+            }
+            indices.push(k);
+        }
+        g.compressed_tex_image_2d(gl::TEXTURE_2D, -3, format, 8, 4, 0, &data);
+        assert_eq!(g.get_error(), gl::NO_ERROR, "{format:04x}");
+        let d = g.textures().unwrap().desc(name[0]).unwrap();
+        let words = g.textures().unwrap().words();
+        for (l, &(w, h)) in sides.iter().enumerate() {
+            let l = l as u32;
+            for j in 0..h {
+                for i in 0..w {
+                    let k = indices[l as usize][(j * w + i) as usize];
+                    let want = channels(&data[k * entry..k * entry + entry]);
+                    let at = razboj_tile::tex::level_base(&d, l)
+                        + texel_offset(&d, l, i, j);
+                    let got = words[((at - BUS) / 4) as usize];
+                    // The word is alpha, red, green, blue from the top.
+                    for (c, &(v, n)) in want.iter().enumerate() {
+                        let g8 = (got >> [16, 8, 0, 24][c]) & 0xff;
+                        let w8 = (v as f64 * 255.0 / ((1 << n) - 1) as f64)
+                            .round() as i32;
+                        assert!(
+                            (g8 as i32 - w8).abs() <= 1,
+                            "{format:04x} level {l} ({i},{j}) channel {c}: \
+                             {g8} not {w8}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    // The levels' data cut short, and a positive level.
+    let short = [0u8; 16 * 3 + 4];
+    g.compressed_tex_image_2d(
+        gl::TEXTURE_2D,
+        -3,
+        gl::PALETTE4_RGB8_OES,
+        8,
+        4,
+        0,
+        &short,
+    );
+    assert_eq!(g.get_error(), gl::INVALID_VALUE);
+    g.compressed_tex_image_2d(
+        gl::TEXTURE_2D,
+        1,
+        gl::PALETTE4_RGB8_OES,
+        8,
+        4,
+        0,
+        &[0u8; 256],
+    );
+    assert_eq!(g.get_error(), gl::INVALID_VALUE);
+}

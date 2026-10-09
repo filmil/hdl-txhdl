@@ -15,6 +15,7 @@ rust_library(
     srcs = [
         "src/emit.rs",
         "src/fixed.rs",
+        "src/get.rs",
         "src/gl.rs",
         "src/lib.rs",
         "src/light.rs",
@@ -68,6 +69,19 @@ rust_test(
     deps = [
         ":gles",
         "//gpu/razboj",
+        "//gpu/razboj:tile",
+    ],
+)
+
+# The queries (#1484): what each setter leaves, read back through
+# glGetIntegerv, glGetFixedv and glGetBooleanv and converted as GL ES
+# 1.1 says, and the limits the library states.
+rust_test(
+    name = "get_test",
+    srcs = ["tests/get.rs"],
+    edition = "2021",
+    deps = [
+        ":gles",
         "//gpu/razboj:tile",
     ],
 )
