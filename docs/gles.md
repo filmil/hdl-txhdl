@@ -44,15 +44,15 @@ A later issue means the entry point is accepted from the start but does what tha
 | Lighting | `glLightx`, `glLightxv`, `glLightModelx`, `glLightModelxv`, `glMaterialx`, `glMaterialxv` | Now |
 | Clip planes | `glClipPlanex` | Now, one plane at least |
 | Clearing | `glClearColorx`, `glClear`; `glClearDepthx` | Now, under the colour and depth masks |
-| Scissor | `glScissor` | #990 |
+| Scissor | `glScissor`; `GL_SCISSOR_TEST` | Now, from #1490, clipped by the library |
 | Depth | `glDepthFunc`, `glDepthMask`, `glPolygonOffsetx`; `GL_POLYGON_OFFSET_FILL` | Now, from #1273, drawn in a tile table; polygon offset from #998 |
 | Blending and masks | `glBlendFunc`, `glAlphaFuncx`, `glColorMask` | Now, from #993, drawn in a tile table |
 | Textures | `glGenTextures`, `glDeleteTextures`, `glBindTexture`, `glTexImage2D`, `glTexParameteri`, `glTexParameterx`, `glTexEnvi`, `glTexEnvx`, `glTexEnvxv`, `glTexCoordPointer`, `glMultiTexCoord4x`, `glActiveTexture`, `glClientActiveTexture`, `glPixelStorei`; `GL_TEXTURE_2D` and `GL_TEXTURE_COORD_ARRAY` | From #997, one unit, drawn in a tile table; the rasteriser samples under every filter, mipmapped, and every environment but `GL_COMBINE`, as Razboj's model does |
 | Points and lines | `glPointSizex`, `glLineWidthx`, and the point and line modes of the draw calls; `GL_POINT_SPRITE_OES` and `GL_COORD_REPLACE_OES` | Now, from issue 994; point sprites from #998 |
-| Switches | `glEnable`, `glDisable`, `glIsEnabled` for `GL_LIGHTING`, `GL_LIGHT0` to `GL_LIGHT7`, `GL_CULL_FACE`, `GL_NORMALIZE`, `GL_RESCALE_NORMAL`, `GL_COLOR_MATERIAL`, `GL_CLIP_PLANE0`, `GL_DEPTH_TEST`, `GL_BLEND`, `GL_ALPHA_TEST`, `GL_DITHER`; and the rest as the issues above land | Now, and growing |
+| Switches | `glEnable`, `glDisable`, `glIsEnabled` for `GL_LIGHTING`, `GL_LIGHT0` to `GL_LIGHT7`, `GL_CULL_FACE`, `GL_NORMALIZE`, `GL_RESCALE_NORMAL`, `GL_COLOR_MATERIAL`, `GL_CLIP_PLANE0`, `GL_DEPTH_TEST`, `GL_BLEND`, `GL_ALPHA_TEST`, `GL_DITHER`, `GL_SCISSOR_TEST`; and the rest as the issues above land | Now, and growing |
 | Queries and errors | `glGetError`, `glGetIntegerv`, `glGetFixedv`, `glGetBooleanv`, `glGetString`, `glGetPointerv` | Now, the queries from #1484 (section 10) |
 | Completion | `glFlush`, `glFinish` | Now (section 7) |
-| Hints | `glHint` | Accepted and ignored, as the specification allows |
+| Hints | `glHint` | Accepted and ignored, as the specification allows, from #1490 |
 
 Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit, which wait for a program that needs them; fog (#998), stencil (#998), `glLogicOp` (#998), and `glReadPixels`, which needs a read path from the framebuffer that nothing has asked for yet.
 An entry point that is left out still exists, so that a program links, and sets `GL_INVALID_ENUM` or `GL_INVALID_OPERATION` as the specification says for an unsupported value.
@@ -380,7 +380,10 @@ A textured frame is binned into a tile table as one that tests depth is; each en
 Each of 77,760 pixels is within 3 a channel of what GL gives within the sixteenth of a pixel a snapped vertex moves, at a level of detail within 0.010 of GL's.
 `//gles:egl_test` uploads a texture through the C entry points into the machine's room and draws it through EGL.
 
-The scissor is added as issue 990 lands, with the entry points section 2 holds for it.
+The scissor is issue 1490's, done in the library: while `GL_SCISSOR_TEST` is on, every entry's box, and a clear, is clipped to the window and the scissor's box, turned over from GL's rows, which count up from the window's bottom; a scissored clear is a rectangle of the box, and an empty box draws nothing.
+Razboj clips to whatever box an entry carries, so it needs nothing more, as it needed nothing for #990's scissor in the assembler.
+`glHint` keeps a mode for each of GL ES 1.1's five targets for the queries, and changes nothing drawn, as GL allows.
+`//gles:prims_test`'s `the_scissor_keeps_drawing_within_its_box` and `//gles:get_test`'s `the_scissor_and_the_hints_read_back` hold them.
 
 ## 11. What the user has to decide
 

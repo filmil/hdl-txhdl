@@ -202,3 +202,49 @@ fn the_modes_make_their_segments_and_points() {
     g.line_width(-ONE);
     assert_eq!(g.get_error(), gl::INVALID_VALUE);
 }
+
+/// The scissor (#1490): with `GL_SCISSOR_TEST` on, a triangle over the
+/// whole window and a clear each touch exactly the scissor's box, given
+/// with GL's rows counting up from the bottom; with it off, the whole
+/// window; and an empty box touches nothing.
+#[test]
+fn the_scissor_keeps_drawing_within_its_box() {
+    let (sw, sh) = (64u32, 48u32);
+    let draw = |scissor: Option<(i32, i32, i32, i32)>| {
+        let mut frame = vec![[0u32; 16]; 16];
+        let mut g = Gl::new(&mut frame, sw, sh);
+        if let Some((x, y, w, h)) = scissor {
+            g.enable(gl::SCISSOR_TEST);
+            g.scissor(x, y, w, h);
+        }
+        g.clear_color(0, 0, ONE, ONE);
+        g.clear(gl::COLOR_BUFFER_BIT);
+        let p = [
+            [-2 * ONE, -2 * ONE, 0, ONE],
+            [4 * ONE, -2 * ONE, 0, ONE],
+            [-2 * ONE, 4 * ONE, 0, ONE],
+        ];
+        g.draw_arrays(gl::TRIANGLES, &p, Some(&[[ONE, 0, 0, ONE]; 3]), None);
+        assert_eq!(g.get_error(), gl::NO_ERROR);
+        let n = g.frame().len();
+        razboj::model::render(
+            &razboj::dl::decode_list(&frame[..n]),
+            sw as usize,
+            sh as usize,
+        )
+    };
+    // GL's box from column 10 and row 5 up from the bottom, 20 by 8:
+    // Razboj's rows 35 to 42.
+    let fb = draw(Some((10, 5, 20, 8)));
+    for y in 0..sh as usize {
+        for x in 0..sw as usize {
+            let inside = (10..30).contains(&x) && (35..43).contains(&y);
+            let p = fb[y * sw as usize + x];
+            assert_eq!(p != 0, inside, "pixel {x},{y}: {p:08x}");
+        }
+    }
+    let all = draw(None);
+    assert!(all.iter().all(|&p| p != 0), "no scissor: every pixel");
+    let none = draw(Some((10, 5, 0, 8)));
+    assert!(none.iter().all(|&p| p == 0), "an empty box: none");
+}

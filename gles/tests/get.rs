@@ -181,3 +181,32 @@ fn polygon_offset_reads_back() {
     assert_eq!(fixed(&mut g, gl::POLYGON_OFFSET_UNITS, 1), [3 * ONE / 2]);
     assert_eq!(ints(&mut g, gl::POLYGON_OFFSET_UNITS, 1), [2], "rounded");
 }
+
+/// The scissor's box and switch, and the hints, read back (#1490): the
+/// box is the window at first, and a hint is `GL_DONT_CARE` until set;
+/// a target or a mode GL ES 1.1 does not have is `GL_INVALID_ENUM`.
+#[test]
+fn the_scissor_and_the_hints_read_back() {
+    let mut frame = vec![[0u32; WORDS]; 16];
+    let mut g = context(&mut frame);
+    assert_eq!(ints(&mut g, name::SCISSOR_BOX, 4), [0, 0, 160, 120]);
+    assert_eq!(bools(&mut g, gl::SCISSOR_TEST, 1), [false]);
+    g.enable(gl::SCISSOR_TEST);
+    g.scissor(3, 4, 50, 60);
+    assert_eq!(ints(&mut g, name::SCISSOR_BOX, 4), [3, 4, 50, 60]);
+    assert_eq!(bools(&mut g, gl::SCISSOR_TEST, 1), [true]);
+    g.scissor(0, 0, -1, 5);
+    assert_eq!(g.get_error(), gl::INVALID_VALUE);
+    for &h in &gles::HINTS {
+        assert_eq!(ints(&mut g, h, 1), [gl::DONT_CARE as i32]);
+    }
+    g.hint(gl::PERSPECTIVE_CORRECTION_HINT, gl::NICEST);
+    g.hint(gl::FOG_HINT, gl::FASTEST);
+    let p = gl::PERSPECTIVE_CORRECTION_HINT;
+    assert_eq!(ints(&mut g, p, 1), [gl::NICEST as i32]);
+    assert_eq!(ints(&mut g, gl::FOG_HINT, 1), [gl::FASTEST as i32]);
+    g.hint(0x1234, gl::NICEST);
+    assert_eq!(g.get_error(), gl::INVALID_ENUM);
+    g.hint(gl::FOG_HINT, 0x1234);
+    assert_eq!(g.get_error(), gl::INVALID_ENUM);
+}

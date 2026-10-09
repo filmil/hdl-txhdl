@@ -44,6 +44,16 @@ pub const POLYGON_OFFSET_FILL: u32 = 0x8037;
 pub const POLYGON_OFFSET_FACTOR: u32 = 0x8038;
 pub const POLYGON_OFFSET_UNITS: u32 = 0x2A00;
 pub const DITHER: u32 = 0x0BD0;
+pub const SCISSOR_TEST: u32 = 0x0C11;
+/// The hints (#1490): GL ES 1.1's targets, and the three modes.
+pub const PERSPECTIVE_CORRECTION_HINT: u32 = 0x0C50;
+pub const POINT_SMOOTH_HINT: u32 = 0x0C51;
+pub const LINE_SMOOTH_HINT: u32 = 0x0C52;
+pub const FOG_HINT: u32 = 0x0C54;
+pub const GENERATE_MIPMAP_HINT: u32 = 0x8192;
+pub const DONT_CARE: u32 = 0x1100;
+pub const FASTEST: u32 = 0x1101;
+pub const NICEST: u32 = 0x1102;
 pub const NEVER: u32 = 0x0200;
 pub const LESS: u32 = 0x0201;
 pub const EQUAL: u32 = 0x0202;
