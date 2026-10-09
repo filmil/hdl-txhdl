@@ -991,10 +991,9 @@ impl<'a> Gl<'a> {
         }
         let (name, align) = (self.bound, self.unpack);
         let r = match self.store.as_mut() {
-            Some(s) if name != 0 => s.image(
+            Some(s) => s.image(
                 name, level, format, width, height, type_, pixels, align,
             ),
-            Some(_) => Err(gl::INVALID_OPERATION),
             None => Err(gl::OUT_OF_MEMORY),
         };
         if let Err(e) = r {
@@ -1026,10 +1025,7 @@ impl<'a> Gl<'a> {
         }
         let name = self.bound;
         let r = match self.store.as_mut() {
-            Some(s) if name != 0 => {
-                s.compressed(name, level, internal, width, height, data)
-            }
-            Some(_) => Err(gl::INVALID_OPERATION),
+            Some(s) => s.compressed(name, level, internal, width, height, data),
             None => Err(gl::OUT_OF_MEMORY),
         };
         if let Err(e) = r {
