@@ -61,6 +61,11 @@ static size_t frame(uint8_t *out, const void *p, size_t n)
 
 static int failures;
 
+static uint32_t plain_load(const volatile uint32_t *w)
+{
+	return *w;
+}
+
 static void expect(int ok, const char *what, size_t piece)
 {
 	if (!ok) {
@@ -225,6 +230,41 @@ int main(void)
 					       len);
 					expect(memcmp(to, want_to, sizeof(to)) == 0,
 					       "fb_copy copies as memcpy does", len);
+				}
+			}
+		}
+	}
+
+	/* The two sums agree for an image given in pieces of every size,
+	 * at every length to 40; a byte changed in memory is seen, and a
+	 * byte past the image's end is not counted (issue 1556). */
+	{
+		static uint32_t mem[16];
+		uint8_t *bytes = (uint8_t *)mem;
+
+		for (uint32_t len = 0; len <= 40; len++) {
+			for (uint32_t piece = 1; piece <= 7; piece++) {
+				uint32_t sum = 0;
+
+				memset(mem, 0xee, sizeof(mem));
+				for (uint32_t at = 0; at < len; at += piece) {
+					uint8_t chunk[7];
+					uint32_t k = len - at < piece ? len - at : piece;
+
+					for (uint32_t i = 0; i < k; i++) {
+						chunk[i] = (uint8_t)((at + i) * 29 + 3);
+					}
+					memcpy(bytes + at, chunk, k);
+					sum = fb_sum_add(sum, at, chunk, k);
+				}
+				expect(fb_sum_words(mem, len, plain_load) == sum,
+				       "the read-back sum is the sum given", len);
+				if (len > 0) {
+					bytes[len / 2] ^= 0x10;
+					expect(fb_sum_words(mem, len, plain_load) !=
+						       sum,
+					       "a changed byte changes the sum", len);
+					bytes[len / 2] ^= 0x10;
 				}
 			}
 		}

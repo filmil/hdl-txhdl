@@ -336,3 +336,26 @@ void fb_copy(uint8_t *dst, const uint8_t *src, size_t n)
 		n--;
 	}
 }
+
+uint32_t fb_sum_add(uint32_t sum, uint32_t offset, const uint8_t *p,
+		    size_t n)
+{
+	for (size_t i = 0; i < n; i++) {
+		sum += (uint32_t)p[i] << (8 * ((offset + i) & 3));
+	}
+	return sum;
+}
+
+uint32_t fb_sum_words(const volatile uint32_t *w, uint32_t len,
+		      uint32_t (*load)(const volatile uint32_t *))
+{
+	uint32_t sum = 0;
+
+	for (uint32_t k = 0; k < len / 4; k++) {
+		sum += load(w + k);
+	}
+	if (len & 3) {
+		sum += load(w + len / 4) & ((1u << (8 * (len & 3))) - 1);
+	}
+	return sum;
+}
