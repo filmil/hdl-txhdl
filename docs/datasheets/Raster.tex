@@ -28,6 +28,30 @@ On the board the count is \code{Doorbell}'s register, which drives
 puts nothing on the link (issue 985). Where nothing drives it,
 \code{ring} is tied high and the count is read back to back.
 
+A count with bit 31 set names a tile table rather than a flat list
+(issue 1255): a header of two words a tile, then each tile's entries
+past \code{ENTRIES\_AT}, which \code{razboj\_tile} bins. A tile is drawn
+into a buffer of 4096 words in block RAM, its pixels marked with the
+tile's serial, and written out as bursts of 64 beats a row, with the
+strobes of the pixels no entry drew off. A tile whose entries read the
+colour before anything covers it is first loaded from the framebuffer
+(issue 993).
+
+In a tile, and only there, an entry may do more, as bits of word 15
+say. With bit 8 it tests depth against a depth bank beside the tile's
+colour, under any of GL's eight comparisons, and with bit 12 writes it
+(issue 992). With bit 13 it blends under GL ES's factors, tests alpha,
+or masks its channels (issue 993). Either bit gives it a second slot
+of sixteen words after it, the depth plane and those settings. With
+bit 14 it is textured (issue 997): two slots more hold the planes of
+$uq$, $vq$ and $q$ in 64 bits, the level of detail's numerators, the
+texture's descriptor and its environment, and the rasteriser samples
+its levels in DDR3 through a texture cache, under GL's two
+magnification and six minification filters, and applies the five
+environments of GL ES~1.1 but \code{COMBINE}, byte for byte as the
+model of \code{gpu/razboj/src/tex.rs} does. A flat list draws such an
+entry untextured, with no depth and no state.
+
 It is an AXI host written as hardware. It issues bursts on
 \code{issue}, sends a pixel's beat on \code{wbeat}, and hands
 identifiers back on \code{release}. It receives \code{grant},
@@ -95,7 +119,8 @@ triangle & bits 25 to 2: colour \\
 5 & bits 15 to 0: \code{cx} & bits 31 to 16: \code{cy} \\
 6 to 14 & \multicolumn{2}{l}{a shaded triangle's red, green and blue
 planes: value, step right, step down} \\
-15 & bits 7 to 0: alpha & \\
+15 & bits 7 to 0: alpha & bit 8: depth; 11 to 9: its comparison;
+12: its write; 13: the pixel's state; 14: textured \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -165,6 +190,28 @@ answered, the count at \code{CTRL} is written back to zero, and
 \code{finished} is set as that write goes out. \code{inflight} is a wire, \code{issued} less \code{answered},
 the writes whose response has not come back, and \code{idle} is high
 when \code{finished} is set and nothing is in flight.
+\item In a tile the pixel goes into the tile's colour bank rather than
+onto the link, a pixel a cycle, and is marked. When the tile's entries
+are drawn its rows go out as bursts of 64 beats, with a beat's strobes
+off where no entry drew. The marks are the tile's serial, so no bank
+is cleared between tiles, and they are scrubbed once in 255 tiles.
+\item A pixel of an entry that tests depth or has the pixel's state
+reads the depth and the colour there, is decided in the following
+turns (the alpha test, the depth test, the blend's factors, products
+and divide, and the mask) and is written a turn after, so each bank
+keeps one write and one read and stays a block RAM.
+\item A textured pixel first takes its texel, a turn for each step of
+\code{tex::texel\_uv} and \code{tex::lod}: \code{q}'s leading zeros,
+the reciprocal's first guess from two \code{select!}s, its Newton step,
+$uq$ and $vq$ times it, and the shift back; beside them the largest
+numerator, the two lines of $\log_2$, the level of detail, and the
+level or levels it reads (\code{pick\_level}). Then each texel the
+filters read, one or four a level and one level or two, takes seven
+turns: its level's coordinates, its column and row wrapped with its
+weight, its address, the read of the cache of 64 lines, a refill of
+sixteen beats on a miss, the weight times each channel, and the sum.
+Then the two levels' blend, and the environment's products and their
+divide in two turns more.
 \item When a write response and a read beat arrive together, the
 write's identifier goes back first and the read's waits a cycle.
 Grants are taken and dropped.
@@ -189,6 +236,21 @@ checks the display list's encoder against its decoder.
 0x400, 0x600>} against the trace of \code{//gpu/razboj:trace} under nvc and
 Verilator: \code{//docs:razboj\_sim\_raster\_raster\_tb\_test} and
 \code{//docs:razboj\_vsim\_raster\_test}.
+\item In tiles, against the model: \code{every\_scene\_is\_the\_same\_in\_tiles},
+\code{depth\_in\_tiles\_is\_the\_models},
+\code{blending\_in\_tiles\_is\_the\_models} and
+\code{texturing\_in\_tiles\_is\_the\_models}, the last over 25 rounds
+of every filter, environment and class of texel on a texture of six
+levels, byte for byte. \code{what\_a\_textured\_pixel\_costs} and
+\code{a\_load\_costs\_about\_a\_write\_out} measure what those cost.
+\item The build replays the netlist against traced runs of its lists,
+its tiles, its depth, its blend and load, and its trilinear texturing:
+\code{//docs:razboj\_lists}, \code{razboj\_tiles},
+\code{razboj\_depth}, \code{razboj\_blend} and \code{razboj\_tex}, each
+under nvc and Verilator.
+\item \code{//cpu/vreteno/rust:ico\_gl\_test} draws the board's 640 by
+480 frame of the textured GL icosahedron on the rasteriser, byte for
+byte the model's.
 \item \code{//soc:demo\_test} runs
 \code{a\_core\_draws\_a\_solid\_and\_a\_gpu\_fills\_it}. Vreteno writes
 a display list on the lattice, the rasteriser draws it, and every pixel
@@ -210,11 +272,15 @@ lattice.
 
 \subsection*{Limits}
 
-\code{//docs:razboj} lists them. It writes one pixel per cycle at most. It
-has no depth buffer, so primitives are drawn in list order. It has no
-interpolation, so a triangle is one colour, and no texture. It clips
-no geometry, only boxes, and the assembler \code{Op::encode} does that
-on the host. It has one read out at a time.
+\code{//docs:razboj} lists them. It writes one pixel per cycle at most,
+and a pixel at a time: a pixel that tests depth or has the pixel's
+state takes three to five cycles, and a textured one 18 more at the
+nearest texel of one level and about 76 reading eight texels, its
+refills included. Depth, the pixel's state and texturing hold only in
+a tile; a flat list draws its entries in list order, flat or shaded,
+with none of them. It has one texture unit and no \code{COMBINE}. It
+clips no geometry, only boxes, and the assembler \code{Op::encode} does
+that on the host. It has one read out at a time.
 
 The code adds these. It has no reset port. A list holds at most 65535
 entries, since \code{left} is sixteen bits. \code{BASE}, \code{DL}

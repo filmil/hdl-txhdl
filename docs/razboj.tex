@@ -318,7 +318,8 @@ numerators of the four derivatives GL takes the level of detail from,
 each of which varies along one axis of the box only. The model divides
 by $q$ with a reciprocal whose first guess is a line in each of 32
 segments, and one Newton step, within $2^{-23}$; and takes the level of
-detail as a base-2 logarithm from a table of 256. It samples under GL's
+detail as a base-2 logarithm whose fraction is a line in each of 32
+segments. It samples under GL's
 two magnification and six minification filters, repeats or clamps, and
 applies the five environments of GL ES~1.1 but \code{COMBINE}, before
 the alpha test. Over a floor in perspective it is within a fiftieth of a
