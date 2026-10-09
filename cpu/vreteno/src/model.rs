@@ -244,6 +244,25 @@ pub struct Model {
     pub wfi_now: std::cell::Cell<bool>,
     pub last_wfi: u64,
     pub contended: bool,
+    /// The instruction cache's lines in the timing mode, each the line's
+    /// address plus one, the line the last instruction was in, and
+    /// whether control fell through to this one (issue 1561).
+    pub ic: Vec<u32>,
+    pub last_line: u32,
+    pub fell: bool,
+    /// What the step was for the timing mode: a multiply 1 or a division
+    /// 2; the registers it reads; the register a load of it wrote; the
+    /// page walks it made; whether it was `fence.i` (issue 1561).
+    pub mkind: std::cell::Cell<u8>,
+    pub reads: std::cell::Cell<(u32, u32)>,
+    pub loaded: std::cell::Cell<u32>,
+    pub prev_loaded: u32,
+    pub walks: std::cell::Cell<u32>,
+    pub ifence: std::cell::Cell<bool>,
+    /// Whether the step was a `fence`, and the cycle count at the last
+    /// store into the DDR3 (issue 1561).
+    pub fenced: std::cell::Cell<bool>,
+    pub stored_at: u64,
 }
 
 /// What a step costs in the timing mode (issue 1392): a base an
@@ -273,6 +292,26 @@ pub struct Timing {
     /// What a store, an `sc.w` and an AMO cost more while the other hart
     /// runs and shares the DDR3's path with it (issue 1554).
     pub contention: (u64, u64, u64),
+    /// What a multiply and a division or remainder cost more than a
+    /// step, and an instruction that reads the register the load before
+    /// it wrote (issue 1561).
+    pub mul: u64,
+    pub div: u64,
+    pub load_use: u64,
+    /// The instruction cache (issue 1561): the core's, direct-mapped,
+    /// 1024 lines of 16 bytes; a line it does not hold costs the first,
+    /// and running on into the next line it holds the second. None
+    /// models no cache, as `taken` alone did.
+    pub icache: Option<(u64, u64)>,
+    /// A translation the TLB does not hold: the page walk's two reads of
+    /// the DDR3 (issue 1561).
+    pub walk: u64,
+    /// What a `fence` waits, at most, for a store into the DDR3 still on
+    /// its way (issue 1561): the most, right after the store, less the
+    /// cycles since.
+    pub fence: u64,
+    /// What a `fence` costs more than a step with nothing on its way.
+    pub fence_alone: u64,
 }
 
 impl Timing {
@@ -311,7 +350,46 @@ impl Timing {
             // (issue 1554); `machine --dcache` asks for it.
             hit: None,
             contention: (1, 11, 8),
+            mul: 0,
+            div: 0,
+            load_use: 0,
+            icache: None,
+            walk: 0,
+            fence: 0,
+            fence_alone: 0,
         }
+    }
+
+    /// The board's costs with the core's caches and its slower steps
+    /// charged (issue 1561). From `costs.rs` on the board (main
+    /// 0d73a9f8's flagship, the scanout running), in cycles an
+    /// instruction with the step: a load the data cache holds 3.2, a
+    /// store 3.4, a load that misses 43.8, `lr.w` 40.6, the pair with
+    /// `sc.w` 56.1, `amoadd.w` 56.4, a `fence` 2.2 alone and 13.8 more after a
+    /// store, a multiply 3.4 and a division 35.4. From `board_test`'s
+    /// `core_costs_for_the_machine`, which the board has not measured: a
+    /// load's word used at once 1 more, an instruction-cache line not
+    /// held 54.5 more than one held and running on into the next line 3.
+    /// A page walk is two loads that miss.
+    pub fn board_cached() -> Self {
+        let mut t = Timing {
+            hit: Some(2),
+            excl: (40, 15, 55),
+            mul: 2,
+            div: 34,
+            load_use: 1,
+            icache: Some((54, 0)),
+            walk: 86,
+            fence: 14,
+            fence_alone: 1,
+            ..Self::board()
+        };
+        for r in &mut t.regions {
+            if r.0 == 0x4000_0000 {
+                (r.2, r.3) = (37, 2);
+            }
+        }
+        t
     }
 
     /// The extra cycles of a data access at `addr`.
@@ -364,6 +442,17 @@ impl Default for Model {
             wfi_now: std::cell::Cell::new(false),
             last_wfi: 0,
             contended: false,
+            ic: Vec::new(),
+            last_line: u32::MAX,
+            fell: false,
+            mkind: std::cell::Cell::new(0),
+            reads: std::cell::Cell::new((0, 0)),
+            loaded: std::cell::Cell::new(0),
+            prev_loaded: 0,
+            walks: std::cell::Cell::new(0),
+            ifence: std::cell::Cell::new(false),
+            fenced: std::cell::Cell::new(false),
+            stored_at: 0,
             dcsr: 0x4000_0003,
             step_armed: false,
             stepped: false,
@@ -589,6 +678,7 @@ impl Model {
             return Ok(ppn << 12 | (va & 0xfff));
         }
         let pa = translate(read, m, va, access)?;
+        self.walks.set(self.walks.get() + 1);
         self.tlb.borrow_mut().put(vpn, &m, access, pa >> 12);
         Ok(pa)
     }
@@ -1080,12 +1170,65 @@ impl Model {
         self.access.set(None);
         self.excl.set(None);
         self.wfi_now.set(false);
+        self.mkind.set(0);
+        self.reads.set((0, 0));
+        self.loaded.set(0);
+        self.walks.set(0);
+        self.ifence.set(false);
+        self.fenced.set(false);
         let pc = self.pc;
         self.execute(imem, interrupt);
         let t = self.timing.as_ref().expect("timing");
         let mut c = t.base;
-        if self.pc != pc.wrapping_add(4) && self.pc != pc.wrapping_add(2) {
+        let taken =
+            self.pc != pc.wrapping_add(4) && self.pc != pc.wrapping_add(2);
+        if taken {
             c += t.taken;
+        }
+        // The instruction cache, by the instruction's line (issue 1561).
+        if let Some((miss, step)) = t.icache {
+            let line = pc >> 4;
+            if line != self.last_line {
+                if self.ic.len() != 1024 {
+                    self.ic = vec![0; 1024];
+                }
+                let slot = (line & 1023) as usize;
+                if self.ic[slot] != line + 1 {
+                    c += miss;
+                    self.ic[slot] = line + 1;
+                } else if self.fell {
+                    c += step;
+                }
+                self.last_line = line;
+            }
+        }
+        self.fell = !taken;
+        c += match self.mkind.get() {
+            1 => t.mul,
+            2 => t.div,
+            _ => 0,
+        };
+        let (r1, r2) = self.reads.get();
+        if self.prev_loaded != 0
+            && (r1 == self.prev_loaded || r2 == self.prev_loaded)
+        {
+            c += t.load_use;
+        }
+        self.prev_loaded = self.loaded.get();
+        c += self.walks.get() as u64 * t.walk;
+        if self.ifence.get() {
+            self.ic.clear();
+            self.last_line = u32::MAX;
+        }
+        // A fence waits for a store into the DDR3 still on its way.
+        if self.fenced.get() {
+            c += t.fence_alone
+                + t.fence.saturating_sub(self.cycles - self.stored_at);
+        }
+        if let Some((addr, true)) = self.access.get() {
+            if cached(addr) {
+                self.stored_at = self.cycles + c;
+            }
         }
         let busy = self.contended as u64;
         let (hit, excl, contention) = (t.hit, t.excl, t.contention);
@@ -1173,6 +1316,20 @@ impl Model {
             self.stepped = true;
         }
         let d = decode(w);
+        if self.timing.is_some() {
+            self.reads.set((d.rs1, d.rs2));
+            self.mkind.set(match d.kind {
+                Kind::Mul | Kind::Mulh | Kind::Mulhsu | Kind::Mulhu => 1,
+                Kind::Div | Kind::Divu | Kind::Rem | Kind::Remu => 2,
+                _ => 0,
+            });
+            if matches!(
+                d.kind,
+                Kind::Lb | Kind::Lh | Kind::Lw | Kind::Lbu | Kind::Lhu
+            ) {
+                self.loaded.set(d.rd);
+            }
+        }
         let a = self.x[d.rs1 as usize];
         let b = self.x[d.rs2 as usize];
         let imm = d.imm as u32;
@@ -1445,7 +1602,11 @@ impl Model {
                 })
             }
             Remu => rd = Some(if b == 0 { a } else { a % b }),
-            Fence => {}
+            // `fence.i` empties the instruction cache in the timing mode.
+            Fence => {
+                self.ifence.set(w >> 12 & 7 == 1);
+                self.fenced.set(w >> 12 & 7 == 0);
+            }
             Ebreak => {
                 // A breakpoint, not a halt: a monitor catches it,
                 // prints, steps, continues. A program that means to
