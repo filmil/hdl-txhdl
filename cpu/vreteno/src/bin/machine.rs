@@ -45,6 +45,17 @@
 //! flagship's mode, 640 by 480, a word a pixel, 4096 bytes a line, or
 //! nothing if the scanout is not shown (issue 1440).
 //!
+//! `--profile FILE` writes what each address the hart ran at cost when
+//! the run stops, a line each: the address in hex, its cycles (steps
+//! outside the timing mode) and how many times it ran (issue 1434).
+//! Against a program's symbols that is a flat profile, and a function's
+//! first address counts its calls, which a cable's pacing does not
+//! change.
+//!
+//! `--watch ADDR` says, when the run stops, who reached `ADDR`: each
+//! return address in `ra` there, how many times, and the sum of `a2`,
+//! which for a copy is its length (issue 1434).
+//!
 //! It stops when the hart halts, or after `--steps` instructions, and
 //! says which, with the program counter, on standard error.
 use std::io::{Read, Write};
@@ -83,6 +94,8 @@ fn main() {
     let mut fastboot = None;
     let mut until: Option<String> = None;
     let mut screen: Option<String> = None;
+    let mut profile: Option<String> = None;
+    let mut watch: Option<u32> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         let mut val =
@@ -104,10 +117,16 @@ fn main() {
             // What the scanout would show when the run stops, as a PPM
             // (issue 1440).
             "--screen" => screen = Some(val()),
+            // What each address cost, written when the run stops (issue
+            // 1434).
+            "--profile" => profile = Some(val()),
+            // Who reaches an address, and with what length in a2.
+            "--watch" => watch = Some(number(&val()) as u32),
             _ => panic!("unknown argument {a}"),
         }
     }
     let image = image.expect("--image is required");
+    let profiling = profile.is_some();
     let bytes =
         std::fs::read(&image).unwrap_or_else(|e| panic!("{image}: {e}"));
     let mut m = Machine::new();
@@ -120,6 +139,12 @@ fn main() {
     m.board.0.borrow_mut().eth.peer = peer;
     if timing {
         m.model.timing = Some(vreteno32::model::Timing::board());
+    }
+    if profiling {
+        m.profile = Some(Default::default());
+    }
+    if let Some(at) = watch {
+        m.watch = Some((at, Default::default()));
     }
     if let Some(n) = fastboot {
         // A pattern rather than zeros, so a byte that lands in the wrong
@@ -212,6 +237,23 @@ fn main() {
                 eprintln!("screen: the scanout at {base:#010x}, in {path}");
             }
             None => eprintln!("screen: the scanout is not shown"),
+        }
+    }
+    if let (Some(path), Some(p)) = (&profile, &m.profile) {
+        let mut rows: Vec<_> = p.iter().collect();
+        rows.sort();
+        let text: String = rows
+            .iter()
+            .map(|(pc, (c, n))| format!("{pc:08x} {c} {n}\n"))
+            .collect();
+        std::fs::write(path, text).unwrap_or_else(|e| panic!("{path}: {e}"));
+        eprintln!("profile: {} addresses, in {path}", rows.len());
+    }
+    if let Some((at, callers)) = &m.watch {
+        let mut rows: Vec<_> = callers.iter().collect();
+        rows.sort_by_key(|(_, (n, _))| std::cmp::Reverse(*n));
+        for (ra, (n, sum)) in rows {
+            eprintln!("watch {at:#010x}: from {ra:#010x}, {n} times, a2 summing {sum}");
         }
     }
     if timing {
