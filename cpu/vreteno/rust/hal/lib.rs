@@ -438,6 +438,11 @@ impl Scan {
         wr(Self::BASE, at);
     }
 
+    /// The base last written, read back from the scanout.
+    pub fn base_word() -> u32 {
+        rd(Self::BASE)
+    }
+
     /// Show the scanout, or the framebuffer again.
     pub fn show(on: bool) {
         wr(Self::CTRL, on as u32);
@@ -487,6 +492,11 @@ impl Razboj {
     /// ring only once [`Razboj::count`] reads zero.
     pub fn ring(entries: u32) {
         wr(Self::COUNT, entries);
+    }
+
+    /// The doorbell's status word, as it reads.
+    pub fn status_word() -> u32 {
+        rd(Self::STATUS)
     }
 
     /// The count: what is being drawn, or zero once it is drawn.

@@ -281,7 +281,8 @@ fn texture(upload: bool) -> Option<(&'static mut [u32], u32, bool)> {
     }
 }
 
-/// Hart 1 (#1408): the odd frames, each built into its buffer and binned
+/// Hart 1 (#1408): the odd frames, each built into the first buffer, at
+/// row 0, and binned
 /// into the second half of the room once the frame before last, which
 /// took that half, is drawn, then left for hart 0 to ring. Its entries
 /// are read back before it says they are there, so that they have
@@ -297,6 +298,11 @@ extern "C" fn odd_frames(_hart: u32, _arg: u32) -> ! {
     loop {
         let (ay, ax) = ((2 * f as i32) & 255, f as i32 & 255);
         let tex = texture(false);
+        // The odd frames go to the first buffer: hart 0 starts with
+        // `which` at 1, so its even frames go to the second, and the
+        // scanout shows the buffer the frame before was drawn into. Both
+        // harts drew into the second, and the first, with the logo and
+        // nothing else, was shown every other frame (#1551).
         let (n, filled) =
             ico_gl::frame(&model, ay, ax, SECOND, last, true, tex, &mut list);
         last = filled;
@@ -324,6 +330,70 @@ fn start_odd() -> bool {
         }
     }
     false
+}
+
+/// What a load that draws nothing is doing (#1551), said after the
+/// cycles: the tiles rung for this frame, the doorbell's count and
+/// whether Razboj was idle straight after the ring, its status word,
+/// the buffer just shown and the base the scanout reads back, and for
+/// each buffer what [`drawn_in`] found.
+#[cfg(diag)]
+fn diag(
+    (tiles, count, idle): (u32, u32, bool),
+    shown: usize,
+    seen: [(u32, u32); 2],
+) {
+    Uart::say(b" tiles ");
+    Uart::put_decimal(tiles);
+    Uart::say(b" rung ");
+    Uart::put_decimal(count);
+    Uart::say(if idle { b" idle" } else { b" busy" });
+    Uart::say(b" shows ");
+    Uart::put_decimal(shown as u32);
+    Uart::say(b" base ");
+    Uart::put_hex(Scan::base_word());
+    Uart::say(b" status ");
+    Uart::put_hex(Razboj::status_word());
+    for (b, (drawn, centre)) in seen.iter().enumerate() {
+        Uart::say(if b == 0 { b" drawn0 " } else { b" drawn1 " });
+        Uart::put_decimal(*drawn);
+        Uart::say(b" centre ");
+        Uart::put_hex(*centre);
+    }
+}
+
+/// How many pixels of buffer `b`'s middle row are not the backdrop, and
+/// its centre pixel as it reads, each read with `lr.w`, which goes
+/// around the data cache (#1551); a plain load may be answered from it.
+/// A run of them holds the other hosts' writes at the arbiter (#1408),
+/// so this is called while Razboj is idle. The program is built without
+/// the A extension, so the instruction is given by its encoding.
+#[cfg(diag)]
+fn drawn_in(b: usize) -> (u32, u32) {
+    let row = b as u32 * SECOND as u32 + ico_list::H as u32 / 2;
+    let at = Razboj::FRAME + row * Scan::STRIDE;
+    let lr = |a: u32| -> u32 {
+        let px: u32;
+        // SAFETY: a load of the buffer's row; `lr.w` is
+        // `.insn r 0x2f, 2, 8, rd, rs1, x0`.
+        unsafe {
+            core::arch::asm!(
+                ".insn r 0x2f, 2, 8, {0}, {1}, x0",
+                out(reg) px,
+                in(reg) a,
+            )
+        };
+        px
+    };
+    let mut drawn = 0u32;
+    let mut x = 0u32;
+    while x < ico_list::W as u32 {
+        if lr(at + 4 * x) & 0x00ff_ffff != BACKDROP {
+            drawn += 1;
+        }
+        x += 1;
+    }
+    (drawn, lr(at + 4 * (ico_list::W as u32 / 2)))
 }
 
 /// Paint the logo into the frame `dy` rows down. A transparent pixel is
@@ -473,14 +543,29 @@ fn main() -> ! {
             Scan::base(Razboj::FRAME + before * Scan::STRIDE);
             wait_blanking();
         }
+        // Built with `diag` (#1551): the drawn pixels of the buffer just
+        // shown, read while Razboj is idle, before it is rung.
+        #[cfg(diag)]
+        let report = frames < 4 || frames & 63 == 0;
+        #[cfg(diag)]
+        let seen = if report {
+            [drawn_in(0), drawn_in(1)]
+        } else {
+            [(0, 0); 2]
+        };
         ring_tiled(binned);
+        // And what was rung, and what Razboj said straight after.
+        #[cfg(diag)]
+        let rung = (binned.count as u32, Razboj::count(), Razboj::idle());
         if odd {
             ODD_READY.store(0, Ordering::Release);
         }
         let shown = mcycle();
         let pair = shown.wrapping_sub(shown_at[which]);
         shown_at[which] = shown;
-        if frames & 63 == 0 {
+        #[cfg(not(diag))]
+        let report = frames & 63 == 0;
+        if report {
             Uart::say(SAYS);
             Uart::put_decimal(listed.wrapping_sub(start));
             Uart::say(b" wait ");
@@ -489,6 +574,8 @@ fn main() -> ! {
             Uart::put_decimal(shown.wrapping_sub(start));
             Uart::say(b" two ");
             Uart::put_decimal(pair);
+            #[cfg(diag)]
+            diag(rung, which ^ 1, seen);
             Uart::put(b'\n');
         }
         frames = frames.wrapping_add(1);
