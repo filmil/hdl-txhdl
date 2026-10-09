@@ -27,13 +27,19 @@ pub struct Hart<
     const DW: usize = 16384,
     const IC: usize = 1,
     const HID: usize = 0,
+    const EXCL: usize = 0,
 > {
     pub mmu: Mmu8,
-    pub core: Vreteno<IW, DW, IC, HID>,
+    pub core: Vreteno<IW, DW, IC, HID, EXCL>,
 }
 
-impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize>
-    Hart<IW, DW, IC, HID>
+impl<
+        const IW: usize,
+        const DW: usize,
+        const IC: usize,
+        const HID: usize,
+        const EXCL: usize,
+    > Hart<IW, DW, IC, HID, EXCL>
 {
     /// A hart whose core has its program loaded.
     pub fn with(program: &[u32]) -> Self {
@@ -46,8 +52,13 @@ impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize>
 
 // begin{run}
 #[lower]
-impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize> Unit
-    for Hart<IW, DW, IC, HID>
+impl<
+        const IW: usize,
+        const DW: usize,
+        const IC: usize,
+        const HID: usize,
+        const EXCL: usize,
+    > Unit for Hart<IW, DW, IC, HID, EXCL>
 {
     async fn run(
         &mut self,

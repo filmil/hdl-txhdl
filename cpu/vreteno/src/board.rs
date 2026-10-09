@@ -214,7 +214,9 @@ pub const DM_AT: usize = <DmMap as AddrMap<1>>::RANGES[0].0;
 /// The board's design.
 #[derive(Trace, Default)]
 pub struct Board<const DIV: u32> {
-    pub cpu: Hart<2>,
+    /// The hart, its A instructions on the DDR3 exclusive pairs, which
+    /// the arbiter and the monitor keep (issue 1408).
+    pub cpu: Hart<2, 16384, 1, 0, 1>,
     pub host: AxiHost<32, 32, 4, 2, 4>,
     /// The second host: Vivado's JTAG-to-AXI master, on the top beside
     /// the board's, reached over the cable that programs the part, so

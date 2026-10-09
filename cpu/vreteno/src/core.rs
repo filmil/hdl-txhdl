@@ -802,6 +802,7 @@ pub struct Vreteno<
     const DW: usize = 16384,
     const IC: usize = 1,
     const HID: usize = 0,
+    const EXCL: usize = 0,
 > {
     pub pc: Reg<U<32>>,
     pub ir: Reg<U<32>>,
@@ -964,12 +965,22 @@ pub struct Vreteno<
     pub sc_ready: Reg<Bit>,
     /// An AMO in writeback: whether the instruction there is one, its
     /// function and its register operand, kept from execute; its
-    /// phase after the load's answer, 1 to compute and 2 to store;
-    /// and the word it stores.
+    /// phase after the load's answer, 1 to compute, 2 to store, and for
+    /// an exclusive pair on the DDR3 3 to wait for the store's answer
+    /// and 4 to read again when it did not store (issue 1408); and the
+    /// word it stores.
     pub wb_amo: Reg<Bit>,
     pub amo_op: Reg<U<5>>,
     pub amo_b: Reg<U<32>>,
-    pub amo_ph: Reg<U<2>>,
+    pub amo_ph: Reg<U<3>>,
+    /// The AMO in writeback is an exclusive pair on the DDR3; and the
+    /// `sc.w` there is an exclusive write on the DDR3, whether its
+    /// answer is still to come, and whether it said the store failed
+    /// (issue 1408).
+    pub wb_x: Reg<Bit>,
+    pub wb_scx: Reg<Bit>,
+    pub scx_wait: Reg<Bit>,
+    pub scx_fail: Reg<Bit>,
     pub amo_val: Reg<U<32>>,
     /// `mbusquiet`: bus refusals read zero and drop the store instead
     /// of trapping, for a program that polls a peripheral which may
@@ -1161,8 +1172,13 @@ pub struct Vreteno<
     // end{vm}
 }
 
-impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize>
-    Vreteno<IW, DW, IC, HID>
+impl<
+        const IW: usize,
+        const DW: usize,
+        const IC: usize,
+        const HID: usize,
+        const EXCL: usize,
+    > Vreteno<IW, DW, IC, HID, EXCL>
 {
     /// The data RAM's depth is a power of two, since its addresses are
     /// masked to it with `DW - 1` (issue 1275).
@@ -1199,8 +1215,13 @@ impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize>
 }
 
 #[lower]
-impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize> Unit
-    for Vreteno<IW, DW, IC, HID>
+impl<
+        const IW: usize,
+        const DW: usize,
+        const IC: usize,
+        const HID: usize,
+        const EXCL: usize,
+    > Unit for Vreteno<IW, DW, IC, HID, EXCL>
 {
     async fn run(
         &mut self,
@@ -1362,19 +1383,29 @@ impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize> Unit
                     self.wb_dev.get(),
                 ),
             );
-            let wb_val = mux(self.wb_load, loaded, wb_alu);
+            // An exclusive `sc.w`'s result is its answer's (issue 1408).
+            let wb_val = mux(
+                self.wb_scx,
+                self.scx_fail.get().zext::<32>(),
+                mux(self.wb_load, loaded, wb_alu),
+            );
             // A device load sits in writeback while its wait is on, and
             // retires the cycle after its answer has landed.
             // An AMO sits in writeback after its load's answer, while
             // its word is computed and stored (issue 1010).
             let amo_ph = self.amo_ph.get();
             let amo_busy = amo_ph != 0;
-            let wb_here = self.wb_valid & !self.dev_wait & !amo_busy;
+            let scx_wait = self.scx_wait.get();
+            let wb_here =
+                self.wb_valid & !self.dev_wait & !amo_busy & !scx_wait;
             // A refused load retires as a trap: nothing is written, the
             // instruction behind it is squashed, and the fetch restarts
             // at the handler. Its address is what the ALU computed.
-            let wb_fault =
-                wb_here & self.wb_load & self.wb_err & !self.busquiet;
+            let wb_fault = wb_here
+                & self.wb_load
+                & self.wb_err
+                & !self.busquiet
+                & !self.wb_scx;
             let wb_write = wb_here & (wb_rd != 0) & !wb_fault;
             // The fetch stage: the instruction at the program counter,
             // into the instruction register unless the execute stage
@@ -1684,6 +1715,7 @@ impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize> Unit
                     | stall_fetch
                     | self.dev_wait
                     | amo_busy
+                    | scx_wait
                     | self.waiting,
             );
             let stall = self.stall.get();
@@ -1767,6 +1799,11 @@ impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize> Unit
                 & !xf
                 & !local
                 & dc_pred;
+            // And on a board whose arbiter and monitor keep exclusive
+            // pairs, it is one: the read and the write go with `lock`
+            // (issue 1408). An A instruction adds no offset, so the
+            // prediction is the address's own.
+            let xd = dc_pred & !local & Bit::from(EXCL != 0);
             let send_load = run & is_load & !unaligned & !xf & !local & !dc_try;
             let ld_loc = run & is_load & !unaligned & !xf & local;
             let amo_loc = ld_loc & is_rmw;
@@ -2219,6 +2256,13 @@ impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize> Unit
             // and the bus has room; nothing of execute's goes out then,
             // since execute waits for it, and it goes before a fetch.
             let amo_go = (amo_ph == 2) & issue.ready() & wbeat.ready();
+            // An exclusive AMO that did not store reads again, once
+            // nothing else of the core's is out (issue 1408).
+            let amo_rd_go =
+                (amo_ph == 4) & !self.f_wait & !self.p_wait & issue.ready();
+            // From when it is to go until its answer, no other read of
+            // the core's goes out, so the answer is its own.
+            let amo_rd_busy = (amo_ph == 4) | (amo_ph == 5);
             let amo_loc_go = amo_go & self.wb_loc;
             let st_go = send_store | (amo_go & !self.wb_loc);
             // A store into the data RAM, and an AMO's store there, write
@@ -2278,6 +2322,7 @@ impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize> Unit
                 & !send_load
                 & !send_store
                 & !amo_go
+                & !amo_rd_busy
                 & issue.ready();
             let f_ffill = f_want & vm & f_th & f_tf & !self.f_wait;
             // The instruction cache (issue 1021). A fetch from the data
@@ -2354,6 +2399,7 @@ impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize> Unit
                 & !self.dev_wait
                 & !send_load
                 & !st_go
+                & !amo_rd_busy
                 & issue.ready();
             let line_base = ic_pa & U::<32>::from(0xffff_fff0u32);
             // A walk's read goes out when nothing else of the core's is
@@ -2367,6 +2413,7 @@ impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize> Unit
                 & !st_go
                 & !f_send
                 & !r_go
+                & !amo_rd_busy
                 & Bit::from(self.stores_out.get() == 0)
                 & issue.ready();
             let p_addr = ptw.head();
@@ -2385,7 +2432,13 @@ impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize> Unit
                 & Bit::from(self.stores_out.get() == 0)
                 & issue.ready();
             let dc_line_go = dc_ask & !self.dc_one;
-            let send_any = send_load | st_go | b_go | r_go | p_send | dc_ask;
+            let send_any =
+                send_load | st_go | b_go | r_go | p_send | dc_ask | amo_rd_go;
+            // An exclusive read or write (issue 1408): `lr.w` and an AMO's
+            // read, `sc.w`, an AMO's store, and its read again.
+            let x_lock =
+                ((send_load & (is_lr | is_rmw)) | (send_store & is_sc)) & xd;
+            let lock = x_lock | (amo_go & self.wb_x) | amo_rd_go;
             // The address: the access's, which settles last behind its
             // adder, goes through one choice, and the rest are chosen
             // among beforehand.
@@ -2399,7 +2452,7 @@ impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize> Unit
                         r_go,
                         line_base,
                         mux(
-                            amo_go,
+                            amo_go | amo_rd_go,
                             self.wb_pa.get(),
                             mux(
                                 dc_ask,
@@ -2414,8 +2467,13 @@ impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize> Unit
                     ),
                 ),
             );
-            let use_addr =
-                !p_send & !b_go & !r_go & !amo_go & !dc_ask & !self.x_done;
+            let use_addr = !p_send
+                & !b_go
+                & !r_go
+                & !amo_go
+                & !amo_rd_go
+                & !dc_ask
+                & !self.x_done;
             if bool::from(send_any) {
                 issue.send(Issue {
                     read: !st_go,
@@ -2428,7 +2486,7 @@ impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize> Unit
                     ),
                     size: U::<3>::from(2u8),
                     burst: BurstKind::Incr,
-                    lock: Bit::Zero,
+                    lock,
                     cache: U::<4>::from(0u8),
                     prot: U::<3>::from(0u8),
                     qos: U::<4>::from(0u8),
@@ -2914,25 +2972,48 @@ impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize> Unit
             // retires with the old word. The reservation: `lr.w` makes
             // it and every `sc.w` uses it up, whether it stored or not.
             let amo_start = ((d_resp & !resp_bad) | l_ans) & self.wb_amo;
+            // An exclusive pair's store waits for its answer, and reads
+            // again when the answer says it did not store; an exclusive
+            // `sc.w` waits for its answer, which is its result (issue
+            // 1408). Every store before an A instruction is answered
+            // before it goes, so the answer is this one's.
+            let x_said = take_done & Bit::from(dh.resp == Resp::ExOkay);
+            let x_ans = take_done & (amo_ph == 3);
+            let scx_go = live & send_store & is_sc & xd;
             with!(self <= {
-                amo_start ? amo_ph: U::<2>::from(1u8),
+                amo_start ? amo_ph: U::<3>::from(1u8),
                 amo_ph == 1 ? {
                     amo_val: amo_alu(
                         self.amo_op.get(),
                         self.wb_dev.get(),
                         self.amo_b.get(),
                     ),
-                    amo_ph: U::<2>::from(2u8)
+                    amo_ph: U::<3>::from(2u8)
                 },
-                amo_go ? amo_ph: U::<2>::from(0u8),
+                amo_go ? amo_ph: mux(
+                    self.wb_x,
+                    U::<3>::from(3u8),
+                    U::<3>::from(0u8)
+                ),
+                x_ans ? amo_ph: mux(x_said, U::<3>::from(0u8), U::<3>::from(4u8)),
+                amo_rd_go ? amo_ph: U::<3>::from(5u8),
+                // A read again that the bus refused ends the AMO, which
+                // retires as a refused load does: its error is taken.
+                (amo_ph == 5) & d_resp & resp_bad ? amo_ph: U::<3>::from(0u8),
+                scx_go ? scx_wait: Bit::One,
+                (take_done & scx_wait) ? {
+                    scx_wait: Bit::Zero,
+                    scx_fail: !x_said
+                },
                 run & is_lr & !unaligned ? {
                     rsv_valid: Bit::One,
                     rsv_at: a.slice::<2, 30>()
                 },
                 run & is_sc ? rsv_valid: Bit::Zero,
                 rst ? {
-                    amo_ph: U::<2>::from(0u8),
-                    rsv_valid: Bit::Zero
+                    amo_ph: U::<3>::from(0u8),
+                    rsv_valid: Bit::Zero,
+                    scx_wait: Bit::Zero
                 },
             });
 
@@ -3277,8 +3358,14 @@ impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize> Unit
                     // Only a load that went out waits for an answer, and
                     // only it can be refused: one that trapped in
                     // execute went nowhere (issue 1084).
-                    self.wb_load <= send_load | ld_loc | dc_try;
+                    // An exclusive `sc.w`'s result is its answer, so it is
+                    // a load to whatever uses it next: that waits for it
+                    // to retire (issue 1408).
+                    self.wb_load <=
+                        send_load | ld_loc | dc_try | (send_store & is_sc & xd);
                     self.wb_amo <= is_rmw & (send_load | ld_loc);
+                    self.wb_x <= is_rmw & send_load & xd;
+                    self.wb_scx <= send_store & is_sc & xd;
                     self.wb_loc <= ld_loc;
                     self.wb_dc <= dc_try;
                     self.wb_st <= store & !local & dc_pred & dc_on & !is_sc;
@@ -3288,7 +3375,7 @@ impl<const IW: usize, const DW: usize, const IC: usize, const HID: usize> Unit
                     self.amo_b <= b;
                     self.wb_stop <= halting
                 },
-                _ if (self.dev_wait | amo_busy).to_bool() => {},
+                _ if (self.dev_wait | amo_busy | scx_wait).to_bool() => {},
                 _ => {
                     self.wb_valid <= Bit::Zero;
                     self.wb_rd <= 0;

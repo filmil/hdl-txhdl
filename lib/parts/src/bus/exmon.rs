@@ -70,6 +70,24 @@ pub struct ExMon<
     /// identifier of its exclusive write whose answer is still to
     /// come, which would make that answer ambiguous; a test reads it.
     pub xdup: Reg<Bit>,
+    /// The exclusive writes that failed, which a test reads to know a
+    /// host had to try again.
+    pub fails: Reg<U<16>>,
+    /// The last write passed on, for its clears a cycle later: whether
+    /// there was one into the range, its first line, and how many lines
+    /// it covers.
+    pub fwv: Reg<Bit>,
+    /// Its first line.
+    pub fwline: Reg<U<28>>,
+    /// The lines it covers.
+    pub fwcnt: Reg<U<28>>,
+    /// The exclusive write at the head was decided last cycle: whether
+    /// it was, whether it stores, and whether by port `P0`'s reservation.
+    pub xk_v: Reg<Bit>,
+    /// Whether it stores.
+    pub xk_ok: Reg<Bit>,
+    /// Whether by port `P0`'s reservation.
+    pub xk_p0: Reg<Bit>,
     /// A write burst taken whose beats are still coming.
     pub wpend: Reg<Bit>,
     /// Whether those beats are a failed exclusive write's, taken and
@@ -158,14 +176,30 @@ impl<
             let aw_here = Bit::from(aw_in.peek().is_some());
             let aw_port = aw.id >> I;
             let aw_line = aw.addr.slice::<4, 28>();
-            let ok0 =
-                Bit::from(aw_port == P0) & v0 & Bit::from(line0 == aw_line);
-            let ok1 =
-                Bit::from(aw_port == P1) & v1 & Bit::from(line1 == aw_line);
+            // The clears of the last write passed on, from its line and
+            // span in registers, a cycle after it: the compares stay off
+            // the way to the router.
+            let fwv = self.fwv.get();
+            let (fwline, fwcnt) = (self.fwline.get(), self.fwcnt.get());
+            let hit0 = fwv & Bit::from((line0 - fwline) < fwcnt);
+            let hit1 = fwv & Bit::from((line1 - fwline) < fwcnt);
+            let ok0 = Bit::from(aw_port == P0)
+                & v0
+                & !hit0
+                & Bit::from(line0 == aw_line);
+            let ok1 = Bit::from(aw_port == P1)
+                & v1
+                & !hit1
+                & Bit::from(line1 == aw_line);
             let aw_in_range = Bit::from((aw.addr & rm) == rb);
             let ex_ok = (ok0 | ok1) & Bit::from(aw.len == 0) & aw_in_range;
-            let fail = aw.lock & !ex_ok;
-            let aw_take = aw_here & !wpend & !binj;
+            // An exclusive write waits a cycle at the head, where it is
+            // decided into a register, and goes on that the next: only
+            // registers stand before the router. Nothing else can pass
+            // while it waits, so the decision holds.
+            let fail = aw.lock & !self.xk_ok.get();
+            let aw_take =
+                aw_here & !wpend & !binj & (!aw.lock | self.xk_v.get());
             let aw_fwd = aw_take & !fail & aw_out.ready();
             let aw_abs = aw_take & fail;
             let _ = aw_in.recv_if(aw_fwd | aw_abs);
@@ -184,13 +218,11 @@ impl<
                 });
             }
             // The lines a write passed on covers, from its first: a
-            // reservation in them is cleared.
+            // reservation in them is cleared, the cycle after.
             let span = aw.addr.slice::<2, 2>().zext::<9>() + aw.len.zext::<9>();
             let cnt = span.slice::<2, 7>().zext::<28>() + 1;
-            let hit0 = aw_fwd & Bit::from((line0 - aw_line) < cnt);
-            let hit1 = aw_fwd & Bit::from((line1 - aw_line) < cnt);
-            let xok0 = aw_fwd & aw.lock & ok0;
-            let xok1 = aw_fwd & aw.lock & ok1;
+            let xok0 = aw_fwd & aw.lock & self.xk_p0.get();
+            let xok1 = aw_fwd & aw.lock & !self.xk_p0.get();
             // The beats: passed on, or a failed write's taken and
             // dropped; its answer waits from its last beat.
             let wh = w_in.head();
@@ -242,13 +274,22 @@ impl<
             with!(self <= {
                 wids: (wids | w_set) & !w_clr,
                 dup ? xdup: Bit::One,
+                aw_abs ? fails: self.fails.get() + 1,
                 aw_fwd | aw_abs ? { wpend: Bit::One, wdrop: aw_abs },
                 aw_abs ? binjid: aw.id,
                 w_end ? wpend: Bit::Zero,
                 (w_end & wdrop) ? binj: Bit::One,
                 inj ? binj: Bit::Zero,
-                // A write's clear wins over a read's set in one cycle,
-                // since the two reach the peripheral in no known order.
+                fwv: aw_fwd & aw_in_range,
+                fwline: aw_line,
+                fwcnt: cnt,
+                xk_v: aw_here & aw.lock & !(aw_fwd | aw_abs),
+                xk_ok: ex_ok,
+                xk_p0: ok0,
+                // A write's clear comes the cycle after it, and wins
+                // over a set made in the write's own cycle, since the
+                // two reach the peripheral in no known order; a read in
+                // the cycle after waits for the write's answer.
                 v0: (v0 | set0) & !hit0 & !used0,
                 v1: (v1 | set1) & !hit1 & !used1,
                 set0 ? line0: ar_line,

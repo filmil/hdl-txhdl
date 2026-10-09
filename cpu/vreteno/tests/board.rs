@@ -81,6 +81,16 @@ struct Ran {
     bursts: Vec<BurstSeen>,
     /// The cycle a reset asked for began, when it did.
     reset_from: Option<u64>,
+    /// The exclusive writes the monitor failed, and the arbiter's
+    /// exclusive holds that ran out (issue 1408).
+    xfails: u32,
+    htimeouts: u32,
+    /// How many times an AMO read its word again, and whether any other
+    /// read of the core's (a fetch, a fill, a walk) went out from a
+    /// cycle in which the read again was to go or was out, which the
+    /// core must never let happen (issue 1408).
+    amo_rereads: u32,
+    amo_shared: bool,
 }
 
 /// Run `text` with `data` in the data memory, on the board's design,
@@ -586,6 +596,11 @@ fn run_all_in<const LO: usize, const HI: usize>(
         dmem: Dmem::with(data),
         ..Default::default()
     };
+    let (xfails, htimeouts) = (board.exmon.fails, board.arb.htimeouts);
+    let core = &board.cpu.core;
+    let (amo_ph, f_wait, p_wait, ic_st) =
+        (core.amo_ph, core.f_wait, core.p_wait, core.ic_st);
+    let (mut amo_rereads, mut amo_shared) = (0u32, false);
     let (rst_o, rst) = signal::<Bit, DefaultClock>();
     let (irq_o, irq) = signal::<Bit, DefaultClock>();
     let (rx_o, rx) = signal::<Bit, DefaultClock>();
@@ -882,7 +897,25 @@ fn run_all_in<const LO: usize, const HI: usize>(
             &mut sent,
             serve,
         );
+        // The read again and every other read of the core's: a fetch
+        // sets f_wait, a fill puts ic_st at 2, a walk sets p_wait.
+        let was = (
+            amo_ph.get().raw(),
+            f_wait.get().to_bool(),
+            p_wait.get().to_bool(),
+            ic_st.get().raw(),
+        );
         sim.cycle();
+        if (was.0 == 4 || was.0 == 5)
+            && ((!was.1 && f_wait.get().to_bool())
+                || (!was.2 && p_wait.get().to_bool())
+                || (was.3 != 2 && ic_st.get().raw() == 2))
+        {
+            amo_shared = true;
+        }
+        if was.0 != 4 && amo_ph.get().raw() == 4 {
+            amo_rereads += 1;
+        }
         master.observe(plan, &jtag);
         chip.step(
             fl_cs_n.get().to_bool(),
@@ -1060,6 +1093,10 @@ fn run_all_in<const LO: usize, const HI: usize>(
         steps: master.at,
         bursts: master.bursts,
         reset_from,
+        xfails: xfails.get().raw() as u32,
+        htimeouts: htimeouts.get().raw() as u32,
+        amo_rereads,
+        amo_shared,
         flash: chip.commands.clone(),
         flash_short: chip.partial,
         phy_frames: phy.frames.clone(),
@@ -3544,4 +3581,248 @@ fn random_loads_and_stores_through_the_data_cache() {
             checks.len()
         );
     }
+}
+
+/// A program that checks itself (issue 1408): `eq` loads a value and
+/// branches to a last instruction that rounds until the limit when a
+/// register is not it, so a run that halts passed every check.
+struct Checked {
+    p: Vec<u32>,
+    /// Where each check's branch goes, and the register it checks.
+    checks: Vec<(usize, u32)>,
+}
+
+impl Checked {
+    fn new() -> Self {
+        Checked {
+            p: vec![],
+            checks: vec![],
+        }
+    }
+
+    fn op(&mut self, w: u32) -> &mut Self {
+        self.p.push(w);
+        self
+    }
+
+    /// `rd` gets `v`.
+    fn li(&mut self, rd: u32, v: u32) -> &mut Self {
+        use vreteno32::isa::{addi, lui};
+        let hi = v.wrapping_add(0x800) >> 12;
+        let lo = v.wrapping_sub(hi << 12) as i32;
+        self.op(lui(rd, hi)).op(addi(rd, rd, lo))
+    }
+
+    /// Fail unless `r` holds `v`; x31 is the check's.
+    fn eq(&mut self, r: u32, v: u32) -> &mut Self {
+        self.li(31, v);
+        self.checks.push((self.p.len(), r));
+        self.op(0)
+    }
+
+    fn done(&mut self) -> Vec<u32> {
+        use vreteno32::isa::{bne, halt, jal};
+        self.op(halt());
+        let fail = self.p.len();
+        self.op(jal(0, 0));
+        let mut p = self.p.clone();
+        for &(at, r) in &self.checks {
+            p[at] = bne(r, 31, ((fail - at) * 4) as i32);
+        }
+        p
+    }
+}
+
+/// The A instructions on the DDR3 are exclusive pairs the monitor
+/// answers (issue 1408): `lr.w` then `sc.w` stores and gives zero; a
+/// second `sc.w`, with the reservation used up, gives one and stores
+/// nothing; `amoadd.w` and `amoswap.w` give the old word and store the
+/// new. No hold runs out and nothing fails at the monitor: the second
+/// `sc.w` fails in the core, whose own reservation the first used up,
+/// and never reaches the bus.
+#[test]
+fn the_a_instructions_on_the_ddr3_are_exclusive_pairs() {
+    use vreteno32::isa::{addi, amoadd_w, amoswap_w, lr_w, lw, sc_w, sw};
+    let p = Checked::new()
+        .li(5, 0x4000_0000)
+        .li(6, 5)
+        .op(sw(6, 5, 0))
+        .op(lr_w(7, 5))
+        .eq(7, 5)
+        .li(8, 9)
+        .op(sc_w(9, 5, 8))
+        // The result used at once, as `bnez` on it would.
+        .op(addi(12, 9, 0))
+        .eq(12, 0)
+        .eq(9, 0)
+        .op(lw(10, 5, 0))
+        .eq(10, 9)
+        .op(sc_w(11, 5, 6))
+        .eq(11, 1)
+        .op(lw(10, 5, 0))
+        .eq(10, 9)
+        .li(12, 3)
+        .op(amoadd_w(13, 5, 12))
+        .eq(13, 9)
+        .op(lw(14, 5, 0))
+        .eq(14, 12)
+        .op(amoswap_w(15, 5, 6))
+        .eq(15, 12)
+        .op(lw(14, 5, 0))
+        .eq(14, 5)
+        .done();
+    let ran = run_debugged(&p, &[], 20_000, &[]);
+    assert!(ran.halted_at.is_some(), "a check failed");
+    assert_eq!(ran.xfails, 0, "the second sc.w failed in the core");
+    assert_eq!(ran.htimeouts, 0, "every hold ended at its write");
+}
+
+/// Another host's write breaks a reservation (issue 1408). The program
+/// takes `lr.w`, waits longer than the arbiter's hold, and only then
+/// tries `sc.w`; the JTAG host's write to the word, held until the
+/// hold runs out, lands between, and `sc.w` gives one and leaves the
+/// JTAG host's word.
+#[test]
+fn another_hosts_write_breaks_a_reservation() {
+    use vreteno32::isa::{addi, bne, lr_w, lw, sc_w};
+    let p = Checked::new()
+        .li(5, 0x4000_0000)
+        .op(lr_w(7, 5))
+        .li(10, 200)
+        .op(addi(10, 10, -1))
+        .op(bne(10, 0, -4))
+        .li(8, 9)
+        .op(sc_w(9, 5, 8))
+        // The result used at once: a failure must not read as success.
+        .op(addi(12, 9, 0))
+        .eq(12, 1)
+        .eq(9, 1)
+        .op(lw(11, 5, 0))
+        .eq(11, 0x77)
+        .done();
+    let plan = [Op::Wait(60), Op::Write(0x4000_0000, 0x77)];
+    let ran = run_debugged(&p, &[], 20_000, &plan);
+    assert!(ran.halted_at.is_some(), "a check failed");
+    assert_eq!(ran.htimeouts, 1, "the hold ran out, so the write went");
+    assert_eq!(ran.xfails, 1, "and the sc.w failed at the monitor");
+}
+
+/// The other host's writes to the line an AMO works on make it try
+/// again, and it loses no count (issue 1408). The program adds one to a
+/// word fifty times with `amoadd.w`; the JTAG host writes the next word
+/// of its line three times, at offsets swept over the run, which a pair
+/// meets when the two are granted in one cycle. Every run ends with the
+/// count exact and no hold run out, and across the sweep some pair
+/// failed and was tried again.
+#[test]
+fn amos_lose_no_count_to_the_other_hosts_writes() {
+    use vreteno32::isa::{addi, amoadd_w, bne, lw};
+    let p = Checked::new()
+        .li(5, 0x4000_0000)
+        .li(6, 1)
+        .li(10, 50)
+        .op(amoadd_w(0, 5, 6))
+        .op(addi(10, 10, -1))
+        .op(bne(10, 0, -8))
+        .op(lw(11, 5, 0))
+        .eq(11, 50)
+        .done();
+    let mut retried = 0;
+    for start in (40..200).step_by(3) {
+        let mut plan = vec![];
+        for k in 0..3u32 {
+            plan.push(Op::Wait(if k == 0 { start } else { 37 }));
+            plan.push(Op::Write(0x4000_0004, k));
+        }
+        let ran = run_debugged(&p, &[], 40_000, &plan);
+        assert!(ran.halted_at.is_some(), "the count, from {start}");
+        assert_eq!(ran.htimeouts, 0, "no hold ran out, from {start}");
+        assert!(!ran.amo_shared, "a read went with the read again, {start}");
+        retried += ran.xfails;
+    }
+    assert!(retried > 0, "some pair was tried again across the sweep");
+}
+
+/// The same from the data memory, with the instruction cache emptied
+/// by `fence.i` every round, so that the loop's lines are fetched over
+/// the bus again each time (issue 1408): no add is lost and no hold
+/// runs out. No pair fails here, though, at any offset tried: from the
+/// data memory the other host's write is never granted in the cycle of
+/// an AMO's exclusive read, which is what fails one. So an AMO reading
+/// again while a fill could go is not reached here; the core keeps every
+/// other read back from the cycle the read again may go until its
+/// answer, by construction, and a directed test is #1474.
+#[test]
+fn amos_from_the_bus_lose_no_count() {
+    use vreteno32::isa::{addi, amoadd_w, bne, fence_i, jalr, lui, lw};
+    let body: Vec<u8> = Checked::new()
+        .li(5, 0x4000_0000)
+        .li(6, 1)
+        .li(10, 20)
+        .op(fence_i())
+        .op(amoadd_w(0, 5, 6))
+        .op(addi(10, 10, -1))
+        .op(bne(10, 0, -12))
+        .op(lw(11, 5, 0))
+        .eq(11, 20)
+        .done()
+        .iter()
+        .flat_map(|w| w.to_le_bytes())
+        .collect();
+    let boot = [lui(1, 0x1000 >> 12), jalr(0, 1, 0)];
+    for start in (40..1500).step_by(23) {
+        let mut plan = vec![];
+        for k in 0..20u32 {
+            plan.push(Op::Wait(if k == 0 { start } else { 61 }));
+            plan.push(Op::Write(0x4000_0004, k));
+        }
+        let ran = run_debugged(&boot, &body, 60_000, &plan);
+        assert!(ran.halted_at.is_some(), "the count, from {start}");
+        assert_eq!(ran.htimeouts, 0, "no hold ran out, from {start}");
+        assert!(!ran.amo_shared, "a read went with the read again, {start}");
+    }
+}
+
+/// The same loop run from the DDR3, where its fetches are fills over
+/// the bus with the controller's latency (issue 1408): the boot memory
+/// writes the loop there and jumps to it. Every run ends with the count
+/// exact, no hold run out, and no other read of the core's sent while
+/// an AMO's read again was to go or out, which the harness checks every
+/// cycle. An AMO reads again only when the other host's write was
+/// granted in its exclusive read's cycle, which this sweep reaches about
+/// once, so the check has not yet caught the guard cut back (#1474).
+#[test]
+fn amos_from_the_ddr3_lose_no_count() {
+    use vreteno32::isa::{addi, amoadd_w, bne, fence, fence_i, jalr, lw, sw};
+    let body = Checked::new()
+        .li(5, 0x4000_0000)
+        .li(6, 1)
+        .li(10, 20)
+        .op(amoadd_w(0, 5, 6))
+        .op(addi(10, 10, -1))
+        .op(bne(10, 0, -8))
+        .op(lw(11, 5, 0))
+        .eq(11, 20)
+        .done();
+    let mut boot = Checked::new();
+    boot.li(8, 0x4001_0000);
+    for (i, &w) in body.iter().enumerate() {
+        boot.li(7, w).op(sw(7, 8, (i * 4) as i32));
+    }
+    boot.op(fence()).op(fence_i()).op(jalr(0, 8, 0));
+    let boot = boot.p.clone();
+    let mut rereads = 0;
+    for start in (200..1600).step_by(13) {
+        let mut plan = vec![];
+        for k in 0..20u32 {
+            plan.push(Op::Wait(if k == 0 { start } else { 47 }));
+            plan.push(Op::Write(0x4000_0004, k));
+        }
+        let ran = run_debugged(&boot, &[], 80_000, &plan);
+        assert!(ran.halted_at.is_some(), "the count, from {start}");
+        assert_eq!(ran.htimeouts, 0, "no hold ran out, from {start}");
+        assert!(!ran.amo_shared, "a read went with the read again, {start}");
+        rereads += ran.amo_rereads;
+    }
+    println!("reads again across the sweep: {rereads}");
 }
