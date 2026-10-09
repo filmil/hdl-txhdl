@@ -902,6 +902,40 @@ vreteno_flat(
     program = ":ico_tex_hdmi",
 )
 
+# The textured program mipmapped (#997 step 4): the checker filtered
+# with GL_LINEAR_MIPMAP_LINEAR, its levels generated as it is uploaded,
+# and a floor receding below the solid, so that the levels show.
+rust_binary(
+    name = "ico_mip_hdmi",
+    srcs = [
+        "ico_gl.rs",
+        "ico_hdmi.rs",
+        "ico_list.rs",
+    ],
+    compile_data = ["vreteno_ram.ld"],
+    crate_root = "ico_hdmi.rs",
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS + [
+        "--cfg=gl",
+        "--cfg=tex",
+        "--cfg=mip",
+    ],
+    tags = ["manual"],
+    deps = [
+        "//cpu/vreteno/rust/hal:vreteno_hal",
+        "//cpu/vreteno/rust/regs:vreteno_regs",
+        "//gles",
+        "//gpu/razboj:tile",
+        "//lib/logo:txhdl_logo",
+    ],
+)
+
+vreteno_flat(
+    name = "ico_mip_hdmi_bin",
+    platform = ":vreteno",
+    program = ":ico_mip_hdmi",
+)
+
 # One frame of the textured icosahedron worked out on the host, as a
 # PNG: the GL list rendered through Razboj's model with the texture's
 # room as its memory, and the logo laid in.
@@ -914,6 +948,24 @@ rust_binary(
     ],
     crate_root = "ico_tex_frame.rs",
     edition = "2021",
+    deps = [
+        "//gles",
+        "//gpu/razboj",
+        "//lib/logo:txhdl_logo",
+    ],
+)
+
+# The same frame mipmapped, as ico_mip_hdmi draws it (#997 step 4).
+rust_binary(
+    name = "ico_mip_frame",
+    srcs = [
+        "ico_gl.rs",
+        "ico_list.rs",
+        "ico_tex_frame.rs",
+    ],
+    crate_root = "ico_tex_frame.rs",
+    edition = "2021",
+    rustc_flags = ["--cfg=mip"],
     deps = [
         "//gles",
         "//gpu/razboj",
@@ -956,6 +1008,28 @@ rust_test(
     deps = [
         "//gles",
         "//gpu/razboj",
+        "//lib/logo:txhdl_logo",
+    ],
+)
+
+# The same tests mipmapped (#997 step 4): the floor and the solid under
+# GL_LINEAR_MIPMAP_LINEAR, the rasteriser's frame byte for byte the
+# model's, and a kept texture with its generated levels drawing as an
+# uploaded one.
+rust_test(
+    name = "ico_mip_test",
+    srcs = [
+        "ico_gl.rs",
+        "ico_gl_test.rs",
+        "ico_list.rs",
+    ],
+    crate_root = "ico_gl_test.rs",
+    edition = "2021",
+    rustc_flags = ["--cfg=mip"],
+    deps = [
+        "//gles",
+        "//gpu/razboj",
+        "//lib/logo:txhdl_logo",
     ],
 )
 

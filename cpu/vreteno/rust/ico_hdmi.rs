@@ -95,8 +95,10 @@ const _: () = assert!(Scan::WIDTH as i32 / 2 + ico_list::REACH < LOGO_X as i32);
 const SAYS: &[u8] = b"ico razboj list ";
 #[cfg(all(gl, not(tex)))]
 const SAYS: &[u8] = b"ico gl list ";
-#[cfg(tex)]
+#[cfg(all(tex, not(mip)))]
 const SAYS: &[u8] = b"ico gl tex list ";
+#[cfg(mip)]
+const SAYS: &[u8] = b"ico gl mip list ";
 
 /// Where the texture's room is with `tex` (#997): in the list's memory,
 /// two megabytes past its start and past the tile table's megabyte.

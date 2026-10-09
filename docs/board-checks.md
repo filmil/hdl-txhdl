@@ -716,6 +716,31 @@ Pass:
 Through GL a frame's list is built and binned while Razboj draws the frame before (#1433), so each line says `list`, the core's building and binning; `wait`, what was left of the frame before's drawing; and `frame`, the whole frame with the wait for the blanking. The frame rate comes in steps of blankings, 1.667 M cycles at 60 Hz.
 Set the counts beside `ico gl list`'s, and put the log and the recording on #997.
 
+### The mipmapped icosahedron, #997 step 4
+
+A flagship from a `main` that holds PR 1471 (#997 step 3), which filters and mipmaps in the rasteriser, programmed over JTAG, with a monitor on the HDMI connector.
+On an older flagship the rasteriser reads the base level at the nearest texel, and the floor's far rows shimmer instead of fading to grey.
+Nothing is written to flash.
+
+`ico_mip_hdmi` is `ico_tex_hdmi` built with `--cfg=mip`.
+The checker is filtered with `GL_LINEAR_MIPMAP_LINEAR` and `GL_LINEAR`, and its levels are generated as it is uploaded.
+A floor recedes below the solid, rows 296 to 400 from the left edge to column 480, clear of the logo's columns, with the checker sixteen times along it, so its far rows read the levels below the base.
+
+```sh
+bazel build //cpu/vreteno/rust:ico_mip_hdmi_bin
+bazel run //flagship:flagship_prog -- "${PROG[@]}"
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=$PWD/bazel-bin/cpu/vreteno/rust/ico_mip_hdmi_bin.bin --seconds=60 \
+    2>&1 | tee board-997-mip.log
+```
+
+Pass:
+* The run says `ico 20 faces`, then `ico gl mip list` cycles lines, and no `trap` and no `ico bin refused`.
+* The floor's checker is sharp near the bottom and fades smoothly to an even colour toward the far edge, with no shimmer as the solid turns; the solid's faces are filtered rather than blocky.
+* A still of the recording looks as `bazel run //cpu/vreteno/rust:ico_mip_frame -- <n> $PWD/f.png` draws frame `n` through Razboj's model; `//cpu/vreteno/rust:ico_mip_test` holds the rasteriser's own frame to the model's, byte for byte.
+
+Set the cycles lines beside `ico gl tex list`'s, and put the log and the recording on #997.
+
 ### Doom, #1177
 
 A flagship from a `main` that holds #1445 (the data cache) or later, programmed over JTAG, with a monitor on the HDMI connector, and the board's serial port open on the board server so that keys can be typed into it.

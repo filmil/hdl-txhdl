@@ -237,7 +237,8 @@ fn the_textured_frame_on_the_rasteriser_is_the_models() {
         &mut out,
     );
     let list = insns(&out[..n]);
-    assert_eq!(list.iter().filter(|i| i.tex.to_bool()).count(), 20);
+    let faces = 20 + ico_gl::FLOOR_TRIS;
+    assert_eq!(list.iter().filter(|i| i.tex.to_bool()).count(), faces);
     let more: Vec<(usize, u32)> = room
         .iter()
         .enumerate()
@@ -287,5 +288,37 @@ fn a_kept_texture_draws_as_an_uploaded_one() {
             ico_gl::frame(&m, ay, ax, dy, Box::SCREEN, true, tex, &mut kept);
         assert_eq!(nu, nk, "slots at {ay},{ax}");
         assert!(up[..nu] == kept[..nk], "the lists differ at {ay},{ax}");
+    }
+}
+
+/// The textured frame's box, which the next frame clears, stays off the
+/// logo's square in the bottom right corner, as `ico_hdmi` paints it
+/// once: textured, and under `mip` with the floor, at every angle tried
+/// and in either buffer. The floor once reached it, and the board lost
+/// the top of the logo (#997 step 4).
+#[test]
+fn the_textured_frame_keeps_off_the_logo() {
+    let (lx, ly) = (W - txhdl_logo::W as i32 - 8, H - txhdl_logo::H as i32 - 8);
+    let m = Model::new(&Solid::new());
+    for step in 0..64 {
+        let (ay, ax) = ((step * 4) & 255, (step * 7) & 255);
+        for dy in [0, SECOND] {
+            let mut room = vec![0u32; ico_gl::TEX_ROOM];
+            let mut out = [[0u32; WORDS]; ico_gl::MOST];
+            let (_, b) = ico_gl::frame(
+                &m,
+                ay,
+                ax,
+                dy,
+                Box::SCREEN,
+                true,
+                Some((&mut room, 0x38_0000, true)),
+                &mut out,
+            );
+            assert!(
+                b.x1 < lx || b.y1 < ly,
+                "{b:?} reaches the logo at {lx},{ly} at {ay},{ax}"
+            );
+        }
     }
 }
