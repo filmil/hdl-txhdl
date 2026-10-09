@@ -252,6 +252,61 @@ impl Timer {
     }
 }
 
+/// The second hart (issue 1408), which waits in its own boot memory
+/// until this one starts it through the timer's mailbox: the address to
+/// start at, an argument, and a one in its `msip`.
+///
+/// It starts at [`Hart1::start`]'s trampoline, which sets its stack
+/// pointer to the top of its own stack memory, the same addresses as
+/// this hart's and other memory, and calls the function it was given
+/// with its number and the argument. Nothing else is set up: `.bss` was
+/// zeroed by this hart, and a trap has nowhere to go.
+pub struct Hart1;
+
+/// The function hart 1 is to run, for the trampoline to read.
+static HART1_MAIN: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+core::arch::global_asm!(
+    ".section .text.vreteno_hart1, \"ax\", @progbits",
+    ".globl vreteno_hart1",
+    "vreteno_hart1:",
+    "la sp, __stack_top",
+    "la t0, {main}",
+    "lw t0, 0(t0)",
+    "jr t0",
+    main = sym HART1_MAIN,
+);
+
+extern "C" {
+    fn vreteno_hart1();
+}
+
+impl Hart1 {
+    const MSIP: usize = map::CLINT + timer::MSIP1;
+    const ENTRY: usize = map::CLINT + timer::MBOX_ENTRY;
+    const ARG: usize = map::CLINT + timer::MBOX_ARG;
+
+    /// Start hart 1 at `main`, with `arg` its second argument. Whatever
+    /// this hart wrote before is seen by hart 1, since the mailbox is
+    /// written after a fence.
+    pub fn start(main: extern "C" fn(u32, u32) -> !, arg: u32) {
+        use core::sync::atomic::{fence, Ordering};
+        HART1_MAIN.store(main as usize, Ordering::Relaxed);
+        fence(Ordering::SeqCst);
+        wr(Self::ENTRY, vreteno_hart1 as usize as u32);
+        wr(Self::ARG, arg);
+        fence(Ordering::SeqCst);
+        wr(Self::MSIP, 1);
+    }
+
+    /// Hart 1 is done: back to its boot memory, where it waits to be
+    /// started again.
+    pub fn park() -> ! {
+        unsafe { core::arch::asm!("jr zero", options(noreturn)) }
+    }
+}
+
 /// The platform-level interrupt controller, for one target: a
 /// priority per source, the enable bits, the threshold, and the word
 /// that claims on a read and completes on a write.

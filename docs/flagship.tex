@@ -503,6 +503,11 @@ display tearing. The processor renders the corner logo into both framebuffers
 during initialization. Every 64 frames, software logs cycle counts for display
 list generation, rasterization, and total frame latency.
 
+The GL build of the program uses the second hart where the bitstream has one
+(issue~\#1408). Each hart builds and bins every other frame, into its own
+framebuffer and its own half of Razboj's room, and the first hart rings every
+frame in order. The cycles line then adds the two frames up to the one shown.
+
 \lstinputlisting[caption={\code{cpu/vreteno/rust/ico\_hdmi.rs}: the
 icosahedron.},label={lst:f-ico}]{cpu/vreteno/rust/ico_hdmi.rs}
 
