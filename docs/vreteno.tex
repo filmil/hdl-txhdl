@@ -473,6 +473,33 @@ all of them & +845\,824 & +320~ms \\
 thousand instructions; the board adds the transfer, which the larger
 kernel lengthens by its bytes over fastboot.
 
+The kernel is built for both of the board's harts (issue~\#1408):
+\code{CONFIG\_SMP} with two CPUs, and no hot plugging yet. OpenSBI
+holds hart 1 until the kernel starts it through SBI, and the kernel
+says it brought up two CPUs; \code{boot\_test} waits for that line.
+Measured the same way, in cycles to userspace, on the machine's
+timing:
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}llrr@{}}
+\toprule
+kernel & tree & Image, bytes & cycles to userspace \\
+\midrule
+uniprocessor & one hart & 3\,929\,088 & 1\,281\,410\,850 \\
+uniprocessor & two harts & 3\,929\,088 & 1\,301\,139\,795 \\
+SMP & one hart & 4\,290\,048 & 1\,417\,748\,252 \\
+SMP & two harts & 4\,290\,048 & 1\,182\,402\,693 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent On one hart, SMP costs 360\,960 bytes and 10.6 per cent of
+the boot. On two it boots 7.7 per cent sooner than the uniprocessor
+kernel on one, for reasons not yet measured.
+The machine models no contention for the DDR3, so the board's two-hart
+figure will be somewhat higher. The tree is the board's two harts by
+default, and \code{boot\_image}'s \code{harts} gives one.
+
 The board can also keep its root on srv, over NFS, so that what is
 written there outlives a reboot (issue~1438). \code{board\_nfs\_boot}
 is the image: its command line gives the address itself,
