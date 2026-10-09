@@ -2580,8 +2580,9 @@ program: it turns on its software interrupt in \code{mie} and waits in
 \code{msip}, it clears that, reads where to start and with what, empties
 its instruction cache with \code{fence.i}, since the first hart has just
 written the code, and jumps; a program that is done jumps back to zero.
-Its external interrupts are the controller's third and fourth targets;
-the debug module does not see it yet.
+Its external interrupts are the controller's third and fourth targets.
+The debug module does not serve it yet: selected, it reads as a hart
+that does not exist, so a debugger finds one hart.
 \code{//cpu/vreteno:board\_test} starts it twice at one address with
 different code, which needs that \code{fence.i}; has both harts add a
 hundred times each to one counter with \code{amoadd.w} and to another
@@ -2734,8 +2735,14 @@ the module through its register file's lent ports, or a CSR, which
 it reads through its CSR read and writes only for \code{dpc} and
 \code{dcsr}. A command while the core runs is \code{cmderr}~4, an
 unsupported one 2, one while another is in flight 1, and a command
-under a standing error is ignored, as the specification says. There
-is no program buffer. The specification's system bus access,
+under a standing error is ignored, as the specification says. The
+module serves hart 0 alone (issue~\#1408). It keeps ten bits of
+\code{hartsello} and reads them back, so a debugger finds how wide the
+selection is. With any other hart selected, \code{dmstatus} says only
+that the hart does not exist, a halt or resume request written for it
+does not reach hart 0, and a command for it is \code{cmderr}~4.
+OpenOCD's scan of the harts therefore ends at hart 1, and it reports
+one hart. There is no program buffer. The specification's system bus access,
 \code{sbcs}, \code{sbaddress0} and \code{sbdata0}, is served beside
 the module by the transport's bridge, where the bus master is
 (Section~\ref{sec:v-dtm}); a debugger on the board's own bus, as the
