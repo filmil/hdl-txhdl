@@ -970,6 +970,101 @@ vreteno_flat(
     program = ":ico_gl_diag_hdmi",
 )
 
+# The three GL programs with the scanout asking two rows ahead (#1523),
+# for the board to show them beside the same programs asking one.
+rust_binary(
+    name = "ico_gl_ahead_hdmi",
+    srcs = [
+        "ico_gl.rs",
+        "ico_hdmi.rs",
+        "ico_list.rs",
+    ],
+    compile_data = ["vreteno_ram.ld"],
+    crate_root = "ico_hdmi.rs",
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS + [
+        "--cfg=gl",
+        "--cfg=ahead",
+    ],
+    tags = ["manual"],
+    deps = [
+        "//cpu/vreteno/rust/hal:vreteno_hal",
+        "//cpu/vreteno/rust/regs:vreteno_regs",
+        "//gles",
+        "//gpu/razboj:tile",
+        "//lib/logo:txhdl_logo",
+    ],
+)
+
+vreteno_flat(
+    name = "ico_gl_ahead_hdmi_bin",
+    platform = ":vreteno",
+    program = ":ico_gl_ahead_hdmi",
+)
+
+rust_binary(
+    name = "ico_tex_ahead_hdmi",
+    srcs = [
+        "ico_gl.rs",
+        "ico_hdmi.rs",
+        "ico_list.rs",
+    ],
+    compile_data = ["vreteno_ram.ld"],
+    crate_root = "ico_hdmi.rs",
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS + [
+        "--cfg=gl",
+        "--cfg=tex",
+        "--cfg=ahead",
+    ],
+    tags = ["manual"],
+    deps = [
+        "//cpu/vreteno/rust/hal:vreteno_hal",
+        "//cpu/vreteno/rust/regs:vreteno_regs",
+        "//gles",
+        "//gpu/razboj:tile",
+        "//lib/logo:txhdl_logo",
+    ],
+)
+
+vreteno_flat(
+    name = "ico_tex_ahead_hdmi_bin",
+    platform = ":vreteno",
+    program = ":ico_tex_ahead_hdmi",
+)
+
+rust_binary(
+    name = "ico_mip_ahead_hdmi",
+    srcs = [
+        "ico_gl.rs",
+        "ico_hdmi.rs",
+        "ico_list.rs",
+    ],
+    compile_data = ["vreteno_ram.ld"],
+    crate_root = "ico_hdmi.rs",
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS + [
+        "--cfg=gl",
+        "--cfg=tex",
+        "--cfg=mip",
+        "--cfg=ahead",
+    ],
+    tags = ["manual"],
+    deps = [
+        "//cpu/vreteno/rust/hal:vreteno_hal",
+        "//cpu/vreteno/rust/regs:vreteno_regs",
+        "//gles",
+        "//gpu/razboj:tile",
+        "//lib/logo:txhdl_logo",
+    ],
+)
+
+vreteno_flat(
+    name = "ico_mip_ahead_hdmi_bin",
+    platform = ":vreteno",
+    program = ":ico_mip_ahead_hdmi",
+)
+
 # One frame of the textured icosahedron worked out on the host, as a
 # PNG: the GL list rendered through Razboj's model with the texture's
 # room as its memory, and the logo laid in.

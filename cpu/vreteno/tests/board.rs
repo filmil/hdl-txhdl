@@ -492,9 +492,21 @@ struct Net<'a> {
 /// [`SCAN_LINE`], so a line has as long to arrive as on the board
 /// (issue 1209). From the reset it has no base, as on the board after
 /// every reset; at `show_at` a program gives it `base`.
+#[derive(Default)]
 struct Scan {
     base: u32,
     show_at: u64,
+    /// The pair asks for lines two rows ahead (issue 1523).
+    two: bool,
+    /// A stall of the memory: from the board's taking the request for
+    /// the line counted first, for the cycles counted second, no word of
+    /// the scanout's leaves the board, as if its reads waited that long.
+    stall: Option<(usize, u64)>,
+    /// A second frame: from the first frame shown, a program moves the
+    /// base between `base` and this one in the middle of every frame,
+    /// as the demos flip their two buffers, for the pair to take at the
+    /// next vertical sync.
+    flip: Option<u32>,
 }
 
 /// The run's line in the board's cycles: 800 columns of the pixel clock,
@@ -547,7 +559,21 @@ struct ScanLog {
     /// Razboj's tile, and its tiles, when the scanout was shown and when
     /// the run ended: whether it drew while the scanout was watched.
     razboj_tile: [(u32, u32); 2],
+    /// What the pair said at the end: the longest a line took to come
+    /// whole, in pixels, and how many lines were late at their rows
+    /// (issue 1523).
+    worst: u32,
+    lates: u32,
+    /// The first pixel of every visible row shown, with the cycle, its
+    /// row and the base the pair took at the last vertical sync: what
+    /// says the pair shows each row's own line, from its own frame.
+    firsts: Vec<(u64, u32, u32, u32)>,
 }
+
+/// The words the flagship's crossing holds: two lines and room to
+/// spare, so a pair asking two rows ahead never fills it and holds up
+/// the bus's one stream of read data (issue 1523).
+const SCAN_CDC_WORDS: usize = 2048;
 
 fn run_all(
     text: &[u32],
@@ -601,13 +627,20 @@ fn run_all_in<const LO: usize, const HI: usize>(
     let (starved_o, starved) = signal::<Bit, Pix>();
     let (stuck_o, stuck) = signal::<Bit, Pix>();
     let (stuck_at_o, stuck_at) = signal::<U<32>, Pix>();
+    let (worst_o, worst) = signal::<U<16>, Pix>();
+    let (lates_o, lates) = signal::<U<16>, Pix>();
+    let (two_o, two) = signal::<Bit, Pix>();
     // The raster, as `txhdl_parts::hdmi::Raster` counts, a column a
     // pixel: the column and row the pair is shown next.
     let (mut hc, mut vc) = (0u32, 0u32);
+    // The base given to the pair, and the one it took at the last
+    // vertical sync.
+    let (mut given, mut taken) = (0u32, 0u32);
     let mut pair = ScanPair::<LO, HI>::default();
     base_o.set(U::<32>::from(0u32));
     clear_o.set(Bit::Zero);
     show_o.set(Bit::Zero);
+    two_o.set(Bit::from_bool(scan.as_ref().is_some_and(|s| s.two)));
     let mut scan_log = ScanLog::default();
     let mut scan_got = 0usize;
     let mut scan_words_in = 0u64;
@@ -858,8 +891,11 @@ fn run_all_in<const LO: usize, const HI: usize>(
     let mut sim = Running::new(join2(
         board,
         pair.run(
-            (pair_inp, col, vis, line, row, frame, base, clear, show),
-            (pix_o, pair_req, starved_o, stuck_o, stuck_at_o),
+            (pair_inp, col, vis, line, row, frame, base, clear, show, two),
+            (
+                pix_o, pair_req, starved_o, stuck_o, stuck_at_o, worst_o,
+                lates_o,
+            ),
         ),
     ));
     rst_o.set(Bit::One);
@@ -1021,6 +1057,8 @@ fn run_all_in<const LO: usize, const HI: usize>(
             if starved.get().to_bool() && scan_log.starved.is_none() {
                 scan_log.starved = Some(cycle);
             }
+            scan_log.worst = worst.get().raw() as u32;
+            scan_log.lates = lates.get().raw() as u32;
             if stuck.get().to_bool() && scan_log.stuck.is_none() {
                 scan_log.stuck = Some((cycle, stuck_at.get().raw() as u32));
             }
@@ -1038,6 +1076,7 @@ fn run_all_in<const LO: usize, const HI: usize>(
                 (r_tile.get().raw() as u32, r_tiles.get().raw() as u32);
             if cycle == s.show_at || Some(cycle) == shown_again {
                 base_o.set(U::<32>::from(s.base));
+                given = s.base;
                 show_o.set(Bit::One);
             }
             if reset_from == Some(cycle) {
@@ -1046,15 +1085,22 @@ fn run_all_in<const LO: usize, const HI: usize>(
             }
             // The pair's requests to the board, and the board's words
             // to the pair, through the flagship's crossing: `chan_cdc`'s
-            // FIFOs, of 4 requests and 1024 words, which nothing resets
-            // (issue 1317). A line has come, for the log, when its last
-            // word is in the crossing, as the board sent it.
+            // FIFOs, of 4 requests and `SCAN_CDC_WORDS` words, which
+            // nothing resets (issue 1317). A line has come, for the log,
+            // when its last word is in the crossing, as the board sent
+            // it. In a stall no word leaves the board.
             if req_cdc.len() < 4 {
                 if let Some(at) = pair_req_rx.recv_if(true) {
                     req_cdc.push_back(at);
                 }
             }
-            if words_cdc.len() < 1024 {
+            let stalled = s.stall.is_some_and(|(line, n)| {
+                scan_log
+                    .lines
+                    .get(line)
+                    .is_some_and(|l| cycle >= l.1 && cycle < l.1 + n)
+            });
+            if words_cdc.len() < SCAN_CDC_WORDS && !stalled {
                 if let Some(w) = scan_words_rx.recv_if(true) {
                     words_cdc.push_back(w);
                     scan_words_in += 1;
@@ -1082,13 +1128,23 @@ fn run_all_in<const LO: usize, const HI: usize>(
                         pair_inp_tx.send(w);
                     }
                 }
-                // The pixel shown for the column before this one.
-                let shown = (hc + SCAN_COLS - 1) % SCAN_COLS;
-                let shown_vc = if hc == 0 {
+                // The pixel on show is the pair's for the column two
+                // before this one: a pixel to name the column, and one
+                // for the pair's register.
+                let shown = (hc + SCAN_COLS - 2) % SCAN_COLS;
+                let shown_vc = if hc < 2 {
                     (vc + SCAN_ROWS - 1) % SCAN_ROWS
                 } else {
                     vc
                 };
+                if shown == 0 && shown_vc < SCAN_VIS_ROWS && cycle > s.show_at {
+                    scan_log.firsts.push((
+                        cycle,
+                        shown_vc,
+                        pix.get().raw() as u32,
+                        taken,
+                    ));
+                }
                 if shown < SCAN_VIS_COLS
                     && shown_vc < SCAN_VIS_ROWS
                     && pix.get().raw() as u32 == txhdl_parts::scanout::LATE
@@ -1107,6 +1163,17 @@ fn run_all_in<const LO: usize, const HI: usize>(
                 line_o.set(Bit::from_bool(hc == 0));
                 row_o.set(U::<12>::from(vc));
                 frame_o.set(Bit::from_bool(hc == 0 && vc == SCAN_VIS_ROWS));
+                if hc == 0 && vc == SCAN_VIS_ROWS {
+                    taken = given;
+                }
+                // A flip in the middle of the frame, taken at the next
+                // vertical sync.
+                if let Some(other) = s.flip {
+                    if hc == 0 && vc == 1 && cycle > s.show_at {
+                        given = if given == s.base { other } else { s.base };
+                        base_o.set(U::<32>::from(given));
+                    }
+                }
                 if h_last {
                     vc = (vc + 1) % SCAN_ROWS;
                 }
@@ -1168,6 +1235,7 @@ fn the_scanout_shows_a_base_given_after_the_reset() {
         scan: Some(Scan {
             base: 0x4100_1000,
             show_at: 3 * frame,
+            ..Scan::default()
         }),
         ..Net::default()
     };
@@ -1218,6 +1286,7 @@ fn the_first_line_is_the_bases_wherever_in_the_frame_it_is_shown() {
             scan: Some(Scan {
                 base: 0x4100_1000,
                 show_at,
+                ..Scan::default()
             }),
             ..Net::default()
         };
@@ -1252,6 +1321,7 @@ fn a_base_outside_the_memory_is_never_fetched() {
         scan: Some(Scan {
             base: 0x3000,
             show_at: frame,
+            ..Scan::default()
         }),
         ..Net::default()
     };
@@ -2958,6 +3028,7 @@ fn a_line_that_never_comes_is_stuck() {
         scan: Some(Scan {
             base: 0x3200,
             show_at: frame,
+            ..Scan::default()
         }),
         ..Net::default()
     };
@@ -3095,6 +3166,7 @@ fn the_scanout_keeps_up_with_the_boards_load() {
             scan: Some(Scan {
                 base: 0x4200_0000,
                 show_at: 6 * SCAN_LINE,
+                ..Scan::default()
             }),
             ..Net::default()
         };
@@ -3232,6 +3304,7 @@ fn the_scanout_against_a_trilinear_floor() {
         scan: Some(Scan {
             base: 0x4200_0000,
             show_at: planned,
+            ..Scan::default()
         }),
         ..Net::default()
     };
@@ -3270,6 +3343,148 @@ fn the_scanout_against_a_trilinear_floor() {
     );
 }
 
+/// A read of the scanout's that stalls for 4000 cycles, longer than a
+/// row, from the moment its line is asked for (issue 1523). Asked one
+/// row ahead, the line has a row, 3200 cycles, to come: it comes after
+/// its row has begun, and since the pair takes a word a pixel, as the
+/// beam reads them, it never catches up, and the whole row shows
+/// `LATE`, as the board's recordings showed rows from a burst on. Its
+/// words then take the pair a row to drain, so the next row's line,
+/// behind them in the crossing, is late too: two rows `LATE`, and four
+/// lines not whole when their rows began, two of which kept ahead of
+/// the beam. Asked two rows ahead, the line has two rows, the stall is
+/// over before it is due, and no column starves: the line is whole some
+/// 40 pixels into its row, ahead of the beam all the way, which the
+/// pair still counts as late. The pair says how long the slow one took.
+/// Each row's first word names its row, so the rows are seen to show
+/// their own lines either way.
+#[test]
+fn a_stalled_read_is_late_one_row_ahead_and_not_two() {
+    // Each row's first word says its row, so the rows shown can be
+    // checked against the lines they came from.
+    let mark = |row: u32| 0x00a0_0000 | row;
+    let plan: Vec<Op> = (0..SCAN_VIS_ROWS)
+        .map(|row| Op::Write(0x4200_0000 + 4096 * row, mark(row)))
+        .collect();
+    for two in [false, true] {
+        let net = Net {
+            scan: Some(Scan {
+                base: 0x4200_0000,
+                show_at: 6 * SCAN_LINE,
+                two,
+                stall: Some((8, 4000)),
+                ..Scan::default()
+            }),
+            ..Net::default()
+        };
+        let ran = run_all(
+            hello_program::TEXT,
+            hello_program::DATA,
+            b"",
+            &[],
+            30 * SCAN_LINE,
+            net,
+            &plan,
+        );
+        let (max, _, _, n) = line_times(&ran.scan);
+        // The rows from the first the pair asked a line for.
+        let first = ran.scan.lines.first().map_or(u64::MAX, |l| l.1);
+        let shown: Vec<_> = ran
+            .scan
+            .firsts
+            .iter()
+            .filter(|&&(at, _, p, _)| {
+                at > first && p != txhdl_parts::scanout::LATE
+            })
+            .collect();
+        assert!(shown.len() >= 10, "rows shown: {:x?}", ran.scan.firsts);
+        for &&(_, row, p, _) in &shown {
+            assert_eq!(p, mark(row), "row {row} showed another's line");
+        }
+        eprintln!(
+            "stall, {} ahead: {n} lines, longest {max} cycles, the pair's \
+             longest {} pixels, {} late, rows LATE {:?}",
+            if two { "two" } else { "one" },
+            ran.scan.worst,
+            ran.scan.lates,
+            ran.scan.late_rows,
+        );
+        assert!(n >= 12, "only {n} lines came");
+        assert!(max > 4000, "the stalled line took {max} cycles");
+        assert!(4 * ran.scan.worst > 4000, "the pair's longest line");
+        if two {
+            assert_eq!(ran.scan.lates, 1, "two ahead, the late lines");
+            assert!(ran.scan.late_rows.is_empty(), "two ahead, rows LATE");
+            assert_eq!(ran.scan.starved, None, "two ahead, a column starved");
+        } else {
+            assert_eq!(ran.scan.lates, 4, "one ahead, the late lines");
+            assert_eq!(ran.scan.late_rows.len(), 2, "one ahead, rows LATE");
+            for &(_, from, cols) in &ran.scan.late_rows {
+                assert!(from == 0 && cols == 640, "a row from {from}");
+            }
+        }
+    }
+}
+
+/// The demos' two buffers, flipped in the middle of every frame and
+/// taken at the next vertical sync (issue 1523): one row ahead and two,
+/// every row shows its own line from the frame the pair took last. On
+/// the board, two rows ahead showed one frame for ever.
+#[test]
+fn a_flipped_frame_is_shown_one_row_ahead_and_two() {
+    let (a, b) = (0x4200_0000u32, 0x4220_0000u32);
+    let mark = |base: u32, row: u32| (base >> 12) | row;
+    let plan: Vec<Op> = [a, b]
+        .iter()
+        .flat_map(|&base| {
+            (0..SCAN_VIS_ROWS)
+                .map(move |row| Op::Write(base + 4096 * row, mark(base, row)))
+        })
+        .collect();
+    for two in [false, true] {
+        let net = Net {
+            scan: Some(Scan {
+                base: a,
+                show_at: 6 * SCAN_LINE,
+                two,
+                flip: Some(b),
+                ..Scan::default()
+            }),
+            ..Net::default()
+        };
+        let ran = run_all(
+            hello_program::TEXT,
+            hello_program::DATA,
+            b"",
+            &[],
+            40 * SCAN_LINE,
+            net,
+            &plan,
+        );
+        let first = ran.scan.lines.first().map_or(u64::MAX, |l| l.1);
+        // From the second frame the pair asked for, whose base is one a
+        // sync took.
+        let shown: Vec<_> = ran
+            .scan
+            .firsts
+            .iter()
+            .filter(|&&(at, _, _, _)| at > first + 6 * SCAN_LINE)
+            .collect();
+        eprintln!(
+            "flip, {} ahead: {:x?}",
+            if two { "two" } else { "one" },
+            shown
+        );
+        assert!(shown.len() >= 12, "rows shown: {}", shown.len());
+        let bases: std::collections::HashSet<u32> =
+            shown.iter().map(|r| r.3).collect();
+        assert_eq!(bases.len(), 2, "both buffers were taken");
+        for &&(_, row, p, base) in &shown {
+            assert_eq!(p, mark(base, row), "row {row} of {base:#x}");
+        }
+    }
+}
+
 /// The serial line's reset, in the flagship's cycles: a pulse of
 /// 100 000, from the count of 2 000 000 to 2 100 000 in
 /// `flagship/board/flagship.v`.
@@ -3296,6 +3511,7 @@ fn the_bus_answers_after_a_reset_in_the_middle_of_its_load() {
             scan: Some(Scan {
                 base: 0x4200_0000,
                 show_at: 6 * SCAN_LINE,
+                ..Scan::default()
             }),
             reset_at: Some((from, BRK_PULSE)),
             ..Net::default()
@@ -3412,6 +3628,7 @@ fn a_core_load_waits_behind_the_scanout() {
     let beside = longest(Some(Scan {
         base: 0x4200_0000,
         show_at: SCAN_LINE,
+        ..Scan::default()
     }));
     eprintln!(
         "a core load waits at most {alone} cycles alone, {beside} beside \
@@ -3587,6 +3804,7 @@ fn a_burst_over_the_unserved_remote_does_not_hold_the_serial_port() {
             scan: Some(Scan {
                 base: 0x3000,
                 show_at: frame,
+                ..Scan::default()
             }),
             video: true,
             serve,

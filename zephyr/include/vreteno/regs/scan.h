@@ -10,6 +10,10 @@
 #define SCAN_CTRL_SCAN_MASK 0x1
 #define SCAN_CTRL_SCAN_WIDTH 1
 #define SCAN_CTRL_SCAN_RESET 0x0
+#define SCAN_CTRL_AHEAD_SHIFT 1 /* read, write: lines asked two rows ahead, from the next frame */
+#define SCAN_CTRL_AHEAD_MASK 0x2
+#define SCAN_CTRL_AHEAD_WIDTH 1
+#define SCAN_CTRL_AHEAD_RESET 0x0
 #define SCAN_STATUS 0x08 /* read only: how the scanout has kept up */
 #define SCAN_STATUS_UNDER_SHIFT 0 /* read only: a column was shown before its word arrived */
 #define SCAN_STATUS_UNDER_MASK 0x1
@@ -19,7 +23,9 @@
 #define SCAN_STATUS_STUCK_MASK 0x2
 #define SCAN_STATUS_STUCK_WIDTH 1
 #define SCAN_STATUS_STUCK_RESET 0x0
-#define SCAN_CLEAR 0x0c /* write only: a write clears the underflow and stuck bits */
+#define SCAN_CLEAR 0x0c /* write only: a write clears the status, the longest line and the count */
 #define SCAN_STUCK_AT 0x10 /* read only: the address of the line that did not come */
+#define SCAN_WORST 0x14 /* read only: the longest a line took to come whole, in pixels */
+#define SCAN_LATES 0x18 /* read only: how many lines had not come whole when their rows began */
 
 #endif

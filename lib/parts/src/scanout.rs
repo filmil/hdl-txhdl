@@ -152,6 +152,38 @@ pub struct LinePair<
     /// Lines owed whose time has passed: their words are dropped rather
     /// than written where another line's go (issue 1233).
     pub behind: Reg<U<3>, C>,
+    /// Lines asked for whose rows have not begun (issue 1523).
+    pub ahead: Reg<U<3>, C>,
+    /// Lines are asked for two rows ahead rather than one, as `two`
+    /// said at the last vertical sync.
+    pub two_ahead: Reg<Bit, C>,
+    /// A count of the pixel clock's edges, which a line's time is
+    /// measured in.
+    pub tick: Reg<U<16>, C>,
+    /// The row each line owed is for, oldest first: two rows ahead, a
+    /// line's words wait in the crossing until the row before its own,
+    /// whose half is the one it is shown from.
+    pub g0: Reg<U<12>, C>,
+    /// The next oldest's.
+    pub g1: Reg<U<12>, C>,
+    /// The third's.
+    pub g2: Reg<U<12>, C>,
+    /// The fourth's.
+    pub g3: Reg<U<12>, C>,
+    /// The tick each line owed was asked for at, oldest first.
+    pub t0: Reg<U<16>, C>,
+    /// The next oldest's.
+    pub t1: Reg<U<16>, C>,
+    /// The third's.
+    pub t2: Reg<U<16>, C>,
+    /// The fourth's.
+    pub t3: Reg<U<16>, C>,
+    /// The longest any line took from being asked for to its last
+    /// word, in pixels. Kept until cleared.
+    pub longest: Reg<U<16>, C>,
+    /// How many lines had not come whole when their rows began. Kept
+    /// until cleared, and stops at its largest.
+    pub late_lines: Reg<U<16>, C>,
 }
 // end{pair}
 
@@ -192,6 +224,19 @@ impl<
             hung_at: Reg::default(),
             late: Reg::default(),
             behind: Reg::default(),
+            ahead: Reg::default(),
+            two_ahead: Reg::default(),
+            tick: Reg::default(),
+            g0: Reg::default(),
+            g1: Reg::default(),
+            g2: Reg::default(),
+            g3: Reg::default(),
+            t0: Reg::default(),
+            t1: Reg::default(),
+            t2: Reg::default(),
+            t3: Reg::default(),
+            longest: Reg::default(),
+            late_lines: Reg::default(),
         }
     }
 }
@@ -211,7 +256,7 @@ impl<
 {
     async fn run(
         &mut self,
-        (inp, col, vis, line, row, frame, base, clear, show): (
+        (inp, col, vis, line, row, frame, base, clear, show, two): (
             Rx<U<32>, C>,
             In<U<AW>, C>,
             In<Bit, C>,
@@ -221,13 +266,16 @@ impl<
             In<U<32>, C>,
             In<Bit, C>,
             In<Bit, C>,
+            In<Bit, C>,
         ),
-        (pix, req, starved, stuck, stuck_at): (
+        (pix, req, starved, stuck, stuck_at, worst, lates): (
             Out<U<32>, C>,
             Tx<U<32>, C>,
             Out<Bit, C>,
             Out<Bit, C>,
             Out<U<32>, C>,
+            Out<U<16>, C>,
+            Out<U<16>, C>,
         ),
     ) {
         loop {
@@ -239,13 +287,34 @@ impl<
             starved.set(self.under.get());
             stuck.set(self.hung.get());
             stuck_at.set(self.hung_at.get());
-            // A word is taken whenever one is offered: the pair is
-            // what the fetch is backpressured by, and a line longer
-            // than `LEN` loses its tail rather than stalling.
-            let take = Bit::from(inp.peek().is_some());
-            let word = inp.recv_if(true).unwrap_or_default();
+            worst.set(self.longest.get());
+            lates.set(self.late_lines.get());
             let w = self.wsel.get();
             let at = self.at.get();
+            // A word is taken whenever one is offered, one row ahead:
+            // the pair is what the fetch is backpressured by, and a line
+            // longer than `LEN` loses its tail rather than stalling. Two
+            // rows ahead, a line's words wait in the crossing until the
+            // row before its own, when the half filling is the one its
+            // row is shown from (issue 1523). The halves change places at
+            // every row's start, the blanking's too.
+            let r_now = row.get();
+            let after = r_now + U::<12>::from(1u8);
+            let next_row = mux(
+                after == U::<12>::from(TOTAL as u32),
+                U::<12>::from(0u8),
+                after,
+            );
+            // A word taken at the edge a row starts on belongs to the
+            // half just filled, the starting row's, as below.
+            let fills = mux(line.get(), r_now, next_row);
+            let waits = self.two_ahead.get()
+                & !self.late.get()
+                & (self.behind.get() == U::<3>::from(0u8))
+                & (self.owing.get() != U::<3>::from(0u8))
+                & (self.g0.get() != fills);
+            let take = Bit::from(inp.peek().is_some()) & !waits;
+            let word = inp.recv_if(!waits.to_bool()).unwrap_or_default();
             // Where a word goes (issue 1233). A word of a line whose
             // time has passed is dropped; one of the line being shown,
             // which started before it came whole, goes into the half the
@@ -282,19 +351,29 @@ impl<
             // A column shown before its word arrived.
             let starve =
                 self.armed.get() & vis.get() & (c.resize::<16>() >= got);
-            let r = row.get();
-            let last = r == U::<12>::from((TOTAL - 1) as u32);
+            let r = r_now;
+            // The row a line start asks for: the next, or two rows on
+            // when the pair asks two ahead (issue 1523), which a host
+            // turns on and off for the frame after the vertical sync.
+            // Two rows ahead a line has a whole row longer to come, and
+            // the crossing holds it until its half is free.
+            let two_now = mux(frame.get(), two.get(), self.two_ahead.get());
+            let d = mux(two_now, U::<12>::from(2u8), U::<12>::from(1u8));
+            let total = U::<12>::from(TOTAL as u32);
+            let on_row = r + d;
+            let target = mux(on_row >= total, on_row - total, on_row);
             // Nothing is asked for until the pair is shown, and then the
             // frame's first line first, from the base a host gave it:
             // out of a reset the next address is zero, and memory there
             // is the boot memory, which answers a line's burst with one
             // beat and hangs the fetch for good (issue 1178).
             let on = show.get();
-            let ask_first = l & last & on;
+            let first_row = target == U::<12>::from(0u8);
+            let ask_first = l & first_row & on;
             let ask_next = l
-                & !last
+                & !first_row
                 & self.armed.get()
-                & (r + 1 < U::<12>::from(ROWS as u32));
+                & (target < U::<12>::from(ROWS as u32));
             // At most four lines are owed at once, which a fetch that
             // keeps up never comes near: it is one line ahead.
             let owing = self.owing.get();
@@ -307,7 +386,13 @@ impl<
             // and the fetch walked into the boot memory and the serial
             // port (issue 1317). Once armed, frames take the base at the
             // sync, so a host still flips with one write.
-            let first_at = mux(self.armed.get(), self.fbase.get(), base.get());
+            // Two rows ahead, the first line may be asked at the very
+            // edge the base is taken at, so the base is read through.
+            let first_at = mux(
+                self.armed.get() & !frame.get(),
+                self.fbase.get(),
+                base.get(),
+            );
             let addr = mux(ask_first, first_at, self.next.get());
             let stride = U::<32>::from(STRIDE as u32);
             // A line outside the frame's memory is not asked for (issue
@@ -352,13 +437,55 @@ impl<
             );
             let owing_next =
                 owing + mux(asked, one, none) - mux(whole, one, none);
+            // When each line owed was asked for, kept beside its address,
+            // and the longest a line took to come whole (issue 1523).
+            let tick = self.tick.get();
+            let (q0, q1, q2, q3) =
+                (self.t0.get(), self.t1.get(), self.t2.get(), self.t3.get());
+            let (h0, h1, h2, h3) =
+                (self.g0.get(), self.g1.get(), self.g2.get(), self.g3.get());
+            let e0 = mux(asked & (pos == none), target, mux(whole, h1, h0));
+            let e1 = mux(asked & (pos == one), target, mux(whole, h2, h1));
+            let e2 = mux(
+                asked & (pos == U::<3>::from(2u8)),
+                target,
+                mux(whole, h3, h2),
+            );
+            let e3 = mux(
+                asked & (pos == U::<3>::from(3u8)),
+                target,
+                mux(whole, U::<12>::from(0u8), h3),
+            );
+            let m0 = mux(asked & (pos == none), tick, mux(whole, q1, q0));
+            let m1 = mux(asked & (pos == one), tick, mux(whole, q2, q1));
+            let m2 = mux(
+                asked & (pos == U::<3>::from(2u8)),
+                tick,
+                mux(whole, q3, q2),
+            );
+            let m3 = mux(
+                asked & (pos == U::<3>::from(3u8)),
+                tick,
+                mux(whole, U::<16>::from(0u8), q3),
+            );
+            let took = tick - q0;
+            let longer = whole & (took > self.longest.get());
+            // A visible row begins, and the line asked for it is due.
+            let starts =
+                l & self.armed.get() & (r < U::<12>::from(ROWS as u32));
+            let ahead = self.ahead.get();
+            let still = mux(starts & (ahead != none), ahead - one, ahead);
             // At a line's start, the lines still owed once this step's
-            // word is counted: none is on time; one is the line about to
-            // be shown, late; more are that line and lines whose time
-            // has passed, whose words are dropped.
+            // word is counted, less those asked for rows still to come:
+            // none is on time; one is the line about to be shown, late;
+            // more are that line and lines whose time has passed, whose
+            // words are dropped.
             let k = owing - mux(whole, one, none);
-            let late_now = k != none;
-            let behind_now = mux(k > one, k - one, none);
+            let late_now = k > still;
+            let behind_now = mux(k > still + one, k - still - one, none);
+            let n_late = self.late_lines.get();
+            let counted_late =
+                starts & late_now & (n_late != U::<16>::from(0xffffu32));
             let behind = self.behind.get();
             let heard = self.heard.get() | take;
             let quiet = self.quiet.get();
@@ -413,6 +540,24 @@ impl<
                 l ? {
                     late: late_now,
                     behind: behind_now,
+                },
+                tick: tick + 1,
+                g0: e0,
+                g1: e1,
+                g2: e2,
+                g3: e3,
+                t0: m0,
+                t1: m1,
+                t2: m2,
+                t3: m3,
+                ahead: still + mux(due, one, none),
+                !on ? ahead: none,
+                frame.get() ? two_ahead: two.get(),
+                longer ? longest: took,
+                counted_late ? late_lines: n_late + 1,
+                clear.get() ? {
+                    longest: U::<16>::from(0u8),
+                    late_lines: U::<16>::from(0u8),
                 },
             });
             if asked.to_bool() {
@@ -484,13 +629,16 @@ regmap! { scan (scan_read, scan_we), 3: [
     (0, base, rw, "the byte the next frame starts at in memory"),
     (1, ctrl, rw, "what the screen shows", [
         (scan, 0, 1, rw, 0, "the scanout when set, the framebuffer when clear"),
+        (ahead, 1, 1, rw, 0, "lines asked two rows ahead, from the next frame"),
     ]),
     (2, status, ro, "how the scanout has kept up", [
         (under, 0, 1, ro, 0, "a column was shown before its word arrived"),
         (stuck, 1, 1, ro, 0, "a line asked for got no word for two line times"),
     ]),
-    (3, clear, wo, "a write clears the underflow and stuck bits"),
+    (3, clear, wo, "a write clears the status, the longest line and the count"),
     (4, stuck_at, ro, "the address of the line that did not come"),
+    (5, worst, ro, "the longest a line took to come whole, in pixels"),
+    (6, lates, ro, "how many lines had not come whole when their rows began"),
 ] }
 
 /// What the pair says about how it has kept up, for [`ScanCtl`]: the
@@ -504,6 +652,10 @@ pub struct ScanState {
     pub stuck: Bit,
     /// That line's address.
     pub at: U<32>,
+    /// The longest a line took to come whole, in pixels (issue 1523).
+    pub worst: U<16>,
+    /// How many lines were late when their rows began.
+    pub lates: U<16>,
 }
 // end{regs}
 
@@ -536,6 +688,12 @@ pub struct ScanCtl {
     pub seen_stuck: Reg<Bit>,
     /// The line that did not come, the same way.
     pub seen_at: Reg<U<32>>,
+    /// Ask for lines two rows ahead (issue 1523).
+    pub ahead: Reg<Bit>,
+    /// The longest line, as the channel last said it.
+    pub seen_worst: Reg<U<16>>,
+    /// The count of late lines, the same way.
+    pub seen_lates: Reg<U<16>>,
 }
 // end{ctl}
 
@@ -545,9 +703,10 @@ impl Unit for ScanCtl {
     async fn run(
         &mut self,
         bus: LitePort<32, 32, 4>,
-        (under, base, mode, clear): (
+        (under, base, mode, clear, two): (
             Rx<ScanState>,
             Out<U<32>>,
+            Out<Bit>,
             Out<Bit>,
             Out<Bit>,
         ),
@@ -557,6 +716,7 @@ impl Unit for ScanCtl {
             base.set(self.fbase.get());
             mode.set(self.show.get());
             clear.set(self.clr.get());
+            two.set(self.ahead.get());
             let heard = Bit::from(under.peek().is_some());
             let said = under.head();
             let _ = under.recv_if(heard);
@@ -576,19 +736,26 @@ impl Unit for ScanCtl {
             let word = scan_read(
                 rsel,
                 self.fbase.get(),
-                scan_ctrl_pack(self.show.get()),
+                scan_ctrl_pack(self.show.get(), self.ahead.get()),
                 scan_status_pack(self.seen.get(), self.seen_stuck.get()),
                 U::<32>::from(0u8),
                 self.seen_at.get(),
+                self.seen_worst.get().resize::<32>(),
+                self.seen_lates.get().resize::<32>(),
             );
             with!(self <= {
                 we.bit(0) ? fbase: written,
-                we.bit(1) ? show: scan_ctrl_scan(written),
+                we.bit(1) ? {
+                    show: scan_ctrl_scan(written),
+                    ahead: scan_ctrl_ahead(written),
+                },
                 clr: we.bit(3),
                 heard ? {
                     seen: said.under,
                     seen_stuck: said.stuck,
                     seen_at: said.at,
+                    seen_worst: said.worst,
+                    seen_lates: said.lates,
                 },
             });
             if rgo.to_bool() {
@@ -616,7 +783,13 @@ pub struct ScanTap {}
 impl Unit for ScanTap {
     async fn run(
         &mut self,
-        (starved, stuck, at): (In<Bit>, In<Bit>, In<U<32>>),
+        (starved, stuck, at, worst, lates): (
+            In<Bit>,
+            In<Bit>,
+            In<U<32>>,
+            In<U<16>>,
+            In<U<16>>,
+        ),
         tap: Tx<ScanState>,
     ) {
         loop {
@@ -626,6 +799,8 @@ impl Unit for ScanTap {
                     under: starved.get(),
                     stuck: stuck.get(),
                     at: at.get(),
+                    worst: worst.get(),
+                    lates: lates.get(),
                 });
             }
         }
@@ -851,6 +1026,9 @@ impl<
         let (starved_o, starved) = signal::<Bit, DefaultClock>();
         let (stuck_o, stuck) = signal::<Bit, DefaultClock>();
         let (stuck_at_o, stuck_at) = signal::<U<32>, DefaultClock>();
+        let (worst_o, worst) = signal::<U<16>, DefaultClock>();
+        let (lates_o, lates) = signal::<U<16>, DefaultClock>();
+        let (two_o, two) = signal::<Bit, DefaultClock>();
         let (tap_tx, tap_rx) = chan::<ScanState, DefaultClock>();
         let (hrgb_o, hrgb) = signal::<U<24>, DefaultClock>();
         let (hhs_o, hhs) = signal::<Bit, DefaultClock>();
@@ -877,17 +1055,24 @@ impl<
                             b: hi_b_tx,
                             r: hi_r_tx,
                         },
-                        (tap_rx, base_o, mode_o, clear_o),
+                        (tap_rx, base_o, mode_o, clear_o, two_o),
                     ),
                     self.pair.run(
-                        (words, col, vis, line, row, frame, base, clear, show),
-                        (pix_o, req, starved_o, stuck_o, stuck_at_o),
+                        (
+                            words, col, vis, line, row, frame, base, clear,
+                            show, two,
+                        ),
+                        (
+                            pix_o, req, starved_o, stuck_o, stuck_at_o,
+                            worst_o, lates_o,
+                        ),
                     ),
                 ),
             ),
             join2(
                 join2(
-                    self.tap.run((starved, stuck, stuck_at), tap_tx),
+                    self.tap
+                        .run((starved, stuck, stuck_at, worst, lates), tap_tx),
                     self.hdmi.run(
                         LitePort {
                             aw: lo_aw_rx,
@@ -920,6 +1105,152 @@ mod tests {
     use super::*;
     use crate::hdmi::{vga, Raster};
     use txhdl::comp::Running;
+
+    /// `ctrl` reads back as written, both its bits, so a host may set
+    /// one and keep the other (issue 1523): the HAL's `show` and
+    /// `two_ahead` each read `ctrl` and write it back with their own bit
+    /// changed.
+    #[test]
+    fn ctrl_reads_back_as_written() {
+        use crate::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
+        let mut ctl = ScanCtl::default();
+        let (aw_tx, aw) = chan::<LiteAw<32>, DefaultClock>();
+        let (ar_tx, ar) = chan::<LiteAr<32>, DefaultClock>();
+        let (w_tx, w) = chan::<LiteW<32, 4>, DefaultClock>();
+        let (b, b_rx) = chan::<LiteB, DefaultClock>();
+        let (r, r_rx) = chan::<LiteR<32>, DefaultClock>();
+        let (_tap_tx, tap_rx) = chan::<ScanState, DefaultClock>();
+        let (base_o, _base) = signal::<U<32>, DefaultClock>();
+        let (mode_o, mode) = signal::<Bit, DefaultClock>();
+        let (clear_o, _clear) = signal::<Bit, DefaultClock>();
+        let (two_o, two) = signal::<Bit, DefaultClock>();
+        let mut sim = Running::new(ctl.run(
+            LitePort { aw, ar, w, b, r },
+            (tap_rx, base_o, mode_o, clear_o, two_o),
+        ));
+        let at = |word: u32| LiteAw::<32> {
+            addr: U::<32>::from(4 * word),
+            prot: U::<3>::from(0u8),
+        };
+        let write = |sim: &mut Running<_>, word: u32, v: u32| {
+            aw_tx.send(at(word));
+            w_tx.send(LiteW {
+                data: U::<32>::from(v),
+                strb: U::<4>::from(0xfu8),
+            });
+            for _ in 0..20 {
+                sim.cycle();
+                if b_rx.recv_if(true).is_some() {
+                    return;
+                }
+            }
+            panic!("no answer to a write");
+        };
+        let read = |sim: &mut Running<_>, word: u32| -> u32 {
+            ar_tx.send(at(word));
+            for _ in 0..20 {
+                sim.cycle();
+                if let Some(a) = r_rx.recv_if(true) {
+                    return a.data.raw() as u32;
+                }
+            }
+            panic!("no answer to a read");
+        };
+        for v in [1u32, 3, 2, 0, 1] {
+            write(&mut sim, 1, v);
+            for _ in 0..4 {
+                sim.cycle();
+            }
+            assert_eq!(read(&mut sim, 1), v, "ctrl after writing {v}");
+            assert_eq!(mode.get().to_bool(), v & 1 == 1, "show for {v}");
+            assert_eq!(two.get().to_bool(), v & 2 == 2, "ahead for {v}");
+        }
+    }
+
+    /// The flagship's frame, 480 rows of 525, its words given as fast as
+    /// the pair takes them, one row ahead and two (issue 1523): from the
+    /// second frame on, no line is late at its row and no column is
+    /// shown before its word, so a late line on the board is a late
+    /// word and not the frame's own shape.
+    #[test]
+    fn a_frame_with_its_words_on_time_has_no_late_line() {
+        type R = Raster<
+            { vga::HV },
+            { vga::HFP },
+            { vga::HSW },
+            { vga::HBP },
+            { vga::VV },
+            { vga::VFP },
+            { vga::VSW },
+            { vga::VBP },
+            10,
+        >;
+        type P = LinePair<
+            { vga::HV },
+            10,
+            { vga::VV },
+            525,
+            4096,
+            0x4000_0000,
+            0x8000_0000,
+            DefaultClock,
+        >;
+        for ahead in [false, true] {
+            let mut raster = R::default();
+            let mut pair = P::default();
+            let (col_o, col) = signal::<U<10>, DefaultClock>();
+            let (vis_o, vis) = signal::<Bit, DefaultClock>();
+            let (line_o, line) = signal::<Bit, DefaultClock>();
+            let (row_o, row) = signal::<U<12>, DefaultClock>();
+            let (frame_o, frame) = signal::<Bit, DefaultClock>();
+            let (base_o, base) = signal::<U<32>, DefaultClock>();
+            let (clear_o, clear) = signal::<Bit, DefaultClock>();
+            let (show_o, show) = signal::<Bit, DefaultClock>();
+            let (pix_o, _pix) = signal::<U<32>, DefaultClock>();
+            let (starved_o, starved) = signal::<Bit, DefaultClock>();
+            let (stuck_o, stuck) = signal::<Bit, DefaultClock>();
+            let (stuck_at_o, _stuck_at) = signal::<U<32>, DefaultClock>();
+            let (worst_o, worst) = signal::<U<16>, DefaultClock>();
+            let (lates_o, lates) = signal::<U<16>, DefaultClock>();
+            let (two_o, two) = signal::<Bit, DefaultClock>();
+            let (words_tx, words) = chan::<U<32>, DefaultClock>();
+            let (req, req_rx) = chan::<U<32>, DefaultClock>();
+            base_o.set(U::<32>::from(0x4100_0000u32));
+            clear_o.set(Bit::Zero);
+            show_o.set(Bit::One);
+            two_o.set(Bit::from_bool(ahead));
+            let mut sim = Running::new(join2(
+                raster.run((), (col_o, vis_o, line_o, row_o, frame_o)),
+                pair.run(
+                    (words, col, vis, line, row, frame, base, clear, show, two),
+                    (
+                        pix_o, req, starved_o, stuck_o, stuck_at_o, worst_o,
+                        lates_o,
+                    ),
+                ),
+            ));
+            let frame_len = 525 * 800;
+            let mut owed = 0usize;
+            for c in 0..3 * frame_len {
+                // The bits are cleared once the first frame is over.
+                clear_o.set(Bit::from_bool(c == frame_len + 1000));
+                if req_rx.recv_if(true).is_some() {
+                    owed += vga::HV;
+                }
+                if owed > 0 && words_tx.ready().to_bool() {
+                    words_tx.send(U::<32>::from(owed as u32));
+                    owed -= 1;
+                }
+                sim.cycle();
+            }
+            let n = lates.get().raw();
+            assert_eq!(n, 0, "two ahead {ahead}: {n} lines late");
+            assert!(!starved.get().to_bool(), "two ahead {ahead}: starved");
+            assert!(!stuck.get().to_bool(), "two ahead {ahead}: stuck");
+            let w = worst.get().raw();
+            assert!(w < 2 * 800 + 640, "two ahead {ahead}: longest {w}");
+        }
+    }
 
     /// The flagship's pair and raster, a line of 640 words in 800
     /// columns: the beam names columns 640 to 799 in the blanking, past
@@ -963,6 +1294,9 @@ mod tests {
         let (starved_o, _starved) = signal::<Bit, DefaultClock>();
         let (stuck_o, _stuck) = signal::<Bit, DefaultClock>();
         let (stuck_at_o, _stuck_at) = signal::<U<32>, DefaultClock>();
+        let (worst_o, _worst) = signal::<U<16>, DefaultClock>();
+        let (lates_o, _lates) = signal::<U<16>, DefaultClock>();
+        let (_two_o, two) = signal::<Bit, DefaultClock>();
         let (words_tx, words) = chan::<U<32>, DefaultClock>();
         let (req, req_rx) = chan::<U<32>, DefaultClock>();
         base_o.set(U::<32>::from(0x4100_0000u32));
@@ -971,8 +1305,8 @@ mod tests {
         let mut sim = Running::new(join2(
             raster.run((), (col_o, vis_o, line_o, row_o, frame_o)),
             pair.run(
-                (words, col, vis, line, row, frame, base, clear, show),
-                (pix_o, req, starved_o, stuck_o, stuck_at_o),
+                (words, col, vis, line, row, frame, base, clear, show, two),
+                (pix_o, req, starved_o, stuck_o, stuck_at_o, worst_o, lates_o),
             ),
         ));
         let mut owed = 0usize;

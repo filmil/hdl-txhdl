@@ -427,6 +427,8 @@ impl Scan {
     const STATUS: usize = map::SCAN + scan::STATUS;
     const CLEAR: usize = map::SCAN + scan::CLEAR;
     const STUCK_AT: usize = map::SCAN + scan::STUCK_AT;
+    const WORST: usize = map::SCAN + scan::WORST;
+    const LATES: usize = map::SCAN + scan::LATES;
 
     /// Columns and rows of a frame, and bytes from one line to the next.
     pub const WIDTH: u32 = 640;
@@ -445,7 +447,23 @@ impl Scan {
 
     /// Show the scanout, or the framebuffer again.
     pub fn show(on: bool) {
-        wr(Self::CTRL, on as u32);
+        let ctrl = rd(Self::CTRL) & !scan::CTRL_SCAN_MASK;
+        wr(Self::CTRL, ctrl | on as u32);
+    }
+
+    /// Ask for lines two rows ahead rather than one, from the next
+    /// frame, so a line has two rows to come rather than one (issue
+    /// 1523).
+    pub fn two_ahead(on: bool) {
+        let ctrl = rd(Self::CTRL) & !scan::CTRL_AHEAD_MASK;
+        wr(Self::CTRL, ctrl | ((on as u32) << scan::CTRL_AHEAD_SHIFT));
+    }
+
+    /// The longest a line has taken from being asked for to its last
+    /// word, in pixels, and how many lines had not come whole when their
+    /// rows began, since the bits were last cleared (issue 1523).
+    pub fn timing() -> (u32, u32) {
+        (rd(Self::WORST), rd(Self::LATES))
     }
 
     /// Whether a column has been shown before its word arrived since
@@ -466,7 +484,8 @@ impl Scan {
         }
     }
 
-    /// Clear the underflow and stuck bits.
+    /// Clear the underflow and stuck bits, the longest line and the
+    /// count of late lines.
     pub fn clear() {
         wr(Self::CLEAR, 1);
     }
