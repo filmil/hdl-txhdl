@@ -98,6 +98,10 @@ pub const REMOTE_WAIT: usize = 100_000_000;
 /// the board's 100 MHz.
 pub const FLASH_DIV: usize = 3;
 
+/// The arbiter's port the scanout's fetch is on, whose reads go ahead
+/// of the round robin (issue 1523). Eight would name none.
+pub const SCAN_PRIO: usize = 4;
+
 // begin{map}
 /// The address map: each range's base and the bits of an address that
 /// must equal it, in the order of the router's ports. The data memory,
@@ -270,7 +274,11 @@ pub struct Board<const DIV: u32> {
     /// The exclusive hold is built (issue 1408): from a host's
     /// exclusive read until its exclusive write, no other host's write
     /// is granted, so an AMO's pair keeps.
-    pub arb: Arbiter<8, 32, 32, 4, 2, 5, 0, 1>,
+    ///
+    /// The scanout's reads go first, [`SCAN_PRIO`] (issue 1523): a line
+    /// has a deadline, and on the board its bursts were late while
+    /// Razboj drew.
+    pub arb: Arbiter<8, 32, 32, 4, 2, 5, 0, 1, SCAN_PRIO>,
     /// The exclusive monitor (issue 1408), between the arbiter and the
     /// router, which every host's writes pass in the order each
     /// peripheral takes them: the reservations of the harts on ports 0
