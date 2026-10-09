@@ -546,11 +546,13 @@ module flagship (
   );
 
   // The scanout's words, to the pixel clock, and its line requests,
-  // back (issue 151). The words' FIFO holds more than a line, 1024
+  // back (issue 151). The words' FIFO holds more than two lines, 2048
   // words, so the bus's read data never waits on the pixel side: the
-  // line pair asks one line ahead and takes a word a pixel, a quarter
-  // of the rate a burst arrives at.
-  chan_cdc #(.W(32), .AW(10)) swords_cdc (
+  // line pair asks one or two lines ahead and takes a word a pixel, a
+  // quarter of the rate a burst arrives at, and two ahead the next
+  // line waits here whole, about 1030 words at the most, while the
+  // pair takes the one before (issue 1523).
+  chan_cdc #(.W(32), .AW(11)) swords_cdc (
     .wr_rst(rst), .rd_rst(pix_rst),
     .wr_clk(clk), .wr_data(swords_data), .wr_valid(swords_valid),
     .wr_ready(swords_ready),
