@@ -73,6 +73,20 @@ rust_test(
     ],
 )
 
+# Fog (#998), through Razboj's model, against floating point: its three
+# modes, a ramp across the window, a point, a clear it leaves alone, and
+# its state.
+rust_test(
+    name = "fog_test",
+    srcs = ["tests/fog.rs"],
+    edition = "2021",
+    deps = [
+        ":gles",
+        "//gpu/razboj",
+        "//gpu/razboj:tile",
+    ],
+)
+
 # The queries (#1484): what each setter leaves, read back through
 # glGetIntegerv, glGetFixedv and glGetBooleanv and converted as GL ES
 # 1.1 says, and the limits the library states.

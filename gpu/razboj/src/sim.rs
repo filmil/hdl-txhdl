@@ -990,18 +990,161 @@ mod tests {
         assert_eq!(changed, 15, "every op but GL_COPY changed the picture");
     }
 
+    /// Fog in tiles (issue 998): flat and shaded triangles and rectangles,
+    /// each with its own fog colour and factors, over a backdrop the tiles
+    /// load, under a blend, an alpha test, a colour mask, depth and a
+    /// scissor box in some rounds, and a clear that fog leaves alone, are
+    /// drawn as the model draws them, byte for byte; and the fog changes
+    /// the picture in every round.
+    #[test]
+    fn fog_in_tiles_is_the_models() {
+        use crate::op::{AlphaTest, BlendMode, DepthMode, Fog, GREATER, LESS};
+        use crate::op::{ONE_MINUS_SRC_ALPHA, SRC_ALPHA};
+        const A: usize = 20;
+        const LOGW: usize = 7;
+        const W: usize = 1 << LOGW;
+        const H: usize = 64;
+        const N: usize = 16384;
+        const DL: usize = 0xa000;
+        const CTRL: usize = 0xfffc;
+        let mut x = 0x6d2b_79f5u32;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x
+        };
+        let backdrop: Vec<Op> = (0..4)
+            .map(|k| Op::Rect {
+                colour: 0x3c_a55au32.wrapping_mul(k + 5) | (k * 0x55) << 24,
+                x: 0,
+                y: k as i32 * 16,
+                w: W as i32,
+                h: 16,
+            })
+            .collect();
+        let first = assemble(&backdrop, W, H);
+        let mut changed = 0;
+        for round in 0..12u32 {
+            let mut ops = vec![
+                Op::Blend((round % 3 == 1).then_some(BlendMode {
+                    src: SRC_ALPHA,
+                    dst: ONE_MINUS_SRC_ALPHA,
+                })),
+                Op::AlphaTest((round % 4 == 2).then_some(AlphaTest {
+                    func: GREATER,
+                    reference: 0x60,
+                })),
+                Op::ColourMask(if round % 5 == 3 { 0b1011 } else { 0xf }),
+                Op::Depth((round % 2 == 1).then_some(DepthMode {
+                    func: LESS,
+                    write: true,
+                })),
+            ];
+            if round % 6 == 4 {
+                ops.push(Op::Scissor {
+                    x: 20,
+                    y: 8,
+                    w: 70,
+                    h: 40,
+                });
+            }
+            if round % 4 == 0 {
+                ops.push(Op::Fog(Some(Fog {
+                    colour: next(),
+                    f: [0, 0, 0],
+                })));
+                ops.push(Op::Clear {
+                    colour: next() | 0x8000_0000,
+                });
+            }
+            for k in 0..5 {
+                let (r, q, s) = (next(), next(), next());
+                ops.push(Op::Fog((k != 3).then_some(Fog {
+                    colour: s,
+                    f: [s >> 24, (s >> 16) & 0xff, (r >> 8) & 0xff],
+                })));
+                let p = |v: u32| {
+                    (
+                        (v % (W as u32 * 16)) as i32 - 64,
+                        ((v >> 12) % (H as u32 * 16)) as i32 - 64,
+                    )
+                };
+                let z = [r & 0xffff, q & 0xffff, (r >> 16) ^ (q >> 16)];
+                let (a, b, c) = (p(r), p(q), p(r ^ q.rotate_left(7)));
+                ops.push(match k {
+                    0 | 3 => Op::TriZ {
+                        colour: q,
+                        a,
+                        b,
+                        c,
+                        z,
+                    },
+                    1 => Op::GouraudZ {
+                        a,
+                        b,
+                        c,
+                        colours: [q, r, q ^ r],
+                        z,
+                    },
+                    2 => Op::Gouraud {
+                        a,
+                        b,
+                        c,
+                        colours: [r, q ^ s, q],
+                    },
+                    _ => Op::Rect {
+                        colour: q,
+                        x: (r % 100) as i32,
+                        y: (q % 40) as i32,
+                        w: 30,
+                        h: 20,
+                    },
+                });
+            }
+            let over = assemble(&ops, W, H);
+            assert!(over.iter().any(|i| i.fog.to_bool()));
+            let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
+                &[Work::tiled(&first, W, H), Work::tiled(&over, W, H)],
+                false,
+                false,
+            );
+            let base = model::render(&first, W, H);
+            let want = model::render_over(&over, W, H, base.clone());
+            let at = want.iter().zip(&runs[1].fb).position(|(p, q)| p != q);
+            assert_eq!(
+                at,
+                None,
+                "round {round}: {:08x} not {:08x}",
+                at.map_or(0, |a| runs[1].fb[a]),
+                at.map_or(0, |a| want[a])
+            );
+            // Against the same entries without their fog.
+            let clear: Vec<_> = over
+                .iter()
+                .map(|i| {
+                    let mut i = *i;
+                    i.fog = txhdl::types::Bit::Zero;
+                    i
+                })
+                .collect();
+            changed += (model::render_over(&clear, W, H, base) != want) as u32;
+        }
+        assert_eq!(changed, 12, "the fog changed the picture in every round");
+    }
+
     /// Texturing in tiles (issue 997): textured triangles in perspective,
     /// flat and shaded, under every class of texel, every environment,
     /// both magnification filters and all six minification filters over
     /// a texture of six levels, repeated and clamped, magnified and
-    /// minified, among entries that are not textured and under a depth
-    /// test in some rounds, are byte for byte the model's. A flat list has
-    /// no texturing, as it has no depth, and draws the same entries
-    /// untextured.
+    /// minified, among entries that are not textured, under a depth test
+    /// in some rounds and fogged after the texture in others (issue 998),
+    /// are byte for byte the model's. A flat list has no texturing, as it
+    /// has no depth, and draws the same entries untextured.
     #[test]
     fn texturing_in_tiles_is_the_models() {
         use crate::model::{render_textured, Textures};
-        use crate::op::{DepthMode, TexMode, LESS};
+        use crate::op::{DepthMode, Fog, TexMode, LESS};
         use razboj_tile::tex::{encode, level_base, side, texel_offset, Desc};
         use std::collections::HashMap;
         const A: usize = 20;
@@ -1074,6 +1217,13 @@ mod tests {
                     env_colour: next(),
                 })),
             ];
+            let fogged = round % 4 == 3;
+            if fogged {
+                ops.push(Op::Fog(Some(Fog {
+                    colour: 0x30_6090 ^ (round << 4),
+                    f: [round * 10, 255 - round * 9, 128],
+                })));
+            }
             for k in 0..4 {
                 // Each vertex: where it is, its clip w, and its texel
                 // coordinates, some past the texture's edges; then `u q`,
@@ -1148,13 +1298,13 @@ mod tests {
             );
             let bare = model::render(&list, W, H);
             textured += (want != bare) as u32;
-            if !deep {
+            if !deep && !fogged {
                 assert_eq!(runs[1].fb, bare, "round {round}: flat, untextured");
                 flat += 1;
             }
         }
         assert!(textured >= 21, "the texture mattered in {textured} rounds");
-        assert!(flat >= 15, "{flat} flat rounds");
+        assert!(flat >= 13, "{flat} flat rounds");
     }
 
     /// What a textured pixel costs (issue 997), and what its refills ask

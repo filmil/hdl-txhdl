@@ -313,6 +313,17 @@ so a pixel takes no cycle more. An operation reads the colour there
 as a blend does, so the binning loads a tile for it. Each of the
 sixteen is drawn in tiles as the model draws it, byte for byte, and
 \code{//docs:razboj\_blend} replays one under \code{GL\_XOR}.
+Fog is GL's too (issue~\#998): words 6 to 8 of the slot are the plane of
+GL's fog factor $f$, a byte with sixteen bits of fraction as a channel's,
+stepped as the depth plane is, and word 9 turns fog on and gives its
+colour. The program works $f$ out at each vertex, which GL allows. A
+fogged pixel takes one turn more, after the texture's environment: each
+of red, green and blue becomes $f c + (255 - f) c_f$, divided by 255 in
+the turn that reads the colour already there, so the alpha test, the
+blend and the logic operation all see the fogged colour, as GL orders
+them. A pixel that is not fogged takes the cycles it did. Fogged scenes,
+textured and not, are drawn in tiles as the model draws them, byte for
+byte, and \code{//docs:razboj\_blend} replays a fogged triangle.
 
 Textures come next (issue~\#997). A texture is its levels in DDR3,
 each texel RGBA in 32 bits as a pixel is, stored in blocks of four by

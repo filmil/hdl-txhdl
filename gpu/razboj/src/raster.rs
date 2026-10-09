@@ -287,6 +287,22 @@ pub struct Raster<
     pub lon: Reg<Bit>,
     pub lop: Reg<U<4>>,
     pub lres: Reg<U<32>>,
+    /// Fog (issue 998): whether the entry is fogged and the fog's colour;
+    /// the factor's plane, at this pixel, at the start of this row, and
+    /// its two steps, as `zc`, `zr`, `zdx` and `zdy` are depth's; and the
+    /// pixel's colour by its factor and the fog's by what is left, a
+    /// channel each, with the pixel's alpha, a turn before they are
+    /// divided.
+    pub fon: Reg<Bit>,
+    pub fcol: Reg<U<24>>,
+    pub fc: Reg<U<32>>,
+    pub fr: Reg<U<32>>,
+    pub fdx: Reg<U<32>>,
+    pub fdy: Reg<U<32>>,
+    pub fsr: Reg<U<17>>,
+    pub fsg: Reg<U<17>>,
+    pub fsb: Reg<U<17>>,
+    pub fsa: Reg<U<8>>,
     /// The tile's colour again, written where and as the bank is and
     /// read only by the walk, for the colour already at a pixel, so that
     /// each of the two is a block RAM of one write and one read; the
@@ -1568,7 +1584,7 @@ impl<
                                               + ((self.insn.get() + 1)
                                                   .resize::<A>()
                                                   << SHIFT),
-                                          len: U::<8>::from(5u8),
+                                          len: U::<8>::from(9u8),
                                           size: U::<3>::from(2u8),
                                           burst: BurstKind::Incr,
                                           lock: Bit::Zero,
@@ -1656,6 +1672,54 @@ impl<
                                       with!(self <= {
                                           lon: w5.bit(0),
                                           lop: w5.slice::<1, 4>(),
+                                      });
+                                      // Fog, words 6 to 9 (issue 998): its
+                                      // factor's plane, then whether it is
+                                      // on and its colour.
+                                      until(DefaultClock::rising, || {
+                                          landing(
+                                              rdata.peek().is_some(),
+                                              release.ready(),
+                                              done.peek().is_some(),
+                                          )
+                                          .to_bool()
+                                      })
+                                      .await;
+                                      let f0 = rdata.head().data;
+                                      with!(self <= { fc: f0, fr: f0 });
+                                      until(DefaultClock::rising, || {
+                                          landing(
+                                              rdata.peek().is_some(),
+                                              release.ready(),
+                                              done.peek().is_some(),
+                                          )
+                                          .to_bool()
+                                      })
+                                      .await;
+                                      self.fdx.set(rdata.head().data);
+                                      until(DefaultClock::rising, || {
+                                          landing(
+                                              rdata.peek().is_some(),
+                                              release.ready(),
+                                              done.peek().is_some(),
+                                          )
+                                          .to_bool()
+                                      })
+                                      .await;
+                                      self.fdy.set(rdata.head().data);
+                                      until(DefaultClock::rising, || {
+                                          landing(
+                                              rdata.peek().is_some(),
+                                              release.ready(),
+                                              done.peek().is_some(),
+                                          )
+                                          .to_bool()
+                                      })
+                                      .await;
+                                      let w9 = rdata.head().data;
+                                      with!(self <= {
+                                          fon: w9.bit(0),
+                                          fcol: w9.slice::<8, 24>(),
                                       });
                                   }
                                   // A textured entry's two slots more
@@ -2480,6 +2544,49 @@ impl<
                                         self.tcol.set(te0);
                                         DefaultClock::rising().await;
                                     }
+                                    // Fog (issue 998), after the texture
+                                    // and before the alpha test: each of
+                                    // red, green and blue by the factor
+                                    // and the fog's by what it leaves, a
+                                    // turn before the read divides them,
+                                    // as the blend's are. A fogged pixel
+                                    // takes this one cycle more.
+                                    if (self.son.get()
+                                        & self.fon.get()
+                                        & self.hit.get())
+                                    .to_bool()
+                                    {
+                                        let fp = mux(
+                                            self.tex_on.get(),
+                                            self.tcol.get(),
+                                            self.rgb.get(),
+                                        );
+                                        let ff = channel(self.fc.get());
+                                        let nf = U::<8>::from(255u8) - ff;
+                                        let fk = self.fcol.get();
+                                        with!(self <= {
+                                            fsr: blend_sum(
+                                                fp.slice::<16, 8>(),
+                                                fk.slice::<16, 8>(),
+                                                ff,
+                                                nf,
+                                            ),
+                                            fsg: blend_sum(
+                                                fp.slice::<8, 8>(),
+                                                fk.slice::<8, 8>(),
+                                                ff,
+                                                nf,
+                                            ),
+                                            fsb: blend_sum(
+                                                fp.slice::<0, 8>(),
+                                                fk.slice::<0, 8>(),
+                                                ff,
+                                                nf,
+                                            ),
+                                            fsa: fp.slice::<24, 8>(),
+                                        });
+                                        DefaultClock::rising().await;
+                                    }
                                     // A pixel of an entry that tests
                                     // depth, or has the pixel's state
                                     // (issue 993), reads the depth and
@@ -2497,16 +2604,30 @@ impl<
                                     .to_bool()
                                     {
                                         let pa = self.pa.get();
+                                        let fogged = self
+                                            .fsa
+                                            .get()
+                                            .concat::<8, 16>(over255(
+                                                self.fsr.get(),
+                                            ))
+                                            .concat::<8, 24>(over255(
+                                                self.fsg.get(),
+                                            ))
+                                            .concat::<8, 32>(over255(
+                                                self.fsb.get(),
+                                            ));
+                                        let plain = mux(
+                                            self.tex_on.get(),
+                                            self.tcol.get(),
+                                            self.rgb.get(),
+                                        );
+                                        let fon = self.son.get() & self.fon.get();
                                         with!(self <= {
                                             dread: self.zbank.read(pa),
                                             dtag: self.zmark.read(pa),
                                             dcol: self.dbank.read(pa),
                                             zq: depth16(self.zc.get()),
-                                            srcq: mux(
-                                                self.tex_on.get(),
-                                                self.tcol.get(),
-                                                self.rgb.get(),
-                                            ),
+                                            srcq: mux(fon, fogged, plain),
                                         });
                                         DefaultClock::rising().await;
                                         let src = self.srcq.get();
@@ -2797,6 +2918,7 @@ impl<
                                         cg: self.cg.get() + self.cgx.get(),
                                         cb: self.cb.get() + self.cbx.get(),
                                         zc: self.zc.get() + self.zdx.get(),
+                                        fc: self.fc.get() + self.fdx.get(),
                                         tuc: self.tuc.get() + self.tudx.get(),
                                         tvc: self.tvc.get() + self.tvdx.get(),
                                         tqc: self.tqc.get() + self.tqdx.get(),
@@ -2818,6 +2940,7 @@ impl<
                                 let qg = self.lg.get() + self.cgy.get();
                                 let qb = self.lb.get() + self.cby.get();
                                 let qz = self.zr.get() + self.zdy.get();
+                                let qf = self.fr.get() + self.fdy.get();
                                 let qu = self.tur.get() + self.tudy.get();
                                 let qv = self.tvr.get() + self.tvdy.get();
                                 let qq = self.tqr.get() + self.tqdy.get();
@@ -2825,6 +2948,7 @@ impl<
                                     x: self.xa.get(),
                                     y: self.y.get() + 1,
                                     zc: qz, zr: qz,
+                                    fc: qf, fr: qf,
                                     tuc: qu, tur: qu,
                                     tvc: qv, tvr: qv,
                                     tqc: qq, tqr: qq,

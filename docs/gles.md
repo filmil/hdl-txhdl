@@ -23,7 +23,7 @@ Everything before the pixel is the library's: vertices, matrices, lighting, clip
 Everything from the pixel on is Razboj's: coverage, the fill rule, interpolating colour across a triangle, and later depth and blending.
 
 It is not conformant ES 1.1, and does not claim to be.
-ES 1.1 requires texturing, which issue 997 adds with one texture unit, and the library leaves out fog and stencil, which wait for issue 998.
+ES 1.1 requires texturing, which issue 997 adds with one texture unit, and the library leaves out stencil, which waits for issue 998.
 The conformance run is issue 999.
 Until then `glGetString(GL_VERSION)` says what the library is, "Common-Lite, one texture unit, not conformant", rather than claim the profile.
 
@@ -47,14 +47,15 @@ A later issue means the entry point is accepted from the start but does what tha
 | Scissor | `glScissor`; `GL_SCISSOR_TEST` | Now, from #1490, clipped by the library |
 | Depth | `glDepthFunc`, `glDepthMask`, `glPolygonOffsetx`; `GL_POLYGON_OFFSET_FILL` | Now, from #1273, drawn in a tile table; polygon offset from #998 |
 | Blending and masks | `glBlendFunc`, `glAlphaFuncx`, `glColorMask`, `glLogicOp`; `GL_COLOR_LOGIC_OP` | Now, from #993, drawn in a tile table; the logic operations from #998 |
+| Fog | `glFogx`, `glFogxv`; `GL_FOG` | From #998, drawn in a tile table, its factor worked out at each vertex |
 | Textures | `glGenTextures`, `glDeleteTextures`, `glBindTexture`, `glTexImage2D`, `glTexParameteri`, `glTexParameterx`, `glTexEnvi`, `glTexEnvx`, `glTexEnvxv`, `glTexCoordPointer`, `glMultiTexCoord4x`, `glActiveTexture`, `glClientActiveTexture`, `glPixelStorei`; `GL_TEXTURE_2D` and `GL_TEXTURE_COORD_ARRAY` | From #997, one unit, drawn in a tile table; the rasteriser samples under every filter, mipmapped, and every environment but `GL_COMBINE`, as Razboj's model does |
 | Points and lines | `glPointSizex`, `glLineWidthx`, and the point and line modes of the draw calls; `GL_POINT_SPRITE_OES` and `GL_COORD_REPLACE_OES` | Now, from issue 994; point sprites from #998 |
-| Switches | `glEnable`, `glDisable`, `glIsEnabled` for `GL_LIGHTING`, `GL_LIGHT0` to `GL_LIGHT7`, `GL_CULL_FACE`, `GL_NORMALIZE`, `GL_RESCALE_NORMAL`, `GL_COLOR_MATERIAL`, `GL_CLIP_PLANE0`, `GL_DEPTH_TEST`, `GL_BLEND`, `GL_ALPHA_TEST`, `GL_DITHER`, `GL_SCISSOR_TEST`; and the rest as the issues above land | Now, and growing |
+| Switches | `glEnable`, `glDisable`, `glIsEnabled` for `GL_LIGHTING`, `GL_LIGHT0` to `GL_LIGHT7`, `GL_CULL_FACE`, `GL_NORMALIZE`, `GL_RESCALE_NORMAL`, `GL_COLOR_MATERIAL`, `GL_CLIP_PLANE0`, `GL_DEPTH_TEST`, `GL_BLEND`, `GL_ALPHA_TEST`, `GL_DITHER`, `GL_SCISSOR_TEST`, `GL_FOG`; and the rest as the issues above land | Now, and growing |
 | Queries and errors | `glGetError`, `glGetIntegerv`, `glGetFixedv`, `glGetBooleanv`, `glGetString`, `glGetPointerv` | Now, the queries from #1484 (section 10) |
 | Completion | `glFlush`, `glFinish` | Now (section 7) |
 | Hints | `glHint` | Accepted and ignored, as the specification allows, from #1490 |
 
-Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit, which wait for a program that needs them; fog (#998), stencil (#998), and `glReadPixels`, which needs a read path from the framebuffer that nothing has asked for yet.
+Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit, which wait for a program that needs them; stencil (#998), and `glReadPixels`, which needs a read path from the framebuffer that nothing has asked for yet.
 An entry point that is left out still exists, so that a program links, and sets `GL_INVALID_ENUM` or `GL_INVALID_OPERATION` as the specification says for an unsupported value.
 
 The limits the library reports are the specification's minimums: a modelview stack of 16, projection and texture stacks of 2, eight lights, one clip plane.
@@ -353,6 +354,11 @@ With any of them on, a primitive carries the pixel's state in its second slot, a
 `dithering_is_the_identity` holds a frame drawn with it on to the same frame with it off, word for word.
 `glLogicOp` and `GL_COLOR_LOGIC_OP` are #998's, done by Razboj: an entry with the operation on carries it in its second slot's word 5, and Razboj does it in place of the blend.
 `logic_ops_are_gls` draws each of the sixteen over a clear and holds every pixel to GL's truth table for it.
+
+Fog is #998's too, `glFogx`, `glFogxv` and `GL_FOG`, in its three modes, `GL_LINEAR`, `GL_EXP` and `GL_EXP2`.
+The library works the factor out at each vertex, with the eye distance as `|z_e|` and the powers of `e` as powers of two, and Razboj carries it across the primitive as a plane, as GL allows; a fogged entry carries the plane and the fog's colour in its second slot's words 6 to 9.
+Razboj fogs a pixel after its texture and before the alpha test, its red, green and blue and not its alpha, and a clear is not fogged.
+`//gles:fog_test` holds the three modes at distances from before a linear fog starts to past where it ends, a ramp across the window, and a point to a reference in f64, a channel within two of it.
 
 The queries are issue 1484's.
 `glGetIntegerv`, `glGetFixedv` and `glGetBooleanv` answer every name the library keeps state for: the viewport and the depth range, the matrix mode, the three matrices and their stacks' depths, the current colour, normal and texture coordinates, the clears, the depth, blend, alpha test and colour mask settings, the faces and the shading, the point size and the line width, the bound texture, the unpack alignment, the light model, and every switch `glIsEnabled` knows.

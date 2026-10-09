@@ -519,6 +519,24 @@ pub extern "C" fn glLogicOp(op: u32) {
 }
 
 #[no_mangle]
+pub extern "C" fn glFogx(pname: u32, param: Fx) {
+    with(|g| g.fog(pname, param));
+}
+
+/// `glFogxv` (#998): the fog's colour, four values, or one of the others,
+/// one.
+#[no_mangle]
+pub unsafe extern "C" fn glFogxv(pname: u32, params: *const Fx) {
+    if pname == gl::FOG_COLOR {
+        let v = vals(params, 4);
+        with(|g| g.fog_colour(v));
+    } else {
+        let v = vals(params, 1);
+        with(|g| g.fog(pname, v[0]));
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn glScissor(x: i32, y: i32, w: i32, h: i32) {
     with(|g| g.scissor(x, y, w, h));
 }

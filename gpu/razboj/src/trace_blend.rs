@@ -3,13 +3,14 @@
 //! a list without a clear, so that the tile is loaded from the
 //! framebuffer first. The list's two triangles are blended over the
 //! backdrop at half their alpha, one tests alpha, a rectangle writes
-//! only some channels, and the last is under `GL_XOR` (issue 998). It
-//! writes the trace and the rasteriser's netlist, so the build replays
-//! the netlist under nvc and Verilator against this run: the load, the
-//! colour bank's copy, the blend, the alpha test, the mask and the logic
-//! operation. It checks the picture against the model.
+//! only some channels, one is under `GL_XOR` and the last is fogged
+//! (issue 998). It writes the trace and the rasteriser's netlist, so the
+//! build replays the netlist under nvc and Verilator against this run:
+//! the load, the colour bank's copy, the blend, the alpha test, the mask,
+//! the logic operation and the fog. It checks the picture against the
+//! model.
 use razboj::model;
-use razboj::op::{assemble, AlphaTest, BlendMode, Op, GREATER};
+use razboj::op::{assemble, AlphaTest, BlendMode, Fog, Op, GREATER};
 use razboj::op::{ONE_MINUS_SRC_ALPHA, SRC_ALPHA, XOR};
 use razboj::raster::Raster;
 use razboj::sim::{self, Work};
@@ -84,6 +85,19 @@ fn main() {
             y: 28,
             w: 40,
             h: 8,
+        },
+        // A shaded triangle fogged toward blue, its factor from nearly
+        // all fog to nearly none.
+        Op::LogicOp(None),
+        Op::Fog(Some(Fog {
+            colour: 0x20_40c0,
+            f: [20, 235, 128],
+        })),
+        Op::Gouraud {
+            a: (40 * 16, 2 * 16),
+            b: (62 * 16, 30 * 16),
+            c: (30 * 16, 36 * 16),
+            colours: [0xffff_4000, 0xff40_ff40, 0xff40_40ff],
         },
     ];
     let (first, list) = (assemble(&backdrop, W, H), assemble(&ops, W, H));

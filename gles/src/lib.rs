@@ -48,6 +48,9 @@ const GMAX: i64 = VMAX as i64 - 16;
 /// the seven planes it can be clipped against.
 const MAXV: usize = 10;
 
+/// `log2 e` in 16.16, for fog's `e^-x` as a power of two (#998).
+const LOG2_E: i64 = 94_548;
+
 /// A vertex on its way: eye and clip coordinates, and its colour, and
 /// with two-sided lighting the colour its back takes.
 #[derive(Clone, Copy, Default)]
@@ -136,6 +139,15 @@ pub struct Gl<'a> {
     /// `GL_CLEAR` to `GL_SET` less `0x1500`, `GL_COPY` at first.
     logic_on: bool,
     logic: u32,
+    /// Fog (#998): its switch; its mode, `GL_EXP` at first; its density,
+    /// start and end, in 16.16; and its colour, each channel clamped to
+    /// nought and one.
+    fog_on: bool,
+    fog_mode: u32,
+    fog_density: Fx,
+    fog_start: Fx,
+    fog_end: Fx,
+    fog_colour: [Fx; 4],
     /// The scissor (#1490): its switch, and its box in GL's window,
     /// the first column and row from the bottom left and the size.
     scissor_on: bool,
@@ -218,6 +230,12 @@ impl<'a> Gl<'a> {
             dither: true,
             logic_on: false,
             logic: gl::COPY - gl::CLEAR,
+            fog_on: false,
+            fog_mode: gl::EXP,
+            fog_density: ONE,
+            fog_start: 0,
+            fog_end: ONE,
+            fog_colour: [0; 4],
             scissor_on: false,
             scissor: (0, 0, sw as i32, sh as i32),
             hints: [gl::DONT_CARE; 5],
@@ -416,6 +434,7 @@ impl<'a> Gl<'a> {
             gl::POLYGON_OFFSET_FILL => self.offset_on = on,
             gl::DITHER => self.dither = on,
             gl::COLOR_LOGIC_OP => self.logic_on = on,
+            gl::FOG => self.fog_on = on,
             gl::SCISSOR_TEST => self.scissor_on = on,
             gl::BLEND => self.blend_on = on,
             gl::ALPHA_TEST => self.alpha_on = on,
@@ -448,6 +467,7 @@ impl<'a> Gl<'a> {
             gl::POLYGON_OFFSET_FILL => self.offset_on,
             gl::DITHER => self.dither,
             gl::COLOR_LOGIC_OP => self.logic_on,
+            gl::FOG => self.fog_on,
             gl::SCISSOR_TEST => self.scissor_on,
             gl::BLEND => self.blend_on,
             gl::ALPHA_TEST => self.alpha_on,
@@ -656,6 +676,79 @@ impl<'a> Gl<'a> {
             gl::CLEAR..=gl::SET => self.logic = op - gl::CLEAR,
             _ => self.fail(gl::INVALID_ENUM),
         }
+    }
+
+    /// `glFogx` (#998): `GL_FOG_MODE`, `GL_LINEAR`, `GL_EXP` or `GL_EXP2`
+    /// as a whole number, as GL passes an enumeration to a fixed-point
+    /// call; or the density, which may not be negative, the start or the
+    /// end, in 16.16.
+    pub fn fog(&mut self, pname: u32, param: Fx) {
+        match pname {
+            gl::FOG_MODE => match param as u32 {
+                m @ (gl::LINEAR | gl::EXP | gl::EXP2) => self.fog_mode = m,
+                _ => self.fail(gl::INVALID_ENUM),
+            },
+            gl::FOG_DENSITY if param < 0 => self.fail(gl::INVALID_VALUE),
+            gl::FOG_DENSITY => self.fog_density = param,
+            gl::FOG_START => self.fog_start = param,
+            gl::FOG_END => self.fog_end = param,
+            _ => self.fail(gl::INVALID_ENUM),
+        }
+    }
+
+    /// `glFogxv` with `GL_FOG_COLOR` (#998): the fog's colour, clamped
+    /// to nought and one as GL clamps it. Its alpha is kept for the query
+    /// and changes nothing, since fog leaves a pixel's alpha alone.
+    pub fn fog_colour(&mut self, c: [Fx; 4]) {
+        self.fog_colour = c.map(|v| v.clamp(0, ONE));
+    }
+
+    /// GL's fog factor at `v` (#998) as a byte, 255 for GL's one, no fog:
+    /// GL ES 1.1's `f` of the eye distance, which GL lets be `|z_e|`,
+    /// clamped to nought and one. `GL_LINEAR` is `(end - c) / (end -
+    /// start)`, and an end at the start fogs what is past it wholly and
+    /// nothing else; `GL_EXP` is `e^(-d c)` and `GL_EXP2` is `e^(-(d
+    /// c)^2)`, each worked out as a power of two. The factor is worked out
+    /// at each vertex and carried across the primitive as a plane, as GL
+    /// allows.
+    fn fog_factor(&self, v: &Vert) -> u32 {
+        let c = (v.eye[2] as i64).abs();
+        let one = ONE as i64;
+        let f = match self.fog_mode {
+            gl::LINEAR => {
+                let (s, e) = (self.fog_start as i64, self.fog_end as i64);
+                match e - s {
+                    0 if c <= e => one,
+                    0 => 0,
+                    span => ((e - c) << 16) / span,
+                }
+            }
+            mode => {
+                let dc = (self.fog_density as i64 * c) >> 16;
+                let x = if mode == gl::EXP2 {
+                    (dc.min(one << 8).pow(2)) >> 16
+                } else {
+                    dc
+                };
+                // e^-x is 2^(-x log2 e), and past 64 it is nought in 16.16.
+                let x = x.min(64 << 16);
+                fixed::exp2(-((x * LOG2_E) >> 16)) as i64
+            }
+        };
+        ((f.clamp(0, one) * 255 + (1 << 15)) >> 16) as u32
+    }
+
+    /// Fog's words for the triangle `v`, in sixteenths, drawn as `w`, with
+    /// the vertices `at` (#998), when fog is on.
+    fn fogged(
+        &self,
+        w: &[u32; WORDS],
+        v: [(i32, i32); 3],
+        at: [&Vert; 3],
+    ) -> Option<[u32; 4]> {
+        let colour = colour_word(&self.fog_colour);
+        self.fog_on
+            .then(|| emit::fog(w, v, at.map(|a| self.fog_factor(a)), colour))
     }
 
     /// `glDepthFunc`: the comparison a pixel's depth makes with the
@@ -1007,23 +1100,44 @@ impl<'a> Gl<'a> {
 
     /// An entry as drawing makes it: testing depth as the context says
     /// when the depth test is on and its plane's slot `slot` is there,
-    /// and as it is otherwise.
-    fn push_drawn(&mut self, mut w: [u32; WORDS], slot: Option<[u32; WORDS]>) {
+    /// fogged when `fog` holds fog's words (#998), and as it is otherwise.
+    fn push_drawn(
+        &mut self,
+        mut w: [u32; WORDS],
+        slot: Option<[u32; WORDS]>,
+        fog: Option<[u32; 4]>,
+    ) {
         let depth = self.depth_test && slot.is_some();
         let pixel = self.pixel();
-        if !depth && pixel == emit::Pixel::DEFAULT {
+        if !depth && pixel == emit::Pixel::DEFAULT && fog.is_none() {
             return self.push(w);
         }
-        // The second slot: the depth plane, or nought without the depth
-        // test, then the pixel's state (#993).
-        let mut p = slot.filter(|_| depth).unwrap_or([0u32; WORDS]);
-        if depth {
-            emit::depth(&mut w, self.depth_func, self.depth_mask);
-        }
-        if pixel != emit::Pixel::DEFAULT {
-            emit::state(&mut w, &mut p, pixel);
-        }
+        let p = self.second(&mut w, slot.filter(|_| depth), pixel, fog);
         self.push_pair(w, p);
+    }
+
+    /// An entry's second slot: the depth plane `depth`, which tells `w`
+    /// to test depth as the context says, or nought; then the pixel's
+    /// state `pixel` (#993) and fog's words `fog` (#998), either of which
+    /// tells `w` it has the state.
+    fn second(
+        &self,
+        w: &mut [u32; WORDS],
+        depth: Option<[u32; WORDS]>,
+        pixel: emit::Pixel,
+        fog: Option<[u32; 4]>,
+    ) -> [u32; WORDS] {
+        let mut p = depth.unwrap_or([0u32; WORDS]);
+        if depth.is_some() {
+            emit::depth(w, self.depth_func, self.depth_mask);
+        }
+        if pixel != emit::Pixel::DEFAULT || fog.is_some() {
+            emit::state(w, &mut p, pixel);
+        }
+        if let Some(f) = fog {
+            p[6..10].copy_from_slice(&f);
+        }
+        p
     }
 
     /// What drawing does to a pixel after its coverage (#993): the blend
@@ -1361,7 +1475,14 @@ impl<'a> Gl<'a> {
         }
         if let Some(b) = clip(c(x0), c(y0), c(x1), c(y1), self.bounds()) {
             let slot = emit::flat_depth(self.window_z(&v));
-            self.push_drawn(emit::rect(colour_word(&v.col), b), Some(slot));
+            let fog = self.fog_on.then(|| {
+                emit::flat_fog(
+                    self.fog_factor(&v),
+                    colour_word(&self.fog_colour),
+                )
+            });
+            let w = emit::rect(colour_word(&v.col), b);
+            self.push_drawn(w, Some(slot), fog);
         }
     }
 
@@ -1396,7 +1517,8 @@ impl<'a> Gl<'a> {
             let tex =
                 emit::textured([a, bb, cc], [st[i], st[j], st[k]], screen);
             if let Some((w, slot)) = drawn {
-                self.push_textured(w, slot, tex);
+                let fog = self.fogged(&w, [a, bb, cc], [v; 3]);
+                self.push_textured(w, slot, tex, fog);
             }
         }
     }
@@ -1452,9 +1574,9 @@ impl<'a> Gl<'a> {
         let (zp, zq) = (self.window_z(&a), self.window_z(&b));
         let zs = self.depth_test.then_some(());
         let screen = self.bounds();
-        for (i, j, k, s, z) in [
-            (0, 1, 2, [cp, cq, cq], [zp, zq, zq]),
-            (0, 2, 3, [cp, cq, cp], [zp, zq, zp]),
+        for (i, j, k, s, z, ends) in [
+            (0, 1, 2, [cp, cq, cq], [zp, zq, zq], [&a, &b, &b]),
+            (0, 2, 3, [cp, cq, cp], [zp, zq, zp], [&a, &b, &a]),
         ] {
             let (q, z) = ((quad[i], quad[j], quad[k]), zs.map(|_| z));
             let w = if self.smooth {
@@ -1463,7 +1585,8 @@ impl<'a> Gl<'a> {
                 emit::triangle(flat, q.0, q.1, q.2, None, z, screen)
             };
             if let Some((w, slot)) = w {
-                self.push_drawn(w, slot);
+                let fog = self.fogged(&w, [q.0, q.1, q.2], ends);
+                self.push_drawn(w, slot, fog);
             }
         }
     }
@@ -1598,7 +1721,9 @@ impl<'a> Gl<'a> {
                 emit::textured([a, b, c], t, screen)
             });
             if let Some((w, slot)) = w {
-                self.push_textured(w, slot, tex);
+                let at = [&poly[0], &poly[k], &poly[k + 1]];
+                let fog = self.fogged(&w, [a, b, c], at);
+                self.push_textured(w, slot, tex, fog);
             }
         }
     }
@@ -1638,19 +1763,14 @@ impl<'a> Gl<'a> {
         mut w: [u32; WORDS],
         slot: Option<[u32; WORDS]>,
         tex: Option<[[u32; WORDS]; 2]>,
+        fog: Option<[u32; 4]>,
     ) {
         let Some([mut ta, tb]) = tex else {
-            return self.push_drawn(w, slot);
+            return self.push_drawn(w, slot, fog);
         };
         let depth = self.depth_test && slot.is_some();
         let pixel = self.pixel();
-        let mut p = slot.filter(|_| depth).unwrap_or([0u32; WORDS]);
-        if depth {
-            emit::depth(&mut w, self.depth_func, self.depth_mask);
-        }
-        if pixel != emit::Pixel::DEFAULT {
-            emit::state(&mut w, &mut p, pixel);
-        }
+        let p = self.second(&mut w, slot.filter(|_| depth), pixel, fog);
         emit::textured_bit(&mut w);
         ta[13] = self.store.as_ref().map_or(0, |s| s.desc_at(self.bound));
         ta[14] = self.env;

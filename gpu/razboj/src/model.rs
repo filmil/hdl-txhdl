@@ -186,6 +186,19 @@ pub fn blend(s: u32, d: u32, sf: u32, df: u32) -> u32 {
         .fold(0, |a, b| a | b)
 }
 
+/// The colour `c`, `0xAARRGGBB`, fogged by the factor `f`, a byte, toward
+/// the fog's colour `fc`, `0xRRGGBB` (issue 998): red, green and blue each
+/// `f c + (255 - f) fc` over 255, as GL's `f C + (1 - f) C_f`, and the
+/// alpha as it was.
+pub fn fog(c: u32, f: u32, fc: u32) -> u32 {
+    (0..3)
+        .map(|k| {
+            let ch = |p: u32| (p >> (8 * k)) & 0xff;
+            div255(ch(c) * f + ch(fc) * (255 - f)) << (8 * k)
+        })
+        .fold(c & 0xff00_0000, |a, b| a | b)
+}
+
 /// The channels of `new` that `mask` holds, a bit a byte, over `old`.
 pub fn masked(new: u32, old: u32, mask: u32) -> u32 {
     let m = (0..4)
@@ -204,8 +217,9 @@ pub fn render(ops: &[Insn], w: usize, h: usize) -> Vec<u32> {
 }
 
 /// The same over a framebuffer that already holds `fb`. Each pixel goes
-/// through GL's steps in GL's order (issue 993): the alpha test, the
-/// depth test, the blend with the colour there, and the colour mask.
+/// through GL's steps in GL's order (issue 993): fog (issue 998), the
+/// alpha test, the depth test, the blend with the colour there or the
+/// logic operation, and the colour mask.
 /// A pixel that fails a test writes nothing, its depth included.
 pub fn render_over(ops: &[Insn], w: usize, h: usize, fb: Vec<u32>) -> Vec<u32> {
     render_textured(ops, w, h, fb, None)
@@ -239,6 +253,7 @@ pub fn render_textured(
         let state = op.state.to_bool();
         let atest = state && op.atest.to_bool();
         let blending = state && op.blend.to_bool();
+        let fogged = state && op.fog.to_bool();
         let logic =
             (state && op.logic.to_bool()).then_some(op.lop.raw() as u32);
         let (sf, df) = (op.sfactor.raw() as u32, op.dfactor.raw() as u32);
@@ -274,6 +289,11 @@ pub fn render_textured(
                     let cc = op.tenvc.raw() as u32;
                     src = crate::tex::env(mode, d.class, src, ct, cc);
                 }
+                if fogged {
+                    let (i, j) = (x - x0, y - y0);
+                    let f = channel(raw(op.f0), raw(op.fdx), raw(op.fdy), i, j);
+                    src = fog(src, f, op.fcol.raw() as u32);
+                }
                 let aref = op.aref.raw() as u32;
                 if atest && !passes(op.afunc.raw() as u32, src >> 24, aref) {
                     continue;
@@ -302,7 +322,7 @@ pub fn render_textured(
 
 #[cfg(test)]
 mod tests {
-    use super::{blend, div255, masked};
+    use super::{blend, div255, fog, masked};
     use crate::op::{DST_COLOR, ZERO};
     use crate::op::{ONE, ONE_MINUS_SRC_ALPHA, SRC_ALPHA, SRC_ALPHA_SATURATE};
 
@@ -338,5 +358,15 @@ mod tests {
         // destination leaves, and one for alpha itself.
         assert_eq!(blend(s, d, SRC_ALPHA_SATURATE, ZERO), 0x8000_0000);
         assert_eq!(masked(0x1122_3344, 0x5566_7788, 0b1010), 0x1166_3388);
+    }
+
+    /// Fog is GL's `f C + (1 - f) C_f` in red, green and blue, and leaves
+    /// the alpha (issue 998).
+    #[test]
+    fn the_fog_is_gls() {
+        let (c, fc) = (0x80ff_4000, 0x20_80ff);
+        assert_eq!(fog(c, 255, fc), c, "no fog");
+        assert_eq!(fog(c, 0, fc), 0x8020_80ff, "all fog");
+        assert_eq!(fog(c, 0x80, fc), 0x8090_607f, "half");
     }
 }
