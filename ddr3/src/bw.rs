@@ -154,7 +154,7 @@ pub fn ddr3_per(beats: usize, bursts: usize, write: bool) -> Measured {
         h.run(host_in, host_out),
         join2(
             mem.run(
-                (aw, ar, w, b, r),
+                (signal::<Bit, DefaultClock>().1, aw, ar, w, b, r),
                 (
                     sys_clk,
                     sys_rst,

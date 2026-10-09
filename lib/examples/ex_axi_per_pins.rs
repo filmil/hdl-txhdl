@@ -43,20 +43,20 @@ fn main() {
     if let Some(mut wave) = Wave::from_env() {
         wave.clock::<txhdl::comp::DefaultClock>();
         // Every port under the name the netlist gives it.
-        wave.add("inp_pins_awready", &inp.pins.awready);
-        wave.add("inp_pins_wready", &inp.pins.wready);
-        wave.add("inp_pins_bid", &inp.pins.bid);
-        wave.add("inp_pins_bresp", &inp.pins.bresp);
-        wave.add("inp_pins_bvalid", &inp.pins.bvalid);
-        wave.add("inp_pins_arready", &inp.pins.arready);
-        wave.add("inp_pins_rid", &inp.pins.rid);
-        wave.add("inp_pins_rdata", &inp.pins.rdata);
-        wave.add("inp_pins_rresp", &inp.pins.rresp);
-        wave.add("inp_pins_rlast", &inp.pins.rlast);
-        wave.add("inp_pins_rvalid", &inp.pins.rvalid);
-        wave.add("inp_aw", &inp.aw);
-        wave.add("inp_ar", &inp.ar);
-        wave.add("inp_w", &inp.w);
+        wave.add("pins_awready", &inp.pins.awready);
+        wave.add("pins_wready", &inp.pins.wready);
+        wave.add("pins_bid", &inp.pins.bid);
+        wave.add("pins_bresp", &inp.pins.bresp);
+        wave.add("pins_bvalid", &inp.pins.bvalid);
+        wave.add("pins_arready", &inp.pins.arready);
+        wave.add("pins_rid", &inp.pins.rid);
+        wave.add("pins_rdata", &inp.pins.rdata);
+        wave.add("pins_rresp", &inp.pins.rresp);
+        wave.add("pins_rlast", &inp.pins.rlast);
+        wave.add("pins_rvalid", &inp.pins.rvalid);
+        wave.add("aw", &inp.aw);
+        wave.add("ar", &inp.ar);
+        wave.add("w", &inp.w);
         wave.add("outp_b", &outp.b);
         wave.add("outp_r", &outp.r);
         wave.add("outp_awid", &outp.awid);
