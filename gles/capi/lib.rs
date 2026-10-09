@@ -166,6 +166,76 @@ pub unsafe extern "C" fn gles_retarget(
     }
 }
 
+/// What draws the frame so far and gives the framebuffer back for
+/// `glReadPixels` (#999): its words, each `0xAARRGGBB`, from Razboj's row
+/// nought, and the words from one row to the next.
+pub type Reader = fn() -> Option<(&'static [u32], usize)>;
+
+/// The reader, which EGL sets when it makes a context current.
+static mut READER: Option<Reader> = None;
+
+/// Sets what `glReadPixels` reads through, or none, which leaves it
+/// writing nothing. Not a GL call: EGL's (#999).
+pub fn gles_reader(reader: Option<Reader>) {
+    // SAFETY: one core and no threads, as for the current context.
+    unsafe { *core::ptr::addr_of_mut!(READER) = reader };
+}
+
+/// `glReadPixels` (#999): the window's pixels from `x`, `y`, GL's, from
+/// its bottom left, `width` by `height`, as `GL_RGBA` and
+/// `GL_UNSIGNED_BYTE`, the rows from the bottom up, each padded to
+/// `GL_PACK_ALIGNMENT`. The frame so far is drawn first. A pixel outside
+/// the window is left as it was, which GL allows.
+///
+/// # Safety
+///
+/// `pixels` holds the rows the call writes, as GL says of it.
+#[no_mangle]
+pub unsafe extern "C" fn glReadPixels(
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    format: u32,
+    type_: u32,
+    pixels: *mut u8,
+) {
+    let Some(c) = current() else {
+        return;
+    };
+    let Some(((top, ww, wh), align)) =
+        c.gl.read_pixels(width, height, format, type_)
+    else {
+        return;
+    };
+    let Some(read) = *core::ptr::addr_of!(READER) else {
+        return;
+    };
+    let Some((fb, stride)) = read() else {
+        return;
+    };
+    let row = (4 * width as usize).next_multiple_of(align);
+    for j in 0..height {
+        let gy = y as i64 + j as i64;
+        if gy < 0 || gy >= wh as i64 {
+            continue;
+        }
+        // GL's rows count up from the bottom, Razboj's down from the top.
+        let r = top as usize + (wh as i64 - 1 - gy) as usize;
+        for i in 0..width {
+            let gx = x as i64 + i as i64;
+            if gx < 0 || gx >= ww as i64 {
+                continue;
+            }
+            let p = fb[r * stride + gx as usize];
+            let at = pixels.add(j as usize * row + 4 * i as usize);
+            let rgba =
+                [(p >> 16) as u8, (p >> 8) as u8, p as u8, (p >> 24) as u8];
+            core::ptr::copy_nonoverlapping(rgba.as_ptr(), at, 4);
+        }
+    }
+}
+
 /// How many instructions the current context's frame holds so far.
 #[no_mangle]
 pub extern "C" fn gles_frame_len() -> usize {

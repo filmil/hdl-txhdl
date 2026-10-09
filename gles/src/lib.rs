@@ -195,6 +195,8 @@ pub struct Gl<'a> {
     tex_coords: [Fx; 4],
     store: Option<texture::Store<'a>>,
     unpack: usize,
+    /// The rows' alignment `glReadPixels` writes (#999), four at first.
+    pack: usize,
     /// Point sprites (#998): their switch, and whether a sprite's texture
     /// coordinates run across it, `GL_COORD_REPLACE_OES`.
     sprite_on: bool,
@@ -280,6 +282,7 @@ impl<'a> Gl<'a> {
             tex_coords: [0, 0, 0, ONE],
             store: None,
             unpack: 4,
+            pack: 4,
             error: gl::NO_ERROR,
         }
     }
@@ -1072,16 +1075,46 @@ impl<'a> Gl<'a> {
         self.tex_coords = [s, t, r, q];
     }
 
-    /// `glPixelStorei(GL_UNPACK_ALIGNMENT)`: the rows' alignment an upload
-    /// reads, one, two, four or eight bytes.
+    /// `glPixelStorei`: the rows' alignment an upload reads,
+    /// `GL_UNPACK_ALIGNMENT`, or `glReadPixels` writes, `GL_PACK_ALIGNMENT`
+    /// (#999), one, two, four or eight bytes.
     pub fn pixel_store(&mut self, pname: u32, value: u32) {
         match (pname, value) {
             (gl::UNPACK_ALIGNMENT, 1 | 2 | 4 | 8) => {
                 self.unpack = value as usize
             }
-            (gl::UNPACK_ALIGNMENT, _) => self.fail(gl::INVALID_VALUE),
+            (gl::PACK_ALIGNMENT, 1 | 2 | 4 | 8) => self.pack = value as usize,
+            (gl::UNPACK_ALIGNMENT | gl::PACK_ALIGNMENT, _) => {
+                self.fail(gl::INVALID_VALUE)
+            }
             _ => self.fail(gl::INVALID_ENUM),
         }
+    }
+
+    /// `glReadPixels`'s checks (#999): `GL_RGBA` and `GL_UNSIGNED_BYTE`,
+    /// which are also the implementation's read format and type, and a
+    /// size that is not negative. When the call reads, the window it reads
+    /// from, as `(top, width, height)`, its first row Razboj's row `top`,
+    /// and the bytes a row of the result is padded to; when not, `None`,
+    /// with the error recorded.
+    pub fn read_pixels(
+        &mut self,
+        width: i32,
+        height: i32,
+        format: u32,
+        type_: u32,
+    ) -> Option<((u32, u32, u32), usize)> {
+        if format != gl::RGBA || type_ != gl::UNSIGNED_BYTE {
+            self.fail(gl::INVALID_ENUM);
+            return None;
+        }
+        if width < 0 || height < 0 {
+            self.fail(gl::INVALID_VALUE);
+            return None;
+        }
+        let top = self.window_top;
+        let window = (top, self.screen.0, self.screen.1 - top);
+        Some((window, self.pack))
     }
 
     /// The rows' alignment an upload reads, in bytes.
