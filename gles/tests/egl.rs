@@ -87,6 +87,12 @@ impl Machine for Model {
         Some((room, TEX_BUS))
     }
 
+    fn pixels(&mut self) -> Option<(&'static [u32], usize)> {
+        // SAFETY: the model lives as long as the test, as the list does,
+        // and nothing draws while GL reads.
+        Some((unsafe { &*(self.fb.as_slice() as *const [u32]) }, FW))
+    }
+
     fn show(&mut self, row: u32) {
         self.events.push(Event::Show(row));
     }
@@ -312,6 +318,79 @@ fn a_program_draws_and_swaps_without_tearing() {
         let texel = fourth.iter().filter(|&&p| p == 0xff40_80c0).count();
         assert_eq!(texel, green_alone(), "the texture over the triangle");
         assert_eq!(eglGetError(), 0x3000);
+
+        // glReadPixels (#999): the frame so far drawn into the back buffer
+        // and read back before the swap, every pixel of the window, the
+        // rows from the bottom up, each RGBA; a swap then draws nothing
+        // more and shows the buffer read.
+        frame([0, ONE / 4, ONE]);
+        let before = m.events.len();
+        let mut all = vec![0u8; 640 * 480 * 4];
+        glReadPixels(
+            0,
+            0,
+            640,
+            480,
+            0x1908,
+            0x1401,
+            all.as_mut_ptr() as *mut _,
+        );
+        assert_eq!(glGetError(), 0);
+        assert!(
+            matches!(m.events[before], Event::Draw(_) | Event::DrawTiled(..)),
+            "the read drew the frame: {:?}",
+            &m.events[before..]
+        );
+        assert_eq!(m.events.len(), before + 1, "and showed nothing");
+        assert_eq!(eglSwapBuffers(dpy, surface), 1);
+        let Some(&Event::Show(top)) =
+            m.events.iter().rev().find(|e| matches!(e, Event::Show(_)))
+        else {
+            panic!("a swap shows")
+        };
+        let shown = rows(&m.fb, top as usize..top as usize + 480);
+        for (j, row) in all.chunks(640 * 4).enumerate() {
+            for (i, p) in row.chunks(4).enumerate() {
+                let w = shown[(479 - j) * 640 + i];
+                let want =
+                    [(w >> 16) as u8, (w >> 8) as u8, w as u8, (w >> 24) as u8];
+                assert_eq!(p, want, "at {i},{j} from the bottom left");
+            }
+        }
+        let clear = 0xff00_40ff;
+        assert!(shown.contains(&clear), "the clear was read");
+        assert!(shown.iter().any(|&p| p != clear), "and the triangles");
+        // A rectangle over the window's top left corner, rows padded to
+        // eight bytes: the pixels outside the window are left alone.
+        glPixelStorei(0x0D05, 8);
+        frame([0, ONE / 4, ONE]);
+        let mut part = [0xabu8; 2 * 16];
+        glReadPixels(
+            -1,
+            479,
+            3,
+            2,
+            0x1908,
+            0x1401,
+            part.as_mut_ptr() as *mut _,
+        );
+        assert_eq!(glGetError(), 0);
+        assert_eq!(part[..4], [0xab; 4], "left of the window");
+        assert_eq!(part[12..16], [0xab; 4], "the padding");
+        assert_eq!(part[16..], [0xab; 16], "above the window");
+        assert_eq!(part[7], 0xff, "inside, opaque");
+        // GL's errors, and the one format and type it reads.
+        glReadPixels(0, 0, 1, 1, 0x1907, 0x1401, part.as_mut_ptr() as *mut _);
+        assert_eq!(glGetError(), 0x0500, "GL_RGB");
+        glReadPixels(0, 0, -1, 1, 0x1908, 0x1401, part.as_mut_ptr() as *mut _);
+        assert_eq!(glGetError(), 0x0501, "a negative width");
+        let mut v = [0i32; 2];
+        glGetIntegerv(0x8B9B, v.as_mut_ptr());
+        glGetIntegerv(0x8B9A, v.as_mut_ptr().add(1));
+        assert_eq!(v, [0x1908, 0x1401]);
+        glGetIntegerv(0x0D05, v.as_mut_ptr());
+        assert_eq!(v[0], 8, "GL_PACK_ALIGNMENT");
+        assert_eq!(eglSwapBuffers(dpy, surface), 1);
     }
 }
 
