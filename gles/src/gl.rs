@@ -127,6 +127,9 @@ pub const REPEAT: u32 = 0x2901;
 pub const CLAMP_TO_EDGE: u32 = 0x812F;
 pub const TEXTURE_ENV: u32 = 0x2300;
 pub const TEXTURE_ENV_MODE: u32 = 0x2200;
+/// Point sprites, `OES_point_sprite` (#998).
+pub const POINT_SPRITE_OES: u32 = 0x8861;
+pub const COORD_REPLACE_OES: u32 = 0x8862;
 pub const TEXTURE_ENV_COLOR: u32 = 0x2201;
 pub const MODULATE: u32 = 0x2100;
 pub const DECAL: u32 = 0x2101;
