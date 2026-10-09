@@ -585,8 +585,10 @@ impl<'a> Gl<'a> {
             | gl::QUADRATIC_ATTENUATION => 1,
             _ => return self.fail(gl::INVALID_ENUM),
         };
+        // Fewer values than the parameter takes is the one-value call of a
+        // vector parameter: GL_INVALID_ENUM, by section 2.12.2 (#1518).
         if params.len() < want {
-            return self.fail(gl::INVALID_VALUE);
+            return self.fail(gl::INVALID_ENUM);
         }
         let four = |p: &[Fx]| [p[0], p[1], p[2], p[3]];
         let mv = self.modelview();
@@ -650,8 +652,10 @@ impl<'a> Gl<'a> {
             gl::SHININESS => 1,
             _ => return self.fail(gl::INVALID_ENUM),
         };
+        // Fewer values than the parameter takes is the one-value call of a
+        // vector parameter: GL_INVALID_ENUM, by section 2.12.2 (#1518).
         if params.len() < want {
-            return self.fail(gl::INVALID_VALUE);
+            return self.fail(gl::INVALID_ENUM);
         }
         let c = || {
             [
