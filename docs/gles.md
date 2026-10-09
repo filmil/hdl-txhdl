@@ -374,6 +374,25 @@ On the board it reads the framebuffer straight from the DDR3, since the core has
 A tile table's depth and stencil live only in its tiles, so after a read they start over as after a swap, which GL does not allow: #1504.
 `egl_test` reads the whole window back pixel for pixel, and a rectangle over the window's corner with eight-byte rows, and checks GL's errors.
 
+The conformance suite is #999's, our own tests of GL ES 1.1's specification, since Khronos's own tests for 1.1 are not public.
+Its C programs, in `gles/conform`, take a window and a context through EGL as any program does and print one line a test, `PASS` or `FAIL` with the reason.
+On the host they draw through Razboj's model as EGL's machine, and `//gles:conform_test` holds the run to `gles/conform/known_failures.txt`, which names an issue for every failure, so that a new failure fails the test and so does a known one that passes.
+The first group is the state tables of the specification's section 6.2: every state variable's initial value, through the query its table names and through the others with section 6.1.2's conversions, and every implementation-dependent value against its minimum.
+Of 196 checks, 97 pass. The 99 failures fall under eight issues:
+
+| Issue | Rows | What is missing |
+|---|---|---|
+| #1505 | 24 | `glGetFixedv` scales an enumeration by 2^16 |
+| #1507 | 5 | `OES_point_size_array` |
+| #1508 | 4 | `glPointParameterx` |
+| #1509 | 8 | The multisampling state |
+| #1510 | 1 | A second texture unit |
+| #1511 | 39 | `glGetMaterialxv`, `glGetLightxv`, `glGetTexParameteriv`, `glGetTexEnv` and `glGetClipPlanex` are stubs |
+| #1512 | 16 | `GL_COMBINE` |
+| #1513 | 2 | `GL_POINT_SMOOTH` and `GL_LINE_SMOOTH` |
+
+`glIsEnabled` of a name it does not know says false with no error, #1514, which is why some of those switches pass through it and fail through `glGetBooleanv`.
+
 The queries are issue 1484's.
 `glGetIntegerv`, `glGetFixedv` and `glGetBooleanv` answer every name the library keeps state for: the viewport and the depth range, the matrix mode, the three matrices and their stacks' depths, the current colour, normal and texture coordinates, the clears, the depth, blend, alpha test and colour mask settings, the faces and the shading, the point size and the line width, the bound texture, the unpack alignment, the light model, and every switch `glIsEnabled` knows.
 They also give the limits: the stacks, 8 lights, 1 clip plane, textures to 1024, 1 texture unit, 4 bits under the pixel, 8 bits a channel, 16 of depth and 8 of stencil, and sizes from 1 to 64.
