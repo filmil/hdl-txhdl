@@ -4740,6 +4740,93 @@ fn exclusive_costs_on_the_ddr3() {
     }
 }
 
+/// What else an instruction costs the core, for the machine's timing
+/// mode (issue 1561): a multiply, a division, and a load whose word the
+/// next instruction uses, thirty-two of each in a loop less the loop
+/// with the instruction alone; and an instruction-cache line that is not
+/// held, from a block of 256 instructions in the DDR3, 64 lines, run cold
+/// and then warm. The test prints each.
+#[test]
+fn core_costs_for_the_machine() {
+    use vreteno32::isa::{
+        add, addi, beq, bne, csrrs, divu, fence, fence_i, jalr, lw, mul, sub,
+        sw, CSR_MCYCLE,
+    };
+    const W: u32 = 0x4004_0000;
+    const BLOCK: u32 = 0x4006_0000;
+    const T: u32 = 0x4000_0700;
+    const RELEASE: u32 = 0x4000_0900;
+    const N: u32 = 32;
+    let bodies: [&[u32]; 8] = [
+        &[],
+        &[mul(6, 7, 8)],
+        &[divu(6, 7, 8)],
+        // A load whose word the next instruction uses, and one whose
+        // word it does not.
+        &[lw(6, 5, 0), add(9, 6, 6)],
+        &[lw(6, 5, 0), add(9, 7, 7)],
+        &[add(9, 7, 7)],
+        // A fence alone, and one after a store into the DDR3, which
+        // waits for the store to land.
+        &[fence()],
+        &[sw(7, 5, 0), fence()],
+    ];
+    let mut c = Checked::new();
+    c.li(7, 0x1234_5678).li(8, 7);
+    for (k, body) in bodies.iter().enumerate() {
+        c.li(5, W).op(lw(6, 5, 0)).li(10, N);
+        c.op(csrrs(25, CSR_MCYCLE, 0));
+        for w in body.iter() {
+            c.op(*w);
+        }
+        let back = -4 * (body.len() as i32 + 1);
+        c.op(addi(10, 10, -1)).op(bne(10, 0, back)).op(fence());
+        c.op(csrrs(26, CSR_MCYCLE, 0)).op(sub(26, 26, 25));
+        c.li(27, T + 4 * k as u32).op(sw(26, 27, 0));
+    }
+    // The block: 256 instructions that do nothing, then a return.
+    let mut block = vec![addi(0, 0, 0); 256];
+    block.push(jalr(0, 1, 0));
+    c.li(8, BLOCK);
+    place(&mut c, 8, &block);
+    c.op(fence()).op(fence_i());
+    for k in 0..2u32 {
+        c.op(csrrs(25, CSR_MCYCLE, 0))
+            .op(jalr(1, 8, 0))
+            .op(csrrs(26, CSR_MCYCLE, 0))
+            .op(sub(26, 26, 25));
+        c.li(27, T + 4 * (8 + k)).op(sw(26, 27, 0));
+    }
+    c.op(fence());
+    c.li(27, RELEASE).op(lw(29, 27, 0)).op(beq(29, 0, -4));
+    let mut plan = vec![Op::Wait(120_000)];
+    for s in 0..10 {
+        plan.push(Op::Read(T + 4 * s));
+    }
+    plan.push(Op::Write(RELEASE, 1));
+    let ran = run_debugged(&c.done(), &[], 400_000, &plan);
+    assert!(ran.halted_at.is_some(), "the run did not finish");
+    let each = |s: usize| (ran.got[s] as f64 - ran.got[0] as f64) / N as f64;
+    println!("mul: {:.1} cycles", each(1));
+    println!("divu: {:.1} cycles", each(2));
+    println!(
+        "a load used at once: {:.1} cycles more than one not",
+        each(3) - each(4)
+    );
+    println!("add: {:.1} cycles", each(5));
+    println!(
+        "fence: {:.1} cycles alone, {:.1} after a store",
+        each(6),
+        each(7)
+    );
+    let (cold, warm) = (ran.got[8] as f64, ran.got[9] as f64);
+    println!(
+        "256 instructions: {cold} cold, {warm} warm, {:.1} a line missed",
+        (cold - warm) / 64.0
+    );
+    assert!(cold > warm, "the cold run missed");
+}
+
 /// A waiting hart is told nothing and forgets its cache as it wakes
 /// (issue 1408). Hart 1's first job reads a word, so its line is
 /// cached, and goes back to wait; hart 0 then writes the word and wakes
