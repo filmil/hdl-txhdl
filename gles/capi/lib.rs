@@ -557,6 +557,111 @@ pub unsafe extern "C" fn glLightModelxv(pname: u32, params: *const Fx) {
     with(|g| g.light_model(pname, &v[..n]));
 }
 
+/// Writes `v`'s first `n` values to `out`, GL's array.
+unsafe fn give<T: Copy>(out: *mut T, v: &[T], n: usize) {
+    if out.is_null() {
+        return;
+    }
+    for (k, &x) in v.iter().take(n).enumerate() {
+        out.add(k).write_unaligned(x);
+    }
+}
+
+/// `glGetLightxv` (#1511).
+#[no_mangle]
+pub unsafe extern "C" fn glGetLightxv(light: u32, pname: u32, params: *mut Fx) {
+    let mut v = [0; 4];
+    let mut n = 0;
+    with(|g| n = g.get_light(light, pname, &mut v));
+    give(params, &v, n);
+}
+
+/// `glGetMaterialxv` (#1511).
+#[no_mangle]
+pub unsafe extern "C" fn glGetMaterialxv(
+    face: u32,
+    pname: u32,
+    params: *mut Fx,
+) {
+    let mut v = [0; 4];
+    let mut n = 0;
+    with(|g| n = g.get_material(face, pname, &mut v));
+    give(params, &v, n);
+}
+
+/// `glGetTexParameteriv` (#1511): an enumerant, or a boolean as 1 or 0.
+#[no_mangle]
+pub unsafe extern "C" fn glGetTexParameteriv(
+    target: u32,
+    pname: u32,
+    params: *mut i32,
+) {
+    let mut v = None;
+    with(|g| v = g.get_tex_parameter(target, pname));
+    if let Some(v) = v {
+        give(params, &[v as i32], 1);
+    }
+}
+
+/// `glGetTexParameterxv` (#1511): the same, an enumerant unscaled and a
+/// boolean as 1.0 or 0.0, as section 6.1.2 converts them.
+#[no_mangle]
+pub unsafe extern "C" fn glGetTexParameterxv(
+    target: u32,
+    pname: u32,
+    params: *mut Fx,
+) {
+    let mut v = None;
+    with(|g| v = g.get_tex_parameter(target, pname));
+    if let Some(v) = v {
+        let x = if pname == gl::GENERATE_MIPMAP {
+            v as Fx * ONE
+        } else {
+            v as Fx
+        };
+        give(params, &[x], 1);
+    }
+}
+
+/// `glGetTexEnvxv` (#1511): the mode as an enumerant unscaled, the colour
+/// in 16.16, and the sprites' replacement as 1.0 or 0.0.
+#[no_mangle]
+pub unsafe extern "C" fn glGetTexEnvxv(env: u32, pname: u32, params: *mut Fx) {
+    let mut v = [0; 4];
+    let mut n = 0;
+    with(|g| n = g.get_tex_env(env, pname, &mut v));
+    if pname == gl::COORD_REPLACE_OES {
+        v[0] *= ONE;
+    }
+    give(params, &v, n);
+}
+
+/// `glGetTexEnviv` (#1511): the mode as an enumerant, the colour mapped
+/// from [0, 1] onto the integers as Table 4.4 maps a colour, and the
+/// sprites' replacement as 1 or 0.
+#[no_mangle]
+pub unsafe extern "C" fn glGetTexEnviv(env: u32, pname: u32, params: *mut i32) {
+    let mut v = [0; 4];
+    let mut n = 0;
+    with(|g| n = g.get_tex_env(env, pname, &mut v));
+    let w = if pname == gl::TEXTURE_ENV_COLOR {
+        v.map(|c| ((c as i64 * i32::MAX as i64) / ONE as i64) as i32)
+    } else {
+        v
+    };
+    give(params, &w, n);
+}
+
+/// `glGetClipPlanex` (#1511): the plane's equation in eye coordinates.
+#[no_mangle]
+pub unsafe extern "C" fn glGetClipPlanex(plane: u32, eqn: *mut Fx) {
+    let mut v = None;
+    with(|g| v = g.get_clip_plane(plane));
+    if let Some(v) = v {
+        give(eqn, &v, 4);
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn glMaterialx(face: u32, pname: u32, param: Fx) {
     with(|g| g.material(face, pname, &[param]));

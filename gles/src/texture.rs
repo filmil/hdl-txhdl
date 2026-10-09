@@ -45,7 +45,7 @@ pub struct Object {
 
 impl Object {
     /// A new object, in GL's initial state.
-    const NEW: Object = Object {
+    pub(crate) const NEW: Object = Object {
         live: false,
         size: None,
         defined: 0,

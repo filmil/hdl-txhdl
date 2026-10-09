@@ -1069,6 +1069,158 @@ impl<'a> Gl<'a> {
         }
     }
 
+    /// `glGetLightxv` (#1511): light `light`'s `pname` into `out`, the
+    /// position and the spot direction in eye coordinates as GL keeps them;
+    /// how many values it wrote, none with the error recorded.
+    pub fn get_light(
+        &mut self,
+        light: u32,
+        pname: u32,
+        out: &mut [Fx],
+    ) -> usize {
+        let i = light.wrapping_sub(gl::LIGHT0) as usize;
+        if i >= gl::MAX_LIGHTS {
+            self.fail(gl::INVALID_ENUM);
+            return 0;
+        }
+        let l = &self.lights[i];
+        let d = l.spot_direction;
+        let v: &[Fx] = match pname {
+            gl::AMBIENT => &l.ambient,
+            gl::DIFFUSE => &l.diffuse,
+            gl::SPECULAR => &l.specular,
+            gl::POSITION => &l.position,
+            gl::SPOT_DIRECTION => &d,
+            gl::SPOT_EXPONENT => core::slice::from_ref(&l.spot_exponent),
+            gl::SPOT_CUTOFF => core::slice::from_ref(&l.spot_cutoff),
+            gl::CONSTANT_ATTENUATION => &l.attenuation[0..1],
+            gl::LINEAR_ATTENUATION => &l.attenuation[1..2],
+            gl::QUADRATIC_ATTENUATION => &l.attenuation[2..3],
+            _ => {
+                self.fail(gl::INVALID_ENUM);
+                return 0;
+            }
+        };
+        let n = v.len().min(out.len());
+        out[..n].copy_from_slice(&v[..n]);
+        n
+    }
+
+    /// `glGetMaterialxv` (#1511): the material's `pname` for `face`,
+    /// `GL_FRONT` or `GL_BACK`, which GL ES's one material answers alike;
+    /// how many values it wrote, none with the error recorded.
+    pub fn get_material(
+        &mut self,
+        face: u32,
+        pname: u32,
+        out: &mut [Fx],
+    ) -> usize {
+        if face != gl::FRONT && face != gl::BACK {
+            self.fail(gl::INVALID_ENUM);
+            return 0;
+        }
+        let m = &self.material;
+        let v: &[Fx] = match pname {
+            gl::AMBIENT => &m.ambient,
+            gl::DIFFUSE => &m.diffuse,
+            gl::SPECULAR => &m.specular,
+            gl::EMISSION => &m.emission,
+            gl::SHININESS => core::slice::from_ref(&m.shininess),
+            _ => {
+                self.fail(gl::INVALID_ENUM);
+                return 0;
+            }
+        };
+        let n = v.len().min(out.len());
+        out[..n].copy_from_slice(&v[..n]);
+        n
+    }
+
+    /// `glGetTexParameteriv` and `glGetTexParameterxv` (#1511): the bound
+    /// texture's `pname`, an enumerant or, for `GL_GENERATE_MIPMAP`, a
+    /// boolean; the texture called nought answers GL's initial values.
+    pub fn get_tex_parameter(
+        &mut self,
+        target: u32,
+        pname: u32,
+    ) -> Option<u32> {
+        if target != gl::TEXTURE_2D {
+            self.fail(gl::INVALID_ENUM);
+            return None;
+        }
+        let name = self.bound;
+        let o = self
+            .store
+            .as_ref()
+            .and_then(|s| s.object(name).copied())
+            .unwrap_or(texture::Object::NEW);
+        let v = match pname {
+            gl::TEXTURE_MIN_FILTER => o.min,
+            gl::TEXTURE_MAG_FILTER => o.mag,
+            gl::TEXTURE_WRAP_S => o.wrap_s,
+            gl::TEXTURE_WRAP_T => o.wrap_t,
+            gl::GENERATE_MIPMAP => o.generate as u32,
+            _ => {
+                self.fail(gl::INVALID_ENUM);
+                return None;
+            }
+        };
+        Some(v)
+    }
+
+    /// `glGetTexEnvxv` (#1511): the environment's mode, as GL's
+    /// enumerant, or its colour; or, for `GL_POINT_SPRITE_OES`, whether
+    /// sprites replace the coordinates. How many values it wrote, none with
+    /// the error recorded; `GL_COMBINE`'s state is #1512's.
+    pub fn get_tex_env(
+        &mut self,
+        target: u32,
+        pname: u32,
+        out: &mut [Fx],
+    ) -> usize {
+        use razboj_tile::tex;
+        let one = |out: &mut [Fx], v: u32| {
+            if let Some(o) = out.first_mut() {
+                *o = v as Fx;
+            }
+            1
+        };
+        match (target, pname) {
+            (gl::POINT_SPRITE_OES, gl::COORD_REPLACE_OES) => {
+                one(out, self.coord_replace as u32)
+            }
+            (gl::TEXTURE_ENV, gl::TEXTURE_ENV_MODE) => {
+                let mode = match self.env {
+                    tex::REPLACE => gl::REPLACE,
+                    tex::DECAL => gl::DECAL,
+                    tex::BLEND => gl::BLEND,
+                    tex::ADD => gl::ADD,
+                    _ => gl::MODULATE,
+                };
+                one(out, mode)
+            }
+            (gl::TEXTURE_ENV, gl::TEXTURE_ENV_COLOR) => {
+                let n = out.len().min(4);
+                out[..n].copy_from_slice(&self.env_colour[..n]);
+                n
+            }
+            _ => {
+                self.fail(gl::INVALID_ENUM);
+                0
+            }
+        }
+    }
+
+    /// `glGetClipPlanex` (#1511): plane nought's equation, in eye
+    /// coordinates as GL keeps it.
+    pub fn get_clip_plane(&mut self, plane: u32) -> Option<[Fx; 4]> {
+        if plane != gl::CLIP_PLANE0 {
+            self.fail(gl::INVALID_ENUM);
+            return None;
+        }
+        Some(self.plane)
+    }
+
     /// `glMultiTexCoord4x` for the one unit: the texture coordinates a
     /// vertex without its own takes.
     pub fn tex_coord(&mut self, s: Fx, t: Fx, r: Fx, q: Fx) {
