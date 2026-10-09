@@ -49,6 +49,10 @@ if [ -c /dev/tty1 ]; then
 	/bin/busybox setsid /bin/busybox sh -c \
 		'exec /bin/busybox sh </dev/tty1 >/dev/tty1 2>&1' &
 fi
+# Two threads, one on each hart, counting three ways (issue 1408).
+if [ -x /bin/smpcount ]; then
+	/bin/smpcount
+fi
 # A dynamic program, when the root has musl's shared library (issue
 # 1439): it loads through /lib/ld-musl-riscv32-sf.so.1 and says so.
 if [ -x /bin/dynhello ]; then

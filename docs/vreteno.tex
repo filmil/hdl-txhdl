@@ -477,6 +477,12 @@ The kernel is built for both of the board's harts (issue~\#1408):
 \code{CONFIG\_SMP} with two CPUs, and no hot plugging yet. OpenSBI
 holds hart 1 until the kernel starts it through SBI, and the kernel
 says it brought up two CPUs; \code{boot\_test} waits for that line.
+Then \code{/init} runs \code{linux/smpcount.c}: two threads, one held
+to each hart, each add 20\,000 to three counters, with \code{amoadd.w},
+with a compare and swap, which is \code{lr.w} and \code{sc.w}, and
+under a mutex. All three must come to 40\,000, and the test waits for
+the line that says so. With the machine's reservations never broken by
+the other hart's store, the swaps and the mutex lose about 1\,100 each.
 Measured the same way, in cycles to userspace, on the machine's
 timing:
 

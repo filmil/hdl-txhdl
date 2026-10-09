@@ -133,6 +133,21 @@ genrule(
     tools = _TOOLS,
 )
 
+# Two threads counting on the two harts (issue 1408), static, for the
+# initramfs, whose /init runs it.
+genrule(
+    name = "smpcount",
+    srcs = [
+        ":rv32_sysroot",
+        "smpcount.c",
+    ],
+    outs = ["bin/smpcount"],
+    cmd = _ENV + " $(execpath userspace.sh) staticprog " +
+          "$(execpath :rv32_sysroot) $(execpath smpcount.c) $@",
+    tags = ["manual"],
+    tools = _TOOLS,
+)
+
 genrule(
     name = "dynhello",
     srcs = [
@@ -162,12 +177,14 @@ genrule(
     name = "initramfs",
     srcs = [
         "bin/busybox",
+        "bin/smpcount",
         "init",
         "@linux//:src",
     ],
     outs = ["initramfs.cpio"],
     cmd = _ENV + " $(execpath userspace.sh) initramfs " +
-          "$(execpath bin/busybox) $(execpath init) $(execpath @linux//:src) $@",
+          "$(execpath bin/busybox) $(execpath init) $(execpath @linux//:src) " +
+          "$(execpath bin/smpcount) $@",
     tags = ["manual"],
     tools = _TOOLS,
 )
@@ -302,8 +319,12 @@ sh_test(
         ":model_boot",
         "//cpu/vreteno:machine",
     ],
-    # The kernel brings up the second hart (issue 1408).
-    env = {"EXPECT": "smp: Brought up 1 node, 2 CPUs"},
+    # The kernel brings up the second hart, and two threads, one on
+    # each, keep three counts exact (issue 1408).
+    env = {
+        "EXPECT": "smp: Brought up 1 node, 2 CPUs",
+        "EXPECT_ALSO": "txhdl: smp count right on two harts",
+    },
     tags = ["manual"],
 )
 
