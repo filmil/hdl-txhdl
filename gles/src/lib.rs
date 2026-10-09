@@ -474,8 +474,17 @@ impl<'a> Gl<'a> {
         }
     }
 
-    pub fn is_enabled(&self, cap: u32) -> bool {
-        self.enabled(cap).unwrap_or(false)
+    /// `glIsEnabled`: whether `cap` is on; for a name that is not a switch
+    /// GL ES 1.1 has or this library keeps, false and `GL_INVALID_ENUM`, as
+    /// section 6.1.1 says (#1514).
+    pub fn is_enabled(&mut self, cap: u32) -> bool {
+        match self.enabled(cap) {
+            Some(on) => on,
+            None => {
+                self.fail(gl::INVALID_ENUM);
+                false
+            }
+        }
     }
 
     /// Whether `cap` is on, or `None` for a switch GL ES 1.1 does not have
@@ -576,8 +585,10 @@ impl<'a> Gl<'a> {
             | gl::QUADRATIC_ATTENUATION => 1,
             _ => return self.fail(gl::INVALID_ENUM),
         };
+        // Fewer values than the parameter takes is the one-value call of a
+        // vector parameter: GL_INVALID_ENUM, by section 2.12.2 (#1518).
         if params.len() < want {
-            return self.fail(gl::INVALID_VALUE);
+            return self.fail(gl::INVALID_ENUM);
         }
         let four = |p: &[Fx]| [p[0], p[1], p[2], p[3]];
         let mv = self.modelview();
@@ -641,8 +652,10 @@ impl<'a> Gl<'a> {
             gl::SHININESS => 1,
             _ => return self.fail(gl::INVALID_ENUM),
         };
+        // Fewer values than the parameter takes is the one-value call of a
+        // vector parameter: GL_INVALID_ENUM, by section 2.12.2 (#1518).
         if params.len() < want {
-            return self.fail(gl::INVALID_VALUE);
+            return self.fail(gl::INVALID_ENUM);
         }
         let c = || {
             [
@@ -974,18 +987,53 @@ impl<'a> Gl<'a> {
         type_: u32,
         pixels: &[u8],
     ) {
+        // Section 3.7.1's errors in its order (#1519): the target, then an
+        // internal format that is none of the five or a border, then a
+        // format or type GL does not have, then an internal format that is
+        // not the format or a packed type that does not fit it. Section 2.5
+        // does not order two errors in one call; this is the order the
+        // section states them in, and the one piglit's paletted texture
+        // test asks for.
+        let base = |f: u32| {
+            matches!(
+                f,
+                gl::ALPHA
+                    | gl::RGB
+                    | gl::RGBA
+                    | gl::LUMINANCE
+                    | gl::LUMINANCE_ALPHA
+            )
+        };
+        let packed = matches!(
+            type_,
+            gl::UNSIGNED_SHORT_5_6_5
+                | gl::UNSIGNED_SHORT_4_4_4_4
+                | gl::UNSIGNED_SHORT_5_5_5_1
+        );
         if target != gl::TEXTURE_2D {
             return self.fail(gl::INVALID_ENUM);
         }
-        if border != 0 || internal != format {
+        if border != 0 || !base(internal) {
             return self.fail(gl::INVALID_VALUE);
+        }
+        if !base(format) || !(packed || type_ == gl::UNSIGNED_BYTE) {
+            return self.fail(gl::INVALID_ENUM);
+        }
+        let fits = match type_ {
+            gl::UNSIGNED_SHORT_5_6_5 => format == gl::RGB,
+            gl::UNSIGNED_SHORT_4_4_4_4 | gl::UNSIGNED_SHORT_5_5_5_1 => {
+                format == gl::RGBA
+            }
+            _ => true,
+        };
+        if internal != format || !fits {
+            return self.fail(gl::INVALID_OPERATION);
         }
         let (name, align) = (self.bound, self.unpack);
         let r = match self.store.as_mut() {
-            Some(s) if name != 0 => s.image(
+            Some(s) => s.image(
                 name, level, format, width, height, type_, pixels, align,
             ),
-            Some(_) => Err(gl::INVALID_OPERATION),
             None => Err(gl::OUT_OF_MEMORY),
         };
         if let Err(e) = r {
@@ -1017,10 +1065,7 @@ impl<'a> Gl<'a> {
         }
         let name = self.bound;
         let r = match self.store.as_mut() {
-            Some(s) if name != 0 => {
-                s.compressed(name, level, internal, width, height, data)
-            }
-            Some(_) => Err(gl::INVALID_OPERATION),
+            Some(s) => s.compressed(name, level, internal, width, height, data),
             None => Err(gl::OUT_OF_MEMORY),
         };
         if let Err(e) = r {
@@ -1067,6 +1112,158 @@ impl<'a> Gl<'a> {
             }
             _ => self.fail(gl::INVALID_ENUM),
         }
+    }
+
+    /// `glGetLightxv` (#1511): light `light`'s `pname` into `out`, the
+    /// position and the spot direction in eye coordinates as GL keeps them;
+    /// how many values it wrote, none with the error recorded.
+    pub fn get_light(
+        &mut self,
+        light: u32,
+        pname: u32,
+        out: &mut [Fx],
+    ) -> usize {
+        let i = light.wrapping_sub(gl::LIGHT0) as usize;
+        if i >= gl::MAX_LIGHTS {
+            self.fail(gl::INVALID_ENUM);
+            return 0;
+        }
+        let l = &self.lights[i];
+        let d = l.spot_direction;
+        let v: &[Fx] = match pname {
+            gl::AMBIENT => &l.ambient,
+            gl::DIFFUSE => &l.diffuse,
+            gl::SPECULAR => &l.specular,
+            gl::POSITION => &l.position,
+            gl::SPOT_DIRECTION => &d,
+            gl::SPOT_EXPONENT => core::slice::from_ref(&l.spot_exponent),
+            gl::SPOT_CUTOFF => core::slice::from_ref(&l.spot_cutoff),
+            gl::CONSTANT_ATTENUATION => &l.attenuation[0..1],
+            gl::LINEAR_ATTENUATION => &l.attenuation[1..2],
+            gl::QUADRATIC_ATTENUATION => &l.attenuation[2..3],
+            _ => {
+                self.fail(gl::INVALID_ENUM);
+                return 0;
+            }
+        };
+        let n = v.len().min(out.len());
+        out[..n].copy_from_slice(&v[..n]);
+        n
+    }
+
+    /// `glGetMaterialxv` (#1511): the material's `pname` for `face`,
+    /// `GL_FRONT` or `GL_BACK`, which GL ES's one material answers alike;
+    /// how many values it wrote, none with the error recorded.
+    pub fn get_material(
+        &mut self,
+        face: u32,
+        pname: u32,
+        out: &mut [Fx],
+    ) -> usize {
+        if face != gl::FRONT && face != gl::BACK {
+            self.fail(gl::INVALID_ENUM);
+            return 0;
+        }
+        let m = &self.material;
+        let v: &[Fx] = match pname {
+            gl::AMBIENT => &m.ambient,
+            gl::DIFFUSE => &m.diffuse,
+            gl::SPECULAR => &m.specular,
+            gl::EMISSION => &m.emission,
+            gl::SHININESS => core::slice::from_ref(&m.shininess),
+            _ => {
+                self.fail(gl::INVALID_ENUM);
+                return 0;
+            }
+        };
+        let n = v.len().min(out.len());
+        out[..n].copy_from_slice(&v[..n]);
+        n
+    }
+
+    /// `glGetTexParameteriv` and `glGetTexParameterxv` (#1511): the bound
+    /// texture's `pname`, an enumerant or, for `GL_GENERATE_MIPMAP`, a
+    /// boolean; the texture called nought answers GL's initial values.
+    pub fn get_tex_parameter(
+        &mut self,
+        target: u32,
+        pname: u32,
+    ) -> Option<u32> {
+        if target != gl::TEXTURE_2D {
+            self.fail(gl::INVALID_ENUM);
+            return None;
+        }
+        let name = self.bound;
+        let o = self
+            .store
+            .as_ref()
+            .and_then(|s| s.object(name).copied())
+            .unwrap_or(texture::Object::NEW);
+        let v = match pname {
+            gl::TEXTURE_MIN_FILTER => o.min,
+            gl::TEXTURE_MAG_FILTER => o.mag,
+            gl::TEXTURE_WRAP_S => o.wrap_s,
+            gl::TEXTURE_WRAP_T => o.wrap_t,
+            gl::GENERATE_MIPMAP => o.generate as u32,
+            _ => {
+                self.fail(gl::INVALID_ENUM);
+                return None;
+            }
+        };
+        Some(v)
+    }
+
+    /// `glGetTexEnvxv` (#1511): the environment's mode, as GL's
+    /// enumerant, or its colour; or, for `GL_POINT_SPRITE_OES`, whether
+    /// sprites replace the coordinates. How many values it wrote, none with
+    /// the error recorded; `GL_COMBINE`'s state is #1512's.
+    pub fn get_tex_env(
+        &mut self,
+        target: u32,
+        pname: u32,
+        out: &mut [Fx],
+    ) -> usize {
+        use razboj_tile::tex;
+        let one = |out: &mut [Fx], v: u32| {
+            if let Some(o) = out.first_mut() {
+                *o = v as Fx;
+            }
+            1
+        };
+        match (target, pname) {
+            (gl::POINT_SPRITE_OES, gl::COORD_REPLACE_OES) => {
+                one(out, self.coord_replace as u32)
+            }
+            (gl::TEXTURE_ENV, gl::TEXTURE_ENV_MODE) => {
+                let mode = match self.env {
+                    tex::REPLACE => gl::REPLACE,
+                    tex::DECAL => gl::DECAL,
+                    tex::BLEND => gl::BLEND,
+                    tex::ADD => gl::ADD,
+                    _ => gl::MODULATE,
+                };
+                one(out, mode)
+            }
+            (gl::TEXTURE_ENV, gl::TEXTURE_ENV_COLOR) => {
+                let n = out.len().min(4);
+                out[..n].copy_from_slice(&self.env_colour[..n]);
+                n
+            }
+            _ => {
+                self.fail(gl::INVALID_ENUM);
+                0
+            }
+        }
+    }
+
+    /// `glGetClipPlanex` (#1511): plane nought's equation, in eye
+    /// coordinates as GL keeps it.
+    pub fn get_clip_plane(&mut self, plane: u32) -> Option<[Fx; 4]> {
+        if plane != gl::CLIP_PLANE0 {
+            self.fail(gl::INVALID_ENUM);
+            return None;
+        }
+        Some(self.plane)
     }
 
     /// `glMultiTexCoord4x` for the one unit: the texture coordinates a

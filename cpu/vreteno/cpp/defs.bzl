@@ -122,6 +122,12 @@ def _vreteno_c_program_impl(ctx):
     dirs = {}
     for h in hdrs.to_list():
         dirs[h.dirname] = True
+    # The roots headers are included from, as `<GLES/gl.h>` is from the
+    # Khronos headers' package (#999): each file's package, under its root.
+    for f in ctx.files.include_roots:
+        root = f.root.path + "/" if f.root.path else ""
+        dirs[root + f.owner.workspace_root + f.owner.package] = True
+    hdrs = depset(ctx.files.include_roots, transitive = [hdrs])
     includes = ["-I" + d for d in dirs.keys()]
     objects = []
     for src in ctx.files.srcs:
@@ -146,7 +152,10 @@ def _vreteno_c_program_impl(ctx):
         objects.append(obj)
     elf = ctx.actions.declare_file(ctx.label.name + ".elf")
     ctx.actions.run(
-        inputs = depset(objects + [ctx.file.linker_script], transitive = [toolchain]),
+        inputs = depset(
+            objects + ctx.files.libs + [ctx.file.linker_script],
+            transitive = [toolchain],
+        ),
         outputs = [elf],
         executable = gcc,
         arguments = _ARCH + [
@@ -158,7 +167,8 @@ def _vreteno_c_program_impl(ctx):
             ctx.file.linker_script.path,
             "-o",
             elf.path,
-        ] + [o.path for o in objects] + ["-lc", "-lm", "-lgcc"],
+        ] + [o.path for o in objects] + [l.path for l in ctx.files.libs] +
+        ["-lc", "-lm", "-lgcc"],
         mnemonic = "VretenoLink",
         progress_message = "Linking %s for Vreteno" % ctx.label.name,
     )
@@ -183,6 +193,15 @@ vreteno_c_program = rule(
         "srcs": attr.label_list(allow_files = [".c", ".S", ".h"], mandatory = True),
         "hdrs": attr.label_list(allow_files = [".h"]),
         "copts": attr.string_list(),
+        "include_roots": attr.label_list(
+            allow_files = True,
+            doc = "Headers included by their path from their package, " +
+                  "whose package's directory is put on the include path.",
+        ),
+        "libs": attr.label_list(
+            allow_files = [".a"],
+            doc = "Static libraries for the core, linked after the objects.",
+        ),
         "linker_script": attr.label(allow_single_file = [".ld"], mandatory = True),
         "_toolchain": attr.label(default = "@riscv_none_elf_gcc//:all"),
         "_gcc": attr.label(

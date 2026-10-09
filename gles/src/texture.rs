@@ -5,7 +5,8 @@
 //! The room is the caller's, as a frame's is: words of DDR3, which this
 //! module reaches through `mem` and Razboj at the bus address `bus`. Its
 //! first `MAX_TEXTURES` times sixteen words are the descriptor table,
-//! object `n`'s descriptor at index `n - 1`, and the texels follow,
+//! object `n`'s descriptor at index `n`, GL's default texture, called
+//! nought, the first (#1515), and the texels follow,
 //! handed out in order and never given back: deleting an object frees its
 //! name and not its texels, which a program that loads its textures once
 //! does not miss.
@@ -45,7 +46,7 @@ pub struct Object {
 
 impl Object {
     /// A new object, in GL's initial state.
-    const NEW: Object = Object {
+    pub(crate) const NEW: Object = Object {
         live: false,
         size: None,
         defined: 0,
@@ -182,8 +183,16 @@ impl<'a> Store<'a> {
             mem,
             bus,
             used,
-            objects: [Object::NEW; MAX_TEXTURES],
+            objects: Self::objects(),
         }
+    }
+
+    /// The objects at first: the texture called nought, GL's default,
+    /// live, in slot nought, and the others unused (#1515).
+    fn objects() -> [Object; MAX_TEXTURES] {
+        let mut o = [Object::NEW; MAX_TEXTURES];
+        o[0].live = true;
+        o
     }
 
     /// A store over a room an earlier store filled (#1433), at the same
@@ -197,7 +206,7 @@ impl<'a> Store<'a> {
             used: TABLE_WORDS.min(mem.len()),
             mem,
             bus,
-            objects: [Object::NEW; MAX_TEXTURES],
+            objects: Self::objects(),
         };
         if s.mem.len() < TABLE_WORDS {
             return s;
@@ -250,7 +259,7 @@ impl<'a> Store<'a> {
     /// The bus address of object `name`'s descriptor, which a textured
     /// entry names its texture by.
     pub fn desc_at(&self, name: u32) -> u32 {
-        self.bus + (name - 1) * (DESC_WORDS as u32) * 4
+        self.bus + name * (DESC_WORDS as u32) * 4
     }
 
     /// The room, read back: for a test that hands it to Razboj's model.
@@ -258,14 +267,15 @@ impl<'a> Store<'a> {
         self.mem
     }
 
-    /// The object called `name`, if it is live.
+    /// The object called `name`, if it is live: slot `name`, the texture
+    /// called nought always (#1515).
     pub fn object(&self, name: u32) -> Option<&Object> {
-        let o = self.objects.get(name.checked_sub(1)? as usize)?;
+        let o = self.objects.get(name as usize)?;
         o.live.then_some(o)
     }
 
     fn object_mut(&mut self, name: u32) -> Option<&mut Object> {
-        let o = self.objects.get_mut(name.checked_sub(1)? as usize)?;
+        let o = self.objects.get_mut(name as usize)?;
         o.live.then_some(o)
     }
 
@@ -276,7 +286,7 @@ impl<'a> Store<'a> {
         if free < out.len() {
             return None;
         }
-        let mut k = 0;
+        let mut k = 1;
         for slot in out.iter_mut() {
             while self.objects[k].live {
                 k += 1;
@@ -285,7 +295,7 @@ impl<'a> Store<'a> {
                 live: true,
                 ..Object::NEW
             };
-            *slot = k as u32 + 1;
+            *slot = k as u32;
         }
         Some(())
     }
@@ -293,10 +303,7 @@ impl<'a> Store<'a> {
     /// The texture called `name` made live if it is not, as `glBindTexture`
     /// makes a name not in use; `false` for a name past the room.
     pub fn ensure(&mut self, name: u32) -> bool {
-        let Some(o) = name
-            .checked_sub(1)
-            .and_then(|k| self.objects.get_mut(k as usize))
-        else {
+        let Some(o) = self.objects.get_mut(name as usize) else {
             return false;
         };
         if !o.live {
@@ -311,7 +318,7 @@ impl<'a> Store<'a> {
     /// `glDeleteTextures`: the names given back. Nought and names not in
     /// use are passed over, as GL says.
     pub fn delete(&mut self, names: &[u32]) {
-        for &n in names {
+        for &n in names.iter().filter(|&&n| n != 0) {
             if let Some(o) = self.object_mut(n) {
                 *o = Object::NEW;
             }
@@ -437,7 +444,7 @@ impl<'a> Store<'a> {
                 o.defined |= 1 << l;
             }
         }
-        self.objects[name as usize - 1] = o;
+        self.objects[name as usize] = o;
         self.publish(name);
         Ok(())
     }
@@ -590,7 +597,7 @@ impl<'a> Store<'a> {
             return;
         }
         let w = tex::encode(&self.desc_of(&o));
-        let at = (name as usize - 1) * DESC_WORDS;
+        let at = name as usize * DESC_WORDS;
         self.mem[at..at + DESC_WORDS].copy_from_slice(&w);
     }
 

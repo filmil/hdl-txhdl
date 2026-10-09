@@ -52,12 +52,12 @@ A later issue means the entry point is accepted from the start but does what tha
 | Textures | `glGenTextures`, `glDeleteTextures`, `glBindTexture`, `glTexImage2D`, `glTexParameteri`, `glTexParameterx`, `glTexEnvi`, `glTexEnvx`, `glTexEnvxv`, `glTexCoordPointer`, `glMultiTexCoord4x`, `glActiveTexture`, `glClientActiveTexture`, `glPixelStorei`; `GL_TEXTURE_2D` and `GL_TEXTURE_COORD_ARRAY` | From #997, one unit, drawn in a tile table; the rasteriser samples under every filter, mipmapped, and every environment but `GL_COMBINE`, as Razboj's model does |
 | Points and lines | `glPointSizex`, `glLineWidthx`, and the point and line modes of the draw calls; `GL_POINT_SPRITE_OES` and `GL_COORD_REPLACE_OES` | Now, from issue 994; point sprites from #998 |
 | Switches | `glEnable`, `glDisable`, `glIsEnabled` for `GL_LIGHTING`, `GL_LIGHT0` to `GL_LIGHT7`, `GL_CULL_FACE`, `GL_NORMALIZE`, `GL_RESCALE_NORMAL`, `GL_COLOR_MATERIAL`, `GL_CLIP_PLANE0`, `GL_DEPTH_TEST`, `GL_BLEND`, `GL_ALPHA_TEST`, `GL_DITHER`, `GL_SCISSOR_TEST`, `GL_FOG`, `GL_STENCIL_TEST`; and the rest as the issues above land | Now, and growing |
-| Queries and errors | `glGetError`, `glGetIntegerv`, `glGetFixedv`, `glGetBooleanv`, `glGetString`, `glGetPointerv` | Now, the queries from #1484 (section 10) |
+| Queries and errors | `glGetError`, `glGetIntegerv`, `glGetFixedv`, `glGetBooleanv`, `glGetString`, `glGetPointerv`, `glGetLightxv`, `glGetMaterialxv`, `glGetTexParameteriv`, `glGetTexParameterxv`, `glGetTexEnviv`, `glGetTexEnvxv`, `glGetClipPlanex` | Now, the queries from #1484 (section 10), the parameters' from #1511 |
 | Completion | `glFlush`, `glFinish` | Now (section 7) |
 | Reading back | `glReadPixels`, `glPixelStorei(GL_PACK_ALIGNMENT)` | From #999, `GL_RGBA` and `GL_UNSIGNED_BYTE`, the frame so far drawn first |
 | Hints | `glHint` | Accepted and ignored, as the specification allows, from #1490 |
 
-Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit, which wait for a program that needs them.
+Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit (#1510), which wait for a program that needs them; and four parts of ES 1.1 that #999's conformance suite found missing: the point size array of `OES_point_size_array` (#1507), `glPointParameterx` (#1508), the multisampling state (#1509), and the switches `GL_POINT_SMOOTH` and `GL_LINE_SMOOTH` (#1513).
 An entry point that is left out still exists, so that a program links, and sets `GL_INVALID_ENUM` or `GL_INVALID_OPERATION` as the specification says for an unsupported value.
 
 The limits the library reports are the specification's minimums: a modelview stack of 16, projection and texture stacks of 2, eight lights, one clip plane.
@@ -332,7 +332,7 @@ It is the same square, as two textured triangles with `s` from nought at its lef
 So a pixel's coordinates are GL's `1/2 + (x - x_w + 1/2) / size` and `1/2 - (y - y_w + 1/2) / size`, and `q` is one.
 Its level of detail is the square's against the texture's, so a mipmapped sprite reads the level its size asks for.
 `//gles:texture_test`'s `a_point_sprite_is_the_texture_across_it` holds a sprite 32 pixels square to that formula, texel by texel, and the same point without coordinate replacement to its own colour.
-GL's own rule for a line one pixel wide, the diamond exit, differs from this at the ends and on ties; it is left for the conformance tests, issue 999, to ask for.
+GL's own rule for a line one pixel wide, the diamond exit, differs from this at the ends and on ties, which section 3.4.1 allows of another algorithm within four rules; #999's conformance suite holds the library's lines to them, and they keep all four.
 
 Depth is issue 1273's, on #992's depth test in Razboj's tile buffer.
 A vertex's window depth is its z over its w carried into the depth range, as sixteen bits.
@@ -378,20 +378,21 @@ The conformance suite is #999's, our own tests of GL ES 1.1's specification, sin
 Its C programs, in `gles/conform`, take a window and a context through EGL as any program does and print one line a test, `PASS` or `FAIL` with the reason.
 On the host they draw through Razboj's model as EGL's machine, and `//gles:conform_test` holds the run to `gles/conform/known_failures.txt`, which names an issue for every failure, so that a new failure fails the test and so does a known one that passes.
 The first group is the state tables of the specification's section 6.2: every state variable's initial value, through the query its table names and through the others with section 6.1.2's conversions, and every implementation-dependent value against its minimum.
-Of 196 checks, 97 pass. The 99 failures fall under eight issues:
+The second is the errors: for each command, the error section 2.5 and the command's own section give a bad argument, each recorded once, and that the command changes nothing.
+The third is the rendering: scenes read back with `glReadPixels` and held, pixel for pixel, to a reference in double precision that follows the specification's rules for points, polygons, lines by the four rules section 3.4.1 sets an algorithm other than the diamond exit, the viewport, smooth shading, every per-fragment test and operation, fog, the texture environments and lighting, skipping only a pixel whose centre lies on an edge, which GL leaves to the implementation.
+The fourth is four of piglit's ES 1 tests, in `gles/conform/piglit`, ported with their float calls made fixed point for Common-Lite, each change marked.
+Of 203 state checks, 163 pass; of 100 error checks, 99; of 81 rendering checks, 80; and of piglit's four, two. The 44 failures fall under eight issues:
 
-| Issue | Rows | What is missing |
+| Issue | Checks | What is missing or wrong |
 |---|---|---|
-| #1505 | 24 | `glGetFixedv` scales an enumeration by 2^16 |
-| #1507 | 5 | `OES_point_size_array` |
-| #1508 | 4 | `glPointParameterx` |
+| #1507 | 6 | `OES_point_size_array` |
+| #1508 | 5 | `glPointParameterx`, without which piglit's point sprite test draws nothing |
 | #1509 | 8 | The multisampling state |
 | #1510 | 1 | A second texture unit |
-| #1511 | 39 | `glGetMaterialxv`, `glGetLightxv`, `glGetTexParameteriv`, `glGetTexEnv` and `glGetClipPlanex` are stubs |
-| #1512 | 16 | `GL_COMBINE` |
+| #1512 | 17 | `GL_COMBINE`, its state and its scales |
 | #1513 | 2 | `GL_POINT_SMOOTH` and `GL_LINE_SMOOTH` |
-
-`glIsEnabled` of a name it does not know says false with no error, #1514, which is why some of those switches pass through it and fail through `glGetBooleanv`.
+| #1520 | 1 | Smooth shading of alpha, which Razboj takes from the first vertex |
+| #1522 | 4 | `OES_matrix_get`'s queries, a core addition |
 
 The queries are issue 1484's.
 `glGetIntegerv`, `glGetFixedv` and `glGetBooleanv` answer every name the library keeps state for: the viewport and the depth range, the matrix mode, the three matrices and their stacks' depths, the current colour, normal and texture coordinates, the clears, the depth, blend, alpha test and colour mask settings, the faces and the shading, the point size and the line width, the bound texture, the unpack alignment, the light model, and every switch `glIsEnabled` knows.

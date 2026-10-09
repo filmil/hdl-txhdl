@@ -6,6 +6,7 @@ load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_static_library", "rust_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//cpu/vreteno/cpp:defs.bzl", "vreteno_c_program")
 load("//cpu/vreteno/rust:defs.bzl", "vreteno_static")
 
 package(default_visibility = ["//visibility:public"])
@@ -315,10 +316,19 @@ cc_binary(
     name = "conform_host",
     srcs = [
         "conform/conform.h",
+        "conform/errors.c",
         "conform/main.c",
+        "conform/piglit/fixed_point.c",
+        "conform/piglit/matrix_get.c",
+        "conform/piglit/paletted.c",
+        "conform/piglit/piglit.c",
+        "conform/piglit/piglit-util-gl.h",
+        "conform/piglit/point_sprite.c",
+        "conform/render.c",
         "conform/state.c",
     ],
     copts = ["-std=c11"],
+    linkopts = ["-lm"],
     deps = [
         ":conform_static",
         ":conform_stubs",
@@ -397,4 +407,44 @@ vreteno_static(
     name = "zephyr_lib",
     library = ":zephyr_static",
     platform = "//cpu/vreteno/rust:vreteno",
+)
+
+# The conformance suite on the board (#999): the same C programs as
+# conform_host, with GL, EGL and the board's machine from zephyr_lib, for
+# the core, standard output to the serial port. The flat image is what
+# fastboot's boot runs:
+#   fastboot -s tcp:192.168.1.50 boot conform_board.bin
+# and the serial port prints the suite's report, its last line its count.
+vreteno_c_program(
+    name = "conform_board",
+    srcs = [
+        "capi/stubs.c",
+        "conform/board/board.c",
+        "conform/board/start.S",
+        "conform/conform.h",
+        "conform/errors.c",
+        "conform/main.c",
+        "conform/piglit/fixed_point.c",
+        "conform/piglit/matrix_get.c",
+        "conform/piglit/paletted.c",
+        "conform/piglit/piglit.c",
+        "conform/piglit/piglit-util-gl.h",
+        "conform/piglit/point_sprite.c",
+        "conform/render.c",
+        "conform/state.c",
+        "egl/stubs.c",
+    ],
+    hdrs = [
+        "conform/conform.h",
+        "conform/piglit/piglit-util-gl.h",
+        "//zephyr:regs_uart",
+    ],
+    copts = [
+        "-std=gnu11",
+        "-DEGL_NO_PLATFORM_SPECIFIC_TYPES",
+    ],
+    include_roots = ["//third_party/khronos:headers"],
+    libs = [":zephyr_lib"],
+    linker_script = "conform/board/conform.ld",
+    tags = ["manual"],
 )

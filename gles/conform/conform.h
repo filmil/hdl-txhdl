@@ -26,7 +26,13 @@ void conform_fail(const char *group, const char *name, const char *fmt, ...);
  * board. */
 extern void conform_machine(void);
 
+/* GL's initial state again, as a new context has it. */
+void conform_fresh(void);
+
 /* The groups. */
 void conform_state(void);
+void conform_errors(void);
+void conform_render(void);
+void conform_piglit(void);
 
 #endif

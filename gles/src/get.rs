@@ -75,6 +75,9 @@ pub mod name {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Integer,
+    /// An enumerant, which `glGetFixedv` gives unscaled, as section 6.1.2
+    /// says (#1505).
+    Enum,
     Fixed,
     /// Fixed, and mapped onto the integers' whole range when asked for
     /// as integers: colours, normals, depths and the alpha reference.
@@ -105,7 +108,7 @@ impl Got {
     pub fn integers(&self, out: &mut [i32]) {
         for (o, &v) in out.iter_mut().zip(&self.values[..self.len]) {
             *o = match self.kind {
-                Kind::Integer | Kind::Boolean => v as i32,
+                Kind::Integer | Kind::Enum | Kind::Boolean => v as i32,
                 Kind::Fixed => ((v + (ONE as i64 / 2)) >> 16) as i32,
                 // [-1, 1] onto [-(2^31 - 1), 2^31 - 1].
                 Kind::Unit => {
@@ -124,7 +127,7 @@ impl Got {
                 Kind::Integer | Kind::Boolean => {
                     (v << 16).clamp(i32::MIN as i64, i32::MAX as i64) as Fx
                 }
-                Kind::Fixed | Kind::Unit => v as Fx,
+                Kind::Enum | Kind::Fixed | Kind::Unit => v as Fx,
             };
         }
     }
@@ -144,6 +147,7 @@ impl Gl<'_> {
         use name::*;
         use Kind::*;
         let i = |v: &[i64]| Some(Got::of(Integer, v));
+        let e = |v: &[i64]| Some(Got::of(Enum, v));
         let f = |v: &[Fx]| {
             let w: [i64; 16] =
                 core::array::from_fn(|k| *v.get(k).unwrap_or(&0) as i64);
@@ -176,16 +180,16 @@ impl Gl<'_> {
                 i(&[1, size])
             }
             SMOOTH_POINT_SIZE_RANGE | SMOOTH_LINE_WIDTH_RANGE => i(&[1, 1]),
-            CULL_FACE_MODE => i(&[self.cull as i64]),
-            FRONT_FACE => i(&[self.front as i64]),
+            CULL_FACE_MODE => e(&[self.cull as i64]),
+            FRONT_FACE => e(&[self.front as i64]),
             SHADE_MODEL => {
-                i(&[if self.smooth { gl::SMOOTH } else { gl::FLAT } as i64])
+                e(&[if self.smooth { gl::SMOOTH } else { gl::FLAT } as i64])
             }
             DEPTH_RANGE => u(&[self.depth_range.0, self.depth_range.1]),
             DEPTH_WRITEMASK => b(&[self.depth_mask]),
             DEPTH_CLEAR_VALUE => u(&[self.clear_depth]),
-            DEPTH_FUNC => i(&[(gl::NEVER + self.depth_func) as i64]),
-            MATRIX_MODE => i(&[self.mode as i64]),
+            DEPTH_FUNC => e(&[(gl::NEVER + self.depth_func) as i64]),
+            MATRIX_MODE => e(&[self.mode as i64]),
             VIEWPORT => {
                 let (x, y, w, h) = self.viewport;
                 i(&[x as i64, y as i64, w as i64, h as i64])
@@ -196,13 +200,13 @@ impl Gl<'_> {
             MODELVIEW_MATRIX => f(&self.mv[self.mv_top]),
             PROJECTION_MATRIX => f(&self.pj[self.pj_top]),
             TEXTURE_MATRIX => f(&self.tx[self.tx_top]),
-            ALPHA_TEST_FUNC => i(&[(gl::NEVER + self.alpha.0) as i64]),
+            ALPHA_TEST_FUNC => e(&[(gl::NEVER + self.alpha.0) as i64]),
             ALPHA_TEST_REF => {
                 let r = self.alpha.1 as i64;
                 u(&[((r * ONE as i64 + 127) / 255) as Fx])
             }
-            BLEND_SRC => i(&[factor(self.blend.0) as i64]),
-            BLEND_DST => i(&[factor(self.blend.1) as i64]),
+            BLEND_SRC => e(&[factor(self.blend.0) as i64]),
+            BLEND_DST => e(&[factor(self.blend.1) as i64]),
             COLOR_CLEAR_VALUE => u(&self.clear_colour),
             // Red, green, blue and alpha; the mask keeps blue in bit 0.
             COLOR_WRITEMASK => {
@@ -219,9 +223,9 @@ impl Gl<'_> {
             // Reading pixels back (#999): the one format and type are
             // GL_RGBA and GL_UNSIGNED_BYTE.
             gl::PACK_ALIGNMENT => i(&[self.pack as i64]),
-            gl::IMPLEMENTATION_COLOR_READ_FORMAT_OES => i(&[gl::RGBA as i64]),
+            gl::IMPLEMENTATION_COLOR_READ_FORMAT_OES => e(&[gl::RGBA as i64]),
             gl::IMPLEMENTATION_COLOR_READ_TYPE_OES => {
-                i(&[gl::UNSIGNED_BYTE as i64])
+                e(&[gl::UNSIGNED_BYTE as i64])
             }
             MAX_LIGHTS => i(&[gl::MAX_LIGHTS as i64]),
             MAX_CLIP_PLANES => i(&[1]),
@@ -240,29 +244,29 @@ impl Gl<'_> {
             DEPTH_BITS => i(&[16]),
             STENCIL_BITS => i(&[8]),
             TEXTURE_BINDING_2D => i(&[self.bound as i64]),
-            ACTIVE_TEXTURE => i(&[TEXTURE0 as i64]),
+            ACTIVE_TEXTURE => e(&[TEXTURE0 as i64]),
             MAX_TEXTURE_UNITS => i(&[1]),
             // The ten paletted formats (#998), GL's values in GL's order.
             NUM_COMPRESSED_TEXTURE_FORMATS => i(&[10]),
             COMPRESSED_TEXTURE_FORMATS => {
                 let first = gl::PALETTE4_RGB8_OES as i64;
                 let v: [i64; 10] = core::array::from_fn(|k| first + k as i64);
-                i(&v)
+                e(&v)
             }
             gl::LIGHT_MODEL_AMBIENT => u(&self.scene_ambient),
             gl::LIGHT_MODEL_TWO_SIDE => b(&[self.two_side]),
             // Polygon offset (#998).
             // The logic operation (#998).
-            gl::LOGIC_OP_MODE => i(&[(gl::CLEAR + self.logic) as i64]),
+            gl::LOGIC_OP_MODE => e(&[(gl::CLEAR + self.logic) as i64]),
             // Fog (#998).
-            gl::FOG_MODE => i(&[self.fog_mode as i64]),
+            gl::FOG_MODE => e(&[self.fog_mode as i64]),
             gl::FOG_DENSITY => f(&[self.fog_density]),
             gl::FOG_START => f(&[self.fog_start]),
             gl::FOG_END => f(&[self.fog_end]),
             gl::FOG_COLOR => u(&self.fog_colour),
             // The stencil (#998). A mask of all ones reads as -1, as a
             // GLint holds it.
-            gl::STENCIL_FUNC => i(&[(gl::NEVER + self.stencil_func) as i64]),
+            gl::STENCIL_FUNC => e(&[(gl::NEVER + self.stencil_func) as i64]),
             gl::STENCIL_REF => i(&[self.stencil_ref as i64]),
             gl::STENCIL_VALUE_MASK => i(&[self.stencil_mask as i32 as i64]),
             gl::STENCIL_WRITEMASK => i(&[self.stencil_write as i32 as i64]),
@@ -279,7 +283,7 @@ impl Gl<'_> {
                     gl::DECR,
                     gl::INVERT,
                 ];
-                i(&[ops[self.stencil_ops[k] as usize] as i64])
+                e(&[ops[self.stencil_ops[k] as usize] as i64])
             }
             // The scissor and the hints (#1490).
             SCISSOR_BOX => {
@@ -288,7 +292,7 @@ impl Gl<'_> {
             }
             h if crate::HINTS.contains(&h) => {
                 let k = crate::HINTS.iter().position(|&t| t == h).unwrap_or(0);
-                i(&[self.hints[k] as i64])
+                e(&[self.hints[k] as i64])
             }
             gl::POLYGON_OFFSET_FACTOR => f(&[self.offset.0]),
             gl::POLYGON_OFFSET_UNITS => f(&[self.offset.1]),

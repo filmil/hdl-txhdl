@@ -364,29 +364,40 @@ pub extern "C" fn glIsEnabled(cap: u32) -> u8 {
 /// The client arrays' state, which the C API keeps rather than the
 /// library (#1484): each array's switch, and its size, type and stride as
 /// given, and the buffer objects' bindings (#1488), by GL ES 1.1's names
-/// for them; `None` for any other name.
-fn array_state(a: &Arrays, b: &Buffers, pname: u32) -> Option<i64> {
+/// for them, each with how it converts (#1505): the types and the active
+/// unit are enumerants, the rest integers; `None` for any other name.
+fn array_state(
+    a: &Arrays,
+    b: &Buffers,
+    pname: u32,
+) -> Option<(i64, gles::get::Kind)> {
+    use gles::get::Kind::{Enum, Integer};
     let size = |x: &Array| x.size as i64;
     let kind = |x: &Array| x.kind as i64;
     let stride = |x: &Array| x.stride as i64;
-    Some(match pname {
+    let v = match pname {
+        0x807B | 0x807E | 0x8082 | 0x8089 | 0x84E1 => {
+            let t = match pname {
+                0x807B => kind(&a.vertex),
+                0x807E => kind(&a.normal),
+                0x8082 => kind(&a.colour),
+                0x8089 => kind(&a.texcoord),
+                // GL_CLIENT_ACTIVE_TEXTURE: the one unit's.
+                _ => 0x84C0,
+            };
+            return Some((t, Enum));
+        }
         VERTEX_ARRAY => a.vertex.on as i64,
         NORMAL_ARRAY => a.normal.on as i64,
         COLOR_ARRAY => a.colour.on as i64,
         gl::TEXTURE_COORD_ARRAY => a.texcoord.on as i64,
         0x807A => size(&a.vertex),
-        0x807B => kind(&a.vertex),
         0x807C => stride(&a.vertex),
-        0x807E => kind(&a.normal),
         0x807F => stride(&a.normal),
         0x8081 => size(&a.colour),
-        0x8082 => kind(&a.colour),
         0x8083 => stride(&a.colour),
         0x8088 => size(&a.texcoord),
-        0x8089 => kind(&a.texcoord),
         0x808A => stride(&a.texcoord),
-        // GL_CLIENT_ACTIVE_TEXTURE: the one unit's.
-        0x84E1 => 0x84C0,
         // The buffer bindings (#1488): the two targets', and the buffer
         // each array was given under.
         0x8894 => b.array as i64,
@@ -396,7 +407,8 @@ fn array_state(a: &Arrays, b: &Buffers, pname: u32) -> Option<i64> {
         0x8898 => a.colour.buffer as i64,
         0x889A => a.texcoord.buffer as i64,
         _ => return None,
-    })
+    };
+    Some((v, Integer))
 }
 
 /// A query (#1484): the client arrays' own state, or the library's.
@@ -405,8 +417,7 @@ unsafe fn query(pname: u32, put: impl FnOnce(&gles::get::Got)) {
     let Some(c) = current() else {
         return;
     };
-    if let Some(v) = array_state(&c.arrays, &c.buffers, pname) {
-        let kind = gles::get::Kind::Integer;
+    if let Some((v, kind)) = array_state(&c.arrays, &c.buffers, pname) {
         let mut values = [0i64; 16];
         values[0] = v;
         return put(&gles::get::Got {
@@ -555,6 +566,111 @@ pub unsafe extern "C" fn glLightModelxv(pname: u32, params: *const Fx) {
     };
     let v = vals(params, n);
     with(|g| g.light_model(pname, &v[..n]));
+}
+
+/// Writes `v`'s first `n` values to `out`, GL's array.
+unsafe fn give<T: Copy>(out: *mut T, v: &[T], n: usize) {
+    if out.is_null() {
+        return;
+    }
+    for (k, &x) in v.iter().take(n).enumerate() {
+        out.add(k).write_unaligned(x);
+    }
+}
+
+/// `glGetLightxv` (#1511).
+#[no_mangle]
+pub unsafe extern "C" fn glGetLightxv(light: u32, pname: u32, params: *mut Fx) {
+    let mut v = [0; 4];
+    let mut n = 0;
+    with(|g| n = g.get_light(light, pname, &mut v));
+    give(params, &v, n);
+}
+
+/// `glGetMaterialxv` (#1511).
+#[no_mangle]
+pub unsafe extern "C" fn glGetMaterialxv(
+    face: u32,
+    pname: u32,
+    params: *mut Fx,
+) {
+    let mut v = [0; 4];
+    let mut n = 0;
+    with(|g| n = g.get_material(face, pname, &mut v));
+    give(params, &v, n);
+}
+
+/// `glGetTexParameteriv` (#1511): an enumerant, or a boolean as 1 or 0.
+#[no_mangle]
+pub unsafe extern "C" fn glGetTexParameteriv(
+    target: u32,
+    pname: u32,
+    params: *mut i32,
+) {
+    let mut v = None;
+    with(|g| v = g.get_tex_parameter(target, pname));
+    if let Some(v) = v {
+        give(params, &[v as i32], 1);
+    }
+}
+
+/// `glGetTexParameterxv` (#1511): the same, an enumerant unscaled and a
+/// boolean as 1.0 or 0.0, as section 6.1.2 converts them.
+#[no_mangle]
+pub unsafe extern "C" fn glGetTexParameterxv(
+    target: u32,
+    pname: u32,
+    params: *mut Fx,
+) {
+    let mut v = None;
+    with(|g| v = g.get_tex_parameter(target, pname));
+    if let Some(v) = v {
+        let x = if pname == gl::GENERATE_MIPMAP {
+            v as Fx * ONE
+        } else {
+            v as Fx
+        };
+        give(params, &[x], 1);
+    }
+}
+
+/// `glGetTexEnvxv` (#1511): the mode as an enumerant unscaled, the colour
+/// in 16.16, and the sprites' replacement as 1.0 or 0.0.
+#[no_mangle]
+pub unsafe extern "C" fn glGetTexEnvxv(env: u32, pname: u32, params: *mut Fx) {
+    let mut v = [0; 4];
+    let mut n = 0;
+    with(|g| n = g.get_tex_env(env, pname, &mut v));
+    if pname == gl::COORD_REPLACE_OES {
+        v[0] *= ONE;
+    }
+    give(params, &v, n);
+}
+
+/// `glGetTexEnviv` (#1511): the mode as an enumerant, the colour mapped
+/// from [0, 1] onto the integers as Table 4.4 maps a colour, and the
+/// sprites' replacement as 1 or 0.
+#[no_mangle]
+pub unsafe extern "C" fn glGetTexEnviv(env: u32, pname: u32, params: *mut i32) {
+    let mut v = [0; 4];
+    let mut n = 0;
+    with(|g| n = g.get_tex_env(env, pname, &mut v));
+    let w = if pname == gl::TEXTURE_ENV_COLOR {
+        v.map(|c| ((c as i64 * i32::MAX as i64) / ONE as i64) as i32)
+    } else {
+        v
+    };
+    give(params, &w, n);
+}
+
+/// `glGetClipPlanex` (#1511): the plane's equation in eye coordinates.
+#[no_mangle]
+pub unsafe extern "C" fn glGetClipPlanex(plane: u32, eqn: *mut Fx) {
+    let mut v = None;
+    with(|g| v = g.get_clip_plane(plane));
+    if let Some(v) = v {
+        give(eqn, &v, 4);
+    }
 }
 
 #[no_mangle]
@@ -713,7 +829,13 @@ pub extern "C" fn glGetString(name: u32) -> *const u8 {
         VERSION => {
             b"OpenGL ES-CL 1.1 TxHDL, Common-Lite, one texture unit, not conformant\0"
         }
-        EXTENSIONS => b"\0",
+        // The required profile extensions the library has, as Appendix C.3
+        // puts them in the string (#1521); the fourth, the point size array,
+        // is #1507's.
+        EXTENSIONS => {
+            b"GL_OES_read_format GL_OES_compressed_paletted_texture \
+              GL_OES_point_sprite\0"
+        }
         _ => {
             gles_record_error(gl::INVALID_ENUM);
             return core::ptr::null();
@@ -904,6 +1026,11 @@ pub extern "C" fn glDrawArrays(mode: u32, first: i32, count: i32) {
     let Some(c) = current() else {
         return;
     };
+    // A mode GL does not have is an error whether or not anything would
+    // be drawn (#1517).
+    if mode > gl::TRIANGLE_FAN {
+        return c.gl.record_error(gl::INVALID_ENUM);
+    }
     if first < 0 || count < 0 {
         return c.gl.record_error(gl::INVALID_VALUE);
     }
@@ -927,6 +1054,9 @@ pub unsafe extern "C" fn glDrawElements(
     let Some(c) = current() else {
         return;
     };
+    if mode > gl::TRIANGLE_FAN {
+        return c.gl.record_error(gl::INVALID_ENUM);
+    }
     if count < 0 {
         return c.gl.record_error(gl::INVALID_VALUE);
     }

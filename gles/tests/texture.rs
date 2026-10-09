@@ -696,3 +696,68 @@ fn a_point_sprite_is_the_texture_across_it() {
     assert_eq!(colour & 0xff_ffff, 0xff_8000);
     assert_eq!(fb.iter().filter(|&&p| p != 0).count(), 1024);
 }
+
+/// The texture called nought, GL's default, is a texture as any other
+/// (#1515): a program that never calls glGenTextures sets its filters,
+/// uploads its image and draws with it, here as a point sprite whose every
+/// pixel is a texel; deleting nought leaves it; and the first name
+/// glGenTextures gives is still one.
+#[test]
+fn the_texture_called_nought_is_a_texture() {
+    let mut frame = vec![[0u32; WORDS]; 64];
+    let room: &'static mut [u32] =
+        Box::leak(vec![0u32; 1 << 16].into_boxed_slice());
+    let mut g = Gl::new(&mut frame, W, H);
+    g.texture_room(room, BUS);
+    let t2 = gl::TEXTURE_2D;
+    g.tex_parameter(t2, gl::TEXTURE_MIN_FILTER, gl::NEAREST);
+    g.tex_parameter(t2, gl::TEXTURE_MAG_FILTER, gl::NEAREST);
+    assert_eq!(g.get_error(), gl::NO_ERROR, "its parameters");
+    let img = image();
+    let (s, rgba, ub) = (SIDE as u32, gl::RGBA, gl::UNSIGNED_BYTE);
+    g.tex_image_2d(t2, 0, rgba, s, s, 0, rgba, ub, &img);
+    assert_eq!(g.get_error(), gl::NO_ERROR, "its image");
+    g.delete_textures(&[0]);
+    assert_eq!(
+        g.get_tex_parameter(t2, gl::TEXTURE_MIN_FILTER),
+        Some(gl::NEAREST),
+        "deleting nought leaves it"
+    );
+    let mode = gl::REPLACE as Fx;
+    g.tex_env(gl::TEXTURE_ENV, gl::TEXTURE_ENV_MODE, &[mode]);
+    g.enable(gl::TEXTURE_2D);
+    g.enable(gl::POINT_SPRITE_OES);
+    g.tex_env(gl::POINT_SPRITE_OES, gl::COORD_REPLACE_OES, &[1]);
+    g.point_size(32 * ONE);
+    g.draw_vertices(gl::POINTS, 1, |_| Vertex {
+        position: [0, 0, 0, ONE],
+        colour: None,
+        normal: None,
+        tex: None,
+    });
+    assert_eq!(g.get_error(), gl::NO_ERROR);
+    let n = g.frame().len();
+    let words = g.textures().unwrap().words().to_vec();
+    let mut name = [0u32];
+    g.gen_textures(&mut name);
+    assert_eq!(name[0], 1, "names still start at one");
+    let list = decode_list(&frame[..n]);
+    let read = |a: u32| words[((a - BUS) / 4) as usize];
+    let t = Textures { mem: &read };
+    let fb = render_textured(
+        &list,
+        W as usize,
+        H as usize,
+        vec![0; 128 * 96],
+        Some(&t),
+    );
+    for (i, j) in [(0usize, 0usize), (5, 17), (31, 31)] {
+        let k = 4 * (j * SIDE + i);
+        let b = &img[k..k + 4];
+        let want = (b[3] as u32) << 24
+            | (b[0] as u32) << 16
+            | (b[1] as u32) << 8
+            | b[2] as u32;
+        assert_eq!(fb[(32 + j) * W as usize + 48 + i], want, "texel {i},{j}");
+    }
+}
