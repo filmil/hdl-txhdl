@@ -779,6 +779,32 @@ Done on October 8, 2026, on flagship main ed9a9a70 with #1445, with a recording:
 E1M1 started 5 s after the Enter that chose the skill, and the keys moved, turned and fired.
 The logs are on #1177.
 
+### The ES 1.1 conformance suite, #999
+
+#999's suite, the same C programs `//gles:conform_test` runs on the host against Razboj's model, run on the board through GL, EGL and the board's machine, so that the board's results can be set beside the model's.
+A flagship from a `main` that holds the GL stack through #999, programmed over JTAG, with the board's serial port open on the board server.
+Nothing is written to flash.
+
+`//gles:conform_board` is the suite for the core, bare metal, 167 KB, sent through fastboot (section 7):
+
+```sh
+bazel build //zephyr:fastboot //gles:conform_board
+scp bazel-bin/gles/conform_board.bin $TXHDL_BOARD_SERVER:txhdl_fastboot/
+bazel run //flagship:flagship_prog -- "${PROG[@]}"
+bazel run //cpu/vreteno/board/remote:load -- \
+    --image=$PWD/bazel-bin/zephyr/fastboot.bin --seconds=60 \
+    2>&1 | tee board-999-listen.log
+bazel run //cpu/vreteno/board/remote:serial -- --seconds=600 \
+    2>&1 | tee board-999.log &
+ssh $TXHDL_BOARD_SERVER txhdl_fastboot/fastboot -s tcp:192.168.1.50 \
+    boot txhdl_fastboot/conform_board.bin
+```
+
+Pass:
+* The serial log has a line a check, `PASS` or `FAIL` with its group and name, and ends with the count, `DONE <passed> passed, <failed> failed`.
+* The log's failures are the host's, which `gles/conform/known_failures.txt` lists, or each difference has an issue: the board draws with Razboj itself and reads back from the DDR3, where the host draws with its model.
+  `comm -3 <(tr -d '\r' < board-999.log | sed -n 's/^FAIL \([^:]*\):.*/\1/p' | sort) <(grep -v '^#' gles/conform/known_failures.txt | awk 'NF {print $1}' | sort)` prints the differences.
+
 ### Ethernet throughput, #1038
 
 The Ethernet half of #151: the port's throughput through the slots and the DMA engines, against the core's own copy of each frame.
