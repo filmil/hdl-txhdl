@@ -499,12 +499,20 @@ SMP & two harts & 4\,290\,048 & 1\,182\,402\,693 \\
 \end{tabular}
 \end{center}
 
-\noindent On one hart, SMP costs 360\,960 bytes and 10.6 per cent of
-the boot. On two it boots 7.7 per cent sooner than the uniprocessor
-kernel on one, for reasons not yet measured.
-The machine models no contention for the DDR3, so the board's two-hart
-figure will be somewhat higher. The tree is the board's two harts by
-default, and \code{boot\_image}'s \code{harts} gives one.
+\noindent On the machine, SMP costs 360\,960 bytes and 10.6 per cent of
+the boot on one hart, and on two it boots 7.7 per cent sooner than
+the uniprocessor kernel on one: the framebuffer console's drawing and
+the entropy generator's mixing run on the second hart, which the
+machine's \code{--profile} shows in its second file. The board
+disagrees. Booted after a reprogram and timed from the console, from
+OpenSBI's banner to \code{Run /init}, the kernel takes 10.58~s
+uniprocessor, 12.70~s SMP on a tree of one hart, +20.0 per cent, and
+11.54~s SMP on two, +9.0 per cent. The second hart does not pay back
+SMP's own cost. On the board every \code{sc.w} and AMO of the kernel's
+locks is an exclusive pair that waits for its write's answer, and the
+two harts share one path to the DDR3; the machine's timing charges
+neither (issue~\#1554). The tree is the board's two harts by default,
+and \code{boot\_image}'s \code{harts} gives one.
 
 The board can also keep its root on srv, over NFS, so that what is
 written there outlives a reboot (issue~1438). \code{board\_nfs\_boot}
