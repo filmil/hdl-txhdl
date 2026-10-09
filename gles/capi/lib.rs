@@ -829,7 +829,13 @@ pub extern "C" fn glGetString(name: u32) -> *const u8 {
         VERSION => {
             b"OpenGL ES-CL 1.1 TxHDL, Common-Lite, one texture unit, not conformant\0"
         }
-        EXTENSIONS => b"\0",
+        // The required profile extensions the library has, as Appendix C.3
+        // puts them in the string (#1521); the fourth, the point size array,
+        // is #1507's.
+        EXTENSIONS => {
+            b"GL_OES_read_format GL_OES_compressed_paletted_texture \
+              GL_OES_point_sprite\0"
+        }
         _ => {
             gles_record_error(gl::INVALID_ENUM);
             return core::ptr::null();
