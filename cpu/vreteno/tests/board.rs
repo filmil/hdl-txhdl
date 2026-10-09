@@ -2040,12 +2040,14 @@ fn the_loader_loads_a_program_and_runs_it() {
         400_000,
     );
     // The loader says `boot`, then `load` when the header arrives, then
-    // one `K` for the header and one for each word, then `ok` with the
+    // one `K` for the header and one for each word, then `mem` with the
+    // sum it reads back from the memory (issue 1555) and `ok` with the
     // address it jumps to; the program it loaded says `hi`.
     let acks = "K".repeat(payload().len() + 1);
+    let sum = payload().iter().fold(0u32, |s, w| s.wrapping_add(*w));
     assert_eq!(
         ran.said,
-        format!("boot\nload\n{acks}ok 40000000\nhi\n"),
+        format!("boot\nload\n{acks}mem {sum:08x}\nok 40000000\nhi\n"),
         "typed {} of {} bytes, the last at cycle {} of {}",
         ran.typed,
         stream(addr, &payload()).len(),
