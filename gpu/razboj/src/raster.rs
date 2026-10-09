@@ -419,7 +419,12 @@ pub struct Raster<
     pub mlm: Reg<U<32>>,
     pub mlz: Reg<U<7>>,
     pub mlx: Reg<U<32>>,
+    /// The two products are made in logic: in a DSP slice Vivado took `tx`
+    /// into the slice's input register, which left `q`'s normalisation and
+    /// the product's input in one cycle at 0.064 ns of slack (#1475).
+    #[use_dsp("no")]
     pub mpq: Reg<U<22>>,
+    #[use_dsp("no")]
     pub mpm: Reg<U<22>>,
     pub mlod: Reg<U<32>>,
     /// What `tex::sample` makes of it: the level sampled, and the next
