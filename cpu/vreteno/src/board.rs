@@ -220,8 +220,9 @@ pub struct Board<const DIV: u32> {
     pub host: AxiHost<32, 32, 4, 2, 4>,
     /// The second hart and its tracker (issue 1408), on the arbiter's
     /// eighth port. Its boot memory holds `park`, where it waits until
-    /// the first starts it through the mailbox; it takes no external
-    /// interrupt and is not on the debug module yet.
+    /// the first starts it through the mailbox. Its external lines are
+    /// the controller's third and fourth targets; it is not on the
+    /// debug module yet.
     pub cpu1: Hart<2, 16384, 1, 1, 1>,
     pub host1: AxiHost<32, 32, 4, 2, 4>,
     /// The second host: Vivado's JTAG-to-AXI master, on the top beside
@@ -705,6 +706,10 @@ impl<const DIV: u32> Unit for Board<DIV> {
         // The PLIC's supervisor line, `mip.SEIP`'s, to the core (issue
         // 1094).
         let (seirq_o, seirq_i) = signal::<Bit, DefaultClock>();
+        // Hart 1's two, from the controller's third and fourth targets
+        // (issue 1408).
+        let (eirq1_o, eirq1_i) = signal::<Bit, DefaultClock>();
+        let (seirq1_o, seirq1_i) = signal::<Bit, DefaultClock>();
         // The tracker and the router.
         let (aw_tx, aw_rx) = chan::<Aw<32, 2>, DefaultClock>();
         let (ar_tx, ar_rx) = chan::<Ar<32, 2>, DefaultClock>();
@@ -1229,6 +1234,8 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                             [uirq_i, irq, eth_irq_i],
                                             eirq_o,
                                             seirq_o,
+                                            eirq1_o,
+                                            seirq1_o,
                                         ),
                                     ),
                                     self.eth.run(
@@ -1315,7 +1322,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                 self.cpu1.run(
                                     (
                                         rst_h1,
-                                        tie(Bit::Zero),
+                                        eirq1_i,
                                         tirq1_i,
                                         sirq1_i,
                                         rdata1_rx,
@@ -1327,7 +1334,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                         tie(U::<32>::from(0u32)),
                                         tie(Bit::Zero),
                                         time_h1,
-                                        tie(Bit::Zero),
+                                        seirq1_i,
                                         dcs1_i,
                                     ),
                                     (

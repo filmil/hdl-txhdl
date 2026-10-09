@@ -641,7 +641,7 @@ mod tests {
         assert_eq!(d.uart.ie, 0, "the port's interrupts off");
         assert_eq!(d.plic.pending, 0, "nothing pending");
         assert_eq!(d.plic.active, 0, "nothing in service");
-        assert_eq!(d.plic.enable, [0, 0], "every source disabled");
+        assert_eq!(d.plic.enable, [0; 4], "every source disabled");
         assert!(d.plic.prio.iter().all(|&p| p == 0), "priorities zero");
         assert_eq!(d.uart.rx.len(), 1, "the byte is still to be read");
     }
