@@ -216,6 +216,13 @@ impl Gl<'_> {
                 )
             }
             UNPACK_ALIGNMENT => i(&[self.unpack as i64]),
+            // Reading pixels back (#999): the one format and type are
+            // GL_RGBA and GL_UNSIGNED_BYTE.
+            gl::PACK_ALIGNMENT => i(&[self.pack as i64]),
+            gl::IMPLEMENTATION_COLOR_READ_FORMAT_OES => i(&[gl::RGBA as i64]),
+            gl::IMPLEMENTATION_COLOR_READ_TYPE_OES => {
+                i(&[gl::UNSIGNED_BYTE as i64])
+            }
             MAX_LIGHTS => i(&[gl::MAX_LIGHTS as i64]),
             MAX_CLIP_PLANES => i(&[1]),
             MAX_TEXTURE_SIZE => i(&[gl::MAX_TEXTURE_SIZE as i64]),

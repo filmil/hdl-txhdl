@@ -38,6 +38,13 @@ pub trait Machine {
     fn buffers(&mut self) -> Option<&'static mut [u8]> {
         None
     }
+    /// The framebuffer as the core reads it, for `glReadPixels` (#999): its
+    /// words from Razboj's row nought, each `0xAARRGGBB`, and the words
+    /// from one row to the next. `None`, the default, leaves `glReadPixels`
+    /// writing nothing.
+    fn pixels(&mut self) -> Option<(&'static [u32], usize)> {
+        None
+    }
     /// Points the scanout at the buffer whose first row is `row`, and
     /// shows the scanout.
     fn show(&mut self, row: u32);

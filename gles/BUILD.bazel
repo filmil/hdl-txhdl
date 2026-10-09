@@ -279,6 +279,66 @@ sh_test(
     ],
 )
 
+# The ES 1.1 conformance suite on the host (#999): its C programs, through
+# GL's and EGL's entry points, drawing with Razboj's model as EGL's machine.
+# The model's machine is the static library's root, so that one library
+# carries the Rust crates beneath GL, EGL and it; the entry points the Rust
+# does not define come from the same stubs as gles_c's.
+rust_static_library(
+    name = "conform_static",
+    srcs = ["conform/host.rs"],
+    crate_name = "conform_host",
+    edition = "2021",
+    deps = [
+        ":capi",
+        ":egl",
+        ":machine",
+        "//gpu/razboj",
+        "//gpu/razboj:tile",
+    ],
+)
+
+cc_library(
+    name = "conform_stubs",
+    srcs = [
+        "capi/stubs.c",
+        "egl/stubs.c",
+    ],
+    copts = ["-std=c11"],
+    deps = [
+        "//third_party/khronos:egl",
+        "//third_party/khronos:gles1",
+    ],
+)
+
+cc_binary(
+    name = "conform_host",
+    srcs = [
+        "conform/conform.h",
+        "conform/main.c",
+        "conform/state.c",
+    ],
+    copts = ["-std=c11"],
+    deps = [
+        ":conform_static",
+        ":conform_stubs",
+    ],
+)
+
+# The suite's run, held to its known failures, each with its issue.
+sh_test(
+    name = "conform_test",
+    srcs = ["conform/conform_test.sh"],
+    args = [
+        "$(location :conform_host)",
+        "$(location conform/known_failures.txt)",
+    ],
+    data = [
+        "conform/known_failures.txt",
+        ":conform_host",
+    ],
+)
+
 # EGL in the model (issue 996): a program's calls through EGL's and GL's
 # entry points, swapping between the two buffers, with Razboj's model
 # drawing each frame.

@@ -207,3 +207,9 @@ pub const MAX_TEXTURE_SIZE: u32 = 1024;
 /// The texture stack's depth, the specification's minimum.
 pub const MAX_TEXTURE_STACK_DEPTH: usize = 2;
 pub const UNPACK_ALIGNMENT: u32 = 0x0CF5;
+/// Reading pixels back (#999): the rows' alignment, and the one format
+/// and type besides `GL_RGBA` and `GL_UNSIGNED_BYTE` an implementation
+/// may read in, `OES_read_format`'s, part of ES 1.1.
+pub const PACK_ALIGNMENT: u32 = 0x0D05;
+pub const IMPLEMENTATION_COLOR_READ_TYPE_OES: u32 = 0x8B9A;
+pub const IMPLEMENTATION_COLOR_READ_FORMAT_OES: u32 = 0x8B9B;
