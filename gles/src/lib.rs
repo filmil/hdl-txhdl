@@ -132,6 +132,10 @@ pub struct Gl<'a> {
     /// framebuffer keeps every bit of the colour, and Razboj's keeps eight
     /// a channel, as many as a colour has here.
     dither: bool,
+    /// The logic operation (#998): its switch, and which of GL's sixteen,
+    /// `GL_CLEAR` to `GL_SET` less `0x1500`, `GL_COPY` at first.
+    logic_on: bool,
+    logic: u32,
     /// The scissor (#1490): its switch, and its box in GL's window,
     /// the first column and row from the bottom left and the size.
     scissor_on: bool,
@@ -212,6 +216,8 @@ impl<'a> Gl<'a> {
             offset_on: false,
             offset: (0, 0),
             dither: true,
+            logic_on: false,
+            logic: gl::COPY - gl::CLEAR,
             scissor_on: false,
             scissor: (0, 0, sw as i32, sh as i32),
             hints: [gl::DONT_CARE; 5],
@@ -409,6 +415,7 @@ impl<'a> Gl<'a> {
             gl::DEPTH_TEST => self.depth_test = on,
             gl::POLYGON_OFFSET_FILL => self.offset_on = on,
             gl::DITHER => self.dither = on,
+            gl::COLOR_LOGIC_OP => self.logic_on = on,
             gl::SCISSOR_TEST => self.scissor_on = on,
             gl::BLEND => self.blend_on = on,
             gl::ALPHA_TEST => self.alpha_on = on,
@@ -440,6 +447,7 @@ impl<'a> Gl<'a> {
             gl::DEPTH_TEST => self.depth_test,
             gl::POLYGON_OFFSET_FILL => self.offset_on,
             gl::DITHER => self.dither,
+            gl::COLOR_LOGIC_OP => self.logic_on,
             gl::SCISSOR_TEST => self.scissor_on,
             gl::BLEND => self.blend_on,
             gl::ALPHA_TEST => self.alpha_on,
@@ -636,6 +644,16 @@ impl<'a> Gl<'a> {
         let ok = matches!(mode, gl::DONT_CARE | gl::FASTEST | gl::NICEST);
         match at {
             Some(k) if ok => self.hints[k] = mode,
+            _ => self.fail(gl::INVALID_ENUM),
+        }
+    }
+
+    /// `glLogicOp` (#998): which of GL's sixteen logic operations,
+    /// `GL_CLEAR` to `GL_SET`, takes the place of the blend while
+    /// `GL_COLOR_LOGIC_OP` is on.
+    pub fn logic_op(&mut self, op: u32) {
+        match op {
+            gl::CLEAR..=gl::SET => self.logic = op - gl::CLEAR,
             _ => self.fail(gl::INVALID_ENUM),
         }
     }
@@ -1015,6 +1033,7 @@ impl<'a> Gl<'a> {
             blend: self.blend_on.then_some(self.blend),
             alpha: self.alpha_on.then_some(self.alpha),
             mask: self.colour_mask,
+            logic: self.logic_on.then_some(self.logic),
         }
     }
 

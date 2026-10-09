@@ -51,6 +51,7 @@
 //!   slot word 3  [0] blend   [7:4] source factor   [11:8] destination's
 //!   slot word 4  [0] alpha test   [3:1] its comparison   [15:8] its
 //!                reference   [19:16] the colour mask, a bit a byte
+//!   slot word 5  [0] the logic operation   [4:1] which (issue 998)
 //! ```
 //!
 //! Like depth, these hold only in a tiled list.
@@ -126,6 +127,7 @@ pub fn encode_ext(i: &Insn) -> Option<[u32; WORDS]> {
         | (lo(i.afunc.raw()) << 1)
         | (lo(i.aref.raw()) << 8)
         | (lo(i.cmask.raw()) << 16);
+    w[5] = (i.logic.to_bool() as u32) | (lo(i.lop.raw()) << 1);
     Some(w)
 }
 
@@ -212,6 +214,8 @@ pub fn decode_ext(i: &mut Insn, e: &[u32]) {
     i.afunc = U::from((e[4] >> 1) & 7);
     i.aref = U::from((e[4] >> 8) & 0xff);
     i.cmask = U::from((e[4] >> 16) & 0xf);
+    i.logic = bit(e[5]);
+    i.lop = U::from((e[5] >> 1) & 0xf);
 }
 
 /// A textured entry's two slots read back into it (issue 997).

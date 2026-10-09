@@ -44,6 +44,14 @@ pub const POLYGON_OFFSET_FILL: u32 = 0x8037;
 pub const POLYGON_OFFSET_FACTOR: u32 = 0x8038;
 pub const POLYGON_OFFSET_UNITS: u32 = 0x2A00;
 pub const DITHER: u32 = 0x0BD0;
+/// The logic operations (#998): the switch, the query, and GL's sixteen
+/// from `GL_CLEAR` to `GL_SET`, of which these are the ends and the one
+/// GL starts with.
+pub const COLOR_LOGIC_OP: u32 = 0x0BF2;
+pub const LOGIC_OP_MODE: u32 = 0x0BF0;
+pub const CLEAR: u32 = 0x1500;
+pub const COPY: u32 = 0x1503;
+pub const SET: u32 = 0x150F;
 pub const SCISSOR_TEST: u32 = 0x0C11;
 /// The hints (#1490): GL ES 1.1's targets, and the three modes.
 pub const PERSPECTIVE_CORRECTION_HINT: u32 = 0x0C50;

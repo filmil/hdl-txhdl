@@ -303,6 +303,16 @@ begins with a clear loads nothing. Scenes under every factor are drawn
 in tiles as the model draws them, byte for byte, loaded and not, and
 \code{//docs:razboj\_blend} replays the netlist's load and blend under
 both simulators.
+GL's sixteen logic operations take the blend's place when an entry
+asks (issue~\#998): word 5 of the same slot turns one on and says
+which, and since GL numbers them as truth tables, bit $3 - (2s + d)$
+of the operation being the result for a source bit $s$ and a
+destination bit $d$, the rasteriser works the result out beside the
+blend's products and chooses it in the turn the blend's divide takes,
+so a pixel takes no cycle more. An operation reads the colour there
+as a blend does, so the binning loads a tile for it. Each of the
+sixteen is drawn in tiles as the model draws it, byte for byte, and
+\code{//docs:razboj\_blend} replays one under \code{GL\_XOR}.
 
 Textures come next (issue~\#997). A texture is its levels in DDR3,
 each texel RGBA in 32 bits as a pixel is, stored in blocks of four by

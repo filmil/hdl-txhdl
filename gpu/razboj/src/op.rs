@@ -111,6 +111,11 @@ pub enum Op {
     /// of the pixel: bit 0 blue, 1 green, 2 red, 3 alpha, so `0xf` is
     /// every channel and nought none (issue 993). Tiled lists only.
     ColourMask(u32),
+    /// From here on, write each pixel as GL's logic operation `op` makes
+    /// it from the pixel and the framebuffer's, bit by bit, in place of
+    /// the blend, or not with `None` (issue 998): `op` is GL's `GL_CLEAR`
+    /// to `GL_SET` less `0x1500`, see [`logic`]. Tiled lists only.
+    LogicOp(Option<u32>),
     /// From here on, texture the entries that carry texture coordinates
     /// as `mode` says, or not at all with `None` (issue 997). Tiled lists
     /// only.
@@ -167,6 +172,30 @@ pub const ONE_MINUS_DST_ALPHA: u32 = 7;
 pub const DST_COLOR: u32 = 8;
 pub const ONE_MINUS_DST_COLOR: u32 = 9;
 pub const SRC_ALPHA_SATURATE: u32 = 10;
+
+/// GL's logic operations (issue 998), `GL_CLEAR` to `GL_SET` less
+/// `0x1500`. GL numbers them so that each is a truth table: bit `3 - (2s
+/// + d)` of the operation is the result for a source bit `s` and a
+/// destination bit `d`.
+pub const CLEAR: u32 = 0;
+pub const AND: u32 = 1;
+pub const COPY: u32 = 3;
+pub const NOOP: u32 = 5;
+pub const XOR: u32 = 6;
+pub const OR: u32 = 7;
+pub const INVERT: u32 = 10;
+pub const NAND: u32 = 14;
+pub const SET: u32 = 15;
+
+/// The pixel the logic operation `op` makes of the source `s` and the
+/// destination `d`, bit by bit, every channel and alpha alike.
+pub fn logic(op: u32, s: u32, d: u32) -> u32 {
+    let take = |k: u32| if (op >> k) & 1 == 1 { u32::MAX } else { 0 };
+    (take(3) & !s & !d)
+        | (take(2) & !s & d)
+        | (take(1) & s & !d)
+        | (take(0) & s & d)
+}
 
 /// An alpha test (issue 993): a pixel is kept when its alpha passes the
 /// comparison `func`, [`NEVER`] to [`ALWAYS`] as depth's, against
@@ -281,6 +310,10 @@ pub struct Insn {
     pub afunc: U<3>,
     pub aref: U<8>,
     pub cmask: U<4>,
+    /// The logic operation (issue 998): whether it is on, in place of the
+    /// blend, and which of GL's sixteen, as [`logic`] reads it.
+    pub logic: Bit,
+    pub lop: U<4>,
     /// Texturing (issue 997): whether the entry is textured, which gives
     /// it two slots more; its texture's descriptor's byte address, its
     /// environment and environment colour; the planes `u q`, `v q` and
@@ -324,11 +357,13 @@ impl Insn {
         }
     }
 
-    /// Whether the entry reads the colour already there: it blends, or
-    /// writes some channels but not all (issue 993).
+    /// Whether the entry reads the colour already there: it blends, has a
+    /// logic operation (issue 998), or writes some channels but not all
+    /// (issue 993).
     pub fn reads_dst(&self) -> bool {
         let m = self.mask();
-        self.state.to_bool() && (self.blend.to_bool() || (m != 0 && m != 0xf))
+        let mixes = self.blend.to_bool() || self.logic.to_bool();
+        self.state.to_bool() && (mixes || (m != 0 && m != 0xf))
     }
 }
 // end{op}
@@ -480,6 +515,7 @@ impl Op {
             | Op::Blend(_)
             | Op::AlphaTest(_)
             | Op::ColourMask(_)
+            | Op::LogicOp(_)
             | Op::Texture(_) => None,
         }
     }
@@ -771,6 +807,7 @@ pub fn assemble(ops: &[Op], sw: usize, sh: usize) -> Vec<Insn> {
             Op::Blend(mode) => pixel.blend = mode,
             Op::AlphaTest(test) => pixel.alpha = test,
             Op::ColourMask(mask) => pixel.mask = mask & 0xf,
+            Op::LogicOp(op) => pixel.logic = op.map(|o| o & 0xf),
             Op::Texture(mode) => texture = mode,
             _ => {
                 if let Some(mut insn) =
@@ -799,6 +836,7 @@ pub struct Pixel {
     pub blend: Option<BlendMode>,
     pub alpha: Option<AlphaTest>,
     pub mask: u32,
+    pub logic: Option<u32>,
 }
 
 impl Default for Pixel {
@@ -807,6 +845,7 @@ impl Default for Pixel {
             blend: None,
             alpha: None,
             mask: 0xf,
+            logic: None,
         }
     }
 }
@@ -830,6 +869,10 @@ impl Pixel {
             insn.aref = U::from(a.reference & 0xff);
         }
         insn.cmask = U::from(self.mask);
+        if let Some(op) = self.logic {
+            insn.logic = Bit::One;
+            insn.lop = U::from(op);
+        }
     }
 }
 

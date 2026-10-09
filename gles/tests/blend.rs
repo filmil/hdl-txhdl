@@ -344,3 +344,56 @@ fn dithering_is_the_identity() {
     };
     assert_eq!(draw(true), draw(false));
 }
+
+/// The logic operations (#998): with `GL_COLOR_LOGIC_OP` on, a triangle
+/// over the whole window writes, at every pixel, GL's operation of its
+/// colour and the clear's, bit by bit, each of the sixteen from its own
+/// truth table; the blend set beside it is not done; and the frame is a
+/// tile table, as Razboj does them only in one.
+#[test]
+fn logic_ops_are_gls() {
+    let s = [ONE * 3 / 4, ONE / 4, ONE, ONE / 2];
+    let c = [ONE / 8, ONE, ONE / 2, ONE];
+    let (sw, dw) = (colour_word(&s), colour_word(&c));
+    for k in 0..16u32 {
+        let mut frame = vec![[0u32; WORDS]; 16];
+        let mut g = Gl::new(&mut frame, W, H);
+        g.clear_color(c[0], c[1], c[2], c[3]);
+        g.clear(gl::COLOR_BUFFER_BIT);
+        g.enable(gl::BLEND);
+        g.blend_func(gl::SRC_ALPHA, gl::ONE);
+        g.enable(gl::COLOR_LOGIC_OP);
+        g.logic_op(gl::CLEAR + k);
+        let p = [
+            [-2 * ONE, -2 * ONE, 0, ONE],
+            [4 * ONE, -2 * ONE, 0, ONE],
+            [-2 * ONE, 4 * ONE, 0, ONE],
+        ];
+        g.shade_model(gl::FLAT);
+        g.draw_arrays(gl::TRIANGLES, &p, Some(&[s; 3]), None);
+        assert_eq!(g.get_error(), gl::NO_ERROR);
+        assert!(g.tiled(), "op {k}: a tile table");
+        let n = g.frame().len();
+        let fb = render_over(
+            &decode_list(&frame[..n]),
+            W as usize,
+            H as usize,
+            vec![0; (W * H) as usize],
+        );
+        // GL's truth table: the result for source bit a and destination
+        // bit b is bit 3 - (2a + b) of the operation.
+        let want = (0..32).fold(0u32, |w, bit| {
+            let (a, b) = ((sw >> bit) & 1, (dw >> bit) & 1);
+            w | ((k >> (3 - (2 * a + b))) & 1) << bit
+        });
+        assert!(
+            fb.iter().all(|&p| p == want),
+            "op {k}: {:08x} not {want:08x}",
+            fb[0]
+        );
+    }
+    let mut frame = vec![[0u32; WORDS]; 4];
+    let mut g = Gl::new(&mut frame, W, H);
+    g.logic_op(gl::SET + 1);
+    assert_eq!(g.get_error(), gl::INVALID_ENUM);
+}

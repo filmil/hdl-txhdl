@@ -239,6 +239,8 @@ pub fn render_textured(
         let state = op.state.to_bool();
         let atest = state && op.atest.to_bool();
         let blending = state && op.blend.to_bool();
+        let logic =
+            (state && op.logic.to_bool()).then_some(op.lop.raw() as u32);
         let (sf, df) = (op.sfactor.raw() as u32, op.dfactor.raw() as u32);
         let mask = op.mask();
         let tex = textures.filter(|_| op.tex.to_bool()).map(|t| {
@@ -282,10 +284,11 @@ pub fn render_textured(
                     continue;
                 }
                 let dst = fb[at];
-                let out = if blending {
-                    blend(src, dst, sf, df)
-                } else {
-                    src
+                // A logic operation is in place of the blend, as GL has it.
+                let out = match logic {
+                    Some(lop) => crate::op::logic(lop, src, dst),
+                    None if blending => blend(src, dst, sf, df),
+                    None => src,
                 };
                 fb[at] = masked(out, dst, mask);
                 if on && op.zwrite.to_bool() {
