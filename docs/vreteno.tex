@@ -487,6 +487,25 @@ third slot's registers, and \code{--screen} writes what the scanout
 would show when the run stops: on the model, the logo, the boot log
 and the prompt.
 
+The root on NFS carries more than the initramfs (issue~1439): musl's
+shared library at \code{/lib/libc.so}, with its loader's name for this
+ABI, \code{/lib/ld-musl-riscv32-sf.so.1}, linked to it; a dynamically
+linked program, \code{/bin/dynhello}, which \code{/init} runs and which
+says so; and Dropbear, the ssh server, pinned by the checksum its author
+publishes and linked against the same library. All are built by the
+tree's own LLVM, as BusyBox is, with nothing fetched while they build.
+The driver's default name for the loader lacks musl's \code{-sf} for
+the soft-float ABI, so a dynamic link names it; a static one must not,
+since \code{ld.lld} would write the name into BusyBox all the same and
+the initramfs has no \code{/lib}. \code{/init} mounts the
+pseudo-terminals a session needs and starts Dropbear, which makes its
+host keys at the first connection and keeps them on the export. Root
+has no password, so a login is by a key in
+\code{/root/.ssh/authorized\_keys}, which goes on srv's export and
+not into the tree. On the model, which has no NFS server,
+\code{boot\_root\_test} boots the same tree as an initramfs and sees
+the dynamic program run and Dropbear listen.
+
 Linux reaches the network through its own LiteEth driver,
 \code{litex\_liteeth}, on the Ethernet port (issue~\#1203). The
 port's registers are LiteEth's at LiteX's offsets, and its two

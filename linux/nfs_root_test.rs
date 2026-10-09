@@ -78,4 +78,15 @@ fn the_nfs_root_is_the_initramfs_system_owned_by_root() {
     assert_eq!((sh.kind, sh.link.as_str()), (b'2', "busybox"));
     // A directory is named with its slash.
     assert_eq!(e["tmp/"].mode, 0o1777, "tmp is sticky");
+    // musl's shared library, its loader's name, a dynamic program and
+    // the ssh server, with the accounts a login reads (issue 1439).
+    assert_eq!(e["lib/libc.so"].kind, b'0');
+    let ld = &e["lib/ld-musl-riscv32-sf.so.1"];
+    assert_eq!((ld.kind, ld.link.as_str()), (b'2', "libc.so"));
+    assert_eq!(e["bin/dynhello"].mode, 0o755);
+    let db = &e["usr/sbin/dropbear"];
+    assert_eq!((db.kind, db.link.as_str()), (b'2', "../bin/dropbearmulti"));
+    assert_eq!(e["usr/bin/dropbearmulti"].mode, 0o755);
+    assert_eq!(e["etc/shadow"].mode, 0o600, "shadow is root's alone");
+    assert_eq!(e["root/.ssh/"].mode, 0o700, "the keys' directory");
 }

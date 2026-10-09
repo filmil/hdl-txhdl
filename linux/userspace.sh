@@ -81,6 +81,11 @@ cross_cc() {
   echo "clang $target --sysroot=$1 -resource-dir=$2" \
     "--rtlib=compiler-rt --unwindlib=none -fuse-ld=lld"
 }
+# What a dynamic program links with: musl's loader by musl's own name
+# for this ABI, soft-float, which the driver's default lacks (issue
+# 1439). Not for a static program, into which lld would write the
+# loader's name all the same.
+dyn_ld="-Wl,--dynamic-linker=/lib/ld-musl-riscv32-sf.so.1"
 
 # The sysroot tar holds the sysroot and the resource directory's library
 # half; the resource directory's headers are linked back in after.
@@ -105,8 +110,9 @@ sysroot)
   # musl, configured out of its tree: its headers first, which the
   # builtins include, and its library after them, which wants them.
   (cd "$work/musl" && "$musl/configure" --target=riscv32-linux-musl \
-    --prefix=/ --syslibdir=/lib --disable-shared \
+    --prefix=/ --syslibdir=/lib \
     CC="clang $target" AR=llvm-ar RANLIB=llvm-ranlib CFLAGS="-O2" \
+    LDFLAGS="-fuse-ld=lld" \
     LIBCC="$rtdir/libclang_rt.builtins.a" >/dev/null)
   make -s -C "$work/musl" install-headers DESTDIR="$sys"
 
@@ -260,13 +266,34 @@ roottar)
   # device nodes and root's ownership are in it without running as root,
   # and unpacked there with `tar -xpf` as root. Every entry at time
   # nought, so the archive is the same each build.
-  busybox=$root/$1 init=$root/$2 out=$3
-  "$PYTHON3" - "$busybox" "$init" "$out" <<'PY'
+  # With musl's shared library, Dropbear and a dynamic program beside
+  # BusyBox (issue 1439), and the accounts an ssh login reads.
+  busybox=$root/$1 init=$root/$2 libc=$root/$3 dropbear=$root/$4
+  dynhello=$root/$5 out=$6 cpio_out=$7
+  "$PYTHON3" - "$busybox" "$init" "$libc" "$dropbear" "$dynhello" "$out" \
+    "$cpio_out" <<'PY'
 import io
 import sys
 import tarfile
 
-busybox, init, out = sys.argv[1:]
+busybox, init, libc, dropbear, dynhello, out, cpio_out = sys.argv[1:]
+# The same tree as a newc archive too, the format the kernel unpacks as
+# an initramfs, so the model, which has no NFS server, boots it.
+cpio = bytearray()
+ino = [0]
+
+
+def newc(name, mode, data=b"", dev=(0, 0)):
+    ino[0] += 1
+    nb = name.encode() + b"\0"
+    fields = [ino[0], mode, 0, 0, 1, 0, len(data), 0, 0, dev[0], dev[1],
+              len(nb), 0]
+    cpio.extend(b"070701" + b"".join(b"%08x" % v for v in fields) + nb)
+    cpio.extend(b"\0" * (-len(cpio) % 4))
+    cpio.extend(data)
+    cpio.extend(b"\0" * (-len(cpio) % 4))
+
+
 with tarfile.open(out, "w", format=tarfile.GNU_FORMAT) as t:
 
     def add(name, kind, mode, data=b"", target="", dev=(0, 0)):
@@ -278,6 +305,10 @@ with tarfile.open(out, "w", format=tarfile.GNU_FORMAT) as t:
         i.linkname = target
         i.devmajor, i.devminor = dev
         t.addfile(i, io.BytesIO(data) if kind == tarfile.REGTYPE else None)
+        kinds = {tarfile.DIRTYPE: 0o040000, tarfile.REGTYPE: 0o100000,
+                 tarfile.SYMTYPE: 0o120000, tarfile.CHRTYPE: 0o020000}
+        body = target.encode() if kind == tarfile.SYMTYPE else data
+        newc(name, kinds[kind] | mode, body, dev)
 
     for d, m in [("dev", 0o755), ("bin", 0o755), ("sbin", 0o755),
                  ("usr", 0o755), ("usr/bin", 0o755), ("usr/sbin", 0o755),
@@ -291,10 +322,79 @@ with tarfile.open(out, "w", format=tarfile.GNU_FORMAT) as t:
     add("bin/sh", tarfile.SYMTYPE, 0o777, target="busybox")
     with open(init, "rb") as f:
         add("init", tarfile.REGTYPE, 0o755, f.read())
+    # musl's shared library, and its loader's name for this ABI.
+    add("lib", tarfile.DIRTYPE, 0o755)
+    with open(libc, "rb") as f:
+        add("lib/libc.so", tarfile.REGTYPE, 0o755, f.read())
+    add("lib/ld-musl-riscv32-sf.so.1", tarfile.SYMTYPE, 0o777,
+        target="libc.so")
+    with open(dynhello, "rb") as f:
+        add("bin/dynhello", tarfile.REGTYPE, 0o755, f.read())
+    # Dropbear: one program, which is what its name calls it.
+    with open(dropbear, "rb") as f:
+        add("usr/bin/dropbearmulti", tarfile.REGTYPE, 0o755, f.read())
+    add("usr/sbin/dropbear", tarfile.SYMTYPE, 0o777,
+        target="../bin/dropbearmulti")
+    for name in ["dbclient", "dropbearkey", "scp"]:
+        add("usr/bin/" + name, tarfile.SYMTYPE, 0o777, target="dropbearmulti")
+    # The accounts: root, whose password is no password at all ("*"),
+    # so a login is by a key in /root/.ssh/authorized_keys.
+    add("etc", tarfile.DIRTYPE, 0o755)
+    add("etc/dropbear", tarfile.DIRTYPE, 0o700)
+    add("etc/passwd", tarfile.REGTYPE, 0o644, b"root:x:0:0:root:/root:/bin/sh\n")
+    add("etc/group", tarfile.REGTYPE, 0o644, b"root:x:0:\n")
+    add("etc/shadow", tarfile.REGTYPE, 0o600, b"root:*:0:0:99999:7:::\n")
+    add("root/.ssh", tarfile.DIRTYPE, 0o700)
+newc("TRAILER!!!", 0)
+cpio.extend(b"\0" * (-len(cpio) % 512))
+with open(cpio_out, "wb") as f:
+    f.write(cpio)
 PY
   ;;
+dropbear)
+  # Dropbear, the ssh server (issue 1439): one program for the server,
+  # the client, the key maker and scp, linked against musl's shared
+  # library, so it runs through /lib/ld-musl-riscv32-sf.so.1 as any
+  # dynamic program on the board does. No zlib, and no login records,
+  # which the root does not keep.
+  tarball=$root/$1 src=$root/$2 out=$3
+  work=$root/.udb
+  unpack_sysroot "$tarball" "$work"
+  cp -r "$src" "$work/src"
+  chmod -R u+w "$work/src"
+  (cd "$work/src" && ./configure --host=riscv32-unknown-linux-musl \
+    --disable-zlib --disable-lastlog --disable-utmp --disable-utmpx \
+    --disable-wtmp --disable-wtmpx --disable-pututline \
+    --disable-pututxline --disable-harden \
+    CC="$(cross_cc "$work/sysroot" "$work/rd")" AR=llvm-ar \
+    RANLIB=llvm-ranlib STRIP=llvm-strip CFLAGS="-O2" LDFLAGS="$dyn_ld" \
+    >/dev/null)
+  make -s -C "$work/src" -j"$jobs" MULTI=1 \
+    PROGRAMS="dropbear dbclient dropbearkey scp"
+  llvm-strip -o "$out" "$work/src/dropbearmulti"
+  ;;
+dynprog)
+  # A C program linked against musl's shared library rather than its
+  # archive (issue 1439): what the board runs to show that a dynamic
+  # program loads and runs.
+  tarball=$root/$1 c=$root/$2 out=$3
+  work=$root/.udyn
+  unpack_sysroot "$tarball" "$work"
+  # shellcheck disable=SC2046
+  $(cross_cc "$work/sysroot" "$work/rd") $dyn_ld -O2 "$c" -o "$work/prog"
+  llvm-strip -o "$out" "$work/prog"
+  ;;
+musl_so)
+  # musl's shared library out of the sysroot, for the root's /lib, where
+  # its loader's name links to it (issue 1439).
+  tarball=$root/$1 out=$2
+  work=$root/.uso
+  rm -rf "$work" && mkdir -p "$work"
+  tar -xf "$tarball" -C "$work" sysroot/lib/libc.so
+  llvm-strip -o "$out" "$work/sysroot/lib/libc.so"
+  ;;
 *)
-  echo "userspace.sh: sysroot, busybox, initramfs, nfsboot or roottar, not $what" >&2
+  echo "userspace.sh: sysroot, busybox, initramfs, nfsboot, roottar, dropbear, dynprog or musl_so, not $what" >&2
   exit 2
   ;;
 esac
