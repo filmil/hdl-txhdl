@@ -23,7 +23,9 @@ use vreteno32::isa::{
     STIMER,
 };
 use vreteno32::model::{Halt, Model};
-use vreteno32::program::{demo, idle, in_memory, machine_info, random, soft};
+use vreteno32::program::{
+    demo, idle, in_memory, machine_info, random, random_at, soft,
+};
 use vreteno32::rom::Rom;
 use vreteno32::term::Terminal;
 use vreteno32::timer::Timer;
@@ -35,19 +37,26 @@ const NIDS: usize = 4;
 /// The address map: the data memory at its page, the timer at
 /// `0x0200_0000`, the serial port at `0x3000`, and the boot memory at
 /// zero, as the board has it, which a fetch under translation reads
-/// (issue 1014).
+/// (issue 1014); and 16 KiB of DDR3 at `DDR_BASE`, which the core's data
+/// cache holds lines of, and of which the model keeps its own copy, so
+/// a word the cache gets wrong disagrees with the model's (issue 1443).
 struct RunMap;
 
-impl AddrMap<4> for RunMap {
-    const RANGES: [(usize, usize); 4] = [
+impl AddrMap<5> for RunMap {
+    const RANGES: [(usize, usize); 5] = [
         (0x1000, 0xf000),
         (0x0200_0000, 0xffff_0000),
         (0x3000, 0xf000),
         (0x0000, 0xffff_f000),
+        (DDR_BASE as usize, 0xffff_c000),
     ];
 }
 
-type Rtr = Router<4, RunMap, 32, 32, 4, IW>;
+/// Where the DDR3 is, and its words here.
+const DDR_BASE: u32 = 0x4000_0000;
+const DDR_WORDS: usize = 4096;
+
+type Rtr = Router<5, RunMap, 32, 32, 4, IW>;
 
 /// The bridge the serial port sits behind: one AXI-Lite peripheral,
 /// at the range the router gives the port.
@@ -230,6 +239,10 @@ fn lockstep_hart<const HID: usize>(
     let ul = axi_units::<32, 32, 4, IW>();
     let rl = axi_units::<32, 32, 4, IW>();
     let rbus = PerPort::from(rl.per_client);
+    let xl = axi_units::<32, 32, 4, IW>();
+    let xbus = PerPort::from(xl.per_client);
+    let mut xper = AxiPer::<32, 32, 4, IW>::default();
+    let mut ddr = Dmem::<IW, 12, DDR_WORDS>::default();
     let mut rom = Rom::<IW>::with(program);
     let mut rper = AxiPer::<32, 32, 4, IW>::default();
     let (issue, wbeat, release, grant, cdone, crdata) = cl.host_client;
@@ -296,12 +309,14 @@ fn lockstep_hart<const HID: usize>(
                             tl.host_in.2,
                             ul.host_in.2,
                             rl.host_in.2,
+                            xl.host_in.2,
                         ],
                         [
                             dl.host_in.3,
                             tl.host_in.3,
                             ul.host_in.3,
                             rl.host_in.3,
+                            xl.host_in.3,
                         ],
                     ),
                     (
@@ -310,18 +325,21 @@ fn lockstep_hart<const HID: usize>(
                             tl.host_out.0,
                             ul.host_out.0,
                             rl.host_out.0,
+                            xl.host_out.0,
                         ],
                         [
                             dl.host_out.1,
                             tl.host_out.1,
                             ul.host_out.1,
                             rl.host_out.1,
+                            xl.host_out.1,
                         ],
                         [
                             dl.host_out.2,
                             tl.host_out.2,
                             ul.host_out.2,
                             rl.host_out.2,
+                            xl.host_out.2,
                         ],
                         cl.per_out.2,
                         cl.per_out.3,
@@ -338,7 +356,16 @@ fn lockstep_hart<const HID: usize>(
                         (ul.per_in.0, ul.per_in.1, ul.per_in.2, [bb], [br]),
                         ([baw], [bar], [bw], ul.per_out.2, ul.per_out.3),
                     ),
-                    join2(rper.run(rl.per_in, rl.per_out), rom.run(rbus, ())),
+                    join2(
+                        join2(
+                            rper.run(rl.per_in, rl.per_out),
+                            rom.run(rbus, ()),
+                        ),
+                        join2(
+                            xper.run(xl.per_in, xl.per_out),
+                            ddr.run(xbus, ()),
+                        ),
+                    ),
                 ),
             ),
         ),
@@ -348,6 +375,7 @@ fn lockstep_hart<const HID: usize>(
     rst_out.set(Bit::Zero);
     let mut model = Model {
         hartid: HID as u32,
+        ddr: Some((DDR_BASE, vec![0; DDR_WORDS])),
         ..Model::default()
     };
     for (i, &w) in data.iter().enumerate() {
@@ -989,6 +1017,74 @@ fn the_data_ram_on_the_cores_own_port() {
     assert_eq!(m.x[21], 77, "what sc stored");
     assert_eq!(m.x[22], 77, "the AMO's old word");
     assert_eq!(m.x[23], 82, "the AMO's new word");
+}
+
+/// The DDR3 through the core's data cache, against the model's own copy
+/// of it (issue 1443): a load right behind a store to its word (#1431),
+/// narrow stores into a line the cache holds and the word read back,
+/// a line filled, stored into and read again, a word through a pointer
+/// just loaded, and lr/sc and an AMO, which go around the cache and
+/// take the line out of it. The model's words are its own, so a word the
+/// cache got wrong is a register the two disagree on.
+#[test]
+fn the_ddr3_through_the_data_cache() {
+    use vreteno32::isa::{
+        addi, amoadd_w, halt, lb, lbu, lh, lhu, lr_w, lui, lw, sb, sc_w, sh, sw,
+    };
+    let p = vec![
+        lui(6, DDR_BASE >> 12), // x6 = the DDR3
+        lw(10, 6, 0),           // the line in the cache, zero
+        addi(5, 0, 0x123),
+        sw(5, 6, 0),
+        lw(11, 6, 0), // the word stored the cycle before
+        addi(7, 0, -1),
+        sb(7, 6, 1),
+        lw(12, 6, 0), // 0x0000_ff23
+        sh(7, 6, 2),
+        lw(13, 6, 0), // 0xffff_ff23
+        lb(14, 6, 1), // -1
+        lbu(15, 6, 0),
+        lhu(16, 6, 2),
+        lh(17, 6, 2),
+        sw(6, 6, 16), // a pointer to the DDR3, in the next line
+        lw(18, 6, 16),
+        lw(19, 18, 0), // through the pointer just loaded
+        lr_w(20, 6),
+        sc_w(21, 6, 5), // 0, stored
+        lw(22, 6, 0),   // 0x123
+        addi(5, 0, 7),
+        amoadd_w(23, 6, 5), // 0x123, and 0x12a stored
+        lw(24, 6, 0),       // 0x12a
+        sw(5, 6, 0),
+        lw(25, 6, 0), // 7 again, behind its store
+        halt(),
+    ];
+    let m = lockstep(&p, &[], "the DDR3", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[11], 0x123, "the word behind its store");
+    assert_eq!(m.x[13], 0xffff_ff23, "the narrow stores");
+    assert_eq!(m.x[19], 0xffff_ff23, "through the pointer");
+    assert_eq!(m.x[24], 0x12a, "the AMO's word");
+    assert_eq!(m.x[25], 7, "and the word behind the last store");
+}
+
+/// Random programs with their data in the DDR3 (issue 1443): every load,
+/// store, narrow store, lr/sc and AMO through the core's data cache,
+/// against the model's own copy of the window.
+#[test]
+fn random_programs_in_the_ddr3() {
+    for seed in 0..32 {
+        let p = random_at(seed, 200, DDR_BASE);
+        let m = lockstep(
+            &p,
+            &[],
+            &format!("random seed {seed} in the DDR3"),
+            Some(seed),
+            None,
+            None,
+        );
+        assert_eq!(m.halted, Some(Halt::Break), "seed {seed} faulted");
+    }
 }
 
 #[test]
