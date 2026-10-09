@@ -403,6 +403,16 @@ drawn in tiles as the model draws them, byte for byte, and
 \code{//docs:razboj\_tex} replays the netlist's trilinear filtering and
 \code{BLEND} under both simulators.
 
+The nvc replays of the tiles, depth, blending and textures take 67
+to 88 seconds each on a quiet host. A loaded host, which this shared
+one often is, runs them up to five times slower, past the 300 seconds
+a medium test is given, so they are large tests, with 900
+(issue~\#1448). nvc's
+rules take no size, so \code{waveform}'s \code{sim\_size} has the
+replay made under another name and run under its own by
+\code{sized\_test} in \code{tools/sized\_test.bzl}, a test that runs
+another test.
+
 \section{The Rasteriser}
 \label{sec:g-raster}
 
