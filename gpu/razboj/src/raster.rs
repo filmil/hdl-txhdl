@@ -569,6 +569,16 @@ fn stencil_step(op: U<3>, s: U<8>, r: U<8>) -> U<8> {
     mux(one, z, mux(two, r, mux(three, inc, mux(four, dec, flip))))
 }
 
+/// The stencil `s` written after the operation `op` with the reference
+/// `r`: the operation's bits where the write mask `wm` holds them and
+/// `s`'s elsewhere, or `s` whole when the stencil test is off (`on`
+/// clear).
+#[lower]
+fn stencil_put(op: U<3>, s: U<8>, r: U<8>, on: Bit, wm: U<8>) -> U<8> {
+    let sn = stencil_step(op, s, r);
+    mux(on, (s & !wm) | (sn & wm), s)
+}
+
 /// Whether a pixel at depth `z` passes `func`, GL's comparisons from
 /// `GL_NEVER` to `GL_ALWAYS` in GL's order, against the depth `d` there,
 /// as `model::passes` has it.
@@ -2714,10 +2724,24 @@ impl<
                                             dw.slice::<16, 8>(),
                                             U::<8>::from(0u8),
                                         );
-                                        let deep = depth_pass(
-                                            self.zfunc.get(),
-                                            self.zq.get(),
-                                            d16,
+                                        // Each test against both what is
+                                        // there and what a fresh pixel
+                                        // reads as, the mark choosing a
+                                        // result rather than an input, so
+                                        // that its compare runs beside the
+                                        // comparators (issue 1534).
+                                        let deep = mux(
+                                            fresh,
+                                            depth_pass(
+                                                self.zfunc.get(),
+                                                self.zq.get(),
+                                                dw.slice::<0, 16>(),
+                                            ),
+                                            depth_pass(
+                                                self.zfunc.get(),
+                                                self.zq.get(),
+                                                U::<16>::from(0xffffu32),
+                                            ),
                                         );
                                         let alpha = depth_pass(
                                             self.afunc.get(),
@@ -2736,30 +2760,57 @@ impl<
                                         let ston = son & self.sten.get();
                                         let sm = self.smask.get();
                                         let sr = self.sref.get();
-                                        let sok = depth_pass(
-                                            self.sfunc.get(),
-                                            (sr & sm).resize::<16>(),
-                                            (s8 & sm).resize::<16>(),
+                                        let sok = mux(
+                                            fresh,
+                                            depth_pass(
+                                                self.sfunc.get(),
+                                                (sr & sm).resize::<16>(),
+                                                (dw.slice::<16, 8>() & sm)
+                                                    .resize::<16>(),
+                                            ),
+                                            depth_pass(
+                                                self.sfunc.get(),
+                                                (sr & sm).resize::<16>(),
+                                                U::<16>::from(0u8),
+                                            ),
                                         );
                                         let apass =
                                             !(son & self.aon.get()) | alpha;
                                         let spass = !ston | sok;
                                         let dpass = !self.zon.get() | deep;
-                                        let sop = mux(
-                                            sok,
-                                            mux(
-                                                dpass,
-                                                self.szpass.get(),
-                                                self.szfail.get(),
-                                            ),
-                                            self.sfail.get(),
-                                        );
-                                        let sn = stencil_step(sop, s8, sr);
+                                        // The stencil each of the three
+                                        // operations would leave, in the
+                                        // bits the write mask holds, side
+                                        // by side, and the tests choose
+                                        // one last: the depth test then
+                                        // waits on a choice rather than on
+                                        // the arithmetic (issue 1534).
                                         let swm = self.swmask.get();
-                                        let sw = mux(
-                                            ston,
-                                            (s8 & !swm) | (sn & swm),
+                                        let on_fail = stencil_put(
+                                            self.sfail.get(),
                                             s8,
+                                            sr,
+                                            ston,
+                                            swm,
+                                        );
+                                        let on_zfail = stencil_put(
+                                            self.szfail.get(),
+                                            s8,
+                                            sr,
+                                            ston,
+                                            swm,
+                                        );
+                                        let on_zpass = stencil_put(
+                                            self.szpass.get(),
+                                            s8,
+                                            sr,
+                                            ston,
+                                            swm,
+                                        );
+                                        let sw = mux(
+                                            sok,
+                                            mux(dpass, on_zpass, on_zfail),
+                                            on_fail,
                                         );
                                         let zw = self.zon.get()
                                             & self.zwrite.get()
