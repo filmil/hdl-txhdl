@@ -30,10 +30,13 @@ def boot_image(
         bootargs = BOOTARGS,
         model = False,
         framebuffer = None,
+        harts = 2,
         **kwargs):
     """A boot image. `framebuffer`, an address in the DDR3 as hex text,
     puts a simple-framebuffer node over the scanout's frame there in the
-    tree and has the shim show it, for a console on HDMI (issue 1440)."""
+    tree and has the shim show it, for a console on HDMI (issue 1440).
+    `harts` is how many harts the tree names, the board's two or one
+    (issue 1408)."""
     if model:
         bootargs = bootargs + " mem=64M"
     # Every step carries the image's tags, so that an image of manual
@@ -66,6 +69,7 @@ def boot_image(
         cmd = "$(location //tools/devtree) --initrd $$(cat $(location " +
               name + ".layout)) --bootargs '" + bootargs + "'" +
               (" --framebuffer " + framebuffer if framebuffer else "") +
+              " --harts " + str(harts) +
               " > $@",
         tools = ["//tools/devtree"],
         tags = tags,
