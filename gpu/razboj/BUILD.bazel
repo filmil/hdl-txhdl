@@ -135,6 +135,19 @@ rust_binary(
     ],
 )
 
+# The traced run of the depth and the stencil on a tile not yet written
+# (issue 1534), with the rasteriser's netlist, so the build replays the
+# fresh value both tests read.
+rust_binary(
+    name = "trace_fresh",
+    srcs = ["src/trace_fresh.rs"],
+    edition = "2021",
+    deps = [
+        ":razboj",
+        "//lib:txhdl",
+    ],
+)
+
 # The traced run of texturing (issue 997), with the rasteriser's
 # netlist, so the build replays the slots, the reciprocal, the cache and
 # the environment.
