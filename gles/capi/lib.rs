@@ -1020,6 +1020,11 @@ pub extern "C" fn glDrawArrays(mode: u32, first: i32, count: i32) {
     let Some(c) = current() else {
         return;
     };
+    // A mode GL does not have is an error whether or not anything would
+    // be drawn (#1517).
+    if mode > gl::TRIANGLE_FAN {
+        return c.gl.record_error(gl::INVALID_ENUM);
+    }
     if first < 0 || count < 0 {
         return c.gl.record_error(gl::INVALID_VALUE);
     }
@@ -1043,6 +1048,9 @@ pub unsafe extern "C" fn glDrawElements(
     let Some(c) = current() else {
         return;
     };
+    if mode > gl::TRIANGLE_FAN {
+        return c.gl.record_error(gl::INVALID_ENUM);
+    }
     if count < 0 {
         return c.gl.record_error(gl::INVALID_VALUE);
     }
