@@ -987,11 +987,47 @@ impl<'a> Gl<'a> {
         type_: u32,
         pixels: &[u8],
     ) {
+        // Section 3.7.1's errors in its order (#1519): the target, then an
+        // internal format that is none of the five or a border, then a
+        // format or type GL does not have, then an internal format that is
+        // not the format or a packed type that does not fit it. Section 2.5
+        // does not order two errors in one call; this is the order the
+        // section states them in, and the one piglit's paletted texture
+        // test asks for.
+        let base = |f: u32| {
+            matches!(
+                f,
+                gl::ALPHA
+                    | gl::RGB
+                    | gl::RGBA
+                    | gl::LUMINANCE
+                    | gl::LUMINANCE_ALPHA
+            )
+        };
+        let packed = matches!(
+            type_,
+            gl::UNSIGNED_SHORT_5_6_5
+                | gl::UNSIGNED_SHORT_4_4_4_4
+                | gl::UNSIGNED_SHORT_5_5_5_1
+        );
         if target != gl::TEXTURE_2D {
             return self.fail(gl::INVALID_ENUM);
         }
-        if border != 0 || internal != format {
+        if border != 0 || !base(internal) {
             return self.fail(gl::INVALID_VALUE);
+        }
+        if !base(format) || !(packed || type_ == gl::UNSIGNED_BYTE) {
+            return self.fail(gl::INVALID_ENUM);
+        }
+        let fits = match type_ {
+            gl::UNSIGNED_SHORT_5_6_5 => format == gl::RGB,
+            gl::UNSIGNED_SHORT_4_4_4_4 | gl::UNSIGNED_SHORT_5_5_5_1 => {
+                format == gl::RGBA
+            }
+            _ => true,
+        };
+        if internal != format || !fits {
+            return self.fail(gl::INVALID_OPERATION);
         }
         let (name, align) = (self.bound, self.unpack);
         let r = match self.store.as_mut() {
