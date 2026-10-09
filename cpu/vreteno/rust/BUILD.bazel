@@ -936,6 +936,40 @@ vreteno_flat(
     program = ":ico_mip_hdmi",
 )
 
+# The untextured GL program saying, every 64 frames, what a load that
+# draws nothing is doing (#1551): the tiles rung, Razboj straight after,
+# the buffer shown and the scanout's base, and the drawn pixels of that
+# buffer's middle row, read around the data cache.
+rust_binary(
+    name = "ico_gl_diag_hdmi",
+    srcs = [
+        "ico_gl.rs",
+        "ico_hdmi.rs",
+        "ico_list.rs",
+    ],
+    compile_data = ["vreteno_ram.ld"],
+    crate_root = "ico_hdmi.rs",
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS + [
+        "--cfg=gl",
+        "--cfg=diag",
+    ],
+    tags = ["manual"],
+    deps = [
+        "//cpu/vreteno/rust/hal:vreteno_hal",
+        "//cpu/vreteno/rust/regs:vreteno_regs",
+        "//gles",
+        "//gpu/razboj:tile",
+        "//lib/logo:txhdl_logo",
+    ],
+)
+
+vreteno_flat(
+    name = "ico_gl_diag_hdmi_bin",
+    platform = ":vreteno",
+    program = ":ico_gl_diag_hdmi",
+)
+
 # One frame of the textured icosahedron worked out on the host, as a
 # PNG: the GL list rendered through Razboj's model with the texture's
 # room as its memory, and the logo laid in.
