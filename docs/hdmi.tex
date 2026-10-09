@@ -189,14 +189,16 @@ terminates in a permanent wait state once \code{written} asserts.
 
 Listing~\ref{lst:h-table} provides the configuration table programmed by
 the master: enabling operational power states for the board-wired input
-buses and setting output format to DVI mode without auxiliary HDMI
-info-packets. Because reference documentation omitted register
-specifications, these values were derived and later verified on physical
-hardware, where the SiI9134 accepted each transaction and activated video
-output. Helper functions in the source supply table entries to the sequencer.
+buses, latching the input on the clock's rising edge, and setting output
+format to DVI mode at 24 bits a pixel without auxiliary HDMI
+info-packets. The values are those public code for the chip writes, an
+FPGA example's system control and a Linux driver's packing (issue 1525).
+The values before them, with the falling edge and the packing bits
+nought, were accepted by the SiI9134 and activated video output on the
+board. Helper functions in the source supply table entries to the
+sequencer.
 
-\hdmipart{table}{The chip's configuration, confirmed on the
-board.}{lst:h-table}
+\hdmipart{table}{The chip's configuration.}{lst:h-table}
 
 \section{The Run}
 \label{sec:h-run}

@@ -79,9 +79,10 @@ set_false_path -hold -fall_from $eth_src -rise_to [get_clocks eth_txck_fwd]
 # figures are the SiI9134 data sheet's (SiI-DS-0193-D, single-edge
 # clocking): setup 1.0 ns and hold 0.5 ns to IDCK rising, EDGE = 1;
 # setup 1.0 ns and hold 0.8 ns to IDCK falling, EDGE = 0. The design
-# writes 0x35 to the system control register, 0x08, and no document in
-# the tree states which bit of it is EDGE, so both edges are checked
-# here: whichever the chip uses, its window is met.
+# writes 0x37 to the system control register, 0x08, the value public
+# code for the chip writes, which latches on IDCK rising, mid-pixel
+# (issue 1525; 0x35 before it latched on the fall). Both edges are
+# still checked here, so either window is met.
 create_generated_clock -name hdmi_idck \
     -source [get_pins clk_oddr/C] -multiply_by 1 -invert \
     [get_ports hdmi_clk]
