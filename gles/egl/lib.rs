@@ -47,7 +47,7 @@
 use core::ffi::c_void;
 use gles_capi::{
     gles_buffer_room, gles_flush, gles_frame_len, gles_frame_tiled,
-    gles_make_current, gles_retarget, gles_texture_room,
+    gles_make_current, gles_reader, gles_retarget, gles_texture_room,
 };
 use razboj_tile::{MAX_TILES, TILE_WORDS};
 
@@ -477,6 +477,47 @@ pub extern "C" fn eglDestroyContext(
 }
 
 /// Points the current GL context at the buffer drawn into, empty.
+/// Has Razboj draw the current context's frame so far into the back
+/// buffer and waits for it, as a swap does before it shows the buffer: a
+/// frame that tests depth from a tile table, which only tests it (#1273),
+/// and one that does not as the flat list it is. Too little room to bin
+/// it in draws it flat, its depth untested, and says so with `false`.
+fn draw_frame(m: &mut dyn Machine) -> bool {
+    if gles_frame_tiled() {
+        let mut tiles = [[0u32; TILE_WORDS]; MAX_TILES];
+        let room = m.scratch();
+        match gles_flush(room, &mut tiles) {
+            Some(b) => m.draw_tiled(&tiles[..b.tiles], &room[..b.entries]),
+            None => {
+                m.draw(gles_frame_len());
+                return false;
+            }
+        }
+    } else {
+        m.draw(gles_frame_len());
+    }
+    true
+}
+
+/// What `glReadPixels` reads (#999): the frame so far drawn into the back
+/// buffer, then the framebuffer, with GL drawing on into the same buffer
+/// from an empty list, as after a swap but for the buffer. A tile table's
+/// depth and stencil live only in its tiles, so they start over after a
+/// read as after a swap, which GL does not allow (#1504). `None` without
+/// a machine, or a machine that cannot be read.
+fn read_back() -> Option<(&'static [u32], usize)> {
+    let s = state();
+    if !s.current {
+        return None;
+    }
+    let m = s.machine.as_deref_mut()?;
+    if gles_frame_len() > 0 {
+        draw_frame(m);
+        target(m, s.back);
+    }
+    m.pixels()
+}
+
 fn target(machine: &mut dyn Machine, back: usize) {
     let list = machine.list();
     // SAFETY: the list is the machine's for good, and GL is its only
@@ -536,6 +577,7 @@ pub extern "C" fn eglMakeCurrent(
             // SAFETY: as the textures' room.
             unsafe { gles_buffer_room(room.as_mut_ptr(), room.len()) };
         }
+        gles_reader(Some(read_back));
         target(m, s.back);
         s.current = true;
     }
@@ -586,24 +628,7 @@ pub extern "C" fn eglSwapBuffers(dpy: Handle, surface: Handle) -> EGLBoolean {
     let Some(m) = s.machine.as_deref_mut() else {
         return fail(NOT_INITIALIZED, FALSE);
     };
-    // A frame that tests depth is drawn from a tile table, which only
-    // tests it (#1273); one that does not, as the flat list it is. Too
-    // little room to bin it in draws it flat, its depth untested, and
-    // says so.
-    let mut drawn = true;
-    if gles_frame_tiled() {
-        let mut tiles = [[0u32; TILE_WORDS]; MAX_TILES];
-        let room = m.scratch();
-        match gles_flush(room, &mut tiles) {
-            Some(b) => m.draw_tiled(&tiles[..b.tiles], &room[..b.entries]),
-            None => {
-                m.draw(gles_frame_len());
-                drawn = false;
-            }
-        }
-    } else {
-        m.draw(gles_frame_len());
-    }
+    let drawn = draw_frame(m);
     m.show(BUFFER_ROWS[s.back]);
     m.wait_blanking();
     s.back ^= 1;
