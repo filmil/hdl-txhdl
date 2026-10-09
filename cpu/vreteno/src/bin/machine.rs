@@ -230,6 +230,18 @@ fn main() {
         None => "stopped at the step limit".to_string(),
     };
     eprintln!("\n{how} after {ran} instructions, pc {:#010x}", m.model.pc);
+    // Where the second hart is, once anything started it (issue 1408).
+    if m.model1.minstret != 0 {
+        let state = if m.parked1 {
+            "waiting to start"
+        } else {
+            "running"
+        };
+        eprintln!(
+            "hart 1: {state} after {} instructions, pc {:#010x}",
+            m.model1.minstret, m.model1.pc
+        );
+    }
     if let Some(path) = &screen {
         let d = m.board.0.borrow();
         match d.scanout() {

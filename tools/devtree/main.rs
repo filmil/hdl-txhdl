@@ -15,13 +15,18 @@
 //!
 //! * the serial port as `sifive,uart0`, the register map #1011 gives the
 //!   hardware;
-//! * the core-local interruptor as `sifive,clint0`, with the hart's
+//! * the core-local interruptor as `sifive,clint0`, with each hart's
 //!   machine software and timer interrupts;
-//! * the PLIC as `sifive,plic-1.0.0`, with two contexts, the hart's
-//!   machine external interrupt and its supervisor one. The second is
-//!   #1013's, which gives the hardware a supervisor context; until it
-//!   lands the tree describes the machine Linux needs rather than the
-//!   one built.
+//! * the PLIC as `sifive,plic-1.0.0`, with two contexts a hart, its
+//!   machine external interrupt and its supervisor one, in SiFive's
+//!   order, which is the hardware's (#1013, #1408).
+//!
+//! The board has two harts (issue 1408), and the tree names both unless
+//! it is asked for one. `/chosen/opensbi-config` names hart 0 the one
+//! hart allowed to boot cold, which OpenSBI's generic platform reads:
+//! the boot shim starts hart 1 into OpenSBI too, and it then waits in
+//! OpenSBI's warm boot, whichever hart came first, until the kernel
+//! starts it through SBI's hart state management.
 //!
 //! What the hart is comes from the design too, so the items of #279
 //! that change it change the tree with them. `riscv,isa` and
@@ -112,6 +117,9 @@ pub struct Chosen {
     /// A simple framebuffer at this address in the DDR3, which the boot
     /// shim has the scanout show (issue 1440).
     pub framebuffer: Option<u32>,
+    /// How many harts the tree names: the board's two, or one (issue
+    /// 1408).
+    pub harts: usize,
 }
 
 /// The scanout's frame: 640 by 480, a word a pixel with red, green and
@@ -127,8 +135,47 @@ impl Default for Chosen {
             initrd: None,
             bootargs: Some(BOOTARGS.to_string()),
             framebuffer: None,
+            harts: 2,
         }
     }
+}
+
+/// The tree's harts, each with its interrupt controller, as `cpus`
+/// holds them.
+fn cpu_nodes(harts: usize, isa: &str, exts: &str, mmu: &str) -> String {
+    (0..harts)
+        .map(|h| {
+            format!(
+                r#"
+		cpu{h}: cpu@{h} {{
+			device_type = "cpu";
+			compatible = "hdlfactory,vreteno", "riscv";
+			reg = <{h}>;
+			riscv,isa = "{isa}";
+			riscv,isa-base = "rv32i";
+			riscv,isa-extensions = {exts};{mmu}
+			status = "okay";
+
+			cpu{h}_intc: interrupt-controller {{
+				compatible = "riscv,cpu-intc";
+				#address-cells = <0>;
+				#interrupt-cells = <1>;
+				interrupt-controller;
+			}};
+		}};
+"#
+            )
+        })
+        .collect()
+}
+
+/// An `interrupts-extended` that gives every hart the lines `lines`, in
+/// order, hart by hart.
+fn per_hart(harts: usize, lines: &[u32]) -> String {
+    (0..harts)
+        .flat_map(|h| lines.iter().map(move |l| format!("<&cpu{h}_intc {l}>")))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The tree, as `dtc` reads it, with nothing chosen but the console and
@@ -172,6 +219,9 @@ pub fn dts_with(chosen: &Chosen) -> String {
         None => String::new(),
     };
     let ndev = PLIC_SOURCES.len();
+    let cpus = cpu_nodes(chosen.harts, &isa, &exts, &mmu);
+    let clint_irqs = per_hart(chosen.harts, &[3, 7]);
+    let plic_irqs = per_hart(chosen.harts, &[11, 9]);
     // The framebuffer: kept from the kernel's own use, and described for
     // simplefb, which drives no hardware and takes the mode as given.
     let (fb_reserved, fb_node) = match chosen.framebuffer {
@@ -207,30 +257,20 @@ pub fn dts_with(chosen: &Chosen) -> String {
 
 	chosen {{
 		stdout-path = "serial0:{BAUD}n8";{extra}
+
+		// Hart 0 boots cold, and any other waits for the kernel
+		// (issue 1408).
+		opensbi-config {{
+			compatible = "opensbi,config";
+			cold-boot-harts = <&cpu0>;
+		}};
 	}};
 
 	cpus {{
 		#address-cells = <1>;
 		#size-cells = <0>;
 		timebase-frequency = <{CLOCK_HZ}>;
-
-		cpu0: cpu@0 {{
-			device_type = "cpu";
-			compatible = "hdlfactory,vreteno", "riscv";
-			reg = <0>;
-			riscv,isa = "{isa}";
-			riscv,isa-base = "rv32i";
-			riscv,isa-extensions = {exts};{mmu}
-			status = "okay";
-
-			cpu0_intc: interrupt-controller {{
-				compatible = "riscv,cpu-intc";
-				#address-cells = <0>;
-				#interrupt-cells = <1>;
-				interrupt-controller;
-			}};
-		}};
-	}};
+{cpus}	}};
 
 	memory@{ddr:x} {{
 		device_type = "memory";
@@ -274,7 +314,7 @@ pub fn dts_with(chosen: &Chosen) -> String {
 		clint: timer@{clint:x} {{
 			compatible = "sifive,clint0", "riscv,clint0";
 			reg = <{clint:#010x} {clint_len:#x}>;
-			interrupts-extended = <&cpu0_intc 3>, <&cpu0_intc 7>;
+			interrupts-extended = {clint_irqs};
 		}};
 
 		plic: interrupt-controller@{plic:x} {{
@@ -283,7 +323,7 @@ pub fn dts_with(chosen: &Chosen) -> String {
 			#address-cells = <0>;
 			#interrupt-cells = <1>;
 			interrupt-controller;
-			interrupts-extended = <&cpu0_intc 11>, <&cpu0_intc 9>;
+			interrupts-extended = {plic_irqs};
 			riscv,ndev = <{ndev}>;
 		}};
 
@@ -318,7 +358,7 @@ pub fn dts_with(chosen: &Chosen) -> String {
 }
 
 /// `devtree [--initrd START END] [--bootargs ARGS] [--framebuffer
-/// ADDR]`: the tree, with a boot image's choices when given.
+/// ADDR] [--harts N]`: the tree, with a boot image's choices when given.
 fn main() {
     let mut chosen = Chosen::default();
     let mut args = std::env::args().skip(1);
@@ -339,6 +379,13 @@ fn main() {
             }
             "--bootargs" => {
                 chosen.bootargs = Some(args.next().expect("--bootargs ARGS"))
+            }
+            "--harts" => {
+                chosen.harts = args
+                    .next()
+                    .and_then(|n| n.parse().ok())
+                    .filter(|n| (1..=2).contains(n))
+                    .expect("--harts 1 or 2")
             }
             _ => panic!("unknown argument {a}"),
         }
@@ -439,8 +486,8 @@ mod tests {
     }
 
     /// The interrupts: the serial port's PLIC source, the PLIC's two
-    /// contexts on the hart's machine and supervisor external lines, and
-    /// the CLINT's machine software and timer lines.
+    /// contexts a hart on its machine and supervisor external lines, and
+    /// the CLINT's machine software and timer lines, for each hart.
     #[test]
     fn the_interrupts_are_the_ones_the_design_wires() {
         let t = dts();
@@ -457,14 +504,41 @@ mod tests {
         );
         assert!(
             t.contains(
-                "interrupts-extended = <&cpu0_intc 11>, <&cpu0_intc 9>;"
+                "interrupts-extended = <&cpu0_intc 11>, <&cpu0_intc 9>, \
+                 <&cpu1_intc 11>, <&cpu1_intc 9>;"
             ),
             "the PLIC's machine and supervisor contexts"
         );
         assert!(
-            t.contains("interrupts-extended = <&cpu0_intc 3>, <&cpu0_intc 7>;"),
+            t.contains(
+                "interrupts-extended = <&cpu0_intc 3>, <&cpu0_intc 7>, \
+                 <&cpu1_intc 3>, <&cpu1_intc 7>;"
+            ),
             "the CLINT's software and timer interrupts"
         );
+    }
+
+    /// Two harts by default and one when asked (issue 1408): a node and
+    /// an interrupt controller each, hart 0 the one OpenSBI boots cold,
+    /// and one hart's tree is the one-hart board's.
+    #[test]
+    fn the_harts_are_the_boards() {
+        let t = dts();
+        assert!(t.contains("cpu0: cpu@0 {") && t.contains("cpu1: cpu@1 {"));
+        assert_eq!(cells(&t, "cpu1: cpu@1 {", "reg"), [1]);
+        assert!(t.contains("cpu1_intc: interrupt-controller {"));
+        assert!(t.contains("compatible = \"opensbi,config\";"));
+        assert!(t.contains("cold-boot-harts = <&cpu0>;"));
+        let one = dts_with(&Chosen {
+            harts: 1,
+            ..Chosen::default()
+        });
+        assert!(!one.contains("cpu@1") && !one.contains("cpu1_intc"));
+        assert!(one
+            .contains("interrupts-extended = <&cpu0_intc 3>, <&cpu0_intc 7>;"));
+        assert!(one.contains(
+            "interrupts-extended = <&cpu0_intc 11>, <&cpu0_intc 9>;"
+        ));
     }
 
     /// The hart's ISA string is what `misa` says, whatever it gains:
@@ -500,7 +574,7 @@ mod tests {
         let t = dts_with(&Chosen {
             initrd: Some((0x4080_0000, 0x4090_0000)),
             bootargs: Some("earlycon console=ttySIF0".into()),
-            framebuffer: None,
+            ..Chosen::default()
         });
         assert_eq!(cells(&t, "chosen {", "linux,initrd-start"), [0x4080_0000]);
         assert_eq!(cells(&t, "chosen {", "linux,initrd-end"), [0x4090_0000]);

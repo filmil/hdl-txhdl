@@ -425,6 +425,21 @@ machine above is its first reader: a test boots a packed image there
 and checks the shim's registers and every part's address before an
 image ever reaches the board.
 
+The tree names both of the board's harts (issue~\#1408), each with its
+interrupt controller. The CLINT's software and timer lines and the
+PLIC's two contexts are given for each hart, in SiFive's order, which
+is the hardware's; \code{--harts 1} writes the one-hart tree. Its
+\code{/chosen} holds OpenSBI's own configuration node, which names
+hart 0 the one hart allowed to boot cold. The shim starts hart 1
+before its jump: OpenSBI's entry and the tree go into the mailbox,
+then a fence, then hart 1's \code{msip}, which \code{park} answers by
+jumping there with \code{a0} one and \code{a1} the tree. Hart 1 then
+waits in OpenSBI's warm boot, stopped in the terms of SBI's hart state
+management, until a kernel starts it. The uniprocessor kernel never
+does, and boots as before. On the machine, Linux's boot tests reach
+the shell with hart 1 in that wait, which the machine names when it
+stops.
+
 The kernel is \code{tinyconfig} with \code{linux/vreteno.config} over
 it (issue~1074): only what the machine has and what the BusyBox
 initramfs needs. A fuller system asks for more, and the fragment now
