@@ -304,10 +304,10 @@ extern "C" fn odd_frames(_hart: u32, _arg: u32) -> ! {
         // harts drew into the second, and the first, with the logo and
         // nothing else, was shown every other frame (#1551).
         let (n, filled) =
-            ico_gl::frame(&model, ay, ax, SECOND, last, true, tex, &mut list);
+            ico_gl::frame(&model, ay, ax, 0, last, true, tex, &mut list);
         last = filled;
         while DRAWN.load(Ordering::Acquire) < f - 1 {}
-        let sh = (ico_list::H + SECOND) as u32;
+        let sh = ico_list::H as u32;
         let b = bin_tiled(&list, n, sh, 1);
         let _ = unsafe { read_volatile(b.last as *const u32) };
         while ODD_READY.load(Ordering::Acquire) != 0 {}
