@@ -16,6 +16,8 @@
 //! * The scanout's base, at `0x3280`, is the byte the buffer starts at,
 //!   `0x4200_0000` and 4096 bytes a row; the first swap also sets the bit
 //!   that shows the scanout.
+//! * GL's textures have four megabytes of the DDR3 at `0x4300_0000`, and
+//!   its buffer objects one after them (#999).
 //! * `glReadPixels` reads the framebuffer straight from the DDR3, both
 //!   buffers' rows, once the frame so far is drawn (#999).
 //! * The vertical blanking is bit 0 of the video peripheral's status, at
@@ -43,6 +45,14 @@ const FRAME: u32 = 0x4200_0000;
 const LIST: usize = 0x4280_0000;
 /// Bytes from one row of the framebuffer to the next.
 const STRIDE: u32 = 4096;
+/// Rooms for GL's textures and buffer objects (#999), in the DDR3 past
+/// the list's four megabytes: four megabytes of textures at `0x4300_0000`,
+/// which Razboj reads at the same address, and one of buffer objects after
+/// them, which only the core reads.
+const TEXTURES: usize = 0x4300_0000;
+const TEXTURE_WORDS: usize = 1 << 20;
+const BUFFERS: usize = 0x4340_0000;
+const BUFFER_BYTES: usize = 1 << 20;
 /// The framebuffer's rows the core may read back (#999): both buffers,
 /// at rows 0 and 512, within four megabytes, short of the list.
 const ROWS: usize = 1024;
@@ -152,6 +162,22 @@ impl Machine for Board {
             at + entries.len() * WORDS * 4 - 4,
             tiles.len() as u32 | doorbell::COUNT_TILED_MASK,
         );
+    }
+
+    fn textures(&mut self) -> Option<(&'static mut [u32], u32)> {
+        // SAFETY: the room is EGL's alone, in the board's DDR3, clear of
+        // the program, the framebuffer and the list.
+        let room = unsafe {
+            core::slice::from_raw_parts_mut(TEXTURES as *mut u32, TEXTURE_WORDS)
+        };
+        Some((room, TEXTURES as u32))
+    }
+
+    fn buffers(&mut self) -> Option<&'static mut [u8]> {
+        // SAFETY: as the textures' room.
+        Some(unsafe {
+            core::slice::from_raw_parts_mut(BUFFERS as *mut u8, BUFFER_BYTES)
+        })
     }
 
     fn pixels(&mut self) -> Option<(&'static [u32], usize)> {
