@@ -37,3 +37,4 @@ state.RGB_SCALE                          #1512
 state.ALPHA_SCALE                        #1512
 state.POINT_SIZE_ARRAY_POINTER_OES       #1507
 state.POINT_SIZE_MAX                     #1508
+errors.tex_env_scale                     #1512
