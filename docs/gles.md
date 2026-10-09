@@ -54,9 +54,10 @@ A later issue means the entry point is accepted from the start but does what tha
 | Switches | `glEnable`, `glDisable`, `glIsEnabled` for `GL_LIGHTING`, `GL_LIGHT0` to `GL_LIGHT7`, `GL_CULL_FACE`, `GL_NORMALIZE`, `GL_RESCALE_NORMAL`, `GL_COLOR_MATERIAL`, `GL_CLIP_PLANE0`, `GL_DEPTH_TEST`, `GL_BLEND`, `GL_ALPHA_TEST`, `GL_DITHER`, `GL_SCISSOR_TEST`, `GL_FOG`, `GL_STENCIL_TEST`; and the rest as the issues above land | Now, and growing |
 | Queries and errors | `glGetError`, `glGetIntegerv`, `glGetFixedv`, `glGetBooleanv`, `glGetString`, `glGetPointerv` | Now, the queries from #1484 (section 10) |
 | Completion | `glFlush`, `glFinish` | Now (section 7) |
+| Reading back | `glReadPixels`, `glPixelStorei(GL_PACK_ALIGNMENT)` | From #999, `GL_RGBA` and `GL_UNSIGNED_BYTE`, the frame so far drawn first |
 | Hints | `glHint` | Accepted and ignored, as the specification allows, from #1490 |
 
-Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit, which wait for a program that needs them; and `glReadPixels`, which needs a read path from the framebuffer that nothing has asked for yet.
+Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit, which wait for a program that needs them.
 An entry point that is left out still exists, so that a program links, and sets `GL_INVALID_ENUM` or `GL_INVALID_OPERATION` as the specification says for an unsupported value.
 
 The limits the library reports are the specification's minimums: a modelview stack of 16, projection and texture stacks of 2, eight lights, one clip plane.
@@ -365,6 +366,13 @@ The stencil is #998's last, `glStencilFunc`, `glStencilOp`, `glStencilMask`, `gl
 An entry with the test on carries it in its second slot's words 10 and 11, and `glClear`'s stencil bit is a rectangle that writes the clear's value through the write mask and leaves the depth, unless the depth is cleared with it.
 EGL's configuration says 16 bits of depth and 8 of stencil.
 `//gles:stencil_test` draws, under each of the eight comparisons, with an operation for each outcome, masks of all bits and of some, and a depth test that fails half the window in some rounds, and holds the picture to a reference that keeps its own stencil; then it draws a colour for each stencil value only where the stencil is that value, so the picture shows the stencil itself.
+
+`glReadPixels` is #999's, the first step of the conformance suite.
+It reads `GL_RGBA` and `GL_UNSIGNED_BYTE`, which are also the implementation's read format and type, with the rows from the bottom up and padded to `GL_PACK_ALIGNMENT`.
+It first draws the frame so far into the buffer not shown, as a swap does but without showing it, and GL then draws on into the same buffer from an empty list.
+On the board it reads the framebuffer straight from the DDR3, since the core has no data cache, and on the model it reads the model's framebuffer, through `Machine::pixels`.
+A tile table's depth and stencil live only in its tiles, so after a read they start over as after a swap, which GL does not allow: #1504.
+`egl_test` reads the whole window back pixel for pixel, and a rectangle over the window's corner with eight-byte rows, and checks GL's errors.
 
 The queries are issue 1484's.
 `glGetIntegerv`, `glGetFixedv` and `glGetBooleanv` answer every name the library keeps state for: the viewport and the depth range, the matrix mode, the three matrices and their stacks' depths, the current colour, normal and texture coordinates, the clears, the depth, blend, alpha test and colour mask settings, the faces and the shading, the point size and the line width, the bound texture, the unpack alignment, the light model, and every switch `glIsEnabled` knows.
