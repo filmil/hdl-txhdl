@@ -4315,6 +4315,104 @@ fn both_harts_storing_share_the_path() {
     assert!(one < 4 * alone, "hart 1: {one} against {alone}");
 }
 
+/// What a load, a store, an AMO and an `lr.w` and `sc.w` pair cost on a
+/// DDR3 word the data cache holds (issue 1554), for the machine's timing
+/// mode: thirty-two of each in a loop timed with `mcycle`, less the empty
+/// loop, first with hart 1 waiting and then with hart 1 storing into the
+/// DDR3 all the while. The test prints the cycles of one of each, and
+/// holds an exclusive one to costing more than a plain store, which is
+/// what the timing mode charged it.
+#[test]
+fn exclusive_costs_on_the_ddr3() {
+    use vreteno32::isa::{
+        addi, amoadd_w, beq, bne, csrrs, fence, jalr, lr_w, lw, sc_w, sub, sw,
+        CSR_MCYCLE,
+    };
+    const CODE: u32 = 0x4002_0000;
+    const W: u32 = 0x4004_0000;
+    const B: u32 = 0x4005_0000;
+    const T: u32 = 0x4000_0700;
+    const FLAG: u32 = 0x4000_0800;
+    const RELEASE: u32 = 0x4000_0900;
+    const N: u32 = 32;
+    // Each kind's body, `x5` the word's address and `x10` the count.
+    let bodies: [&[u32]; 7] = [
+        &[],
+        &[lw(6, 5, 0)],
+        &[sw(10, 5, 0)],
+        &[amoadd_w(6, 5, 10)],
+        &[lr_w(6, 5), sc_w(7, 5, 6)],
+        // A load that misses: a new line each time, and the step.
+        &[lw(6, 5, 0), addi(5, 5, 256)],
+        // An `lr.w` alone, its reservation left to the next.
+        &[lr_w(6, 5)],
+    ];
+    // Every kind timed in turn, each time to T + 4 * slot.
+    let timed = |c: &mut Checked, slot0: u32| {
+        for (k, body) in bodies.iter().enumerate() {
+            c.li(5, W).op(lw(6, 5, 0)).li(10, N);
+            c.op(csrrs(25, CSR_MCYCLE, 0));
+            for w in body.iter() {
+                c.op(*w);
+            }
+            let back = -4 * (body.len() as i32 + 1);
+            c.op(addi(10, 10, -1)).op(bne(10, 0, back)).op(fence());
+            c.op(csrrs(26, CSR_MCYCLE, 0)).op(sub(26, 26, 25));
+            c.li(27, T + 4 * (slot0 + k as u32)).op(sw(26, 27, 0));
+        }
+    };
+    // Hart 1: two thousand stores into B, then the flag.
+    let mut j = Checked::new();
+    j.li(5, B).li(10, 2000);
+    j.op(sw(10, 5, 0))
+        .op(addi(5, 5, 4))
+        .op(addi(10, 10, -1))
+        .op(bne(10, 0, -12))
+        .op(fence())
+        .li(24, 1)
+        .op(sw(24, 11, 0))
+        .op(jalr(0, 0, 0));
+    let job = j.p.clone();
+    let mut c = Checked::new();
+    timed(&mut c, 0);
+    c.li(8, CODE).li(12, FLAG).op(sw(0, 12, 0));
+    place(&mut c, 8, &job);
+    start_hart1(&mut c, 8, 12);
+    timed(&mut c, 7);
+    c.op(lw(15, 12, 0)).op(beq(15, 0, -4)).op(fence());
+    c.li(27, RELEASE).op(lw(29, 27, 0)).op(beq(29, 0, -4));
+    let mut plan = vec![Op::Wait(250_000)];
+    for s in 0..14 {
+        plan.push(Op::Read(T + 4 * s));
+    }
+    plan.push(Op::Write(RELEASE, 1));
+    let ran = run_debugged(&c.done(), &[], 600_000, &plan);
+    assert!(ran.halted_at.is_some(), "the run did not finish");
+    let each = |s: usize| {
+        (ran.got[s] as f64 - ran.got[if s < 7 { 0 } else { 7 }] as f64)
+            / N as f64
+    };
+    let names = [
+        "load",
+        "store",
+        "amoadd.w",
+        "lr.w and sc.w",
+        "load missing, and a step",
+        "lr.w",
+    ];
+    for (k, name) in names.iter().enumerate() {
+        println!(
+            "{name}: {:.1} cycles alone, {:.1} with hart 1 storing",
+            each(k + 1),
+            each(k + 8)
+        );
+    }
+    // An exclusive costs more than a posted store, alone and together.
+    for s in [3, 4, 10, 11] {
+        assert!(each(s) > each(2) + 10.0, "slot {s}: {}", each(s));
+    }
+}
+
 /// A waiting hart is told nothing and forgets its cache as it wakes
 /// (issue 1408). Hart 1's first job reads a word, so its line is
 /// cached, and goes back to wait; hart 0 then writes the word and wakes

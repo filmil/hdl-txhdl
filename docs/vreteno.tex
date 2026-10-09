@@ -608,6 +608,14 @@ and 7088 from the DDR3, and \code{ethperf.rs} copies a full frame into
 a DDR3 slot in 20\,142 where the board took 19\,926. A cold run misses
 by the instruction cache's fills, which the model does not have, and a
 transmit by the engine, which it does not time.
+An \code{lr.w}, \code{sc.w} or AMO on the DDR3 is an exclusive pair on
+the bus, and is charged what \code{board\_test} measures one at: 34
+cycles, 17 and 50, a step included. While the other hart works beside
+it, a store costs 1 more, an \code{sc.w} 11 and an AMO 8 (issue~\#1554).
+\code{--dcache} charges a load the core's data cache would hold as a
+hit. Without the costs the model still lacks, a missed instruction line,
+a page walk, a division, a run then comes out well under the board's
+time, so it is not the default (issue~\#1561).
 With \code{--profile} the machine writes what each address cost, and
 with \code{--watch} who reached an address and with what length; against
 a program's symbols they say where its time goes whatever the cable's

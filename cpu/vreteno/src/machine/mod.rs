@@ -408,6 +408,7 @@ impl Machine {
         let interrupt = self.model.interrupt();
         let was = self.model.cycles;
         let pc = self.model.pc;
+        self.model.contended = !self.parked1 && Self::working(&self.model1);
         if let Some((at, callers)) = &mut self.watch {
             if pc == *at && interrupt.is_none() {
                 let e = callers.entry(self.model.x[1]).or_insert((0, 0));
@@ -438,6 +439,7 @@ impl Machine {
         {
             let interrupt = self.model1.interrupt();
             let was = self.model1.cycles;
+            self.model1.contended = Self::working(&self.model);
             let pc1 = self.model1.pc;
             self.model1.step(&[], interrupt);
             Self::takes(&self.model1, &mut self.model);
@@ -469,7 +471,17 @@ impl Machine {
                 other.rsv = None;
                 other.rsv_pa = None;
             }
+            // And, in the timing mode, the line out of the other's data
+            // cache, as the snoop names it (issue 1554).
+            other.dc_forget(addr);
         }
+    }
+
+    /// Whether a hart is working rather than waiting: it has run a
+    /// hundred cycles since its last `wfi`, so it shares the DDR3's path
+    /// with the other (issue 1554).
+    fn working(m: &Model) -> bool {
+        m.cycles.saturating_sub(m.last_wfi) > 100
     }
 
     /// Steps until the hart halts or `limit` instructions have run, and
