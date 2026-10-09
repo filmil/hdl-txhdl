@@ -3306,3 +3306,111 @@ impl<
     }
 }
 // end{run}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The decide stage's inputs: the mark's verdict, the depth and
+    /// stencil read, the pixel's depth, the depth and stencil
+    /// comparisons, the reference and its mask, the operations on a
+    /// stencil failure, a depth failure and a pass, whether the stencil
+    /// is on, and its write mask.
+    type Inputs = (
+        Bit,
+        U<24>,
+        U<16>,
+        U<3>,
+        U<3>,
+        U<8>,
+        U<8>,
+        [U<3>; 3],
+        Bit,
+        U<8>,
+    );
+
+    /// The decide stage's depth and stencil, as they were before issue
+    /// 1534 split them: the mark choosing the depth and the stencil
+    /// read, then the tests, then the stencil's operation, then its
+    /// arithmetic. The depth test's result, the stencil test's, and the
+    /// stencil written.
+    fn before(a: Inputs) -> (Bit, Bit, U<8>) {
+        let (fresh, dw, zq, zfunc, sfunc, sr, sm, ops, ston, swm) = a;
+        let d16 = mux(fresh, dw.slice::<0, 16>(), U::<16>::from(0xffffu32));
+        let s8 = mux(fresh, dw.slice::<16, 8>(), U::<8>::from(0u8));
+        let deep = depth_pass(zfunc, zq, d16);
+        let sok = depth_pass(
+            sfunc,
+            (sr & sm).resize::<16>(),
+            (s8 & sm).resize::<16>(),
+        );
+        let sop = mux(sok, mux(deep, ops[2], ops[1]), ops[0]);
+        let sn = stencil_step(sop, s8, sr);
+        (deep, sok, mux(ston, (s8 & !swm) | (sn & swm), s8))
+    }
+
+    /// The same, as the decide stage now has it (issue 1534).
+    fn after(a: Inputs) -> (Bit, Bit, U<8>) {
+        let (fresh, dw, zq, zfunc, sfunc, sr, sm, ops, ston, swm) = a;
+        let s8 = mux(fresh, dw.slice::<16, 8>(), U::<8>::from(0u8));
+        let deep = mux(
+            fresh,
+            depth_pass(zfunc, zq, dw.slice::<0, 16>()),
+            depth_pass(zfunc, zq, U::<16>::from(0xffffu32)),
+        );
+        let sok = mux(
+            fresh,
+            depth_pass(
+                sfunc,
+                (sr & sm).resize::<16>(),
+                (dw.slice::<16, 8>() & sm).resize::<16>(),
+            ),
+            depth_pass(sfunc, (sr & sm).resize::<16>(), U::<16>::from(0u8)),
+        );
+        let put = |op| stencil_put(op, s8, sr, ston, swm);
+        let sw = mux(sok, mux(deep, put(ops[2]), put(ops[1])), put(ops[0]));
+        (deep, sok, sw)
+    }
+
+    /// Issue 1534's restructure decides every pixel as before: a million
+    /// draws of the stage's inputs, the depth and the stencil read and
+    /// the pixel's depth from values near the edges as often as not, and
+    /// every comparison and operation, fresh and written.
+    #[test]
+    fn the_restructured_decide_is_the_same_function() {
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        let edge = |r: u64, v: u64, top: u64| match r % 4 {
+            0 => 0,
+            1 => top,
+            2 => top - 1,
+            _ => v & top,
+        };
+        for _ in 0..1_000_000 {
+            let r = next();
+            let fresh = Bit::from(r & 1 == 1);
+            let d = edge(r >> 1, next(), 0xffff);
+            let s = edge(r >> 3, next(), 0xff);
+            let dw = U::<24>::from((s << 16 | d) as u32);
+            let zq = U::<16>::from(edge(r >> 5, next(), 0xffff) as u32);
+            let f3 = |v: u64| U::<3>::from((v & 7) as u32);
+            let (zfunc, sfunc) = (f3(r >> 7), f3(r >> 10));
+            let ops = [f3(r >> 13), f3(r >> 16), f3(r >> 19)];
+            let b8 = |v: u64| U::<8>::from((v & 0xff) as u32);
+            let (sr, sm, swm) = (b8(r >> 22), b8(r >> 30), b8(r >> 38));
+            let ston = Bit::from(r >> 46 & 1 == 1);
+            let a = (fresh, dw, zq, zfunc, sfunc, sr, sm, ops, ston, swm);
+            let (was, now) = (before(a), after(a));
+            assert_eq!(
+                (was.0.to_bool(), was.1.to_bool(), was.2.raw()),
+                (now.0.to_bool(), now.1.to_bool(), now.2.raw()),
+                "{a:?}"
+            );
+        }
+    }
+}
