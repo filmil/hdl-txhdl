@@ -1670,6 +1670,13 @@ impl<
                 & (!(issue.ready() & wbeat.ready())
                     | self.p_wait
                     | (is_load & self.f_wait)
+                    // Without the data cache every load goes straight to the
+                    // bus, so it waits for the stores posted before it,
+                    // which the cache's path does on its own (issue 1463);
+                    // with the cache the term is constant zero.
+                    | (is_load
+                        & Bit::from(IC == 0)
+                        & Bit::from(self.stores_out.get() != 0))
                     | (dvm & !self.x_done));
             // A word of the instruction is still on the bus: the core
             // waits for it, which is what makes a program above the
@@ -1771,10 +1778,15 @@ impl<
             // writeback for its word, as one on the bus waits for its
             // answer.
             // A plain load whose address is in the DDR3 tries the data
-            // cache (issue 1275), from rs1's top two bits or, translated,
-            // the physical address's; a wrong guess either way is safe,
-            // since writeback reads around the cache when the address
-            // is not the DDR3's, and a load not tried goes to the bus.
+            // cache (issue 1275), and so does every other plain load that
+            // is not the data RAM's: writeback, which has the address,
+            // reads around the cache when it is not the DDR3's, and that
+            // read waits for every store the core has posted. A load sent
+            // straight to the bus would not, and nothing between the core
+            // and the DDR3 keeps a read behind a write to the same word
+            // (issue 1463), so the cache is no longer chosen from rs1's top
+            // bits: a base outside the DDR3 with an offset into it was a
+            // load that could overtake a store.
             // The arrays are read at the page offset's bits, the same
             // before and after translation.
             let dc_on = U::<1>::from(IC as u32).bit(0);
@@ -1792,7 +1804,6 @@ impl<
                 & !unaligned
                 & !xf
                 & !local
-                & dc_pred
                 & dc_on;
             // An AMO, lr.w or sc.w there goes around the cache and takes
             // its line out of it.
@@ -3381,7 +3392,10 @@ impl<
                     self.wb_scx <= send_store & is_sc & xd;
                     self.wb_loc <= ld_loc;
                     self.wb_dc <= dc_try;
-                    self.wb_st <= store & !local & dc_pred & dc_on & !is_sc;
+                    // Writeback updates a line only at a DDR3 address the
+                    // cache holds (`dc_in`, `dc_tag_hit`), so a store asks
+                    // whatever its base register held (issue 1463).
+                    self.wb_st <= store & !local & dc_on & !is_sc;
                     self.wb_sd <= sdata;
                     self.wb_en <= en;
                     self.amo_op <= funct5;

@@ -3658,6 +3658,64 @@ fn the_data_cache_keeps_the_cores_own_order() {
     }
 }
 
+/// A load or store whose base register is outside the DDR3 and whose
+/// address is inside it keeps the core's order there too (issue 1463).
+/// The cache used to be chosen from the base register's top bits, so
+/// such a load went straight to the bus while a store to its word was
+/// still posted, and could read the word from before it; and such a
+/// store did not write a line the cache held, so a load through a DDR3
+/// base read the old word from the cache.
+#[test]
+fn a_base_outside_the_ddr3_keeps_the_order_inside_it() {
+    use vreteno32::isa::{addi, bne, halt, jal, lui, lw, sw};
+    let cases: [(&str, Vec<u32>, u32, u32); 3] = [
+        (
+            "a store, then a load of its word through a base below",
+            vec![addi(8, 0, 0x222), sw(8, 5, 0x100), lw(9, 16, 0x200)],
+            9,
+            8,
+        ),
+        (
+            "a store, then a load of its word through a base above",
+            vec![addi(8, 0, 0x333), sw(8, 5, 0x100), lw(9, 17, -0x700)],
+            9,
+            8,
+        ),
+        (
+            "a store through a base below into a line the cache holds",
+            vec![
+                lw(14, 5, 0x100),
+                addi(8, 0, 0x444),
+                sw(8, 16, 0x200),
+                lw(9, 5, 0x100),
+            ],
+            9,
+            8,
+        ),
+    ];
+    for (what, body, got, want) in cases {
+        // x5 = 0x4000_0000; x16 = 0x3fff_ff00, x16 + 0x200 = 0x4000_0100;
+        // x17 = 0x4000_0800, x17 - 0x700 = 0x4000_0100. The word there is
+        // 0x111 to start.
+        let mut p = vec![
+            lui(5, 0x4000_0000 >> 12),
+            lui(16, 0x4000_0000 >> 12),
+            addi(16, 16, -0x100),
+            lui(17, 0x4000_0000 >> 12),
+            addi(17, 17, 0x7ff),
+            addi(17, 17, 1),
+            addi(6, 0, 0x111),
+            sw(6, 5, 0x100),
+            lw(7, 5, 0x100),
+        ];
+        p.extend(body);
+        // A wrong word: round the last instruction until the limit.
+        p.extend([bne(got, want, 8), halt(), jal(0, 0)]);
+        let ran = run_debugged(&p, &[], 6000, &[]);
+        assert!(ran.halted_at.is_some(), "{what}: a word from before");
+    }
+}
+
 /// A random mix of loads and stores of every width over two lines of
 /// the DDR3 and the same two lines a page on, which share their places
 /// in the data cache, so lines are filled, hit, written into and put
