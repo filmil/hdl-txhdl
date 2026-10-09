@@ -39,3 +39,7 @@ state.POINT_SIZE_ARRAY_POINTER_OES       #1507
 state.POINT_SIZE_MAX                     #1508
 errors.tex_env_scale                     #1512
 render.smooth_alpha                      #1520
+state.MODELVIEW_MATRIX_FLOAT_AS_INT_BITS_OES #1522
+state.PROJECTION_MATRIX_FLOAT_AS_INT_BITS_OES #1522
+state.TEXTURE_MATRIX_FLOAT_AS_INT_BITS_OES #1522
+state.EXTENSION_OES_point_size_array     #1507

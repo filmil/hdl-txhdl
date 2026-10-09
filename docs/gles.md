@@ -380,17 +380,18 @@ On the host they draw through Razboj's model as EGL's machine, and `//gles:confo
 The first group is the state tables of the specification's section 6.2: every state variable's initial value, through the query its table names and through the others with section 6.1.2's conversions, and every implementation-dependent value against its minimum.
 The second is the errors: for each command, the error section 2.5 and the command's own section give a bad argument, each recorded once, and that the command changes nothing.
 The third is the rendering: scenes read back with `glReadPixels` and held, pixel for pixel, to a reference in double precision that follows the specification's rules for points, polygons, lines by the four rules section 3.4.1 sets an algorithm other than the diamond exit, the viewport, smooth shading, every per-fragment test and operation, fog, the texture environments and lighting, skipping only a pixel whose centre lies on an edge, which GL leaves to the implementation.
-Of 196 state checks, 160 pass; of 100 error checks, 99; and of 81 rendering checks, 80. The 38 failures fall under seven issues:
+Of 203 state checks, 163 pass; of 100 error checks, 99; and of 81 rendering checks, 80. The 42 failures fall under eight issues:
 
 | Issue | Checks | What is missing or wrong |
 |---|---|---|
-| #1507 | 5 | `OES_point_size_array` |
+| #1507 | 6 | `OES_point_size_array` |
 | #1508 | 4 | `glPointParameterx` |
 | #1509 | 8 | The multisampling state |
 | #1510 | 1 | A second texture unit |
 | #1512 | 17 | `GL_COMBINE`, its state and its scales |
 | #1513 | 2 | `GL_POINT_SMOOTH` and `GL_LINE_SMOOTH` |
 | #1520 | 1 | Smooth shading of alpha, which Razboj takes from the first vertex |
+| #1522 | 3 | `OES_matrix_get`'s queries, a core addition |
 
 The queries are issue 1484's.
 `glGetIntegerv`, `glGetFixedv` and `glGetBooleanv` answer every name the library keeps state for: the viewport and the depth range, the matrix mode, the three matrices and their stacks' depths, the current colour, normal and texture coordinates, the clears, the depth, blend, alpha test and colour mask settings, the faces and the shading, the point size and the line width, the bound texture, the unpack alignment, the light model, and every switch `glIsEnabled` knows.

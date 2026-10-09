@@ -14,9 +14,10 @@
  *    component, a depth range or depth clear value, or a normal, which
  *    maps [-1, 1] onto the integers' range;
  *  - and any of them is FALSE as a boolean only when it is zero.
- * An implementation-dependent value is held to the table's minimum. Rows
- * the tables typeset as optional extensions the library does not claim
- * (the matrices as integer bits) are left out.
+ * An implementation-dependent value is held to the table's minimum. The
+ * matrices as integer bits are OES_matrix_get's, a core addition by Table
+ * C.2, and so are checked, as is the EXTENSIONS string for the four
+ * required profile extensions.
  */
 #include <stdio.h>
 #include <string.h>
@@ -24,6 +25,14 @@
 #include "conform.h"
 
 #define ONE CONFORM_ONE
+
+/* OES_matrix_get's names, a core addition in ES 1.1, from glext.h, which
+ * the tree does not fetch. */
+#ifndef GL_MODELVIEW_MATRIX_FLOAT_AS_INT_BITS_OES
+#define GL_MODELVIEW_MATRIX_FLOAT_AS_INT_BITS_OES 0x898D
+#define GL_PROJECTION_MATRIX_FLOAT_AS_INT_BITS_OES 0x898E
+#define GL_TEXTURE_MATRIX_FLOAT_AS_INT_BITS_OES 0x898F
+#endif
 
 /* What a row is read as, and how it converts: IsEnabled, GetBooleanv,
  * GetIntegerv of a number or of an enumeration, GetFixedv of a number or
@@ -604,6 +613,75 @@ static void others(void) {
                  want, e);
 }
 
+/* Section 6.1.2 and Table C.2: each matrix as the bits of the
+ * single-precision floats its elements are, through GetIntegerv. */
+static void matrix_bits(void) {
+  static const struct {
+    const char *name;
+    GLenum mode, pname;
+  } m[3] = {
+      {"MODELVIEW_MATRIX_FLOAT_AS_INT_BITS_OES", GL_MODELVIEW,
+       GL_MODELVIEW_MATRIX_FLOAT_AS_INT_BITS_OES},
+      {"PROJECTION_MATRIX_FLOAT_AS_INT_BITS_OES", GL_PROJECTION,
+       GL_PROJECTION_MATRIX_FLOAT_AS_INT_BITS_OES},
+      {"TEXTURE_MATRIX_FLOAT_AS_INT_BITS_OES", GL_TEXTURE,
+       GL_TEXTURE_MATRIX_FLOAT_AS_INT_BITS_OES},
+  };
+  GLfixed load[16];
+  for (int k = 0; k < 16; k++)
+    load[k] = (GLfixed)((k + 1) * ONE / 4);
+  for (int r = 0; r < 3; r++) {
+    glMatrixMode(m[r].mode);
+    glLoadMatrixx(load);
+    GLint got[16];
+    memset(got, 0, sizeof got);
+    glGetError();
+    glGetIntegerv(m[r].pname, got);
+    GLenum e = glGetError();
+    int k = 0;
+    for (; k < 16; k++) {
+      float f = (float)(k + 1) / 4;
+      GLint bits;
+      memcpy(&bits, &f, sizeof bits);
+      if (got[k] != bits)
+        break;
+    }
+    glLoadIdentity();
+    if (e != GL_NO_ERROR)
+      conform_fail("state", m[r].name, "error %04x", e);
+    else if (k < 16)
+      conform_fail("state", m[r].name, "element %d is %08x", k, got[k]);
+    else
+      conform_pass("state", m[r].name);
+  }
+  glMatrixMode(GL_MODELVIEW);
+}
+
+/* Appendix C.3: the required profile extensions are in the EXTENSIONS
+ * string, each a word of it. */
+static void extensions(void) {
+  static const char *required[4] = {
+      "GL_OES_read_format", "GL_OES_compressed_paletted_texture",
+      "GL_OES_point_size_array", "GL_OES_point_sprite"};
+  const char *s = (const char *)glGetString(GL_EXTENSIONS);
+  for (int k = 0; k < 4; k++) {
+    size_t n = strlen(required[k]);
+    int found = 0;
+    for (const char *p = s; p && *p && !found;) {
+      const char *end = strchr(p, ' ');
+      size_t len = end ? (size_t)(end - p) : strlen(p);
+      found = len == n && strncmp(p, required[k], n) == 0;
+      p = end ? end + 1 : p + len;
+    }
+    char name[64];
+    snprintf(name, sizeof name, "EXTENSION_%s", required[k] + 3);
+    if (found)
+      conform_pass("state", name);
+    else
+      conform_fail("state", name, "not in \"%s\"", s ? s : "(null)");
+  }
+}
+
 void conform_state(void) {
   /* Table 6.24: no error before any call has made one. */
   GLenum first = glGetError();
@@ -616,4 +694,6 @@ void conform_state(void) {
   lighting();
   texturing();
   others();
+  matrix_bits();
+  extensions();
 }
