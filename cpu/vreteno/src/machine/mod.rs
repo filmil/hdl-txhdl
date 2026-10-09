@@ -259,6 +259,8 @@ pub struct Machine {
     /// the steps outside the timing mode, and how many times it ran
     /// (issue 1434). A function's first address counts its calls.
     pub profile: Option<std::collections::HashMap<u32, (u64, u64)>>,
+    /// The same for the second hart (issue 1408).
+    pub profile1: Option<std::collections::HashMap<u32, (u64, u64)>>,
     /// An address to watch, and for each caller that reached it, by the
     /// return address in `ra`, how many times and the sum of `a2`, a
     /// copy's length (issue 1434).
@@ -306,6 +308,7 @@ impl Machine {
             model,
             board,
             profile: None,
+            profile1: None,
             watch: None,
             model1,
             parked1: true,
@@ -435,13 +438,20 @@ impl Machine {
         {
             let interrupt = self.model1.interrupt();
             let was = self.model1.cycles;
+            let pc1 = self.model1.pc;
             self.model1.step(&[], interrupt);
             Self::takes(&self.model1, &mut self.model);
-            self.clock.1 += if self.model1.timing.is_some() {
+            let n1 = if self.model1.timing.is_some() {
                 (self.model1.cycles - was).max(1)
             } else {
                 1
             };
+            if let Some(p) = &mut self.profile1 {
+                let e = p.entry(pc1).or_insert((0, 0));
+                e.0 += n1;
+                e.1 += 1;
+            }
+            self.clock.1 += n1;
             if self.model1.pc == 0 {
                 self.parked1 = true;
             }
