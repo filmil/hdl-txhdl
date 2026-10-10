@@ -409,6 +409,141 @@ fn logo(dy: u32) {
     }
 }
 
+/// The canonical demos (#1592): the step an image is in the icosahedron
+/// series, and its name, given by the build; an image without them runs
+/// for good, as the demos before them do.
+const STEP: Option<&str> = option_env!("DEMO_STEP");
+const NAME: Option<&str> = option_env!("DEMO_NAME");
+
+/// How long a canonical demo runs: 1200 frames, 20 seconds at 60 Hz.
+const DEMO_FRAMES: u32 = 1200;
+
+/// Where the step's title goes: the top left corner, eight pixels in,
+/// each of a 5 by 7 font's pixels two of the screen's, a glyph twelve
+/// pixels apart.
+const TITLE_X: u32 = 8;
+const TITLE_Y: u32 = 8;
+const TITLE_H: u32 = 14;
+
+// The solid never reaches the title's rows, so no clear erases it.
+const _: () =
+    assert!(ico_list::H / 2 - ico_list::REACH > (TITLE_Y + TITLE_H) as i32);
+
+/// A 5 by 7 glyph, a byte a column from the left, bit 0 at the top: the
+/// digits, the small letters, a space, a colon and a dash, the classic
+/// LCD font's; anything else is a space.
+fn glyph(c: u8) -> [u8; 5] {
+    const DIGITS: [[u8; 5]; 10] = [
+        [0x3e, 0x51, 0x49, 0x45, 0x3e],
+        [0x00, 0x42, 0x7f, 0x40, 0x00],
+        [0x42, 0x61, 0x51, 0x49, 0x46],
+        [0x21, 0x41, 0x45, 0x4b, 0x31],
+        [0x18, 0x14, 0x12, 0x7f, 0x10],
+        [0x27, 0x45, 0x45, 0x45, 0x39],
+        [0x3c, 0x4a, 0x49, 0x49, 0x30],
+        [0x01, 0x71, 0x09, 0x05, 0x03],
+        [0x36, 0x49, 0x49, 0x49, 0x36],
+        [0x06, 0x49, 0x49, 0x29, 0x1e],
+    ];
+    const LETTERS: [[u8; 5]; 26] = [
+        [0x20, 0x54, 0x54, 0x54, 0x78],
+        [0x7f, 0x48, 0x44, 0x44, 0x38],
+        [0x38, 0x44, 0x44, 0x44, 0x20],
+        [0x38, 0x44, 0x44, 0x48, 0x7f],
+        [0x38, 0x54, 0x54, 0x54, 0x18],
+        [0x08, 0x7e, 0x09, 0x01, 0x02],
+        [0x0c, 0x52, 0x52, 0x52, 0x3e],
+        [0x7f, 0x08, 0x04, 0x04, 0x78],
+        [0x00, 0x44, 0x7d, 0x40, 0x00],
+        [0x20, 0x40, 0x44, 0x3d, 0x00],
+        [0x7f, 0x10, 0x28, 0x44, 0x00],
+        [0x00, 0x41, 0x7f, 0x40, 0x00],
+        [0x7c, 0x04, 0x18, 0x04, 0x78],
+        [0x7c, 0x08, 0x04, 0x04, 0x78],
+        [0x38, 0x44, 0x44, 0x44, 0x38],
+        [0x7c, 0x14, 0x14, 0x14, 0x08],
+        [0x08, 0x14, 0x14, 0x18, 0x7c],
+        [0x7c, 0x08, 0x04, 0x04, 0x08],
+        [0x48, 0x54, 0x54, 0x54, 0x20],
+        [0x04, 0x3f, 0x44, 0x40, 0x20],
+        [0x3c, 0x40, 0x40, 0x20, 0x7c],
+        [0x1c, 0x20, 0x40, 0x20, 0x1c],
+        [0x3c, 0x40, 0x30, 0x40, 0x3c],
+        [0x44, 0x28, 0x10, 0x28, 0x44],
+        [0x0c, 0x50, 0x50, 0x50, 0x3c],
+        [0x44, 0x64, 0x54, 0x4c, 0x44],
+    ];
+    match c {
+        b'0'..=b'9' => DIGITS[(c - b'0') as usize],
+        b'a'..=b'z' => LETTERS[(c - b'a') as usize],
+        b':' => [0x00, 0x36, 0x36, 0x00, 0x00],
+        b'-' => [0x08, 0x08, 0x08, 0x08, 0x08],
+        _ => [0; 5],
+    }
+}
+
+/// Paint `text` in white into the frame `dy` rows down at the title's
+/// place, once, as the logo is: the backdrop stays between its strokes.
+fn title(text: &[u8], dy: u32) {
+    let base = Razboj::FRAME as *mut u32;
+    for (k, &c) in text.iter().enumerate() {
+        let g = glyph(c);
+        for (i, col) in g.iter().enumerate() {
+            for j in 0..7u32 {
+                if col >> j & 1 == 0 {
+                    continue;
+                }
+                let x = TITLE_X + 12 * k as u32 + 2 * i as u32;
+                let y = dy + TITLE_Y + 2 * j;
+                for (ox, oy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    let at = ((y + oy) * ROW + x + ox) as usize;
+                    // SAFETY: the frame's pixels, which nothing draws over
+                    // at the title's place.
+                    unsafe { write_volatile(base.add(at), 0x00ff_ffff) };
+                }
+            }
+        }
+    }
+}
+
+/// A canonical demo's start (#1592): the console line naming its step,
+/// and the title over both frames.
+fn demo_start() {
+    let (Some(step), Some(name)) = (STEP, NAME) else {
+        return;
+    };
+    Uart::say(b"demo ico ");
+    Uart::say(step.as_bytes());
+    Uart::say(b": ");
+    Uart::say(name.as_bytes());
+    Uart::put(b'\n');
+    let mut text = [b' '; 40];
+    let mut n = 0;
+    for part in [b"ico ".as_slice(), step.as_bytes(), b": ", name.as_bytes()] {
+        for &c in part {
+            if n < text.len() {
+                text[n] = c;
+                n += 1;
+            }
+        }
+    }
+    title(&text[..n], 0);
+    title(&text[..n], SECOND as u32);
+}
+
+/// A canonical demo's end once it has run its frames (#1592): the
+/// console says so and the core stops, the last frame shown.
+fn demo_end(frames: u32) {
+    if let Some(step) = STEP {
+        if frames >= DEMO_FRAMES {
+            Uart::say(b"demo ico ");
+            Uart::say(step.as_bytes());
+            Uart::say(b" done\n");
+            vreteno_hal::halt();
+        }
+    }
+}
+
 /// Wait for the raster to leave the vertical blanking, if it is in one,
 /// and then to enter the next: the moment the scanout takes its base.
 fn wait_blanking() {
@@ -435,6 +570,7 @@ fn main() -> ! {
     );
     logo(0);
     logo(SECOND as u32);
+    demo_start();
     Scan::base(Razboj::FRAME);
     Scan::show(true);
     // Built with `ahead`, the scanout asks for its lines two rows ahead
@@ -477,6 +613,7 @@ fn main() -> ! {
             Uart::put(b'\n');
         }
         frames = frames.wrapping_add(1);
+        demo_end(frames);
         which ^= 1;
         ay = (ay + 2) & 255;
         ax = (ax + 1) & 255;
@@ -586,6 +723,7 @@ fn main() -> ! {
             Uart::put(b'\n');
         }
         frames = frames.wrapping_add(1);
+        demo_end(frames);
         which ^= 1;
         ay = (ay + 2) & 255;
         ax = (ax + 1) & 255;
