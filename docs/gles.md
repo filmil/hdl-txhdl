@@ -397,6 +397,10 @@ Of 203 state checks, 163 pass; of 100 error checks, 99; of 83 rendering checks, 
 | #1520 | 1 | Smooth shading of alpha, which Razboj takes from the first vertex |
 | #1522 | 4 | `OES_matrix_get`'s queries, a core addition |
 
+On the board the same programs run on the core against Razboj, built as `//gles:conform_board` and sent by fastboot (`docs/board-checks.md`), and the suite runs to its count in about five minutes.
+hil's run of 2026-10-10 (main 2499d950 on flagship 7d9fbdd6) gave 344 of 390, the host's failures and two more: `render.read_keeps_depth` and `render.read_keeps_stencil`, whose fix the board's machine undid by laying its tile table over the frame GL kept (#1596).
+With that fixed the board and the host should agree check for check, and every failure is one of the issues in the table.
+
 The queries are issue 1484's.
 `glGetIntegerv`, `glGetFixedv` and `glGetBooleanv` answer every name the library keeps state for: the viewport and the depth range, the matrix mode, the three matrices and their stacks' depths, the current colour, normal and texture coordinates, the clears, the depth, blend, alpha test and colour mask settings, the faces and the shading, the point size and the line width, the bound texture, the unpack alignment, the light model, and every switch `glIsEnabled` knows.
 They also give the limits: the stacks, 8 lights, 1 clip plane, textures to 1024, 1 texture unit, 4 bits under the pixel, 8 bits a channel, 16 of depth and 8 of stencil, and sizes from 1 to 64.
