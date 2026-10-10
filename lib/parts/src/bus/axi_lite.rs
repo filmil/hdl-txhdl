@@ -50,6 +50,14 @@ pub struct LiteAddr<const A: usize> {
 pub type LiteAw<const A: usize> = LiteAddr<A>;
 /// The read address channel's beat. The same fields.
 pub type LiteAr<const A: usize> = LiteAddr<A>;
+// A struct literal through an alias finds the field order of the
+// struct under a const of the alias's name (issue 1541).
+#[doc(hidden)]
+#[allow(non_upper_case_globals)]
+pub const LiteAw: txhdl::types::Fields = LiteAddr;
+#[doc(hidden)]
+#[allow(non_upper_case_globals)]
+pub const LiteAr: txhdl::types::Fields = LiteAddr;
 
 /// The write data channel's beat: the word, and which of its bytes
 /// are meant.

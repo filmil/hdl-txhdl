@@ -39,6 +39,8 @@ pub fn derive_bus(input: TokenStream) -> TokenStream {
 /// A struct or enum item, as far as the derives need it: name, generic
 /// parameters with and without their bounds, and the body.
 struct Item {
+    /// The item's visibility as written: `pub`, `pub(crate)` or nothing.
+    vis: String,
     kind: String,
     name: String,
     bounds: String,
@@ -58,6 +60,21 @@ fn parse_item(input: TokenStream) -> Item {
         }
         i += 1;
     }
+    let vis = match (
+        i.checked_sub(2).map(|j| &toks[j]),
+        toks.get(i.wrapping_sub(1)),
+    ) {
+        (Some(TokenTree::Ident(p)), Some(TokenTree::Group(g)))
+            if p.to_string() == "pub"
+                && g.delimiter() == Delimiter::Parenthesis =>
+        {
+            format!("pub{g}")
+        }
+        (_, Some(TokenTree::Ident(p))) if p.to_string() == "pub" => {
+            "pub".to_string()
+        }
+        _ => String::new(),
+    };
     let kind = toks[i].to_string();
     let name = toks[i + 1].to_string();
     i += 2;
@@ -123,6 +140,7 @@ fn parse_item(input: TokenStream) -> Item {
         _ => None,
     });
     Item {
+        vis,
         kind,
         name,
         bounds,
@@ -451,6 +469,18 @@ pub fn derive_value(input: TokenStream) -> TokenStream {
             })
             .collect::<Vec<_>>()
             .join(" ");
+        // The fields' names in declared order, as a constant of the
+        // struct's own name: a constant lives in the value namespace and
+        // the struct in the type namespace, so the two do not clash, a
+        // `use` of the struct brings both, and the names, which do not
+        // depend on the struct's generics, are there without them. A
+        // struct literal under `#[lower]` reads them to pack its fields
+        // in this order, whatever order it names them in (issue 1541).
+        let order = names
+            .iter()
+            .map(|n| format!("\"{n}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
         format!(
             "impl{b} ::txhdl::types::Value for {n}{a} {{\n\
              const WIDTH: usize = {width};\n\
@@ -459,10 +489,15 @@ pub fn derive_value(input: TokenStream) -> TokenStream {
              fn parts(self) -> Vec<::txhdl::types::Part> {{\n\
              vec![{fields}] }}\n\
              fn layout() -> Vec<(&'static str, usize)> {{\n\
-             vec![{layout}] }}\n}}",
+             vec![{layout}] }}\n}}\n\
+             #[doc(hidden)]\n\
+             #[allow(non_upper_case_globals, dead_code)]\n\
+             {v} const {n}: ::txhdl::types::Fields = \
+             ::txhdl::types::Fields(&[{order}]);",
             b = item.bounds,
             n = item.name,
-            a = item.args
+            a = item.args,
+            v = item.vis
         )
     } else {
         let variants = variant_names(body);
@@ -3875,12 +3910,14 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
             }
         }
         // A struct literal, `Name { f: e, .. }`: its fields concatenated
-        // in the order written, which must be the declaration's, the
-        // first field highest, as `#[derive(Value)]` lays them out.
-        [TokenTree::Ident(_), TokenTree::Group(g)]
+        // in the order the struct declares them, the first field highest,
+        // as `#[derive(Value)]` lays them out, whatever order the literal
+        // names them in (issue 1541). The order is `Name` the constant,
+        // which the derive writes beside `Name` the struct.
+        [TokenTree::Ident(name), TokenTree::Group(g)]
             if g.delimiter() == Delimiter::Brace =>
         {
-            let mut acc: Option<String> = None;
+            let mut named: Vec<String> = Vec::new();
             for f in split_commas(g) {
                 let colon = f.iter().position(
                     |t| matches!(t, TokenTree::Punct(p) if p.as_char() == ':'),
@@ -3900,14 +3937,17 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                         )
                     }
                 };
-                acc = Some(match acc {
-                    None => e,
-                    Some(a) => {
-                        format!("NlE::Cat(Box::new({a}), Box::new({e}))")
-                    }
-                });
+                let field =
+                    f.first().map(|t| t.to_string()).unwrap_or_default();
+                named.push(format!("(\"{field}\", {e})"));
             }
-            acc.ok_or_else(|| "an empty struct literal".to_string())
+            if named.is_empty() {
+                return Err("an empty struct literal".to_string());
+            }
+            Ok(format!(
+                "::txhdl::netlist::literal(&{name}, vec![{}])",
+                named.join(", ")
+            ))
         }
         _ => {
             let last_group = matches!(ts.last(), Some(TokenTree::Group(_)));

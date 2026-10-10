@@ -343,6 +343,40 @@ pub fn field<V: Value>(e: Expr, name: &str) -> Expr {
     panic!("`{name}` is not a field of the value")
 }
 
+/// A struct literal on a wire: its fields' values, named as the literal
+/// names them, concatenated in the order the struct declares them, the
+/// first field highest, as `#[derive(Value)]` lays them out (issue 1541).
+/// A field the literal leaves out or one the struct does not have is a
+/// mistake the Rust compiler has already refused in the run, so it is
+/// said here rather than lowered.
+pub fn literal(
+    order: &crate::types::Fields,
+    fields: Vec<(&str, Expr)>,
+) -> Expr {
+    assert_eq!(
+        fields.len(),
+        order.0.len(),
+        "a struct literal names {} fields of {}",
+        fields.len(),
+        order.0.len()
+    );
+    let mut fields: Vec<(&str, Option<Expr>)> =
+        fields.into_iter().map(|(n, e)| (n, Some(e))).collect();
+    let mut acc: Option<Expr> = None;
+    for want in order.0 {
+        let e = fields
+            .iter_mut()
+            .find(|(n, _)| n == want)
+            .and_then(|(_, e)| e.take())
+            .unwrap_or_else(|| panic!("a struct literal leaves out {want}"));
+        acc = Some(match acc {
+            None => e,
+            Some(a) => Expr::Cat(Box::new(a), Box::new(e)),
+        });
+    }
+    acc.expect("a struct with no fields")
+}
+
 /// One end a unit may take as a port, as the netlist needs it: what
 /// it is, how wide, on which clock, and how its value is laid out.
 /// `#[derive(Ports)]` reads a struct's fields through this, so a

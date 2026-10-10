@@ -141,6 +141,14 @@ pub struct Addr<const A: usize, const I: usize> {
 pub type Aw<const A: usize, const I: usize> = Addr<A, I>;
 /// The read address channel's beat. The same fields.
 pub type Ar<const A: usize, const I: usize> = Addr<A, I>;
+// A struct literal through an alias finds the field order of the
+// struct under a const of the alias's name (issue 1541).
+#[doc(hidden)]
+#[allow(non_upper_case_globals)]
+pub const Aw: txhdl::types::Fields = Addr;
+#[doc(hidden)]
+#[allow(non_upper_case_globals)]
+pub const Ar: txhdl::types::Fields = Addr;
 
 /// The write data channel's beat. `D` is the data width and `S` the
 /// strobe width, which is `D / 8`.
