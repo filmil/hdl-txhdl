@@ -246,6 +246,24 @@ boot_image(
     tags = ["manual"],
 )
 
+# The board's image with its address from srv's DHCP server rather than
+# the command line (issue 1441): a lease in 192.168.1.100 to .150, then
+# three pings to srv. Not over an NFS root, which renumbering eth0 would
+# cut off.
+#
+#   fastboot -s tcp:192.168.1.50 boot bazel-bin/linux/board_dhcp_boot.bin
+boot_image(
+    name = "board_dhcp_boot",
+    bootargs = "earlycon console=tty0 console=ttySIF0 " +
+               "txhdl.dhcp txhdl.ping=192.168.1.1",
+    framebuffer = "0x42000000",
+    initramfs = "initramfs.cpio",
+    kernel = "Image",
+    opensbi = "fw_jump.bin",
+    system_map = "System.map",
+    tags = ["manual"],
+)
+
 # The board with its root on NFS from srv (issue 1438): the address
 # from the kernel's own command line, so no DHCP server is needed, the
 # root at srv's export, and an initramfs with nothing to run, so the

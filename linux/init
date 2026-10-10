@@ -23,18 +23,43 @@ uname -a
 addr=
 peer=
 ptycheck=
+dhcp=
 for word in $(/bin/busybox cat /proc/cmdline); do
 	case "$word" in
 	txhdl.net) addr=10.0.0.1/24 peer=10.0.0.2 ;;
 	txhdl.ip=*) addr=${word#txhdl.ip=} ;;
 	txhdl.ping=*) peer=${word#txhdl.ping=} ;;
 	txhdl.ptycheck) ptycheck=1 ;;
+	txhdl.dhcp) dhcp=1 ;;
 	esac
 done
 if [ -n "$addr" ]; then
 	/bin/busybox ip addr add "$addr" dev eth0
 	/bin/busybox ip link set eth0 up
 	echo "txhdl: eth0 is up at $addr"
+fi
+# `txhdl.dhcp` asks a DHCP server for eth0's address instead (issue
+# 1441); the script udhcpc runs on a lease puts the address on, and
+# what it was leased becomes the address the ping goes from.
+if [ -n "$dhcp" ]; then
+	/bin/busybox mkdir -p /etc
+	/bin/busybox cat >/etc/udhcpc.script <<'EOF2'
+#!/bin/sh
+case "$1" in
+bound | renew)
+	/bin/busybox ip addr add "$ip/$mask" dev "$interface"
+	echo "$ip/$mask" >/etc/leased
+	;;
+esac
+EOF2
+	/bin/busybox chmod 755 /etc/udhcpc.script
+	/bin/busybox ip link set eth0 up
+	if /bin/busybox udhcpc -i eth0 -n -q -t 5 -s /etc/udhcpc.script; then
+		addr=$(/bin/busybox cat /etc/leased)
+		echo "txhdl: eth0 leased $addr"
+	else
+		echo "txhdl: no DHCP lease for eth0"
+	fi
 fi
 if [ -n "$addr" ] && [ -n "$peer" ]; then
 	# Three, all answered: ping waits for each after the first with
