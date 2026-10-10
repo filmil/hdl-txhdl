@@ -155,16 +155,17 @@ fn main() {
     m.boot(at, if dtb.is_some() { dtb_at } else { 0 });
     m.board.0.borrow_mut().eth.peer = peer;
     if timing {
-        let mut t = vreteno32::model::Timing::board();
+        let mut t = if dcache {
+            vreteno32::model::Timing::board_cached()
+        } else {
+            vreteno32::model::Timing::board()
+        };
         if let Some(n) = ddr3_store {
             for r in &mut t.regions {
                 if r.0 == 0x4000_0000 {
                     r.3 = n;
                 }
             }
-        }
-        if dcache {
-            t.hit = Some(1);
         }
         m.model.timing = Some(t);
     }

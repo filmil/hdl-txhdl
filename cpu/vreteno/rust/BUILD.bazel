@@ -1564,3 +1564,23 @@ vreteno_flat(
     platform = ":vreteno",
     program = ":ico_split",
 )
+
+# What an instruction costs the core on the board, for the machine's
+# timing mode (issue 1561): the loops board_test measures in
+# simulation, timed on the board's own DDR3.
+rust_binary(
+    name = "costs_ram",
+    srcs = ["costs.rs"],
+    compile_data = ["vreteno_ram.ld"],
+    crate_root = "costs.rs",
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS,
+    tags = ["manual"],
+    deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
+)
+
+vreteno_flat(
+    name = "costs_ram_bin",
+    platform = ":vreteno",
+    program = ":costs_ram",
+)
