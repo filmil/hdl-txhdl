@@ -9,20 +9,49 @@
 
 \code{Board} is everything that computes on the board, written as a
 unit of units so that \code{\#[lower]} makes its netlist as one module
-holding the rest. It holds seven hosts, an arbiter that puts them onto
-one link, a router of eight, and the peripherals behind its eight
-ports. The hosts are the core's tracker; Vivado's JTAG-to-AXI master
+holding the rest. It holds two harts, eight hosts, an arbiter that
+puts the hosts onto one link, an exclusive monitor, a router of eight,
+and the peripherals behind its eight ports. The hosts are the first
+hart's tracker, \code{host}; Vivado's JTAG-to-AXI master
 on the board's top (issue 241), whose pins arrive under \code{jtag\_}
 and are joined by an \code{AxiPins}, sharing one host through
 \code{jarb} with the bridge of the RISC-V debug transport (issue 154);
 the Ethernet port's two engines, each behind an \code{AxiHost} of its
 own (issue 151); the video scanout's fetch (issue 151); and the SD card
 host's two engines, sharing one host through \code{sdarb} (issue 912);
-and Razboj's rasteriser behind \code{rhost} (issue 985).
-The arbiter is an \code{Arbiter7<32, 32, 4, 2, 5, 0>}, so the
-peripheral side of the bus allocates five bits of identifier, two for a
-host's own and three for the port, which is room for eight hosts
-(issue 1022). The debug transport, \code{dtm}, runs on the cable's
+Razboj's rasteriser behind \code{rhost} (issue 985); and the second
+hart's tracker, \code{host1} (issue 1408).
+The arbiter, \code{arb}, is an
+\code{Arbiter<8, 32, 32, 4, 2, 5, 0, 1, SCAN\_PRIO>}, an
+\code{Arbiter8} with the exclusive hold built and no host's reads
+ahead, since \code{SCAN\_PRIO} is eight (issue 1523). Its peripheral
+side has five bits of identifier, two for a host's own and three for
+the port, which is room for the eight hosts (issue 1022).
+
+The harts are \code{cpu}, a \code{Hart<2, 16384, 1, 0, 1>}, and
+\code{cpu1}, a \code{Hart<2, 16384, 1, 1, 1>}: hart numbers 0 and 1,
+and both with their A instructions on the DDR3 as exclusive pairs
+(issue 1408). The second hart's boot memory holds \code{park}, from
+\code{park.rs}, where it waits in \code{wfi} until the first starts it
+through the timer's mailbox and its \code{msip}; it does not run the
+board's program. Its timer and software lines are the timer's
+\code{tirq1} and \code{sirq1}, and its external lines are the
+interrupt controller's third and fourth targets. It is not on the
+debug module: its halt and resume requests and register access are
+tied to zero.
+
+\code{exmon}, an \code{ExMon<5, 2, 0, 7, 0x4000\_0000, 0xc000\_0000>},
+stands between the arbiter and the router, where every host's writes
+pass in the order each peripheral takes them. It keeps the
+reservations of the harts on the arbiter's ports 0 and 7 for the DDR3,
+and answers each exclusive write. \code{dcsnoop}, a
+\code{DcSnoop<7>}, stands on the router's port to the DDR3 (issue
+1275). A write into the DDR3, once answered, has its lines named to
+each hart that did not write it, on that hart's \code{dc\_snoop},
+before the answer goes back; hart 1 is told nothing while
+\code{asleep} says it waits in \code{wfi}.
+
+The debug transport, \code{dtm}, runs on the cable's
 clock behind the top's \code{BSCANE2}, and \code{dreq} and
 \code{dans} transfer its accesses across to the board's clock and back.
 The data memory and the timer each sit behind an \code{AxiPer}. Ten
@@ -36,14 +65,14 @@ entropy source at \code{0x3500} (issue 458), the configuration
 flash's SPI master at \code{0x3600} (issue 312), the Ethernet PHY's
 management interface at \code{0x3700} (issue 864), the SD card host
 at \code{0x3800} (issue 153), and Razboj's doorbell at \code{0x3900}
-(issue 985). The DDR3 memory takes the router's port
-with no tracker in front, and holds AMD's MIG controller with its own
+(issue 985). The DDR3 memory takes the router's port behind the
+snoop, with no tracker in front, and holds AMD's MIG controller with its own
 AXI4 port as a foreign module, which makes the design's clock from the
 board's. The interrupt
 controller, \code{Plic3}, and the debug module, \code{Dm}, each sit
 behind a \code{LiteBridge<1, ..>} of their own; the module's lines go to
-the core's halt and resume requests and its register access, and take
-the core's debug mode and the word read (issue 154).
+the first hart's halt and resume requests and its register access, and
+take its debug mode and the word read (issue 154).
 
 The configuration flash, the chip that holds the bitstream, is reached
 twice (issue 312): through that SPI master, \code{spi}, for commands,
@@ -117,7 +146,8 @@ the same bridge, at \code{0x3800} \\
 & \code{0xffff\_ff00} & \code{doorbell}, \code{Doorbell} &
 the same bridge, at \code{0x3900} \\
 \code{0x4000\_0000} & \code{0xc000\_0000} & \code{ddr3},
-\code{Ddr3Per} & nothing: the router's port goes to it \\
+\code{Ddr3Per} & \code{dcsnoop}, \code{DcSnoop<7>}: the router's port
+goes to it through the snoop, with no tracker \\
 \code{0x0c00\_0000} & \code{0xfc00\_0000} & \code{plic},
 \code{Plic3<0>} & \code{pplic}, \code{LiteBridge<1, ..>} at
 \code{0x0c00\_0000} \\
@@ -141,21 +171,25 @@ and from the bus above it.
 \subsection*{Behaviour}
 
 \begin{itemize}
-\item The core's tracker is \code{AxiHost<32, 32, 4, 2, 4>}: 32-bit
-addresses and words, four lanes, two-bit identifiers, four of them.
-\item \code{rst} goes to the core, the timer, the serial port and the
+\item Each hart's tracker, \code{host} and \code{host1}, is
+\code{AxiHost<32, 32, 4, 2, 4>}: 32-bit addresses and words, four
+lanes, two-bit identifiers, four of them.
+\item \code{rst} goes to both harts, the timer, the serial port and the
 interrupt controller. The DDR3 controller has its own reset,
 \code{sys\_rst}, active high, and hands back \code{ui\_rst}, high
 until the clock it makes is good.
 \item The interrupt controller's source 1 is the serial port's
 interrupt line, its source 2 is \code{irq}, and its source 3 is the
 Ethernet port's arrival; all three ask while high.
-Its line is the core's external interrupt. The timer's line goes to
-the core's \code{tirq}.
-\item Of the core's outputs, only \code{halt} is a port. \code{instr}
+Its machine and supervisor lines for hart 0 go to \code{cpu} and
+those for hart 1 to \code{cpu1}. The timer's lines go to each hart's
+\code{tirq} and \code{sirq} the same way.
+\item Of the first hart's outputs, only \code{halt} is a port. \code{instr}
 and the \code{Writeback} go nowhere; \code{dbg} and \code{dbg\_rdata}
 go to the debug module, whose requests and register access come back
-to the core.
+to the core. None of the second hart's outputs leaves the unit: its
+bus side goes to \code{host1}, \code{asleep} goes to the snoop, and
+the rest go nowhere.
 \item The join runs the timer before the core, since the core reads
 the timer's line in the same step, and the serial port before the
 interrupt controller before the core, for the same reason. \code{Ddr3Per} runs its controller
@@ -294,7 +328,26 @@ print the chip's identity, a clear write enable latch and where the
 sync word is, and the chip must have taken no write enable.
 The same target also runs the boot memory, the remote peripheral, the
 loader and the debug module through the board.
-\code{the\_netlist\_holds\_the\_controller} checks that the Verilog
+\code{the\_data\_cache\_sees}\allowbreak
+\code{\_another\_hosts\_write} holds the snoop;
+\code{the\_a\_instructions\_on\_the\_ddr3}\allowbreak
+\code{\_are\_exclusive\_pairs} and
+\code{amos\_lose\_no\_count}\allowbreak
+\code{\_to\_the\_other\_hosts\_writes} hold the
+monitor and the arbiter's hold. The second hart:
+\code{hart\_one\_starts\_twice}\allowbreak
+\code{\_from\_the\_mailbox} starts it from
+\code{park} twice through the mailbox, \code{two\_harts\_lose\_no\_count}
+has both count with \code{amoadd.w} and with \code{lr.w} and
+\code{sc.w} and pass words through the snoop,
+\code{a\_hart\_woken\_as\_a}\allowbreak\code{\_write\_lands\_sees\_it} and
+\code{a\_woken\_harts\_first}\allowbreak
+\code{\_read\_is\_the\_new\_word} hold its wake
+from \code{wfi}, and \code{hart\_one\_takes\_an}\allowbreak
+\code{\_external\_interrupt}
+holds its interrupt controller targets.
+\code{the\_netlist\_holds}\allowbreak
+\code{\_the\_controller} checks that the Verilog
 has the top, the core and the DDR3's pins part as modules,
 instantiates \code{ddr3\_axi32} and \code{ring\_osc} without writing
 either, and has
@@ -339,9 +392,12 @@ the board as well: the identity, write enable refused and the
 bitstream through the window. The program is fixed in the netlist. The board top ties \code{irq} low, so on the
 board the interrupt controller's second source never asks.
 
-The arbiter's ports are the core on 0, \code{jarb} on 1, the Ethernet
-port's fetch engine on 2 and its store engine on 3, the scanout's fetch
-on 4, \code{sdarb} on 5 and Razboj's rasteriser on 6. It takes turns,
-so with every host offering each wins one turn in seven. Three bits of
-port number leave room for an eighth host, which raises the count and
-widens nothing past the arbiter.
+The arbiter's ports are the first hart on 0, \code{jarb} on 1, the
+Ethernet port's fetch engine on 2 and its store engine on 3, the
+scanout's fetch on 4, \code{sdarb} on 5, Razboj's rasteriser on 6 and
+the second hart on 7. It takes turns, so with every host offering each
+wins one turn in eight. Three bits of port number hold eight hosts, so
+the eight ports are all taken.
+
+The second hart is not on the debug module, and the debug module
+serves hart 0 alone.
