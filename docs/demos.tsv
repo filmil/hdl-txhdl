@@ -9,7 +9,8 @@
 # A line that starts with # is not run; a demo whose image is not on
 # main yet waits there. Each icosahedron step stops itself after 1200
 # frames and keeps its last frame, so its seconds cover its slowest
-# rate with room; the teapot stops after 256 frames.
+# rate with room; the teapot stops after 256 frames, about 150 s at
+# the 1.7 frames a second it draws on the board (2026-10-10).
 #name	target	how	seconds	until	extra
 ico-1-flat	//cpu/vreteno/rust:demo_ico_1_flat_bin	serial	25	-	-
 ico-2-depth	//cpu/vreteno/rust:demo_ico_2_depth_bin	serial	45	-	-
@@ -19,6 +20,6 @@ ico-5-mipmapped	//cpu/vreteno/rust:demo_ico_5_mipmapped_bin	serial	110	-	-
 ico-6-fog	//cpu/vreteno/rust:demo_ico_6_fog_bin	serial	110	-	-
 ico-7-blend	//cpu/vreteno/rust:demo_ico_7_blend_bin	serial	110	-	-
 ico-8-mirror	//cpu/vreteno/rust:demo_ico_8_mirror_bin	serial	110	-	-
-teapot	//cpu/vreteno/rust:demo_teapot_1_utah_bin	serial	60	-	-
+teapot	//cpu/vreteno/rust:demo_teapot_1_utah_bin	serial	180	-	-
 linux-console	//linux:board_demo_boot	fastboot	120	txhdl: demo done	-
 doom	//demo/doom:doom	fastboot	60	-	freedoom1.wad
