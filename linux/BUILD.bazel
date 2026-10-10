@@ -470,6 +470,44 @@ boot_image(
     tags = ["manual"],
 )
 
+# The same list on the machine model, with no pauses and the model's
+# peer to ping, so that the demo cannot rot between recordings.
+boot_image(
+    name = "model_demo_boot",
+    bootargs = "earlycon console=ttySIF0 txhdl.net txhdl.demo=0",
+    initramfs = "root.cpio",
+    kernel = "Image",
+    model = True,
+    opensbi = "fw_jump.bin",
+    system_map = "System.map",
+    tags = ["manual"],
+)
+
+sh_test(
+    name = "demo_test",
+    size = "large",
+    srcs = ["boot_test.sh"],
+    args = [
+        "$(rootpath //cpu/vreteno:machine)",
+        "$(rootpath :model_demo_boot)",
+        "--eth-peer",
+    ],
+    data = [
+        ":model_demo_boot",
+        "//cpu/vreteno:machine",
+    ],
+    env = {
+        "EXPECT": "txhdl: demo done",
+        "EXPECT_ALSO": "^# uname -a;^Linux ;^# cat /proc/cpuinfo;" +
+                       "^processor;^# nproc;^# free;^Mem:;" +
+                       "^# ip addr;inet 10.0.0.1/24;^# /bin/dynhello;" +
+                       "txhdl: a dynamic program ran;" +
+                       "^# ping -c 3 -W 5 10.0.0.2;3 packets received",
+        "STEPS": "800000000",
+    },
+    tags = ["manual"],
+)
+
 # The words the board's image takes, on the machine model (issue 1318):
 # txhdl.ip brings eth0 up at an address and txhdl.ping pings a host, as
 # txhdl.net does with the model's two. The board carries
