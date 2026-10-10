@@ -13,17 +13,32 @@ controller generated with its AXI4 port, has pins: a \code{valid} and a
 \code{ready} per channel and a wire per field. \code{AxiPerPins} is
 \code{AxiPins} the other way round. It stands on the link's peripheral
 end, where an \code{AxiPer} would, and puts the link's channels onto
-those pins, holding nothing.
+those pins. What it holds is what it owes the peripheral: the one write
+it is giving, kept through the design's reset, which a peripheral such
+as AMD's controller does not share, and counts of the responses and
+read beats outstanding (issue 1532).
 
-Its inputs are the side \code{inp: AxiPerPinsIn}: the eleven pins the
-peripheral drives as one field, \code{pins}, an \code{AxiPerDriven},
-and the \code{aw}, \code{ar} and \code{w} channels from the link, so
-its input ports are \code{inp\_pins\_awready} and the rest beside
-\code{inp\_aw}, \code{inp\_ar} and \code{inp\_w}. \code{AxiPerDriven}
-derives \code{Ports}, so a design holding a peripheral's pins among its
-own ports passes them on whole. Its outputs are the side
-\code{outp: AxiPerPinsOut}: the \code{b} and \code{r} channels back to
-the link, and the twenty-six pins the peripheral reads.
+Its inputs are the side \code{AxiPerPinsIn}, destructured: the design's
+reset, \code{rst}; the eleven pins the peripheral drives as one field,
+\code{pins}, an \code{AxiPerDriven}; and the \code{aw}, \code{ar} and
+\code{w} channels from the link. So its input ports are \code{rst},
+\code{pins\_awready} and the rest, \code{aw}, \code{ar} and \code{w}.
+\code{AxiPerDriven} derives \code{Ports}, so a design holding a
+peripheral's pins among its own ports passes them on whole. Its outputs
+are the side \code{outp: AxiPerPinsOut}: the \code{b} and \code{r}
+channels back to the link, and the twenty-six pins the peripheral reads.
+
+A reset can land after the peripheral took a write's address and
+before it took the beats, which lived in the link's channel and went
+with the reset. The peripheral would then pair every later write's
+beats with the address before it, and a write's response would never
+come. So the unit keeps the write it is giving the peripheral, one at
+a time: \code{cur} says one is being given, \code{held} that its
+address is not yet taken, \code{h\_id} to \code{h\_qos} hold that
+address as the pins carry it, \code{beats} its beats and \code{sent}
+how many have gone. \code{bowe} counts the writes taken whose response
+has not come, \code{rowe} the read beats asked for that have not come,
+and \code{drain} says the unit is draining after a reset.
 
 \code{axi\_per\_pins::sim} has \code{PinRam}, a memory on the pins
 written as a simulation, and \code{pins}, which makes the wires.
@@ -62,21 +77,45 @@ controller's own 30-bit address.
 \subsection*{Behaviour}
 
 \begin{itemize}
-\item It holds no state; every output is a function of the step's
-inputs and the channels.
-\item An address phase at the head of \code{aw} is \code{awvalid} and
-the \code{aw} pins: \code{awid}, \code{awaddr}, \code{awlen},
-\code{awsize}, the burst type encoded in two bits, \code{awlock},
-\code{awcache}, \code{awprot} and \code{awqos}. It is taken off the
-channel in a step \code{awready} is high. The same holds for
-\code{ar}, and for \code{w} with \code{wdata}, \code{wstrb} and
-\code{wlast}.
+\item A write starts when none is being given, an address phase is at
+the head of \code{aw} and the unit is not draining. Its address phase
+is \code{awvalid} and the \code{aw} pins: \code{awid}, \code{awaddr},
+\code{awlen}, \code{awsize}, the burst type encoded in two bits,
+\code{awlock}, \code{awcache}, \code{awprot} and \code{awqos}. It is
+taken off the channel in the step it starts and kept in \code{h\_id}
+to \code{h\_qos}, which drive the pins from then on, so the offer
+stands until \code{awready} takes it. One write follows another with
+no step between them (issue 1121).
+\item The write's beats come from \code{w}, \code{wvalid} with
+\code{wdata}, \code{wstrb} and \code{wlast}, until \code{sent} reaches
+its count of beats, \code{awlen} plus one; a beat is taken off
+\code{w} in a step \code{wready} is high. The write is done once its
+address is taken and its beats have all gone.
+\item An address phase at the head of \code{ar} is \code{arvalid} and
+the \code{ar} pins, unless the unit is draining, and is taken off the
+channel in a step \code{arready} is high.
 \item A response the peripheral offers, \code{bvalid} with
 \code{bid} and \code{bresp}, the response decoded from its two bits,
 goes onto \code{b} in a step \code{b} has room, and \code{bready} is
 that room. The same holds for \code{rvalid} and \code{r}, with
 \code{rid}, \code{rdata}, \code{rresp} and \code{rlast}, and
 \code{rready}.
+\item \code{bowe} counts up as the peripheral takes a write's address
+and down as a response is taken; \code{rowe} counts up by a read's
+beats as the peripheral takes its address and down as a beat is taken.
+A response or a read beat counts only while one is owed: at power-up a
+controller's pins are unknown in a simulation of the netlist, and the
+counts have no reset to wash that out.
+\item Under \code{rst}, and after it until no write is being given and
+nothing is owed, the unit drains. It goes on offering the kept
+address, gives the rest of the write's beats with no byte enabled,
+which writes nothing, with \code{wlast} on the last of its count, and
+takes nothing from \code{w}. \code{bready} and \code{rready} are high,
+so the responses and read beats meant for the design that was reset
+are taken and dropped, none passed on to the link. It offers the
+peripheral nothing new.
+\item Nothing it offers waits on a \code{ready}, as AXI4 asks of a
+host, and an offer is never withdrawn.
 \item Every field of the link's address phase reaches a pin except
 \code{region}: AMD's controller has no region pins, and a peripheral
 joined to one link needs none, since the region is how an interconnect
@@ -86,8 +125,13 @@ tells decoded ranges of one peripheral apart. \code{AxQOS} is forwarded.
 \subsection*{Verification}
 
 \begin{itemize}
-\item \code{a\_host\_on\_the\_link\_reaches\_a\_peripheral\_on\_pins} in
-\code{bus::axi\_per\_pins}, in \code{//lib/parts:parts\_test}, writes
+\item \code{an\_answer\_nothing\_asked\_for\_is\_not\_counted} in
+\code{bus::axi\_per\_pins}, in \code{//lib/parts:parts\_test}, has the
+pins offer a response and a read beat under the reset and after it,
+with nothing asked: \code{bowe} and \code{rowe} stay zero and the drain
+ends.
+\item \code{a\_host\_on\_the\_link\_reaches\_a\_peripheral\_on\_pins}
+there writes
 three words through an \code{AxiHost}, the unit and a \code{PinRam},
 reads four back across the burst's ends, and reads past the memory's
 end, answered \code{SlvErr}.
@@ -107,6 +151,15 @@ simulates its netlist against that run under nvc and Verilator:
 \item \code{//ddr3:ddr3\_test} drives it inside \code{Ddr3Per}, and
 \code{//ddr3/sim:wrapper\_test}, which is manual, checks the
 controller's side of the same pins under Vivado's simulator.
+\item \code{the\_loader\_takes\_an\_image\_after\_a\_reset}\allowbreak
+\code{\_in\_the\_middle\_of\_a\_program}, in
+\code{//cpu/vreteno:board\_test}, resets the board's design from the
+serial line while a program copies in the DDR3, sends on the Ethernet
+port and has Razboj draw, at three distances into the program, and
+asserts that one landed with a write's beats owed. The DDR3
+controller, which that reset does not reach, keeps what it was doing,
+and the loader must take the next image whole: acknowledge every
+block, read back the sum it was sent, and run it.
 \end{itemize}
 
 \subsection*{Used by}
@@ -116,8 +169,10 @@ and AMD's DDR3 controller. The example \code{ex\_axi\_per\_pins}.
 
 \subsection*{Limits}
 
-Its \code{ready} outputs are the channels' room in the same step, so
-a path runs from a channel's state through the unit to the
-peripheral's pins with no register. It has no \code{AxREGION} or user
-pins, so a peripheral that wants a region gets it as a constant where
-it is instantiated.
+Outside the drain, its \code{ready} outputs are the channels' room in
+the same step, so a path runs from a channel's state through the unit
+to the peripheral's pins with no register. It gives the peripheral one
+write at a time: the next write's address is offered only once the
+last one's address is taken and its beats have gone. It has no
+\code{AxREGION} or user pins, so a peripheral that wants a region gets
+it as a constant where it is instantiated.
