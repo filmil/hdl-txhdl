@@ -41,8 +41,11 @@ In a tile, and only there, an entry may do more, as bits of word 15
 say. With bit 8 it tests depth against a depth bank beside the tile's
 colour, under any of GL's eight comparisons, and with bit 12 writes it
 (issue 992). With bit 13 it blends under GL ES's factors, tests alpha,
-or masks its channels (issue 993). Either bit gives it a second slot
-of sixteen words after it, the depth plane and those settings. With
+or masks its channels (issue 993), and it may also take one of GL's
+sixteen logic operations in place of the blend, be fogged, or test
+and write a stencil kept above each depth (issue 998). Either bit
+gives it a second slot of sixteen words after it, the depth plane and
+those settings, in the format the table below gives. With
 bit 14 it is textured (issue 997): two slots more hold the planes of
 $uq$, $vq$ and $q$ in 64 bits, the level of detail's numerators, the
 texture's descriptor and its environment, and the rasteriser samples
@@ -125,6 +128,32 @@ planes: value, step right, step down} \\
 \end{tabular}
 \end{center}
 
+An entry's second slot, which only a tile reads, is in the format
+\code{dl.rs} states too. Its depth plane is zero when the entry does
+not test depth.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.72\textwidth}@{}}
+\toprule
+Word & Fields \\
+\midrule
+0 to 2 & The depth plane: \code{z0}, \code{zdx}, \code{zdy} \\
+3 & bit 0: blend; 7 to 4: the source factor; 11 to 8: the
+destination's \\
+4 & bit 0: alpha test; 3 to 1: its comparison; 15 to 8: its reference;
+19 to 16: the colour mask, a bit a byte \\
+5 & bit 0: the logic operation, in place of the blend; 4 to 1: which of
+GL's sixteen \\
+6 to 8 & The fog factor's plane: \code{f0}, \code{fdx}, \code{fdy} \\
+9 & bit 0: fog; 31 to 8: its colour, \code{0xRRGGBB} \\
+10 & bit 0: stencil; 3 to 1: its comparison; 15 to 8: its reference;
+23 to 16: its mask; 31 to 24: its write mask \\
+11 & bits 2 to 0: the operation on a stencil failure; 5 to 3: on a
+depth failure; 8 to 6: on a pass \\
+\bottomrule
+\end{tabular}
+\end{center}
+
 \dstables{Raster}
 
 \subsection*{Behaviour}
@@ -187,7 +216,8 @@ beats only past the run's end.
 out, so backpressure holds the walk.
 \item When the last instruction's box is walked and every write is
 answered, the count at \code{CTRL} is written back to zero, and
-\code{finished} is set as that write goes out. \code{inflight} is a wire, \code{issued} less \code{answered},
+\code{finished} is set as that write goes out. \code{inflight} is a
+wire, \code{issued} less \code{answered},
 the writes whose response has not come back, and \code{idle} is high
 when \code{finished} is set and nothing is in flight.
 \item In a tile the pixel goes into the tile's colour bank rather than
@@ -197,9 +227,31 @@ off where no entry drew. The marks are the tile's serial, so no bank
 is cleared between tiles, and they are scrubbed once in 255 tiles.
 \item A pixel of an entry that tests depth or has the pixel's state
 reads the depth and the colour there, is decided in the following
-turns (the alpha test, the depth test, the blend's factors, products
-and divide, and the mask) and is written a turn after, so each bank
-keeps one write and one read and stays a block RAM.
+turns (the alpha test, the stencil test and the depth test with the
+blend's factors; the blend's products; their divide, and the mask) and
+is written a turn after, so each bank keeps one write and one read and
+stays a block RAM.
+\item The depth bank's word is the stencil's byte above the depth's
+sixteen bits, under one mark, so a pixel the tile has not written
+reads as the farthest depth and a stencil of nought, and a pixel that
+changes one of the two writes the other back as it was. The turn that
+decides the alpha and depth tests decides the stencil's too, in GL's
+order, so a pixel takes no cycle more. The stencil takes the operation
+for how the pixel did, a stencil failure, a depth failure or a pass,
+in the bits its write mask holds, wherever the alpha test passed; the
+colour and the depth are written only where all three passed.
+\item A logic operation is worked out beside the blend's products, on
+the pixel's whole word and the word there, bit by bit: bit
+$3 - (2s + d)$ of the operation is the result for a source bit $s$ and
+a destination bit $d$. It is held in \code{lres} and chosen in place
+of the blend in the turn the blend's divide takes, before the mask, so
+a pixel takes no cycle more.
+\item A fogged pixel takes one turn more, after the texture's
+environment and before the read: each of red, green and blue is its
+channel times the fog factor plus the fog's times 255 less it, divided
+by 255 in the turn that reads the colour there, so the alpha test, the
+blend and the logic operation see the fogged colour. The factor's
+plane is stepped across the box as the depth plane is.
 \item A textured pixel first takes its texel, a turn for each step of
 \code{tex::texel\_uv} and \code{tex::lod}: \code{q}'s leading zeros,
 the reciprocal's first guess from two \code{select!}s, its Newton step,
@@ -236,18 +288,31 @@ checks the display list's encoder against its decoder.
 0x400, 0x600>} against the trace of \code{//gpu/razboj:trace} under nvc and
 Verilator: \code{//docs:razboj\_sim\_raster\_raster\_tb\_test} and
 \code{//docs:razboj\_vsim\_raster\_test}.
-\item In tiles, against the model: \code{every\_scene\_is\_the\_same\_in\_tiles},
-\code{depth\_in\_tiles\_is\_the\_models},
-\code{blending\_in\_tiles\_is\_the\_models} and
-\code{texturing\_in\_tiles\_is\_the\_models}, the last over 25 rounds
-of every filter, environment and class of texel on a texture of six
-levels, byte for byte. \code{what\_a\_textured\_pixel\_costs} and
+\item In tiles, against the model, byte for byte:
+\begin{itemize}
+\item \code{every\_scene\_is\_the\_same\_in\_tiles};
+\item \code{depth\_in\_tiles\_is\_the\_models};
+\item \code{blending\_in\_tiles\_is\_the\_models};
+\item \code{logic\_ops\_in\_tiles\_are\_the\_models}, each of GL's
+sixteen operations, in some rounds under a blend it takes the place
+of, and each but \code{GL\_COPY} changes the picture;
+\item \code{fog\_in\_tiles\_is\_the\_models}, under a blend, an alpha
+test, a colour mask, depth and a scissor box in some rounds;
+\item \code{the\_stencil\_in\_tiles\_is\_the\_models}, under every
+comparison, with operations, masks and a reference;
+\item \code{texturing\_in\_tiles\_is\_the\_models}, over 25 rounds of
+every filter, environment and class of texel on a texture of six
+levels, fogged after the texture in some rounds.
+\end{itemize}
+\code{what\_a\_textured\_pixel\_costs} and
 \code{a\_load\_costs\_about\_a\_write\_out} measure what those cost.
 \item The build replays the netlist against traced runs of its lists,
 its tiles, its depth, its blend and load, and its trilinear texturing:
 \code{//docs:razboj\_lists}, \code{razboj\_tiles},
 \code{razboj\_depth}, \code{razboj\_blend} and \code{razboj\_tex}, each
-under nvc and Verilator.
+under nvc and Verilator. \code{razboj\_blend}'s run also draws a
+rectangle under \code{GL\_XOR}, a fogged triangle, and a rectangle
+inside a square of stencil.
 \item \code{//cpu/vreteno/rust:ico\_gl\_test} draws the board's 640 by
 480 frame of the textured GL icosahedron on the rasteriser, byte for
 byte the model's.
@@ -274,10 +339,11 @@ lattice.
 
 \code{//docs:razboj} lists them. It writes one pixel per cycle at most,
 and a pixel at a time: a pixel that tests depth or has the pixel's
-state takes three to five cycles, and a textured one 18 more at the
-nearest texel of one level and about 76 reading eight texels, its
-refills included. Depth, the pixel's state and texturing hold only in
-a tile; a flat list draws its entries in list order, flat or shaded,
+state takes three to five cycles, a fogged one a cycle more, and a
+textured one 18 more at the nearest texel of one level and about 76
+reading eight texels, its refills included. Depth, the pixel's state,
+with its logic operation, fog and stencil, and texturing hold only in a
+tile; a flat list draws its entries in list order, flat or shaded,
 with none of them. It has one texture unit and no \code{COMBINE}. It
 clips no geometry, only boxes, and the assembler \code{Op::encode} does
 that on the host. It has one read out at a time.
