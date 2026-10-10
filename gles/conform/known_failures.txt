@@ -5,11 +5,9 @@ state.POINT_SIZE_ARRAY_OES               #1507
 state.POINT_SIZE_ARRAY_TYPE_OES          #1507
 state.POINT_SIZE_ARRAY_STRIDE_OES        #1507
 state.POINT_SIZE_ARRAY_BUFFER_BINDING_OES #1507
-state.POINT_SMOOTH                       #1513
 state.POINT_SIZE_MIN                     #1508
 state.POINT_FADE_THRESHOLD_SIZE          #1508
 state.POINT_DISTANCE_ATTENUATION         #1508
-state.LINE_SMOOTH                        #1513
 state.MAX_TEXTURE_UNITS                  #1510
 state.COMBINE_RGB                        #1512
 state.COMBINE_ALPHA                      #1512

@@ -57,7 +57,7 @@ A later issue means the entry point is accepted from the start but does what tha
 | Reading back | `glReadPixels`, `glPixelStorei(GL_PACK_ALIGNMENT)` | From #999, `GL_RGBA` and `GL_UNSIGNED_BYTE`, the frame so far drawn first |
 | Hints | `glHint` | Accepted and ignored, as the specification allows, from #1490 |
 
-Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit (#1510), which wait for a program that needs them; and three parts of ES 1.1 that #999's conformance suite found missing: the point size array of `OES_point_size_array` (#1507), `glPointParameterx` (#1508), and the switches `GL_POINT_SMOOTH` and `GL_LINE_SMOOTH` (#1513).
+Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit (#1510), which wait for a program that needs them; and two parts of ES 1.1 that #999's conformance suite found missing: the point size array of `OES_point_size_array` (#1507) and `glPointParameterx` (#1508). Antialiased points and lines are left out too (#1622): the switches `GL_POINT_SMOOTH` and `GL_LINE_SMOOTH` are kept (#1513), and a point or a line is drawn as with them off.
 An entry point that is left out still exists, so that a program links, and sets `GL_INVALID_ENUM` or `GL_INVALID_OPERATION` as the specification says for an unsupported value.
 
 The limits the library reports are the specification's minimums: a modelview stack of 16, projection and texture stacks of 2, eight lights, one clip plane.
@@ -385,7 +385,7 @@ The first group is the state tables of the specification's section 6.2: every st
 The second is the errors: for each command, the error section 2.5 and the command's own section give a bad argument, each recorded once, and that the command changes nothing.
 The third is the rendering: scenes read back with `glReadPixels` and held, pixel for pixel, to a reference in double precision that follows the specification's rules for points, polygons, lines by the four rules section 3.4.1 sets an algorithm other than the diamond exit, the viewport, smooth shading, every per-fragment test and operation, fog, the texture environments and lighting, and the depth and the stencil kept across a read in the middle of a frame, skipping only a pixel whose centre lies on an edge, which GL leaves to the implementation.
 The fourth is four of piglit's ES 1 tests, in `gles/conform/piglit`, ported with their float calls made fixed point for Common-Lite, each change marked.
-Of 203 state checks, 171 pass; of 100 error checks, 99; of 83 rendering checks, 83; and of piglit's four, two. The 35 failures fall under six issues:
+Of 203 state checks, 173 pass; of 100 error checks, 99; of 83 rendering checks, 83; and of piglit's four, two. The 33 failures fall under five issues:
 
 | Issue | Checks | What is missing or wrong |
 |---|---|---|
@@ -393,7 +393,6 @@ Of 203 state checks, 171 pass; of 100 error checks, 99; of 83 rendering checks, 
 | #1508 | 5 | `glPointParameterx`, without which piglit's point sprite test draws nothing |
 | #1510 | 1 | A second texture unit |
 | #1512 | 17 | `GL_COMBINE`, its state and its scales |
-| #1513 | 2 | `GL_POINT_SMOOTH` and `GL_LINE_SMOOTH` |
 | #1522 | 4 | `OES_matrix_get`'s queries, a core addition |
 
 On the board the same programs run on the core against Razboj, built as `//gles:conform_board` and sent by fastboot (`docs/board-checks.md`), and the suite runs to its count in about five minutes.

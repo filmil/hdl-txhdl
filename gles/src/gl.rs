@@ -44,6 +44,10 @@ pub const POLYGON_OFFSET_FILL: u32 = 0x8037;
 pub const POLYGON_OFFSET_FACTOR: u32 = 0x8038;
 pub const POLYGON_OFFSET_UNITS: u32 = 0x2A00;
 pub const DITHER: u32 = 0x0BD0;
+/// The antialiasing switches (#1513), kept; points and lines are drawn
+/// as when they are off until #1622.
+pub const POINT_SMOOTH: u32 = 0x0B10;
+pub const LINE_SMOOTH: u32 = 0x0B20;
 /// Multisampling's switches and state (#1509), which GL keeps with no
 /// multisample buffer, where they change nothing drawn (section 3.2.1).
 pub const MULTISAMPLE: u32 = 0x809D;
