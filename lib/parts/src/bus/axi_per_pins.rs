@@ -342,8 +342,17 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize> Unit
             let rready = drain | r_room;
             outp.bready.set(bready);
             outp.rready.set(rready);
-            let b_go = pins.bvalid.get() & bready;
-            let r_go = pins.rvalid.get() & rready;
+            // A response or a read beat counts only while one is owed.
+            // At power-up, before a controller such as AMD's is ready,
+            // its pins are unknown in a simulation, and these registers
+            // have no reset to wash that out (issue 1532); a count of
+            // zero masks them.
+            let b_go = pins.bvalid.get()
+                & bready
+                & Bit::from(bowe != U::<8>::from(0u8));
+            let r_go = pins.rvalid.get()
+                & rready
+                & Bit::from(rowe != U::<14>::from(0u16));
             // The write is done once its address is taken and its beats
             // have all gone.
             let sent_now = mux(w_go, sent + U::<9>::from(1u16), sent);
@@ -823,7 +832,45 @@ mod tests {
     use crate::bus::axi::{axi, AxiHost, Link, Rd, Wr};
     use std::cell::RefCell;
     use std::rc::Rc;
-    use txhdl::comp::{join2, Running};
+    use txhdl::comp::{join2, signal, Running};
+
+    /// A response or a read beat the pins offer when the unit owes none
+    /// is not counted (issue 1532). At power-up a controller's pins are
+    /// unknown in a simulation of the netlist, while the unit takes
+    /// every answer under the reset; counted, they left its counts
+    /// unknown for good, since they have no reset, and the unit drained
+    /// for ever. Here the pins offer both, under the reset and after it,
+    /// with nothing asked: the counts stay zero and the drain ends.
+    #[test]
+    fn an_answer_nothing_asked_for_is_not_counted() {
+        let Link {
+            per_in, per_out, ..
+        } = axi::<16, 32, 4, 2, 4>();
+        let (aw, ar, w, _, _) = per_in;
+        let (_, _, b, r) = per_out;
+        let (_ram, mut inp, outp) = pins::<16, 32, 4, 2>(aw, ar, w, b, r, 16);
+        let (rst_o, rst) = signal::<Bit, DefaultClock>();
+        let (bvalid_o, bvalid) = signal::<Bit, DefaultClock>();
+        let (rvalid_o, rvalid) = signal::<Bit, DefaultClock>();
+        inp.rst = rst;
+        inp.pins.bvalid = bvalid;
+        inp.pins.rvalid = rvalid;
+        let mut pinned = AxiPerPins::<16, 32, 4, 2>::default();
+        let (bowe, rowe, drain) = (pinned.bowe, pinned.rowe, pinned.drain);
+        let mut sim = Running::new(pinned.run(inp, outp));
+        rst_o.set(Bit::One);
+        bvalid_o.set(Bit::One);
+        rvalid_o.set(Bit::One);
+        for step in 0..20 {
+            if step == 10 {
+                rst_o.set(Bit::Zero);
+            }
+            sim.cycle();
+            assert_eq!(bowe.get().raw(), 0, "responses owed at {step}");
+            assert_eq!(rowe.get().raw(), 0, "read beats owed at {step}");
+        }
+        assert!(!drain.get().to_bool(), "the drain ended with the reset");
+    }
 
     /// A host on the link writes a burst into a memory on AXI4 pins,
     /// reads it back across the burst's ends, and reads past the
