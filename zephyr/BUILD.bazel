@@ -197,6 +197,23 @@ sh_test(
     ],
 )
 
+# The GL program on the machine model draws every frame into the
+# buffer not shown and shows each frame it drew (#1605): Razboj a
+# stand-in that says the rows each ring's list draws in and what the
+# scanout showed.
+sh_test(
+    name = "gles_two_buffers_test",
+    srcs = ["gles/two_buffers_test.sh"],
+    args = [
+        "$(rootpath //cpu/vreteno:machine)",
+        "$(rootpaths :gles)",
+    ],
+    data = [
+        ":gles",
+        "//cpu/vreteno:machine",
+    ],
+)
+
 # The same with the network stack logging at debug, for the board when
 # a frame goes missing (#786).
 zephyr_image(
