@@ -153,6 +153,12 @@ def _nvc_runner(ctx):
     )
     runfiles = runfiles.merge(ctx.attr._script[DefaultInfo].default_runfiles)
 
+    # Since rules_nvc 4.7.0 the wrapper does not carry nvc: the binary
+    # and what it loads come from the toolchain, so they are runfiles.
+    runfiles = runfiles.merge(ctx.runfiles(
+        files = [analyzer_x] + list(nvc_info.deps),
+    ))
+
     def for_wrapper(p):
         return ("../" + p[9:]) if p.startswith("external/") else p
 
