@@ -2294,6 +2294,16 @@ board's is 16384. For the same reason that netlist has no instruction
 cache (issue~\#1323): no fetch goes to it there and its arrays are
 never written, so the synthesis folds them away.
 
+Two Zephyr images keep all their RAM in the window, their stacks
+among it: the fastboot server (issue~\#1230) and the GL program
+(issue~\#1287). Each is linked to run its code from the DDR3 and copy
+its data into the window as it starts, so nothing either hands to
+Razboj or to a DMA engine may live there; the GL program's
+framebuffers, display list and textures are at fixed addresses in the
+DDR3. On the machine model, with the data cache, the GL program draws
+a frame in 1.18 to 1.26 million cycles that took 1.40 to 1.48 million
+with its RAM in the DDR3.
+
 The core caches its loads from the DDR3 as well (issue~\#1275): four
 kilobytes, 256 lines of four words, one way, written through and
 filled by loads only. Booting Linux on the model, 91.3\% of the loads
