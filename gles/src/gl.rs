@@ -44,6 +44,16 @@ pub const POLYGON_OFFSET_FILL: u32 = 0x8037;
 pub const POLYGON_OFFSET_FACTOR: u32 = 0x8038;
 pub const POLYGON_OFFSET_UNITS: u32 = 0x2A00;
 pub const DITHER: u32 = 0x0BD0;
+/// Multisampling's switches and state (#1509), which GL keeps with no
+/// multisample buffer, where they change nothing drawn (section 3.2.1).
+pub const MULTISAMPLE: u32 = 0x809D;
+pub const SAMPLE_ALPHA_TO_COVERAGE: u32 = 0x809E;
+pub const SAMPLE_ALPHA_TO_ONE: u32 = 0x809F;
+pub const SAMPLE_COVERAGE: u32 = 0x80A0;
+pub const SAMPLE_BUFFERS: u32 = 0x80A8;
+pub const SAMPLES: u32 = 0x80A9;
+pub const SAMPLE_COVERAGE_VALUE: u32 = 0x80AA;
+pub const SAMPLE_COVERAGE_INVERT: u32 = 0x80AB;
 /// The logic operations (#998): the switch, the query, and GL's sixteen
 /// from `GL_CLEAR` to `GL_SET`, of which these are the ends and the one
 /// GL starts with.

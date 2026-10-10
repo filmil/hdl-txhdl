@@ -296,6 +296,11 @@ impl Gl<'_> {
             }
             gl::POLYGON_OFFSET_FACTOR => f(&[self.offset.0]),
             gl::POLYGON_OFFSET_UNITS => f(&[self.offset.1]),
+            // No multisample buffer, in the one configuration EGL has
+            // (#1509).
+            gl::SAMPLE_BUFFERS | gl::SAMPLES => i(&[0]),
+            gl::SAMPLE_COVERAGE_VALUE => f(&[self.coverage.0]),
+            gl::SAMPLE_COVERAGE_INVERT => b(&[self.coverage.1]),
             cap => self.enabled(cap).and_then(|on| b(&[on])),
         }
     }

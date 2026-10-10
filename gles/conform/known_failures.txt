@@ -10,15 +10,7 @@ state.POINT_SIZE_MIN                     #1508
 state.POINT_FADE_THRESHOLD_SIZE          #1508
 state.POINT_DISTANCE_ATTENUATION         #1508
 state.LINE_SMOOTH                        #1513
-state.MULTISAMPLE                        #1509
-state.SAMPLE_ALPHA_TO_COVERAGE           #1509
-state.SAMPLE_ALPHA_TO_ONE                #1509
-state.SAMPLE_COVERAGE                    #1509
-state.SAMPLE_COVERAGE_VALUE              #1509
-state.SAMPLE_COVERAGE_INVERT             #1509
 state.MAX_TEXTURE_UNITS                  #1510
-state.SAMPLE_BUFFERS                     #1509
-state.SAMPLES                            #1509
 state.COMBINE_RGB                        #1512
 state.COMBINE_ALPHA                      #1512
 state.SRC0_RGB                           #1512

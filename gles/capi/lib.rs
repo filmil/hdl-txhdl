@@ -788,6 +788,11 @@ pub extern "C" fn glClearDepthx(depth: Fx) {
 }
 
 #[no_mangle]
+pub extern "C" fn glSampleCoveragex(value: Fx, invert: u8) {
+    with(|g| g.sample_coverage(value, invert != 0));
+}
+
+#[no_mangle]
 pub extern "C" fn glDepthRangex(near: Fx, far: Fx) {
     with(|g| g.depth_range(near, far));
 }
