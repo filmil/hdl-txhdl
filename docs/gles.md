@@ -95,6 +95,7 @@ Section 4 gives the format at each one.
 9. **Shading.**
    Flat shading takes the colour of the provoking vertex, the last of each triangle in ES 1.1, and writes a flat triangle.
    Smooth shading writes a Gouraud triangle with a colour at each vertex, and the library works out the three colour planes Razboj steps (section 4).
+   When the vertices' alphas differ, it also works out the alpha's plane, which goes in the entry's second slot, words 12 to 15, so that the triangle is drawn from a tile table with its alpha interpolated as its colour is (#1520).
 10. **The frame.**
     Each surviving triangle goes into the frame's list, and the frame is handed to Razboj on `glFlush`, `glFinish` or, later, `eglSwapBuffers` (section 7).
 
@@ -384,7 +385,7 @@ The first group is the state tables of the specification's section 6.2: every st
 The second is the errors: for each command, the error section 2.5 and the command's own section give a bad argument, each recorded once, and that the command changes nothing.
 The third is the rendering: scenes read back with `glReadPixels` and held, pixel for pixel, to a reference in double precision that follows the specification's rules for points, polygons, lines by the four rules section 3.4.1 sets an algorithm other than the diamond exit, the viewport, smooth shading, every per-fragment test and operation, fog, the texture environments and lighting, and the depth and the stencil kept across a read in the middle of a frame, skipping only a pixel whose centre lies on an edge, which GL leaves to the implementation.
 The fourth is four of piglit's ES 1 tests, in `gles/conform/piglit`, ported with their float calls made fixed point for Common-Lite, each change marked.
-Of 203 state checks, 163 pass; of 100 error checks, 99; of 83 rendering checks, 82; and of piglit's four, two. The 44 failures fall under eight issues:
+Of 203 state checks, 163 pass; of 100 error checks, 99; of 83 rendering checks, 83; and of piglit's four, two. The 43 failures fall under seven issues:
 
 | Issue | Checks | What is missing or wrong |
 |---|---|---|
@@ -394,7 +395,6 @@ Of 203 state checks, 163 pass; of 100 error checks, 99; of 83 rendering checks, 
 | #1510 | 1 | A second texture unit |
 | #1512 | 17 | `GL_COMBINE`, its state and its scales |
 | #1513 | 2 | `GL_POINT_SMOOTH` and `GL_LINE_SMOOTH` |
-| #1520 | 1 | Smooth shading of alpha, which Razboj takes from the first vertex |
 | #1522 | 4 | `OES_matrix_get`'s queries, a core addition |
 
 The queries are issue 1484's.

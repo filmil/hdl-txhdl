@@ -339,6 +339,16 @@ order. Scenes under every comparison and operation are drawn in tiles
 as the model draws them, byte for byte, and
 \code{//docs:razboj\_blend} replays a rectangle drawn inside a square
 of stencil.
+A smooth triangle's alpha is GL's too (issue~\#1520). Words 12 to 14 of
+the slot are the plane of its alpha, a byte with sixteen bits of
+fraction as a channel's, stepped as the colour channels are, and word 15
+turns it on; with it on, a pixel's alpha is the plane's rather than the
+entry's one alpha, before the texture's environment, the fog, the alpha
+test and the blend, as GL orders them. The slot now comes in one burst
+of sixteen words rather than twelve, four cycles more an entry a tile,
+and a pixel takes no cycle more. Smooth triangles whose vertices'
+alphas differ, under a blend, an alpha test, a colour mask and depth,
+are drawn in tiles as the model draws them, byte for byte.
 
 Textures come next (issue~\#997). A texture is its levels in DDR3,
 each texel RGBA in 32 bits as a pixel is, stored in blocks of four by
