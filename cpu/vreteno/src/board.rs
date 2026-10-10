@@ -98,9 +98,13 @@ pub const REMOTE_WAIT: usize = 100_000_000;
 /// the board's 100 MHz.
 pub const FLASH_DIV: usize = 3;
 
-/// The arbiter's port the scanout's fetch is on, whose reads go ahead
-/// of the round robin (issue 1523). Eight would name none.
-pub const SCAN_PRIO: usize = 4;
+/// The arbiter's port whose reads go ahead of the round robin: eight,
+/// none. The scanout's, 4, was given it for issue 1523, and on the
+/// board, asking two rows ahead, it made no difference: 0.074 LATE rows
+/// a frame with it and 0.140 without, over 9 loads and 6, the medians
+/// both 0 (p = 0.455). So the round robin stays as it was, and the
+/// parameter is kept for a host that needs it.
+pub const SCAN_PRIO: usize = 8;
 
 // begin{map}
 /// The address map: each range's base and the bits of an address that
@@ -275,9 +279,8 @@ pub struct Board<const DIV: u32> {
     /// exclusive read until its exclusive write, no other host's write
     /// is granted, so an AMO's pair keeps.
     ///
-    /// The scanout's reads go first, [`SCAN_PRIO`] (issue 1523): a line
-    /// has a deadline, and on the board its bursts were late while
-    /// Razboj drew.
+    /// No host's reads go first: [`SCAN_PRIO`] names none, since the
+    /// scanout's priority made no difference on the board (issue 1523).
     pub arb: Arbiter<8, 32, 32, 4, 2, 5, 0, 1, SCAN_PRIO>,
     /// The exclusive monitor (issue 1408), between the arbiter and the
     /// router, which every host's writes pass in the order each
