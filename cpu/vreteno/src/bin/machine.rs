@@ -26,9 +26,10 @@
 //! the board's time (issue 1554).
 //!
 //! `--rings` says, when the run stops, every word written to Razboj's
-//! doorbell and where the scanout showed from as it was written. Razboj
-//! is a stand-in here, done at once, and the raster's blanking comes
-//! every hundred thousand steps (issue 1551).
+//! doorbell, the rows its list draws in, and where the scanout showed
+//! from as it was written. Razboj is a stand-in here, done at once, and
+//! the raster's blanking comes every hundred thousand steps (issue 1551,
+//! #1605).
 //!
 //! `--fastboot-peer BYTES` puts a fastboot client on the cable instead
 //! (issue 1390), smoltcp's TCP/IP at 192.168.1.1 with a client on top,
