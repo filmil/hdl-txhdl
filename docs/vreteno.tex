@@ -809,7 +809,17 @@ and computes again, until a store holds. The arbiter keeps every other
 host's writes out of a pair, so a second try is rare and a third rarer;
 \code{//cpu/vreteno:board\_test} counts them, with the other host
 writing into the AMO's line over a sweep of offsets, and checks that no
-add is lost and no hold runs out. A \code{sc.w} whose reservation the
+add is lost and no hold runs out. A test can also have the monitor fail every
+other exclusive write, by its \code{alternate} register, which nothing
+in the design sets, so synthesis folds it away. Then every AMO reads
+again: in straight-line code in the DDR3, each AMO ending a line, and
+under Sv32 with a store before the AMO and the next instruction on a
+page the TLB does not hold. Every count is exact, and no other read of
+the core's goes with a read again. Cutting the core's guard on those
+reads back to the read again's first cycle fails neither test, though:
+with the pipeline stalled behind the AMO and its fetch ahead of it, no
+fetch, fill or walk is due then, so the guard holds by construction
+rather than by a test (issue~\#1474). A \code{sc.w} whose reservation the
 core already knows is gone fails in the core and never reaches the bus.
 
 User and supervisor mode (issue~1012) are a two-bit privilege register
