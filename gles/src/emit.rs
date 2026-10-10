@@ -174,6 +174,33 @@ pub fn fog(
     [f0, dx, dy, 1 | (colour & 0xff_ffff) << 8]
 }
 
+/// A smooth triangle's alpha plane (#1520), as Razboj's second slot holds
+/// it in words 12 to 15, for the triangle `v` drawn as `w`, a colour
+/// `0xAARRGGBB` at each vertex in `s`: the plane of the alphas, a
+/// channel's with sixteen bits of fraction, from the box's first pixel,
+/// turned with the vertices when the area says the other way, then the
+/// bit that turns it on.
+pub fn alpha_plane(
+    w: &[u32; WORDS],
+    v: [(i32, i32); 3],
+    s: [u32; 3],
+) -> [u32; 4] {
+    let [a, b, c] = v;
+    let swap = area2(a, b, c) < 0;
+    let al = s.map(|c| (c >> 24) as i64);
+    let (b, c, al) = if swap {
+        (c, b, [al[0], al[2], al[1]])
+    } else {
+        (b, c, al)
+    };
+    let first = (
+        (w[1] & 0xffff) as i32 * 16 + 8,
+        (w[1] >> 16) as i32 * 16 + 8,
+    );
+    let (a0, dx, dy) = plane(a, b, c, al, first, 16);
+    [a0, dx, dy, 1]
+}
+
 /// The same for a rectangle or a point: the factor `f` everywhere, half
 /// a unit up as a triangle's start is.
 pub fn flat_fog(f: u32, colour: u32) -> [u32; 4] {
@@ -193,7 +220,7 @@ pub fn flat_depth(z: u32) -> [u32; WORDS] {
 /// A triangle on a screen `within`, its vertices in sixteenths, flat in
 /// `colour` or, with `shades`, a colour at each vertex blended across
 /// it; a colour is `0xAARRGGBB`, and a shaded triangle's alpha is its
-/// first vertex's. With `zs`, a depth of sixteen bits at each vertex,
+/// first vertex's unless [`alpha_plane`]'s words come with it (#1520). With `zs`, a depth of sixteen bits at each vertex,
 /// the triangle's depth plane's slot comes with it, for [`depth`] to
 /// make the instruction test. `None` when there is nothing to draw: no
 /// area, a vertex out of Razboj's range, or a box off the screen. The

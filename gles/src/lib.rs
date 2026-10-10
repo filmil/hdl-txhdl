@@ -1440,39 +1440,57 @@ impl<'a> Gl<'a> {
         &mut self,
         mut w: [u32; WORDS],
         slot: Option<[u32; WORDS]>,
-        fog: Option<[u32; 4]>,
+        planes: Planes,
     ) {
         let depth = self.depth_test && slot.is_some();
         let pixel = self.pixel();
-        if !depth && pixel == emit::Pixel::DEFAULT && fog.is_none() {
+        if !depth && pixel == emit::Pixel::DEFAULT && planes.is_none() {
             return self.push(w);
         }
-        let p = self.second(&mut w, slot.filter(|_| depth), pixel, fog);
+        let p = self.second(&mut w, slot.filter(|_| depth), pixel, planes);
         self.push_pair(w, p);
     }
 
     /// An entry's second slot: the depth plane `depth`, which tells `w`
     /// to test depth as the context says, or nought; then the pixel's
-    /// state `pixel` (#993) and fog's words `fog` (#998), either of which
-    /// tells `w` it has the state.
+    /// state `pixel` (#993), fog's words (#998) and the alpha plane's
+    /// (#1520), any of which tells `w` it has the state.
     fn second(
         &self,
         w: &mut [u32; WORDS],
         depth: Option<[u32; WORDS]>,
         pixel: emit::Pixel,
-        fog: Option<[u32; 4]>,
+        planes: Planes,
     ) -> [u32; WORDS] {
         let mut p = depth.unwrap_or([0u32; WORDS]);
         if depth.is_some() {
             emit::depth(w, self.depth_func, self.depth_mask);
         }
-        if pixel != emit::Pixel::DEFAULT || fog.is_some() {
+        if pixel != emit::Pixel::DEFAULT || !planes.is_none() {
             emit::state(w, &mut p, pixel);
         }
-        if let Some(f) = fog {
+        if let Some(f) = planes.fog {
             p[6..10].copy_from_slice(&f);
         }
+        if let Some(a) = planes.alpha {
+            p[12..16].copy_from_slice(&a);
+        }
         p
+    }
+
+    /// A smooth triangle's alpha plane (#1520), for the triangle `v` drawn
+    /// as `w` with the colours `s` at its vertices, when shading is smooth
+    /// and the vertices' alphas differ: GL interpolates alpha as it does
+    /// the colour. Otherwise the triangle keeps its first vertex's.
+    fn alpha_planed(
+        &self,
+        w: &[u32; WORDS],
+        v: [(i32, i32); 3],
+        s: [u32; 3],
+    ) -> Option<[u32; 4]> {
+        let al = s.map(|c| c >> 24);
+        (self.smooth && (al[0] != al[1] || al[1] != al[2]))
+            .then(|| emit::alpha_plane(w, v, s))
     }
 
     /// What drawing does to a pixel after its coverage (#993): the blend
@@ -1849,7 +1867,7 @@ impl<'a> Gl<'a> {
                 )
             });
             let w = emit::rect(colour_word(&v.col), b);
-            self.push_drawn(w, Some(slot), fog);
+            self.push_drawn(w, Some(slot), Planes { fog, alpha: None });
         }
     }
 
@@ -1885,7 +1903,7 @@ impl<'a> Gl<'a> {
                 emit::textured([a, bb, cc], [st[i], st[j], st[k]], screen);
             if let Some((w, slot)) = drawn {
                 let fog = self.fogged(&w, [a, bb, cc], [v; 3]);
-                self.push_textured(w, slot, tex, fog);
+                self.push_textured(w, slot, tex, Planes { fog, alpha: None });
             }
         }
     }
@@ -1952,8 +1970,12 @@ impl<'a> Gl<'a> {
                 emit::triangle(flat, q.0, q.1, q.2, None, z, screen)
             };
             if let Some((w, slot)) = w {
-                let fog = self.fogged(&w, [q.0, q.1, q.2], ends);
-                self.push_drawn(w, slot, fog);
+                let v = [q.0, q.1, q.2];
+                let planes = Planes {
+                    fog: self.fogged(&w, v, ends),
+                    alpha: self.alpha_planed(&w, v, s),
+                };
+                self.push_drawn(w, slot, planes);
             }
         }
     }
@@ -2075,9 +2097,9 @@ impl<'a> Gl<'a> {
         for k in 1..n - 1 {
             let (a, b, c) = (at(0), at(k), at(k + 1));
             let z = self.depth_test.then_some([zw[0], zw[k], zw[k + 1]]);
+            let s = [face(&poly[0]), face(&poly[k]), face(&poly[k + 1])]
+                .map(|c| colour_word(&c));
             let w = if self.smooth {
-                let s = [face(&poly[0]), face(&poly[k]), face(&poly[k + 1])]
-                    .map(|c| colour_word(&c));
                 emit::triangle(s[0], a, b, c, Some(s), z, screen)
             } else {
                 emit::triangle(flat, a, b, c, None, z, screen)
@@ -2089,8 +2111,11 @@ impl<'a> Gl<'a> {
             });
             if let Some((w, slot)) = w {
                 let at = [&poly[0], &poly[k], &poly[k + 1]];
-                let fog = self.fogged(&w, [a, b, c], at);
-                self.push_textured(w, slot, tex, fog);
+                let planes = Planes {
+                    fog: self.fogged(&w, [a, b, c], at),
+                    alpha: self.alpha_planed(&w, [a, b, c], s),
+                };
+                self.push_textured(w, slot, tex, planes);
             }
         }
     }
@@ -2130,14 +2155,14 @@ impl<'a> Gl<'a> {
         mut w: [u32; WORDS],
         slot: Option<[u32; WORDS]>,
         tex: Option<[[u32; WORDS]; 2]>,
-        fog: Option<[u32; 4]>,
+        planes: Planes,
     ) {
         let Some([mut ta, tb]) = tex else {
-            return self.push_drawn(w, slot, fog);
+            return self.push_drawn(w, slot, planes);
         };
         let depth = self.depth_test && slot.is_some();
         let pixel = self.pixel();
-        let p = self.second(&mut w, slot.filter(|_| depth), pixel, fog);
+        let p = self.second(&mut w, slot.filter(|_| depth), pixel, planes);
         emit::textured_bit(&mut w);
         ta[13] = self.store.as_ref().map_or(0, |s| s.desc_at(self.bound));
         ta[14] = self.env;
@@ -2316,4 +2341,20 @@ fn kept_from(frame: &[[u32; WORDS]], window: Bounds) -> usize {
         s += n;
     }
     from
+}
+
+/// The planes an entry's second slot may carry besides depth: fog's
+/// factor and colour (#998), and a smooth triangle's alpha (#1520), each
+/// as the words the slot holds them in.
+#[derive(Clone, Copy, Default)]
+struct Planes {
+    fog: Option<[u32; 4]>,
+    alpha: Option<[u32; 4]>,
+}
+
+impl Planes {
+    /// Whether the entry carries neither.
+    fn is_none(&self) -> bool {
+        self.fog.is_none() && self.alpha.is_none()
+    }
 }
