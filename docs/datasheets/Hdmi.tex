@@ -124,7 +124,9 @@ A framebuffer pixel is 12 bits, and the framebuffer holds
 columns by 128 rows. \code{hc} and \code{vc} are 12 bits wide. The mode
 is fixed when the type is named. The whole unit runs on the pixel
 clock, bus included. A host on another clock needs a crossing of the
-five AXI-Lite channels, and nothing in the tree provides one. The
+five AXI-Lite channels: the flagship puts one hand-written
+\code{chan\_cdc} on each (\code{flagship/board/flagship.v}), and a
+lowered design crosses with \code{ChanCdc}. The
 framebuffer cannot be read over the bus. On the board, \code{//docs:hdmi}
 states that the picture confirmed the order of red, green and blue on
 the chip's data inputs and the 3.3~V LVCMOS standard of its pins,
