@@ -846,8 +846,9 @@ Its 32 patches are each cut three by three, 564 triangles once the squares that 
 It is smooth shaded, lit from the eye diffusely and specularly, leans 20 degrees towards the eye, and turns about its axis once in 128 frames.
 It prints `demo teapot 1: utah`, then `teapot 564 triangles`, and after 256 frames, two turns, `demo teapot 1 done:` with its rate.
 Its tessellation, view, light and frames do not change, so that its rate measures the system; a finer teapot would be a demo of its own.
-On the machine model with the board's timing, a frame's list takes 67.1 million cycles on one hart, and with both harts two frames take 68.5 million, 2.9 frames a second.
-Most of it is GL's work a vertex, which `draw_elements` does again for every index that names the vertex (#1624).
+On the machine model with the board's timing, a frame's list takes 48.4 million cycles on one hart, and with both harts two frames take 49.7 million, 4.0 frames a second.
+It took 68.2 million and 69.6 million, 2.9 frames a second, before `draw_elements` kept the vertices it had worked out (#1624).
+What is left is mostly each triangle's own work, which #1624 says how to take next.
 
 ```sh
 bazel build //demo/canon:teapot
