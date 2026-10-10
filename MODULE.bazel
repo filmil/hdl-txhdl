@@ -212,7 +212,7 @@ use_repo(crate, "crates")
 # VHDL simulation, hermetic (nvc is built from source through the
 # registry): the lowered designs are simulated against the traces the Rust
 # simulation wrote.
-bazel_dep(name = "rules_nvc", version = "4.6.0")
+bazel_dep(name = "rules_nvc", version = "4.7.0")
 
 # Verilog simulation, hermetic (Verilator comes down as a binary, below,
 # and is not built here): the same lowered designs, as Verilog, are simulated against

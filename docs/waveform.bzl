@@ -11,7 +11,6 @@ NAME_timing.tex.
 """
 
 load("//tools:quiet.bzl", "quiet_cmd")
-load("//tools:sized_test.bzl", "sized_test")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@rules_nvc//nvc:rules.bzl", "vhdl_test")
@@ -77,24 +76,14 @@ def waveform(
                       " $(location " + name + ".vhd.ports) " + entity + " " + unit + " > $@",
                 tools = ["//tools/fst2tb"],
             )
-            # vhdl_test takes no size (filmil/bazel_rules_nvc issue
-            # 110), so a sized replay is made under another name,
-            # manual, and run under its own name by sized_test.
-            sim = name + "_sim" + tag
             vhdl_test(
-                name = sim + "_nvc" if sim_size else sim,
+                name = name + "_sim" + tag,
                 srcs = foreign_vhdl + [name + ".vhd", tb + ".vhd"],
                 deps = [],
                 entities = [entity + "_tb"],
                 global_args = ["-H", nvc_heap] if nvc_heap else [],
-                tags = ["manual"] if sim_size else [],
+                size = sim_size,
             )
-            if sim_size:
-                sized_test(
-                    name = sim + "_" + entity + "_tb_test",
-                    size = sim_size,
-                    test = sim + "_nvc_" + entity + "_tb_test",
-                )
             # The Verilog testbench is a loop over a file of vectors,
             # one a cycle, which the test opens from its runfiles by the
             # path it has in the workspace (issue 601).
