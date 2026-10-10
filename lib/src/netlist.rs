@@ -2566,6 +2566,35 @@ impl Lowered {
                 _ => writeln!(out, "  wire {}{n};", range(*w)).unwrap(),
             }
         }
+        let (procs, wires, temps) = self.hoisted();
+        for (n, e) in &wires {
+            let w = self.ewidth(e);
+            assert!(w > 0, "wire `{n}` has no width: size its literals");
+            writeln!(
+                out,
+                "  {}wire {}{n};",
+                dsp_wire(n)
+                    .map(|v| format!("(* use_dsp = \"{v}\" *) "))
+                    .unwrap_or_default(),
+                range(w)
+            )
+            .unwrap();
+        }
+        for (t, w, e) in &temps {
+            writeln!(
+                out,
+                "  {}wire {}{t} = {};",
+                dsp_wire(t)
+                    .map(|v| format!("(* use_dsp = \"{v}\" *) "))
+                    .unwrap_or_default(),
+                range(*w),
+                vexpr(e, l)
+            )
+            .unwrap();
+        }
+        // The children after every wire, ties included: a name first
+        // met in a port connection is an implicit net, and Vivado's
+        // simulator refuses its declaration after that (#1575).
         for inst in &self.instances {
             // A lowered child's clock ports are named for their clocks;
             // a foreign child's have names of their own.
@@ -2609,32 +2638,6 @@ impl Lowered {
                 "  {module} {params}{}(\n    {}\n  );",
                 inst.name,
                 conns.join(",\n    ")
-            )
-            .unwrap();
-        }
-        let (procs, wires, temps) = self.hoisted();
-        for (n, e) in &wires {
-            let w = self.ewidth(e);
-            assert!(w > 0, "wire `{n}` has no width: size its literals");
-            writeln!(
-                out,
-                "  {}wire {}{n};",
-                dsp_wire(n)
-                    .map(|v| format!("(* use_dsp = \"{v}\" *) "))
-                    .unwrap_or_default(),
-                range(w)
-            )
-            .unwrap();
-        }
-        for (t, w, e) in &temps {
-            writeln!(
-                out,
-                "  {}wire {}{t} = {};",
-                dsp_wire(t)
-                    .map(|v| format!("(* use_dsp = \"{v}\" *) "))
-                    .unwrap_or_default(),
-                range(*w),
-                vexpr(e, l)
             )
             .unwrap();
         }
@@ -5032,6 +5035,17 @@ mod tests {
         let v = tied_to(Kind::In).checked().verilog();
         assert!(v.contains(".step(ticker_tie0)"), "the join: {v}");
         assert!(v.contains("assign ticker_tie0 = 8'b00000011;"), "{v}");
+    }
+
+    /// The tie's wire is declared before the instance that reads it:
+    /// a name first met in a port connection is an implicit net, and
+    /// Vivado's simulator refuses the declaration after it (#1575).
+    #[test]
+    fn a_tie_is_declared_before_its_instance() {
+        let v = tied_to(Kind::In).checked().verilog();
+        let decl = v.find("wire [7:0] ticker_tie0;").expect("declared");
+        let used = v.find(".step(ticker_tie0)").expect("joined");
+        assert!(decl < used, "declared after its use: {v}");
     }
 
     /// And to nothing else: an output would be driven twice.
