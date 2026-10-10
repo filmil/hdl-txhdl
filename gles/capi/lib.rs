@@ -809,6 +809,17 @@ pub fn gles_flush(
     current().and_then(|c| c.gl.flush(entries, tiles).ok())
 }
 
+/// The same for `glReadPixels` (#1504): the frame binned, then kept as
+/// what rebuilds its depth and its stencil, so that GL draws on against
+/// both. Not a GL call: what EGL's read does with a frame that tests
+/// depth or the stencil.
+pub fn gles_flush_keeping(
+    entries: &mut [[u32; WORDS]],
+    tiles: &mut [[u32; TILE_WORDS]],
+) -> Option<Binned> {
+    current().and_then(|c| c.gl.flush_keeping(entries, tiles).ok())
+}
+
 /// `glFlush` and `glFinish` leave the frame where it is: handing it to
 /// Razboj and waiting for it are EGL's, issue 996, which reads the frame
 /// [`gles_make_current`] was given and [`gles_frame_len`]'s count.

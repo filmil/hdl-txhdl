@@ -46,8 +46,9 @@
 
 use core::ffi::c_void;
 use gles_capi::{
-    gles_buffer_room, gles_flush, gles_frame_len, gles_frame_tiled,
-    gles_make_current, gles_reader, gles_retarget, gles_texture_room,
+    gles_buffer_room, gles_flush, gles_flush_keeping, gles_frame_len,
+    gles_frame_tiled, gles_make_current, gles_reader, gles_retarget,
+    gles_texture_room,
 };
 use razboj_tile::{MAX_TILES, TILE_WORDS};
 
@@ -482,11 +483,18 @@ pub extern "C" fn eglDestroyContext(
 /// frame that tests depth from a tile table, which only tests it (#1273),
 /// and one that does not as the flat list it is. Too little room to bin
 /// it in draws it flat, its depth untested, and says so with `false`.
-fn draw_frame(m: &mut dyn Machine) -> bool {
+/// With `keep`, for a read, a tiled frame stays as what rebuilds its
+/// depth and its stencil rather than being begun again (#1504).
+fn draw_frame(m: &mut dyn Machine, keep: bool) -> bool {
     if gles_frame_tiled() {
         let mut tiles = [[0u32; TILE_WORDS]; MAX_TILES];
         let room = m.scratch();
-        match gles_flush(room, &mut tiles) {
+        let binned = if keep {
+            gles_flush_keeping(room, &mut tiles)
+        } else {
+            gles_flush(room, &mut tiles)
+        };
+        match binned {
             Some(b) => m.draw_tiled(&tiles[..b.tiles], &room[..b.entries]),
             None => {
                 m.draw(gles_frame_len());
@@ -500,11 +508,12 @@ fn draw_frame(m: &mut dyn Machine) -> bool {
 }
 
 /// What `glReadPixels` reads (#999): the frame so far drawn into the back
-/// buffer, then the framebuffer, with GL drawing on into the same buffer
-/// from an empty list, as after a swap but for the buffer. A tile table's
-/// depth and stencil live only in its tiles, so they start over after a
-/// read as after a swap, which GL does not allow (#1504). `None` without
-/// a machine, or a machine that cannot be read.
+/// buffer, then the framebuffer, with GL drawing on into the same buffer.
+/// A tile table's depth and stencil live only in its tiles, so a frame
+/// drawn from one goes on as the entries that rebuild them, its colour
+/// masked off, and the next draw of the frame makes them again before
+/// what follows the read (#1504); any other frame goes on from an empty
+/// list. `None` without a machine, or a machine that cannot be read.
 fn read_back() -> Option<(&'static [u32], usize)> {
     let s = state();
     if !s.current {
@@ -512,8 +521,10 @@ fn read_back() -> Option<(&'static [u32], usize)> {
     }
     let m = s.machine.as_deref_mut()?;
     if gles_frame_len() > 0 {
-        draw_frame(m);
-        target(m, s.back);
+        let tiled = gles_frame_tiled();
+        if !(draw_frame(m, true) && tiled) {
+            target(m, s.back);
+        }
     }
     m.pixels()
 }
@@ -628,7 +639,7 @@ pub extern "C" fn eglSwapBuffers(dpy: Handle, surface: Handle) -> EGLBoolean {
     let Some(m) = s.machine.as_deref_mut() else {
         return fail(NOT_INITIALIZED, FALSE);
     };
-    let drawn = draw_frame(m);
+    let drawn = draw_frame(m, false);
     m.show(BUFFER_ROWS[s.back]);
     m.wait_blanking();
     s.back ^= 1;

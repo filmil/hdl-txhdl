@@ -801,6 +801,52 @@ static void stencil(void) {
   report("stencil_equal", window_is(want_box, 0));
 }
 
+/* A read in the middle of a frame (#1504): the depth and the stencil the
+ * frame made before glReadPixels hold for what it draws after, as GL
+ * keeps both across a read. */
+static void reads_mid_frame(void) {
+  GLuint back = 0x000000ff, a = 0xff0000ff, b = 0x00ff00ff, c = 0x0000ffff;
+  GLubyte one[4];
+  /* The depth: cleared to 0.375, A drawn at 0.25 over the left, a read;
+   * then B at 0.5 over both halves under GL_LESS, which neither lets
+   * through, and C at 0.3, which only the cleared half does. */
+  scene(back);
+  glClearDepthx(ONE * 3 / 8);
+  glClear(GL_DEPTH_BUFFER_BIT);
+  glEnable(GL_DEPTH_TEST);
+  glDepthFunc(GL_LESS);
+  colour(a);
+  rect(100 * ONE, 100 * ONE, 150 * ONE, 200 * ONE, -ONE / 2);
+  glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, one);
+  colour(b);
+  rect(100 * ONE, 100 * ONE, 200 * ONE, 200 * ONE, 0);
+  colour(c);
+  rect(100 * ONE, 100 * ONE, 200 * ONE, 200 * ONE, -ONE * 2 / 5);
+  read_window();
+  report("read_keeps_depth",
+         small_is(110, 140, a, 0) && small_is(170, 140, c, 0));
+  /* The stencil: 5 written in a square with the colour masked, a read,
+   * then the window drawn where the stencil is 5. */
+  scene(back);
+  glClearStencil(0);
+  glClear(GL_STENCIL_BUFFER_BIT);
+  glEnable(GL_STENCIL_TEST);
+  glStencilFunc(GL_ALWAYS, 5, 0xff);
+  glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+  glColorMask(0, 0, 0, 0);
+  rect(100 * ONE, 100 * ONE, 150 * ONE, 150 * ONE, 0);
+  glColorMask(1, 1, 1, 1);
+  glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, one);
+  glStencilFunc(GL_EQUAL, 5, 0xff);
+  glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+  colour(b);
+  rect(0, 0, W * ONE, H * ONE, 0);
+  read_window();
+  inside = b, outside = back;
+  box[0] = 100, box[1] = 100, box[2] = 50, box[3] = 50;
+  report("read_keeps_stencil", window_is(want_box, 0));
+}
+
 /* --- Texturing (section 3.7). -------------------------------------- */
 
 static GLubyte texels[4 * 4 * 4];
@@ -953,6 +999,7 @@ void conform_render(void) {
   masks_and_logic();
   fog();
   stencil();
+  reads_mid_frame();
   texturing();
   lighting();
 }
