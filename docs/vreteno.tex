@@ -2795,9 +2795,13 @@ ahead, none does, and every row shows its own line.
 The board's late rows fall only while Razboj draws, about the first
 third of a frame, where the arbiter's round robin gives the scanout one
 turn in eight. The arbiter takes \code{PRIO}, a host whose read wins
-whenever it offers one, ahead of the round robin among the others, and
-the board names the scanout's port, \code{SCAN\_PRIO} (issue~\#1523).
-Writes keep their turns, and a burst already granted runs to its end.
+whenever it offers one, ahead of the round robin among the others;
+writes keep their turns, and a burst already granted runs to its end.
+The board tried it with the scanout's port, asking two rows ahead, and
+it made no difference: 0.074 LATE rows a frame with it and 0.140
+without, over 9 loads and 6, the medians both 0 and the difference not
+significant (issue~\#1523). So \code{SCAN\_PRIO} names no port, and the
+round robin is as it was.
 
 \code{vreteno\_board\_jtag.v} is the top with the master, the board's
 own top with one block added, and every other top ties the pins off,
