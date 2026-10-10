@@ -8,6 +8,8 @@
 \documentclass[journal,onecolumn,9pt]{IEEEtran}
 
 \newcommand{\listingsize}{\normalsize}
+% A generated table breaks across pages (issue 1614).
+\usepackage{longtable}
 \input{housestyle}
 
 \InputIfFileExists{buildstamp.tex}{}{}
