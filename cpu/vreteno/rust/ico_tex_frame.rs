@@ -50,7 +50,8 @@ fn main() {
         dy,
         Box::SCREEN,
         true,
-        Some((&mut room, TEX, true)),
+        // Smooth shading's frame is #1592's step 3, untextured.
+        (!cfg!(smooth)).then_some((&mut room[..], TEX, true)),
         &mut out,
     );
     let list = decode_list(&out[..k]);
