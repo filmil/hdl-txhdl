@@ -22,6 +22,10 @@
 # reprogram, since Linux, and a program booted by fastboot that takes
 # over the serial port, need not answer the serial line's reset.
 set -euo pipefail
+# Say where it stopped, if it stops: the first run stopped after its
+# last demo without a word, and a run that does not say what failed
+# cannot be mended.
+trap 'echo "demos: stopped at line $LINENO: $BASH_COMMAND" >&2' ERR
 
 # --- begin runfiles.bash initialization v3 ---
 f=bazel_tools/tools/bash/runfiles/runfiles.bash
@@ -74,6 +78,8 @@ sha="$(git rev-parse --short=8 HEAD)"
 run="$(date -u +%Y%m%d)-$sha"
 dir="$out/$run"
 mkdir -p "$dir"
+# Everything the run says goes to its directory as well.
+exec > >(tee -a "$dir/run.log") 2>&1
 echo "demos at $sha into $dir"
 
 # Every image and the fastboot app, built at this commit; the flagship
@@ -91,11 +97,11 @@ printf 'demo\timage\tsha256\tstart\tend\tlast line\n' >"$dir/manifest.tsv"
 
 # Whatever holds the serial port on the board server: none, or the
 # pids of the senders.
-holders() { ssh -o BatchMode=yes "$server" "fuser $port 2>/dev/null" || true; }
+holders() { ssh -n -o BatchMode=yes "$server" "fuser $port 2>/dev/null" || true; }
 # Stops this tool's own senders on the board server, each with the
 # timeout above it, after checking each is a sender.
 release() {
-  ssh -o BatchMode=yes "$server" "for p in \$(fuser $port 2>/dev/null); do
+  ssh -n -o BatchMode=yes "$server" "for p in \$(fuser $port 2>/dev/null); do
       case \"\$(tr '\\0' ' ' </proc/\$p/cmdline)\" in
         */txhdl_load/load\ $port*) kill \$p \$(ps -o ppid= -p \$p) ;;
       esac; done" || true
@@ -124,29 +130,36 @@ for d in "${demos[@]}"; do
   [[ -n "$dry" ]] && continue
   if [[ "$how" == serial ]]; then
     "$load" --server="$server" --reset --image="$image" \
-      --seconds="$seconds" 2>&1 | stamp >"$log" || true
-    start="$(grep -am1 ' ok 40000000' "$log" | cut -c1-13)"
+      --seconds="$seconds" </dev/null 2>&1 | stamp >"$log" || true
+    start="$(grep -am1 ' ok 40000000' "$log" | cut -c1-13 || true)"
     after_fastboot=""
   else
     # The fastboot app, then the image and its extra files from the
     # board server, then the demo's seconds or its last line.
-    ssh -o BatchMode=yes "$server" "mkdir -p $fbdir/demos"
+    ssh -n -o BatchMode=yes "$server" "mkdir -p $fbdir/demos"
     scp -q -o BatchMode=yes "$image" "$server:$fbdir/demos/$name.bin"
     ( "$load" --server="$server" --reset --image="$fastboot_bin" \
-        --seconds=$((seconds + 120)) 2>&1 | stamp >"$log" ) &
+        --seconds=$((seconds + 120)) </dev/null 2>&1 | stamp >"$log" ) &
     reader=$!
     for _ in $(seq 1 150); do
-      grep -q 'listening on port' "$log" 2>/dev/null && break; sleep 1
-    done
-    files="demos/$name.bin"
-    [[ "$extra" != - ]] && files="$files $extra"
-    timeout 300 ssh -o BatchMode=yes "$server" \
-      "cd $fbdir && ./fastboot -s tcp:192.168.1.50 boot $files" >>"$log" 2>&1 || true
-    start="$(grep -am1 'fastboot: booting' "$log" | cut -c1-13)"
-    for _ in $(seq 1 "$seconds"); do
-      [[ "$until" != - ]] && grep -aqF "$until" "$log" && break
+      if grep -q 'listening on port' "$log" 2>/dev/null; then break; fi
       sleep 1
     done
+    # The sender holding the port for this demo, stopped by its pid when
+    # the demo's time is up.
+    sender="$(holders)"
+    files="demos/$name.bin"
+    if [[ "$extra" != - ]]; then files="$files $extra"; fi
+    timeout 300 ssh -n -o BatchMode=yes "$server" \
+      "cd $fbdir && ./fastboot -s tcp:192.168.1.50 boot $files" >>"$log" 2>&1 || true
+    start="$(grep -am1 'fastboot: booting' "$log" | cut -c1-13 || true)"
+    for _ in $(seq 1 "$seconds"); do
+      if [[ "$until" != - ]] && grep -aqF "$until" "$log"; then break; fi
+      sleep 1
+    done
+    if [[ -n "$sender" ]]; then
+      ssh -n -o BatchMode=yes "$server" "kill $sender" 2>/dev/null || true
+    fi
     release
     kill "$reader" 2>/dev/null || true
     wait "$reader" 2>/dev/null || true
@@ -154,7 +167,7 @@ for d in "${demos[@]}"; do
   fi
   release
   end="$(date -u +%T.%3N)Z"
-  last="$(grep -av '^\S* \[load\]' "$log" | tail -1 | cut -c15- | tr '\t' ' ')"
+  last="$(grep -av '^\S* \[load\]' "$log" | tail -1 | cut -c15- | tr '\t' ' ' || true)"
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$target" "$sum" "${start:-?}" "$end" "$last" \
     >>"$dir/manifest.tsv"
   echo "  $name: from ${start:-?} to $end"
