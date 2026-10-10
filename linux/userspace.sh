@@ -372,6 +372,17 @@ dropbear)
   mkdir -p "$work/src"
   cp -rL "$src/." "$work/src"
   chmod -R u+w "$work/src"
+  # The fetched tree is the shared repository cache's, and the builds
+  # before this fix wrote into it: configure's headers, logs and
+  # Makefiles, make's objects and archives, and the program. Out of
+  # the copy with them, so that this build makes its own and a stale
+  # object is never taken as up to date. Each is made again below:
+  # config.h from src/config.h.in, the Makefiles from their .in, the
+  # guard header by a rule of the Makefile.
+  (cd "$work/src" && rm -rf obj && rm -f config.h config.log \
+    config.status default_options_guard.h dropbearmulti Makefile \
+    libtomcrypt/Makefile libtommath/Makefile test/Makefile &&
+    find . \( -name "*.o" -o -name "*.a" \) -delete)
   (cd "$work/src" && ./configure --host=riscv32-unknown-linux-musl \
     --disable-zlib --disable-lastlog --disable-utmp --disable-utmpx \
     --disable-wtmp --disable-wtmpx --disable-pututline \
