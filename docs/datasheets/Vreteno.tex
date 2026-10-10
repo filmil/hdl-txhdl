@@ -97,44 +97,103 @@ library has no RAM. The tables use the default. \\
 \subsection*{Register map}
 
 The control registers, by CSR number. Software reaches them through
-the six CSR instructions. They are not on the bus.
+the six CSR instructions. They are not on the bus. A number names a
+register only from a mode at or above the one its bits 9 and 8 give,
+so a supervisor register is reached from supervisor and machine mode
+and a machine register from machine mode alone.
 
 \begin{center}\footnotesize
 \begin{tabular}{@{}llp{0.6\textwidth}@{}}
 \toprule
 Number & Register & What the core keeps \\
 \midrule
-\code{0x300} & \code{mstatus} & Bits 3 and 7 only; a write is masked
-with \code{0x88}. \\
-\code{0x304} & \code{mie} & Bits 11 and 7 only, the external and the
-timer enable. \\
+\code{0x300} & \code{mstatus} & \code{SIE}, \code{MIE}, \code{SPIE},
+\code{MPIE}, \code{SPP}, \code{MPP}, \code{MPRV}, \code{SUM},
+\code{MXR}, \code{TVM}, \code{TW} and \code{TSR}, the bits of
+\code{0x007e\_19aa}; a write of 2 to \code{MPP} leaves user mode. \\
+\code{0x301} & \code{misa} & Nothing: it reads \code{0x4014\_1105},
+\code{MXL} of 1 and the letters \code{A}, \code{C}, \code{I},
+\code{M}, \code{S} and \code{U}. Writable and ignored. \\
+\code{0x302} & \code{medeleg} & The exceptions delegated: causes 0 to
+9, 12, 13 and 15. \\
+\code{0x303} & \code{mideleg} & The interrupts delegated: the
+supervisor's software, timer and external, bits 1, 5 and 9. \\
+\code{0x304} & \code{mie} & Bits 1, 3, 5, 7, 9 and 11. \\
 \code{0x305} & \code{mtvec} & The handler's address; a write clears
 bits 1 and 0. \\
+\code{0x306} & \code{mcounteren} & Bits 0 to 2: \code{cycle},
+\code{time} and \code{instret} below machine mode. \\
+\code{0x30a} & \code{menvcfg} & Bit 0, \code{FIOM}; the rest reads
+zero. \\
+\code{0x310}, \code{0x31a} & \code{mstatush}, \code{menvcfgh} & Nothing:
+zero. \\
 \code{0x340} & \code{mscratch} & Entire 32-bit register. \\
 \code{0x341} & \code{mepc} & The trap's address; a write clears
 bit 0. \\
 \code{0x342} & \code{mcause} & Entire 32-bit register. \\
 \code{0x343} & \code{mtval} & Entire 32-bit register. \\
-\code{0x344} & \code{mip} & Bit 11 is stored: \code{irq} sets it and
-a write keeps only that bit. Bit 7 reads as \code{tirq}. \\
+\code{0x344} & \code{mip} & Reads the external line \code{irq} as bit
+11, \code{tirq} as bit 7, \code{sirq} as bit 3 and \code{seirq} as bit
+9, ORed with bits 1, 5 and 9 as software wrote them; a write keeps only
+those three. \\
+\code{0x100} & \code{sstatus} & \code{mstatus} seen through
+\code{0x000c\_0122}: \code{SIE}, \code{SPIE}, \code{SPP}, \code{SUM}
+and \code{MXR}. \\
+\code{0x104}, \code{0x144} & \code{sie}, \code{sip} & \code{mie} and
+\code{mip} under \code{mideleg}; a write to \code{sip} reaches only bit
+1, and only when delegated. \\
+\code{0x105} & \code{stvec} & The handler's address; a write clears
+bits 1 and 0. \\
+\code{0x106} & \code{scounteren} & Bits 0 to 2: \code{cycle},
+\code{time} and \code{instret} in user mode. \\
+\code{0x10a} & \code{senvcfg} & Bit 0, \code{FIOM}; the rest reads
+zero. \\
+\code{0x140} & \code{sscratch} & Entire 32-bit register. \\
+\code{0x141} & \code{sepc} & The trap's address; a write clears
+bit 0. \\
+\code{0x142}, \code{0x143} & \code{scause}, \code{stval} & Entire
+32-bit registers. \\
+\code{0x180} & \code{satp} & Entire 32-bit register; with \code{TVM} set,
+supervisor mode may not name it. \\
+\code{0xb00}, \code{0xb80} & \code{mcycle}, \code{mcycleh} & The
+cycle counter, writable a half at a time. \\
+\code{0xb02}, \code{0xb82} & \code{minstret}, \code{minstreth} & The
+retired-instruction counter, writable a half at a time. \\
+\code{0xc00} to \code{0xc02}, \code{0xc80} to \code{0xc82} &
+\code{cycle}, \code{time}, \code{instret} and their halves & Read
+only: \code{mcycle}, the input \code{time} and \code{minstret}, below
+machine mode as \code{mcounteren} and \code{scounteren} allow. \\
+\code{0x320}, \code{0x323} to \code{0x33f}, \code{0xb03} to
+\code{0xb1f}, \code{0xb83} to \code{0xb9f}, \code{0xc03} to
+\code{0xc1f}, \code{0xc83} to \code{0xc9f} & \code{mcountinhibit},
+the event selectors and the counters that count nothing & Nothing:
+zero (issue 1460); the user's copies, \code{0xc03} up, in machine
+mode only. \\
+\code{0x7b0} & \code{dcsr} & In debug mode only: \code{ebreakm}, bit
+15, and \code{step}, bit 2, as written; the cause and the mode kept;
+version 4 in bits 31 to 28. \\
+\code{0x7b1} & \code{dpc} & In debug mode only: the address to resume
+at; a write clears bit 0. \\
 \code{0x7c0} & \code{mhalt} & Nothing: it reads as zero. A write of an
 odd value stops the core when that instruction retires. \\
-\code{0x301} & \code{misa} & Nothing: it reads
-\code{0x4000\_1104}, which is \code{MXL} of 1 and the letters
-\code{C}, \code{I} and \code{M}. Writable and ignored, as the
-specification allows. \\
-\code{0xf11} & \code{mvendorid} & Nothing: zero, which means
-unimplemented. Read only. \\
-\code{0xf12} & \code{marchid} & Nothing: zero. Read only. \\
-\code{0xf13} & \code{mimpid} & Nothing: zero. Read only. \\
-\code{0xf14} & \code{mhartid} & Nothing: zero, this machine's one
-hart. Read only. \\
+\code{0x7c1} & \code{mbusquiet} & Bit 0: a load the bus refuses reads
+zero, and a store it refuses is dropped, instead of trapping (issue
+417). \\
+\code{0xf11} to \code{0xf13} & \code{mvendorid}, \code{marchid},
+\code{mimpid} & Nothing: zero. Read only. \\
+\code{0xf14} & \code{mhartid} & The hart's number, \code{HID}. Read
+only. \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-A CSR instruction that names any other number is an illegal word and
-traps.
+A CSR instruction that names any other number, or a number its mode may
+not reach, traps as an illegal instruction, as does a write to a
+read-only one, whose number's bits 11 and 10 are both set. A read of a
+read-only one does not. In supervisor mode, \code{TVM} also makes
+\code{sfence.vma} illegal, \code{TW} makes \code{wfi} illegal, and
+\code{TSR} makes \code{sret} illegal, so that machine mode can take
+them over (issue 1347).
 
 \dstables{Vreteno}
 
