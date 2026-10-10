@@ -785,9 +785,13 @@ pub trait Value: Copy {
 /// A struct's fields by name, in the order it declares them, which
 /// `#[derive(Value)]` writes as a constant of the struct's own name, so
 /// that a struct literal under `#[lower]` packs its fields in that order
-/// whatever order it names them in (issue 1541).
+/// whatever order it names them in (issue 1541). Beside each name is
+/// its field's width, so that a constant the literal puts in a field
+/// is sized to it (issue 1574); a field whose type names one of the
+/// struct's generic parameters has no width a constant can hold, and
+/// reads nought.
 #[derive(Clone, Copy, Debug)]
-pub struct Fields(pub &'static [&'static str]);
+pub struct Fields(pub &'static [&'static str], pub &'static [usize]);
 
 /// One field of a compound value in a trace.
 pub struct Part {
