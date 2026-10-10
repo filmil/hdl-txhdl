@@ -1147,6 +1147,19 @@ rust_binary(
     ],
 )
 
+# The canonical teapot's cut (#1592): 564 triangles over the grid,
+# normals of unit length, and the teapot where freeglut lays it.
+rust_test(
+    name = "teapot_test",
+    srcs = ["teapot.rs"],
+    crate_root = "teapot.rs",
+    edition = "2021",
+    deps = [
+        "//gles",
+        "//lib/teapot:teapot_data",
+    ],
+)
+
 # The smooth frame over a mirror, as #1592's step 8 draws it.
 rust_binary(
     name = "ico_mirror_frame",

@@ -251,3 +251,60 @@ pub fn get() -> &'static Teapot {
     // SAFETY: cut, and never written again.
     unsafe { &*core::ptr::addr_of!(TEAPOT) }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cut() -> Box<Teapot> {
+        let mut t = Box::new(Teapot::EMPTY);
+        t.build();
+        t
+    }
+
+    #[test]
+    fn the_teapot_is_564_triangles_of_the_grid() {
+        let t = cut();
+        // 32 patches of 18, less one of each pair on the bottom's first
+        // row, which closes to its middle, in each of four quarters. The
+        // knob's first row closes nearly but not quite, and stays.
+        assert_eq!(t.triangles, TRIANGLES - 4 * N);
+        assert_eq!(t.triangles, 564);
+        assert!(t.indices[..3 * t.triangles]
+            .iter()
+            .all(|&i| (i as usize) < VERTS));
+    }
+
+    #[test]
+    fn every_normal_is_of_unit_length() {
+        let t = cut();
+        for n in t.normals.iter() {
+            let sq: i64 = n.iter().map(|&c| c as i64 * c as i64).sum();
+            let one = (ONE as i64) * (ONE as i64);
+            assert!((sq - one).abs() < one / 100, "{n:?}");
+        }
+    }
+
+    #[test]
+    fn the_teapot_sits_where_freeglut_lays_it() {
+        let t = cut();
+        let (mut lo, mut hi) = ([Fx::MAX; 3], [Fx::MIN; 3]);
+        for p in t.positions.iter() {
+            for k in 0..3 {
+                lo[k] = lo[k].min(p[k]);
+                hi[k] = hi[k].max(p[k]);
+            }
+        }
+        let units = |v: Fx| v as f64 / ONE as f64;
+        // Along x the handle's back, a corner of its patches, at -3, and
+        // the spout's tip short of its control points' 3.525, since a
+        // patch meets only its corner points; the base and the knob at
+        // 1.575 either side of the middle; the body's 2 either side
+        // across.
+        let near = |v: Fx, want: f64| (units(v) - want * SCALE).abs() < 0.001;
+        assert!(near(lo[0], -3.0), "the handle's back");
+        assert!(units(hi[0]) > 3.3 * SCALE && units(hi[0]) < 3.525 * SCALE);
+        assert!(near(lo[1], -MIDDLE) && near(hi[1], MIDDLE), "base, knob");
+        assert!(near(lo[2], -2.0) && near(hi[2], 2.0), "the body");
+    }
+}
