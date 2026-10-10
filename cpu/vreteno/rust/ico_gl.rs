@@ -84,8 +84,12 @@ pub const VERTS: usize = 3 * FACES;
 
 /// The most a frame's list holds: the backdrop's rectangle, and every
 /// face with its second slot when the depth test is on and its two
-/// texture slots when it is textured.
-pub const MOST: usize = 1 + 4 * FACES + 4 * FLOOR_TRIS;
+/// texture slots when it is textured. Under `mirror` (#1592's step 8),
+/// the reflection's faces as well, and the mirror's two triangles twice.
+pub const MOST: usize = 1
+    + 4 * FACES
+    + 4 * FLOOR_TRIS
+    + if cfg!(mirror) { 2 * FACES + 8 } else { 0 };
 
 /// The floor's triangles under `mip` (#997): two, each with its second
 /// slot and its two texture slots.
@@ -259,13 +263,18 @@ pub fn frame<'a>(
         }
     }
 
+    #[cfg(fog)]
+    fog(&mut g);
+
     #[cfg(mip)]
     if textured {
         floor(&mut g);
     }
 
     // `ico_list` turns about y and then about x.
-    g.translate(0, 0, -D);
+    g.translate(0, 0, -distance(ax));
+    #[cfg(mirror)]
+    mirror(&mut g, model, ay, ax);
     g.rotate(degrees(ax), ONE, 0, 0);
     g.rotate(degrees(ay), 0, ONE, 0);
     if textured {
@@ -347,6 +356,107 @@ pub fn kept<'a>(g: &mut Gl<'a>, room: &'a mut [u32], bus: u32) {
     let modulate = gl::MODULATE as Fx;
     g.tex_env(gl::TEXTURE_ENV, gl::TEXTURE_ENV_MODE, &[modulate]);
     g.enable(gl::TEXTURE_2D);
+}
+
+/// Under `mirror` (#1592's step 8): the view tilted down about the
+/// solid's centre, and a mirror below the solid with the solid's
+/// reflection in it. The mirror's rectangle goes into the stencil, its
+/// colour and depth unwritten; the solid is drawn turned over in the
+/// mirror's plane where the stencil says the mirror is, so that nothing
+/// of the reflection lies outside the mirror; then the mirror itself is
+/// blended over it, a translucent blue-grey, its depth written. The
+/// solid itself comes after, from the tilted view this leaves.
+#[cfg(mirror)]
+fn mirror(g: &mut Gl<'_>, model: &Model, ay: i32, ax: i32) {
+    // Four units farther than `D`, so that the solid and its reflection
+    // both fit; 25 degrees down; the solid lifted 1.2 units, so that it
+    // sits above the screen's middle and its reflection below. The
+    // mirror is 1.8 units below the solid's centre, past its reach, 4
+    // units wide and from 2.4 units behind the centre to 4 before it: on
+    // the screen, rows 214 to about 400 and short of column 488, where
+    // the logo starts.
+    let (y, half, back, front) =
+        (-9 * ONE / 5, 2 * ONE, -12 * ONE / 5, 4 * ONE);
+    g.translate(0, 0, -4 * ONE);
+    g.rotate(25 * ONE, ONE, 0, 0);
+    g.translate(0, 6 * ONE / 5, 0);
+    let square = [
+        [-half, y, back, ONE],
+        [half, y, back, ONE],
+        [half, y, front, ONE],
+        [-half, y, front, ONE],
+    ];
+    let order = [0usize, 1, 2, 0, 2, 3];
+    let draw_square = |g: &mut Gl<'_>| {
+        g.draw_vertices(gl::TRIANGLES, order.len(), |k| Vertex {
+            position: square[order[k]],
+            colour: None,
+            normal: Some([0, ONE, 0]),
+            tex: None,
+        })
+    };
+    g.enable(gl::STENCIL_TEST);
+    g.stencil_func(gl::ALWAYS, 1, 0xff);
+    g.stencil_op(gl::KEEP, gl::KEEP, gl::REPLACE);
+    g.color_mask(false, false, false, false);
+    g.depth_mask(false);
+    draw_square(g);
+    g.color_mask(true, true, true, true);
+    g.depth_mask(true);
+
+    g.stencil_func(gl::EQUAL, 1, 0xff);
+    g.stencil_op(gl::KEEP, gl::KEEP, gl::KEEP);
+    g.push_matrix();
+    g.translate(0, 2 * y, 0);
+    g.scale(ONE, -ONE, ONE);
+    g.rotate(degrees(ax), ONE, 0, 0);
+    g.rotate(degrees(ay), 0, ONE, 0);
+    g.draw_elements(
+        gl::TRIANGLES,
+        &model.indices,
+        &model.positions,
+        None,
+        Some(&model.normals),
+    );
+    g.pop_matrix();
+    g.disable(gl::STENCIL_TEST);
+
+    g.disable(gl::LIGHTING);
+    g.enable(gl::BLEND);
+    g.blend_func(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+    g.color(3 * ONE / 20, 9 * ONE / 50, ONE / 4, 9 * ONE / 20);
+    draw_square(g);
+    g.disable(gl::BLEND);
+    g.enable(gl::LIGHTING);
+}
+
+/// How far away the solid is at angle `ax`: `D`, or under `fog` (#1592's
+/// step 6) from `D` out to `D + SWING` and back once a turn of `ax`, its
+/// speed easing to nothing at either end, so that it recedes into the
+/// fog and comes back out of it.
+fn distance(ax: i32) -> Fx {
+    if !cfg!(fog) {
+        return D;
+    }
+    const SWING: i64 = 10 * ONE as i64;
+    let a = (ax & 255) as i64;
+    let t = (if a < 128 { a } else { 256 - a }) * ONE as i64 / 128;
+    let eased = t * t / ONE as i64 * (3 * ONE as i64 - 2 * t) / ONE as i64;
+    D + (eased * SWING / ONE as i64) as Fx
+}
+
+/// Under `fog` (#1592's step 6): linear fog from the floor's near edge
+/// to its far one, in the backdrop's colour. The floor fades into the
+/// backdrop towards the horizon, and the solid keeps four fifths of its
+/// own colour at `D` and a quarter at its farthest.
+#[cfg(fog)]
+fn fog(g: &mut Gl<'_>) {
+    g.enable(gl::FOG);
+    g.fog(gl::FOG_MODE, gl::LINEAR as Fx);
+    g.fog(gl::FOG_START, 12 * ONE);
+    g.fog(gl::FOG_END, 31 * ONE);
+    let b = |shift: u32| ((BACKDROP >> shift) & 0xff) as Fx * ONE / 255;
+    g.fog_colour([b(16), b(8), b(0), ONE]);
 }
 
 /// Under `mip` (#997), a floor below the solid and behind it, receding
