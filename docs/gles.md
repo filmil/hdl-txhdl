@@ -369,9 +369,12 @@ EGL's configuration says 16 bits of depth and 8 of stencil.
 
 `glReadPixels` is #999's, the first step of the conformance suite.
 It reads `GL_RGBA` and `GL_UNSIGNED_BYTE`, which are also the implementation's read format and type, with the rows from the bottom up and padded to `GL_PACK_ALIGNMENT`.
-It first draws the frame so far into the buffer not shown, as a swap does but without showing it, and GL then draws on into the same buffer from an empty list.
+It first draws the frame so far into the buffer not shown, as a swap does but without showing it, and GL then draws on into the same buffer.
 On the board it reads the framebuffer straight from the DDR3, since the core has no data cache, and on the model it reads the model's framebuffer, through `Machine::pixels`.
-A tile table's depth and stencil live only in its tiles, so after a read they start over as after a swap, which GL does not allow: #1504.
+A tile table's depth and stencil live only in its tiles, so a frame drawn from one goes on after the read as the entries that rebuild them (#1504).
+Those are the frame's entries since its last clear of the depth that test the depth or the stencil, each with its colour mask emptied, which Razboj draws without writing or marking any colour.
+Redrawn from a fresh tile before what follows the read, they leave the depth and the stencil the frame had, since neither depends on the colour already at a pixel.
+Any other frame goes on from an empty list.
 `egl_test` reads the whole window back pixel for pixel, and a rectangle over the window's corner with eight-byte rows, and checks GL's errors.
 
 The conformance suite is #999's, our own tests of GL ES 1.1's specification, since Khronos's own tests for 1.1 are not public.
@@ -379,9 +382,9 @@ Its C programs, in `gles/conform`, take a window and a context through EGL as an
 On the host they draw through Razboj's model as EGL's machine, and `//gles:conform_test` holds the run to `gles/conform/known_failures.txt`, which names an issue for every failure, so that a new failure fails the test and so does a known one that passes.
 The first group is the state tables of the specification's section 6.2: every state variable's initial value, through the query its table names and through the others with section 6.1.2's conversions, and every implementation-dependent value against its minimum.
 The second is the errors: for each command, the error section 2.5 and the command's own section give a bad argument, each recorded once, and that the command changes nothing.
-The third is the rendering: scenes read back with `glReadPixels` and held, pixel for pixel, to a reference in double precision that follows the specification's rules for points, polygons, lines by the four rules section 3.4.1 sets an algorithm other than the diamond exit, the viewport, smooth shading, every per-fragment test and operation, fog, the texture environments and lighting, skipping only a pixel whose centre lies on an edge, which GL leaves to the implementation.
+The third is the rendering: scenes read back with `glReadPixels` and held, pixel for pixel, to a reference in double precision that follows the specification's rules for points, polygons, lines by the four rules section 3.4.1 sets an algorithm other than the diamond exit, the viewport, smooth shading, every per-fragment test and operation, fog, the texture environments and lighting, and the depth and the stencil kept across a read in the middle of a frame, skipping only a pixel whose centre lies on an edge, which GL leaves to the implementation.
 The fourth is four of piglit's ES 1 tests, in `gles/conform/piglit`, ported with their float calls made fixed point for Common-Lite, each change marked.
-Of 203 state checks, 163 pass; of 100 error checks, 99; of 81 rendering checks, 80; and of piglit's four, two. The 44 failures fall under eight issues:
+Of 203 state checks, 163 pass; of 100 error checks, 99; of 83 rendering checks, 82; and of piglit's four, two. The 44 failures fall under eight issues:
 
 | Issue | Checks | What is missing or wrong |
 |---|---|---|
