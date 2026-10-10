@@ -114,15 +114,19 @@ fn define(what: &str, key: &str, body: &str) {
     );
 }
 
-/// A table, or a line saying there is nothing to put in one.
+/// A table, or a line saying there is nothing to put in one. It is a
+/// `longtable`, which breaks across pages with its heading repeated: a
+/// `tabular` is one box, and a component with many fields, Razboj's
+/// rasteriser, ran off its page with the rest of its rows on no page
+/// at all (issue 1614).
 fn table(cols: &str, head: &str, rows: &[String], none: &str) -> String {
     if rows.is_empty() {
         return format!("\\noindent\\emph{{{none}}}\\par\n");
     }
     format!(
-        "\\begin{{center}}\\footnotesize\n\\begin{{tabular}}{{@{{}}{cols}@{{}}}}\n\
-         \\toprule\n{head} \\\\\n\\midrule\n{}\n\\bottomrule\n\
-         \\end{{tabular}}\n\\end{{center}}\n",
+        "{{\\footnotesize\n\\begin{{longtable}}{{@{{}}{cols}@{{}}}}\n\
+         \\toprule\n{head} \\\\\n\\midrule\n\\endhead\n\
+         \\bottomrule\n\\endfoot\n{}\n\\end{{longtable}}}}\n",
         rows.join("\n")
     )
 }
