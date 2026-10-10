@@ -136,7 +136,10 @@ for d in "${demos[@]}"; do
   else
     # The fastboot app, then the image and its extra files from the
     # board server, then the demo's seconds or its last line.
-    ssh -n -o BatchMode=yes "$server" "mkdir -p $fbdir/demos"
+    # A Bazel output is read-only, and so is the copy an earlier run
+    # left, which an upload cannot overwrite: it goes first.
+    ssh -n -o BatchMode=yes "$server" \
+      "mkdir -p $fbdir/demos && rm -f $fbdir/demos/$name.bin"
     scp -q -o BatchMode=yes "$image" "$server:$fbdir/demos/$name.bin"
     ( "$load" --server="$server" --reset --image="$fastboot_bin" \
         --seconds=$((seconds + 120)) </dev/null 2>&1 | stamp >"$log" ) &
