@@ -359,6 +359,10 @@ genrule(
     cmd = "for f in $(SRCS); do cp \"$$f\" \"$(RULEDIR)/$$(basename $$f)\"; done",
 )
 
+# The canonical demos, which //cpu/vreteno/board/remote:demos runs (issue
+# 1592).
+exports_files(["demos.tsv"])
+
 # The specification as an IEEE two-column article, set in Computer Modern.
 # Built against the hermetic LaTeX toolchain registered in MODULE.bazel, so
 # nothing has to be installed on the machine running the build.

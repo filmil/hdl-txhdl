@@ -1,0 +1,18 @@
+# The canonical demos (issue 1592), in the order a run shows them.
+# One line a demo, tab-separated:
+#   name     the clip's and the log's name
+#   target   the image's Bazel target
+#   how      serial (the loader in the boot memory) or fastboot
+#   seconds  how long the demo is shown
+#   until    a console line that ends it early, or -
+#   extra    files fastboot also sends, on the board server, or -
+# A line that starts with # is not run; a demo whose image does not
+# exist yet waits there.
+#name	target	how	seconds	until	extra
+ico-1-flat	//cpu/vreteno/rust:ico_hdmi_bin	serial	30	-	-
+ico-2-gl	//cpu/vreteno/rust:ico_gl_hdmi_bin	serial	30	-	-
+ico-3-tex	//cpu/vreteno/rust:ico_tex_hdmi_bin	serial	30	-	-
+ico-4-mip	//cpu/vreteno/rust:ico_mip_hdmi_bin	serial	30	-	-
+#teapot	research's teapot image (pending)	serial	30	-	-
+#linux-boot	//linux:board_demo_boot	fastboot	120	txhdl: demo done	-
+doom	//demo/doom:doom	fastboot	60	-	freedoom1.wad
