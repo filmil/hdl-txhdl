@@ -914,9 +914,16 @@ fn biggest(a: U<32>, b: U<32>, c: U<32>, d: U<32>) -> U<32> {
     let mb = mux(b.bit(31), z - b, b);
     let mc = mux(c.bit(31), z - c, c);
     let md = mux(d.bit(31), z - d, d);
-    let ab = mux(ma < mb, mb, ma);
-    let cd = mux(mc < md, md, mc);
-    mux(ab < cd, cd, ab)
+    // The six comparisons side by side and one choice after them,
+    // rather than the two pairs' larger and then the larger of those,
+    // which put three comparisons one after another: a path of eighteen
+    // levels on the flagship (#1565). The largest is the same value
+    // whichever of two equal ones is taken.
+    let (ab, ac, ad) = (ma < mb, ma < mc, ma < md);
+    let (bc, bd, cd) = (mb < mc, mb < md, mc < md);
+    let a_top = !ab & !ac & !ad;
+    let b_top = !bc & !bd;
+    mux(a_top, ma, mux(b_top, mb, mux(cd, md, mc)))
 }
 
 /// A pixel's level of detail in 8.8, as `tex::lod` has it: `log2` of
@@ -3410,6 +3417,54 @@ mod tests {
                 (was.0.to_bool(), was.1.to_bool(), was.2.raw()),
                 (now.0.to_bool(), now.1.to_bool(), now.2.raw()),
                 "{a:?}"
+            );
+        }
+    }
+
+    /// The largest of four numerators' magnitudes as `biggest` took it
+    /// before #1565's timing: each pair's larger, then the larger of
+    /// those.
+    fn biggest_pairs(a: U<32>, b: U<32>, c: U<32>, d: U<32>) -> U<32> {
+        let z = U::<32>::from(0u8);
+        let m = |v: U<32>| mux(v.bit(31), z - v, v);
+        let (ma, mb, mc, md) = (m(a), m(b), m(c), m(d));
+        let ab = mux(ma < mb, mb, ma);
+        let cd = mux(mc < md, md, mc);
+        mux(ab < cd, cd, ab)
+    }
+
+    /// `biggest`'s comparisons side by side give the largest the pairs
+    /// gave: a million draws of four numerators, each nought, one, the
+    /// most negative, a value of either sign, or equal to another, as
+    /// often as not.
+    #[test]
+    fn the_largest_numerator_is_as_before() {
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        for _ in 0..1_000_000 {
+            let r = next();
+            let mut v = [0u32; 4];
+            for k in 0..4 {
+                v[k] = match (r >> (3 * k)) & 7 {
+                    0 => 0,
+                    1 => 1,
+                    2 => 0x8000_0000,
+                    3 => 0xffff_ffff,
+                    4 if k > 0 => v[k - 1],
+                    5 if k > 0 => v[k - 1].wrapping_neg(),
+                    _ => next() as u32,
+                };
+            }
+            let u = v.map(U::<32>::from);
+            assert_eq!(
+                biggest(u[0], u[1], u[2], u[3]).raw(),
+                biggest_pairs(u[0], u[1], u[2], u[3]).raw(),
+                "{v:x?}"
             );
         }
     }
