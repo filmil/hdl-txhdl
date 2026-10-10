@@ -137,7 +137,9 @@ pub struct Devices {
     /// each ring's word with where the scanout showed from as it came,
     /// so a test sees what each frame was drawn into against what was on
     /// the screen: for a tile table, the first and last rows its tiles
-    /// start at, read from its records at `RAZBOJ_LIST`.
+    /// start at, read from its records at `RAZBOJ_LIST`; for a flat list,
+    /// the first and last rows its entries' boxes span, a clear's being
+    /// the raster's rows 0 to 479 (#1605).
     pub rings: Vec<(u32, Option<u32>, Option<(u32, u32)>)>,
     /// The lines the PLIC drives, as last worked out, and whether they
     /// have to be worked out again: they change only when a program
@@ -182,6 +184,26 @@ const BLANKING: u64 = 5_000;
 /// (`razboj_tile::TILED`).
 const RAZBOJ_LIST: u32 = 0x4280_0000;
 const TILED: u32 = 1 << 31;
+
+/// The first and last rows a flat list of `n` entries at `RAZBOJ_LIST`
+/// draws in (#1605): a clear's, the raster's rows 0 to 479; any other
+/// entry's, its box's, y0 and y1 in bits 25 to 16 of its second and third
+/// words. An entry that tests depth takes a second slot, which is
+/// skipped. `None` for an empty list.
+fn flat_rows(ddr: &memory::Memory, n: u32) -> Option<(u32, u32)> {
+    let word = |slot: u32, k: u32| ddr.load(RAZBOJ_LIST + 64 * slot + 4 * k);
+    let (mut slot, mut rows) = (0, None::<(u32, u32)>);
+    for _ in 0..n {
+        let (lo, hi) = if word(slot, 0) & 3 == 0 {
+            (0, 479)
+        } else {
+            (word(slot, 1) >> 16 & 0x3ff, word(slot, 2) >> 16 & 0x3ff)
+        };
+        rows = Some(rows.map_or((lo, hi), |(a, b)| (a.min(lo), b.max(hi))));
+        slot += if word(slot, 15) >> 8 & 1 != 0 { 2 } else { 1 };
+    }
+    rows
+}
 
 /// The bus the model reaches the devices through.
 #[derive(Debug)]
@@ -287,16 +309,18 @@ impl Bus for Board {
                 let shown = d.scanout();
                 // A tile table's records, the second word of each the
                 // tile's origin, its row in bits 25 to 16.
-                let rows = (v & TILED != 0).then(|| {
+                let rows = if v & TILED != 0 {
                     let n = v & 0xffff;
                     (0..n)
                         .map(|t| {
-                            d.ddr.load(RAZBOJ_LIST + 8 * t + 4) >> 16 & 0x3ff
+                            let y = d.ddr.load(RAZBOJ_LIST + 8 * t + 4) >> 16
+                                & 0x3ff;
+                            (y, y)
                         })
-                        .fold((u32::MAX, 0), |(lo, hi), y| {
-                            (lo.min(y), hi.max(y))
-                        })
-                });
+                        .reduce(|(a, b), (c, e)| (a.min(c), b.max(e)))
+                } else {
+                    flat_rows(&d.ddr, v & 0xffff)
+                };
                 d.rings.push((v, shown, rows));
             }
             return true;
