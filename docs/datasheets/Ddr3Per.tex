@@ -26,8 +26,11 @@ peripheral takes the link's channels as they are: \code{aw},
 module \code{ddr3\_axi32}, which the lowering names and does not write.
 Its \code{run} is a model for simulation: \code{PinRam} of
 \code{AxiPerPins} on the controller's pins, which holds the whole
-gigabyte and is not ready until it has calibrated. The model does not
-drive the memory's pins.
+gigabyte, takes an address modulo its size, and is not ready until it
+has calibrated. It reads at the address: a read takes its words when
+its address is taken, so a write that lands while the read waits out
+the controller's latency is not in them, as the controller may answer
+(issue 1424). The model does not drive the memory's pins.
 
 On the memory side its ports are the board's clock and the
 controller's reset in, the design's clock and its reset out, since the
@@ -77,7 +80,9 @@ pulse at power-on on the board.
 64 cycles. It offers a read's first beat \code{MODEL\_READ\_LATENCY},
 24 steps, after it sees the address phase, and a write's response
 \code{MODEL\_WRITE\_LATENCY}, 2 steps, after it sees the last beat. It
-sees what the pins part drove a step after the pins part drove it.
+sees what the pins part drove a step after the pins part drove it. A
+read's words are the memory's as its address phase is taken, not as
+its beats are offered.
 Those are the controller's latencies as \code{//ddr3/sim:wrapper\_test}
 measured them against the Micron models: a read's first beat 25
 cycles after its address phase was taken, 27 for a burst of sixteen
@@ -109,10 +114,16 @@ behaves as the pins part does at the model's latency.
 \item \code{//cpu/vreteno:board\_test} runs
 \code{the\_memory\_test\_runs\_on\_the\_board}, a compiled program that
 writes and reads the memory through the model and must print
-\code{ddr3 ok}. It also runs \code{the\_netlist\_holds\_the\_controller},
+\code{ddr3 ok}. It also runs \code{the\_netlist\_holds}\allowbreak
+\code{\_the\_controller},
 and \code{the\_ddr3\_path\_is\_timed\_by\_the\_core}, which finds a load
 from the memory costing the model's read latency less two cycles more
 than a load from the data memory.
+\code{the\_data\_cache\_sees}\allowbreak
+\code{\_another\_hosts\_write} there relies on the
+model reading at the address: a cache fill that is out when another
+host's write lands brings the old word, and the core must not keep it
+(issues 1424 and 1429).
 \item \code{//ddr3/sim:wrapper\_test} simulates the wrapper and the
 controller against the Micron models under Vivado's simulator. It
 calibrates, then writes and reads back a burst of sixteen, a word in
@@ -122,7 +133,8 @@ word's. It prints the latencies above. It is manual.
 \code{//ddr3/sim:example\_test} is AMD's own proof of the controller as
 configured, the native example design's traffic generator writing the
 memory and reading it back through it; manual too.
-\item \code{//cpu/vreteno/board/sim:}\allowbreak\code{board\_test} simulates the whole
+\item \code{//cpu/vreteno/board/sim:}\allowbreak
+\code{board\_test} simulates the whole
 board, this controller included, against two Micron models. It is
 manual.
 \end{itemize}
@@ -130,7 +142,8 @@ manual.
 \subsection*{Used by}
 
 \code{Board}, as \code{ddr3}, on the router's port for
-\code{0x4000\_0000}, with no tracker in front.
+\code{0x4000\_0000}, behind the data cache's snoop, \code{dcsnoop},
+and with no tracker in front.
 
 \subsection*{Limits}
 
