@@ -141,6 +141,10 @@ pub struct Devices {
     /// the first and last rows its entries' boxes span, a clear's being
     /// the raster's rows 0 to 479 (#1605).
     pub rings: Vec<(u32, Option<u32>, Option<(u32, u32)>)>,
+    /// Every base the scanout is given, with the stand-in raster's frame
+    /// it was written in (#1639), so that a test sees how many frames
+    /// each buffer stays on the screen.
+    pub flips: Vec<(u32, u64)>,
     /// The lines the PLIC drives, as last worked out, and whether they
     /// have to be worked out again: they change only when a program
     /// reaches the PLIC or the serial port, or when a byte arrives, so
@@ -301,6 +305,11 @@ impl Bus for Board {
             return true;
         }
         if let Some(off) = inside(map.video, addr) {
+            use txhdl_parts::scanout::{scan, SCAN_BIT};
+            if off == (1 << SCAN_BIT) + scan::base {
+                let frame = d.steps / RASTER;
+                d.flips.push((v, frame));
+            }
             d.video[(off / 4) as usize % 64] = v;
             return true;
         }
@@ -365,6 +374,7 @@ impl Machine {
             trng: trng::Trng::default(),
             video: [0; 64],
             rings: Vec::new(),
+            flips: Vec::new(),
             meip: false,
             seip: false,
             meip1: false,

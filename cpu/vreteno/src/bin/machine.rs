@@ -25,6 +25,10 @@
 //! which without the costs it does not yet model leaves a run well under
 //! the board's time (issue 1554).
 //!
+//! `--flips` says, when the run stops, every base the scanout was given
+//! and the stand-in raster's frame it was written in, so that how long
+//! each buffer stays on the screen can be read off (#1639).
+//!
 //! `--rings` says, when the run stops, every word written to Razboj's
 //! doorbell, the rows its list draws in, and where the scanout showed
 //! from as it was written. Razboj is a stand-in here, done at once, and
@@ -111,6 +115,7 @@ fn main() {
     let mut ddr3_store: Option<u64> = None;
     let mut dcache = false;
     let mut rings = false;
+    let mut flips = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         let mut val =
@@ -127,6 +132,7 @@ fn main() {
             "--ddr3-store" => ddr3_store = Some(number(&val())),
             "--dcache" => dcache = true,
             "--rings" => rings = true,
+            "--flips" => flips = true,
             "--fastboot-peer" => fastboot = Some(number(&val()) as usize),
             // Stop once the console has said this, and say how far the
             // run got, which times a boot to a line of its log (issue
@@ -261,6 +267,13 @@ fn main() {
                 format!(" rows {lo} to {hi}")
             });
             eprintln!("ring {i}: {word:#010x}{rows} shown {shown}");
+        }
+    }
+    // Each base the scanout was given and the raster frame it came in
+    // (#1639).
+    if flips {
+        for (i, (base, frame)) in m.board.0.borrow().flips.iter().enumerate() {
+            eprintln!("flip {i}: {base:#010x} at frame {frame}");
         }
     }
     // Where the second hart is, once anything started it (issue 1408).
