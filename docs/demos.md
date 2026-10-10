@@ -10,7 +10,7 @@ Each line names a demo, its image's Bazel target, how it is loaded, how long it 
 
 * **The icosahedron series**: one image for each GPU feature, oldest first, from the flat icosahedron the core draws itself to the textured and mipmapped ones Razboj draws.
   A new feature adds a line at the end of the series.
-* **The teapot**: the Stanford teapot, so that every milestone draws the same well-known model.
+* **The teapot**: the Utah teapot, so that every milestone draws the same well-known model.
 * **Linux on the console**: the board boots Linux and runs a fixed list of commands, each printed before its output, until `txhdl: demo done`.
 * **Doom**: the first level, from Freedoom's WAD.
 
