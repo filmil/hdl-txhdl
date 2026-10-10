@@ -2532,6 +2532,35 @@ impl Lowered {
                 _ => writeln!(out, "  wire {}{n};", range(*w)).unwrap(),
             }
         }
+        let (procs, wires, temps) = self.hoisted();
+        for (n, e) in &wires {
+            let w = self.ewidth(e);
+            assert!(w > 0, "wire `{n}` has no width: size its literals");
+            writeln!(
+                out,
+                "  {}wire {}{n};",
+                dsp_wire(n)
+                    .map(|v| format!("(* use_dsp = \"{v}\" *) "))
+                    .unwrap_or_default(),
+                range(w)
+            )
+            .unwrap();
+        }
+        for (t, w, e) in &temps {
+            writeln!(
+                out,
+                "  {}wire {}{t} = {};",
+                dsp_wire(t)
+                    .map(|v| format!("(* use_dsp = \"{v}\" *) "))
+                    .unwrap_or_default(),
+                range(*w),
+                vexpr(e, l)
+            )
+            .unwrap();
+        }
+        // The children after every wire, ties included: a name first
+        // met in a port connection is an implicit net, and Vivado's
+        // simulator refuses its declaration after that (#1575).
         for inst in &self.instances {
             // A lowered child's clock ports are named for their clocks;
             // a foreign child's have names of their own.
@@ -2575,32 +2604,6 @@ impl Lowered {
                 "  {module} {params}{}(\n    {}\n  );",
                 inst.name,
                 conns.join(",\n    ")
-            )
-            .unwrap();
-        }
-        let (procs, wires, temps) = self.hoisted();
-        for (n, e) in &wires {
-            let w = self.ewidth(e);
-            assert!(w > 0, "wire `{n}` has no width: size its literals");
-            writeln!(
-                out,
-                "  {}wire {}{n};",
-                dsp_wire(n)
-                    .map(|v| format!("(* use_dsp = \"{v}\" *) "))
-                    .unwrap_or_default(),
-                range(w)
-            )
-            .unwrap();
-        }
-        for (t, w, e) in &temps {
-            writeln!(
-                out,
-                "  {}wire {}{t} = {};",
-                dsp_wire(t)
-                    .map(|v| format!("(* use_dsp = \"{v}\" *) "))
-                    .unwrap_or_default(),
-                range(*w),
-                vexpr(e, l)
             )
             .unwrap();
         }
