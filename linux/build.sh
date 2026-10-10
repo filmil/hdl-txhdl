@@ -67,7 +67,7 @@ jobs=$(nproc)
 
 case $what in
 kernel)
-  src=$1 frag=$2 image=$3 config=$4 map=$5
+  src=$1 frag=$2 image=$3 config=$4 map=$5 mod_c=$6 mod_ko=$7
   out=$root/.kout
   rm -rf "$out" && mkdir -p "$out"
   k() {
@@ -106,6 +106,16 @@ kernel)
   # Where the kernel ends in memory, past the Image: its BSS and early
   # page tables, which the boot image (issue 1019) must leave free.
   cp "$out/System.map" "$map"
+  # A module built against this kernel (issue 1441), out of the tree as
+  # any module a user adds is: the tree's own modules first, for the
+  # symbol versions a module is checked against, then the one module.
+  k -j"$jobs" modules
+  mod=$root/.kmod
+  rm -rf "$mod" && mkdir -p "$mod"
+  cp "$root/$mod_c" "$mod/"
+  echo "obj-m := $(basename "$mod_c" .c).o" >"$mod/Kbuild"
+  k M="$mod" modules
+  cp "$mod/$(basename "$mod_c" .c).ko" "$mod_ko"
   ;;
 opensbi)
   src=$1 bin_out=$2 elf_out=$3

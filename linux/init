@@ -58,6 +58,13 @@ fi
 if [ -x /bin/dynhello ]; then
 	/bin/dynhello
 fi
+# A module, when the root has one (issue 1441): loaded, listed and
+# removed, which says the kernel loads modules; it says so as it goes.
+if [ -f /lib/modules/txhdl_hello.ko ]; then
+	/bin/busybox insmod /lib/modules/txhdl_hello.ko
+	/bin/busybox lsmod | /bin/busybox grep txhdl_hello
+	/bin/busybox rmmod txhdl_hello
+fi
 # The ssh server, when the root has one (issue 1439): its sessions need
 # pseudo-terminals, and it makes its host keys on the first connection
 # and keeps them in /etc/dropbear, which persists on an NFS root. Keys
