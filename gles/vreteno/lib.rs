@@ -3,10 +3,12 @@
 //! Vreteno's peripherals, behind `gles_egl::Machine`.
 //!
 //! * The display list is Razboj's, in the DDR3 at `0x4280_0000`, and GL
-//!   writes each frame straight into it. The core has no data cache, so
-//!   the stores reach the memory in order; the last word is read back
-//!   before the doorbell is rung, so that the posted stores have landed
-//!   when Razboj reads the list, as `ico_hdmi.rs` does.
+//!   writes each frame straight into it. The stores are posted and the
+//!   doorbell is on another path, so a `fence w, o` comes before the
+//!   doorbell is rung, which waits until every store is answered, as the
+//!   HAL's `Razboj::ring` does (#1553, #1610). A read of the list's last
+//!   word would not do it: the core's data cache answers a load that hits
+//!   at once, without waiting for the stores before it.
 //! * The doorbell at `0x3900` takes the count, and reads zero again with
 //!   the rasteriser's status idle once every pixel is written.
 //! * A frame that tests depth is binned into a megabyte two into the
@@ -18,8 +20,10 @@
 //!   that shows the scanout.
 //! * GL's textures have four megabytes of the DDR3 at `0x4300_0000`, and
 //!   its buffer objects one after them (#999).
-//! * `glReadPixels` reads the framebuffer straight from the DDR3, both
-//!   buffers' rows, once the frame so far is drawn (#999).
+//! * `glReadPixels` reads the framebuffer from the DDR3, both buffers'
+//!   rows, once the frame so far is drawn (#999). The core's loads go
+//!   through its data cache, which drops every line another host's burst
+//!   writes, Razboj's among them, so they see what Razboj drew.
 //! * The vertical blanking is bit 0 of the video peripheral's status, at
 //!   `0x3200`.
 //!
@@ -75,14 +79,18 @@ fn wr(at: usize, v: u32) {
     unsafe { write_volatile(at as *mut u32, v) }
 }
 
-/// Rings the doorbell with `count` once the list's last word, at
-/// `last`, reads back, so that every store before it has landed; then
-/// waits until the list is drawn, the count back at zero and every
-/// pixel written.
-fn ring(last: usize, count: u32) {
+/// Rings the doorbell with `count` once every store before it, the
+/// list's among them, is answered (#1610); then waits until the list is
+/// drawn, the count back at zero and every pixel written.
+fn ring(count: u32) {
     let (bell, status) =
         (DOORBELL + doorbell::COUNT, DOORBELL + doorbell::STATUS);
-    let _ = rd(last);
+    // SAFETY: a fence has no effect but the order. The crate is also
+    // built for the host, in `//...`, where nothing runs it.
+    #[cfg(target_arch = "riscv32")]
+    unsafe {
+        core::arch::asm!("fence w, o")
+    };
     wr(bell, count);
     while rd(bell) & doorbell::COUNT_COUNT_MASK != 0
         || rd(status) & doorbell::STATUS_IDLE_MASK == 0
@@ -122,7 +130,7 @@ impl Machine for Board {
         }
         while rd(DOORBELL + doorbell::COUNT) & doorbell::COUNT_COUNT_MASK != 0 {
         }
-        ring(LIST + entries * WORDS * 4 - 4, entries as u32);
+        ring(entries as u32);
     }
 
     fn scratch(&mut self) -> &'static mut [[u32; WORDS]] {
@@ -158,10 +166,7 @@ impl Machine for Board {
                 wr(at + (i * WORDS + k) * 4, w);
             }
         }
-        ring(
-            at + entries.len() * WORDS * 4 - 4,
-            tiles.len() as u32 | doorbell::COUNT_TILED_MASK,
-        );
+        ring(tiles.len() as u32 | doorbell::COUNT_TILED_MASK);
     }
 
     fn textures(&mut self) -> Option<(&'static mut [u32], u32)> {
@@ -183,8 +188,8 @@ impl Machine for Board {
     fn pixels(&mut self) -> Option<(&'static [u32], usize)> {
         let words = (STRIDE / 4) as usize;
         // SAFETY: the framebuffer is Razboj's, in the board's DDR3, and
-        // the draw before a read has waited for every pixel; the core has
-        // no data cache, so its loads see what Razboj wrote.
+        // the draw before a read has waited for every pixel; the data
+        // cache drops the lines Razboj writes, so the loads see them.
         let fb = unsafe {
             core::slice::from_raw_parts(
                 FRAME as usize as *const u32,
