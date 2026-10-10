@@ -57,6 +57,9 @@
 //!   slot word 10 [0] stencil   [3:1] its comparison   [15:8] its
 //!                reference   [23:16] its mask   [31:24] its write mask
 //!   slot word 11 [2:0] stencil fail   [5:3] depth fail   [8:6] depth pass
+//!   slot word 12 a0      word 13 adx      word 14 ady  (issue 1520)
+//!   slot word 15 [0] the alpha plane, a shaded triangle's alpha
+//!                interpolated as its colour is
 //! ```
 //!
 //! Like depth, these hold only in a tiled list.
@@ -137,6 +140,8 @@ pub fn encode_ext(i: &Insn) -> Option<[u32; WORDS]> {
     w[5] = (i.logic.to_bool() as u32) | (lo(i.lop.raw()) << 1);
     (w[6], w[7], w[8]) = (lo(i.f0.raw()), lo(i.fdx.raw()), lo(i.fdy.raw()));
     w[9] = (i.fog.to_bool() as u32) | (lo(i.fcol.raw()) << 8);
+    (w[12], w[13], w[14]) = (lo(i.a0.raw()), lo(i.adx.raw()), lo(i.ady.raw()));
+    w[15] = i.ashade.to_bool() as u32;
     w[10] = (i.sten.to_bool() as u32)
         | (lo(i.sfunc.raw()) << 1)
         | (lo(i.sref.raw()) << 8)
@@ -236,6 +241,8 @@ pub fn decode_ext(i: &mut Insn, e: &[u32]) {
     (i.f0, i.fdx, i.fdy) = (U::from(e[6]), U::from(e[7]), U::from(e[8]));
     i.fog = bit(e[9]);
     i.fcol = U::from(e[9] >> 8);
+    (i.a0, i.adx, i.ady) = (U::from(e[12]), U::from(e[13]), U::from(e[14]));
+    i.ashade = bit(e[15]);
     i.sten = bit(e[10]);
     i.sfunc = U::from((e[10] >> 1) & 7);
     i.sref = U::from((e[10] >> 8) & 0xff);

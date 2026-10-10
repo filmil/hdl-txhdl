@@ -101,13 +101,19 @@ pub(crate) fn channel(start: u32, dx: u32, dy: u32, i: i32, j: i32) -> u32 {
 /// box's first: its alpha above its colour, which is its own or a
 /// shaded triangle's three planes there.
 fn colour(op: &Insn, i: i32, j: i32) -> u32 {
-    let alpha = (op.alpha.raw() as u32) << 24;
-    if op.kind != Kind::Shaded {
-        return alpha | op.colour.raw() as u32;
-    }
     let p = |a: U<32>, b: U<32>, c: U<32>| {
         channel(a.raw() as u32, b.raw() as u32, c.raw() as u32, i, j)
     };
+    // A shaded triangle's alpha plane where it has one (issue 1520),
+    // which only the pixel's state carries.
+    let alpha = if op.state.to_bool() && op.ashade.to_bool() {
+        p(op.a0, op.adx, op.ady) << 24
+    } else {
+        (op.alpha.raw() as u32) << 24
+    };
+    if op.kind != Kind::Shaded {
+        return alpha | op.colour.raw() as u32;
+    }
     let r = p(op.r0, op.rdx, op.rdy);
     let g = p(op.g0, op.gdx, op.gdy);
     let b = p(op.b0, op.bdx, op.bdy);
