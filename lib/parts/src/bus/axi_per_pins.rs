@@ -1034,6 +1034,59 @@ mod tests {
         got.expect("the read was answered")
     }
 
+    /// An answer as early as a peripheral can give it, the step after
+    /// the address and the beats were taken, is counted: the counts the
+    /// unit keeps go back to zero once every burst is answered (issue
+    /// 1532). An answer the count missed would leave it above zero for
+    /// good, and the next reset's drain would never end.
+    #[test]
+    fn the_earliest_answers_are_counted() {
+        let Link {
+            host,
+            host_in,
+            host_out,
+            per_in,
+            per_out,
+            ..
+        } = axi::<16, 32, 4, 2, 4>();
+        let (aw, ar, w, _, _) = per_in;
+        let (_, _, b, r) = per_out;
+        let (ram, inp, outp) = pins::<16, 32, 4, 2>(aw, ar, w, b, r, 64);
+        let ram = ram.timed(0, 0, 0);
+        let done = Rc::new(RefCell::new(false));
+        let d = done.clone();
+        let client = async move {
+            for at in [0x0u32, 0x10, 0x20] {
+                let words = [U::from(at), U::from(at + 1)];
+                let got = host.write(Wr::at(at), &words).await.done().await;
+                assert_eq!(got.resp, Resp::Okay);
+                let got = host.read(Rd::at(at, 2)).await.done().await;
+                assert_eq!(got.data, words.to_vec());
+            }
+            *d.borrow_mut() = true;
+        };
+        let mut tracker = AxiHost::<16, 32, 4, 2, 4>::default();
+        let mut pinned = AxiPerPins::<16, 32, 4, 2>::default();
+        let (bowe, rowe) = (pinned.bowe, pinned.rowe);
+        let mut sim = Running::new(join2(
+            client,
+            join2(
+                tracker.run(host_in, host_out),
+                join2(ram.serve(), pinned.run(inp, outp)),
+            ),
+        ));
+        for _ in 0..400 {
+            sim.cycle();
+            if *done.borrow() {
+                break;
+            }
+        }
+        assert!(*done.borrow(), "every burst was answered");
+        sim.cycle();
+        assert_eq!(bowe.get().raw(), 0, "responses still owed");
+        assert_eq!(rowe.get().raw(), 0, "read beats still owed");
+    }
+
     #[test]
     fn a_memory_reading_at_the_address_lets_a_read_pass_a_write() {
         assert_eq!(passed(false), 9, "read at the beat: the new word");
