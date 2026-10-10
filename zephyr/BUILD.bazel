@@ -182,6 +182,21 @@ zephyr_image(
     module = ":module",
 )
 
+# The GL program boots on the machine model and draws sixty frames, its
+# stacks and its state in the core's own memory (issue 1287).
+sh_test(
+    name = "gles_model_test",
+    srcs = ["gles/model_test.sh"],
+    args = [
+        "$(rootpath //cpu/vreteno:machine)",
+        "$(rootpaths :gles)",
+    ],
+    data = [
+        ":gles",
+        "//cpu/vreteno:machine",
+    ],
+)
+
 # The same with the network stack logging at debug, for the board when
 # a frame goes missing (#786).
 zephyr_image(
