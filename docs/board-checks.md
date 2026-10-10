@@ -817,16 +817,17 @@ It draws `ico <n>: <name>` in the top left corner of both buffers, where the sol
 |---|---|---|
 | 1 | `demo-ico-1-flat.bin` | Flat faces, back faces culled, Razboj's flat list without GL |
 | 2 | `demo-ico-2-depth.bin` | Through GL, depth-tested in tiles, lit per face |
+| 3 | `demo-ico-3-smooth.bin` | Lit at each corner along the way from the centre and shaded smooth, so the light runs across the faces as on a ball |
 | 4 | `demo-ico-4-textured.bin` | A texture on each face, nearest filtering |
 | 5 | `demo-ico-5-mipmapped.bin` | Trilinear mipmaps, over a floor receding to the horizon |
 
-Steps 3, smooth shading, and 6 to 8, fog, blending with smooth alpha, and the stencil, come as the program learns them, and the teapot after.
+Steps 6 to 8, fog, blending with smooth alpha, and the stencil, come as the program learns them, and the teapot after.
 A flagship from the same `main`, programmed over JTAG, and the board's serial port open on the board server:
 
 ```sh
 bazel build //demo/canon:ico_series
 bazel run //flagship:flagship_prog -- "${PROG[@]}"
-for s in 1-flat 2-depth 4-textured 5-mipmapped; do
+for s in 1-flat 2-depth 3-smooth 4-textured 5-mipmapped; do
   bazel run //cpu/vreteno/board/remote:load -- --reset \
       --image=$PWD/bazel-bin/demo/canon/demo-ico-$s.bin --seconds=30 \
       2>&1 | tee board-1592-ico-$s.log
