@@ -575,6 +575,11 @@ struct ScanLog {
     /// (issue 1523).
     worst: u32,
     lates: u32,
+    /// What the pair counts and measures itself (issue 1524): the rows
+    /// and frames that showed `LATE`, and the least margin, in pixels.
+    pair_late_rows: u32,
+    pair_late_frames: u32,
+    margin: i16,
     /// The first pixel of every visible row shown, with the cycle, its
     /// row and the base the pair took at the last vertical sync: what
     /// says the pair shows each row's own line, from its own frame.
@@ -647,9 +652,9 @@ fn run_all_in<const LO: usize, const HI: usize>(
     let (stuck_at_o, stuck_at) = signal::<U<32>, Pix>();
     let (worst_o, worst) = signal::<U<16>, Pix>();
     let (lates_o, lates) = signal::<U<16>, Pix>();
-    let (late_rows_o, _late_rows) = signal::<U<16>, Pix>();
-    let (late_frames_o, _late_frames) = signal::<U<16>, Pix>();
-    let (margin_o, _margin) = signal::<U<16>, Pix>();
+    let (late_rows_o, late_rows) = signal::<U<16>, Pix>();
+    let (late_frames_o, late_frames) = signal::<U<16>, Pix>();
+    let (margin_o, margin) = signal::<U<16>, Pix>();
     let (two_o, two) = signal::<Bit, Pix>();
     // The raster, as `txhdl_parts::hdmi::Raster` counts, a column a
     // pixel: the column and row the pair is shown next.
@@ -1112,6 +1117,9 @@ fn run_all_in<const LO: usize, const HI: usize>(
             }
             scan_log.worst = worst.get().raw() as u32;
             scan_log.lates = lates.get().raw() as u32;
+            scan_log.pair_late_rows = late_rows.get().raw() as u32;
+            scan_log.pair_late_frames = late_frames.get().raw() as u32;
+            scan_log.margin = margin.get().raw() as u16 as i16;
             if stuck.get().to_bool() && scan_log.stuck.is_none() {
                 scan_log.stuck = Some((cycle, stuck_at.get().raw() as u32));
             }
@@ -3395,6 +3403,7 @@ fn the_scanout_against_a_trilinear_floor() {
     assert!(n >= 20, "only {n} lines came");
     assert_eq!(ran.scan.starved, None, "a column starved");
     assert!(ran.scan.late_rows.is_empty(), "rows shown LATE");
+    assert_eq!(ran.scan.pair_late_rows, 0, "rows the pair counted LATE");
     assert!(
         2 * max < SCAN_LINE,
         "the longest line took {max} of {SCAN_LINE} cycles"
@@ -3461,11 +3470,15 @@ fn a_stalled_read_is_late_one_row_ahead_and_not_two() {
         }
         eprintln!(
             "stall, {} ahead: {n} lines, longest {max} cycles, the pair's \
-             longest {} pixels, {} late, rows LATE {:?}",
+             longest {} pixels, {} late, rows LATE {:?}, the pair \
+             counts {} rows and {} frames LATE, margin {}",
             if two { "two" } else { "one" },
             ran.scan.worst,
             ran.scan.lates,
             ran.scan.late_rows,
+            ran.scan.pair_late_rows,
+            ran.scan.pair_late_frames,
+            ran.scan.margin,
         );
         assert!(n >= 12, "only {n} lines came");
         assert!(max > 4000, "the stalled line took {max} cycles");
@@ -3473,10 +3486,14 @@ fn a_stalled_read_is_late_one_row_ahead_and_not_two() {
         if two {
             assert_eq!(ran.scan.lates, 1, "two ahead, the late lines");
             assert!(ran.scan.late_rows.is_empty(), "two ahead, rows LATE");
+            assert_eq!(ran.scan.pair_late_rows, 0, "two ahead, rows counted");
+            assert!(ran.scan.margin >= 0, "two ahead, the margin");
             assert_eq!(ran.scan.starved, None, "two ahead, a column starved");
         } else {
             assert_eq!(ran.scan.lates, 4, "one ahead, the late lines");
             assert_eq!(ran.scan.late_rows.len(), 2, "one ahead, rows LATE");
+            assert_eq!(ran.scan.pair_late_rows, 2, "one ahead, rows counted");
+            assert!(ran.scan.margin < 0, "one ahead, the margin");
             for &(_, from, cols) in &ran.scan.late_rows {
                 assert!(from == 0 && cols == 640, "a row from {from}");
             }

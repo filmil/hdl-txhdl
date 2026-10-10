@@ -1355,13 +1355,22 @@ mod tests {
         }
     }
 
-    /// The flagship's frame, 480 rows of 525, its words given as fast as
-    /// the pair takes them, one row ahead and two (issue 1523): from the
-    /// second frame on, no line is late at its row and no column is
-    /// shown before its word, so a late line on the board is a late
-    /// word and not the frame's own shape.
-    #[test]
-    fn a_frame_with_its_words_on_time_has_no_late_line() {
+    /// What a run of the flagship's pair says at its end.
+    struct Seen {
+        lates: u32,
+        late_rows: u32,
+        late_frames: u32,
+        margin: i16,
+        starved: bool,
+        stuck: bool,
+        worst: u32,
+    }
+
+    /// The flagship's frame, 480 rows of 525, for `frames` frames, one
+    /// row ahead or two, with each line's words given one a clock from
+    /// `delay` clocks after the line is asked for, as fast as the pair
+    /// takes them, and the counts cleared once the first frame is over.
+    fn timed_run(ahead: bool, delay: usize, frames: usize) -> Seen {
         type R = Raster<
             { vga::HV },
             { vga::HFP },
@@ -1383,72 +1392,187 @@ mod tests {
             0x8000_0000,
             DefaultClock,
         >;
-        for ahead in [false, true] {
-            let mut raster = R::default();
-            let mut pair = P::default();
-            let (col_o, col) = signal::<U<10>, DefaultClock>();
-            let (vis_o, vis) = signal::<Bit, DefaultClock>();
-            let (line_o, line) = signal::<Bit, DefaultClock>();
-            let (row_o, row) = signal::<U<12>, DefaultClock>();
-            let (frame_o, frame) = signal::<Bit, DefaultClock>();
-            let (base_o, base) = signal::<U<32>, DefaultClock>();
-            let (clear_o, clear) = signal::<Bit, DefaultClock>();
-            let (show_o, show) = signal::<Bit, DefaultClock>();
-            let (pix_o, _pix) = signal::<U<32>, DefaultClock>();
-            let (starved_o, starved) = signal::<Bit, DefaultClock>();
-            let (stuck_o, stuck) = signal::<Bit, DefaultClock>();
-            let (stuck_at_o, _stuck_at) = signal::<U<32>, DefaultClock>();
-            let (worst_o, worst) = signal::<U<16>, DefaultClock>();
-            let (lates_o, lates) = signal::<U<16>, DefaultClock>();
-            let (late_rows_o, _late_rows) = signal::<U<16>, DefaultClock>();
-            let (late_frames_o, _late_frames) = signal::<U<16>, DefaultClock>();
-            let (margin_o, _margin) = signal::<U<16>, DefaultClock>();
-            let (two_o, two) = signal::<Bit, DefaultClock>();
-            let (words_tx, words) = chan::<U<32>, DefaultClock>();
-            let (req, req_rx) = chan::<U<32>, DefaultClock>();
-            base_o.set(U::<32>::from(0x4100_0000u32));
-            clear_o.set(Bit::Zero);
-            show_o.set(Bit::One);
-            two_o.set(Bit::from_bool(ahead));
-            let mut sim = Running::new(join2(
-                raster.run((), (col_o, vis_o, line_o, row_o, frame_o)),
-                pair.run(
-                    (words, col, vis, line, row, frame, base, clear, show, two),
-                    (
-                        pix_o,
-                        req,
-                        starved_o,
-                        stuck_o,
-                        stuck_at_o,
-                        worst_o,
-                        lates_o,
-                        late_rows_o,
-                        late_frames_o,
-                        margin_o,
-                    ),
+        let mut raster = R::default();
+        let mut pair = P::default();
+        let (col_o, col) = signal::<U<10>, DefaultClock>();
+        let (vis_o, vis) = signal::<Bit, DefaultClock>();
+        let (line_o, line) = signal::<Bit, DefaultClock>();
+        let (row_o, row) = signal::<U<12>, DefaultClock>();
+        let (frame_o, frame) = signal::<Bit, DefaultClock>();
+        let (base_o, base) = signal::<U<32>, DefaultClock>();
+        let (clear_o, clear) = signal::<Bit, DefaultClock>();
+        let (show_o, show) = signal::<Bit, DefaultClock>();
+        let (pix_o, _pix) = signal::<U<32>, DefaultClock>();
+        let (starved_o, starved) = signal::<Bit, DefaultClock>();
+        let (stuck_o, stuck) = signal::<Bit, DefaultClock>();
+        let (stuck_at_o, _stuck_at) = signal::<U<32>, DefaultClock>();
+        let (worst_o, worst) = signal::<U<16>, DefaultClock>();
+        let (lates_o, lates) = signal::<U<16>, DefaultClock>();
+        let (late_rows_o, late_rows) = signal::<U<16>, DefaultClock>();
+        let (late_frames_o, late_frames) = signal::<U<16>, DefaultClock>();
+        let (margin_o, margin) = signal::<U<16>, DefaultClock>();
+        let (two_o, two) = signal::<Bit, DefaultClock>();
+        let (words_tx, words) = chan::<U<32>, DefaultClock>();
+        let (req, req_rx) = chan::<U<32>, DefaultClock>();
+        base_o.set(U::<32>::from(0x4100_0000u32));
+        clear_o.set(Bit::Zero);
+        show_o.set(Bit::One);
+        two_o.set(Bit::from_bool(ahead));
+        let mut sim = Running::new(join2(
+            raster.run((), (col_o, vis_o, line_o, row_o, frame_o)),
+            pair.run(
+                (words, col, vis, line, row, frame, base, clear, show, two),
+                (
+                    pix_o,
+                    req,
+                    starved_o,
+                    stuck_o,
+                    stuck_at_o,
+                    worst_o,
+                    lates_o,
+                    late_rows_o,
+                    late_frames_o,
+                    margin_o,
                 ),
-            ));
-            let frame_len = 525 * 800;
-            let mut owed = 0usize;
-            for c in 0..3 * frame_len {
-                // The bits are cleared once the first frame is over.
-                clear_o.set(Bit::from_bool(c == frame_len + 1000));
-                if req_rx.recv_if(true).is_some() {
-                    owed += vga::HV;
-                }
-                if owed > 0 && words_tx.ready().to_bool() {
-                    words_tx.send(U::<32>::from(owed as u32));
-                    owed -= 1;
-                }
-                sim.cycle();
+            ),
+        ));
+        let frame_len = 525 * 800;
+        let mut owed = 0usize;
+        let mut asked = std::collections::VecDeque::new();
+        for c in 0..frames * frame_len {
+            // The bits are cleared once the first frame is over.
+            clear_o.set(Bit::from_bool(c == frame_len + 1000));
+            if req_rx.recv_if(true).is_some() {
+                asked.push_back(c + delay);
             }
-            let n = lates.get().raw();
-            assert_eq!(n, 0, "two ahead {ahead}: {n} lines late");
-            assert!(!starved.get().to_bool(), "two ahead {ahead}: starved");
-            assert!(!stuck.get().to_bool(), "two ahead {ahead}: stuck");
-            let w = worst.get().raw();
-            assert!(w < 2 * 800 + 640, "two ahead {ahead}: longest {w}");
+            while asked.front().is_some_and(|&t| t <= c) {
+                asked.pop_front();
+                owed += vga::HV;
+            }
+            if owed > 0 && words_tx.ready().to_bool() {
+                words_tx.send(U::<32>::from(owed as u32));
+                owed -= 1;
+            }
+            sim.cycle();
         }
+        Seen {
+            lates: lates.get().raw() as u32,
+            late_rows: late_rows.get().raw() as u32,
+            late_frames: late_frames.get().raw() as u32,
+            margin: margin.get().raw() as u16 as i16,
+            starved: starved.get().to_bool(),
+            stuck: stuck.get().to_bool(),
+            worst: worst.get().raw() as u32,
+        }
+    }
+
+    /// The flagship's frame, its words given as fast as the pair takes
+    /// them, one row ahead and two (issue 1523): from the second frame
+    /// on, no line is late at its row and no column is shown before its
+    /// word, so a late line on the board is a late word and not the
+    /// frame's own shape. No row shows `LATE`, and the least margin is
+    /// not negative (issue 1524).
+    #[test]
+    fn a_frame_with_its_words_on_time_has_no_late_line() {
+        for ahead in [false, true] {
+            let s = timed_run(ahead, 0, 3);
+            assert_eq!(s.lates, 0, "two ahead {ahead}: {} lines late", s.lates);
+            assert!(!s.starved, "two ahead {ahead}: starved");
+            assert!(!s.stuck, "two ahead {ahead}: stuck");
+            assert!(
+                s.worst < 2 * 800 + 640,
+                "two ahead {ahead}: longest {}",
+                s.worst
+            );
+            assert_eq!(s.late_rows, 0, "two ahead {ahead}: rows LATE");
+            assert_eq!(s.late_frames, 0, "two ahead {ahead}: frames LATE");
+            assert!(s.margin >= 0, "two ahead {ahead}: margin {}", s.margin);
+        }
+    }
+
+    /// The margin's nought is the last tick a word may come (issue
+    /// 1524): every word held back by the margin measured on time leaves
+    /// the margin nought and no row `LATE`, and one clock more makes it
+    /// minus one and rows `LATE`, so the first hold-back that shows
+    /// `LATE` is the first that makes the margin negative.
+    #[test]
+    fn the_margin_is_nought_at_the_last_tick_a_word_may_come() {
+        let m = timed_run(false, 0, 2).margin;
+        assert!(m > 0, "on time, the margin is {m}");
+        let at = timed_run(false, m as usize, 2);
+        assert_eq!(at.margin, 0, "held back {m}");
+        assert_eq!(at.late_rows, 0, "held back {m}: rows LATE");
+        let past = timed_run(false, m as usize + 1, 2);
+        assert_eq!(past.margin, -1, "held back {}", m + 1);
+        assert!(past.late_rows > 0, "held back {}: no row LATE", m + 1);
+        assert!(past.late_frames > 0, "held back {}: no frame LATE", m + 1);
+    }
+
+    /// A host's read of the counts and the margin is a value the pair
+    /// sent, whole, even while they change every cycle (issue 1524): the
+    /// pair's values reach `ScanCtl` together on one channel, and a read
+    /// takes one register; the margin reads sign-extended.
+    #[test]
+    fn a_read_of_a_changing_value_is_one_the_pair_sent() {
+        use crate::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
+        let mut ctl = ScanCtl::default();
+        let (_aw_tx, aw) = chan::<LiteAw<32>, DefaultClock>();
+        let (ar_tx, ar) = chan::<LiteAr<32>, DefaultClock>();
+        let (_w_tx, w) = chan::<LiteW<32, 4>, DefaultClock>();
+        let (b, _b_rx) = chan::<LiteB, DefaultClock>();
+        let (r, r_rx) = chan::<LiteR<32>, DefaultClock>();
+        let (tap_tx, tap_rx) = chan::<ScanState, DefaultClock>();
+        let (base_o, _base) = signal::<U<32>, DefaultClock>();
+        let (mode_o, _mode) = signal::<Bit, DefaultClock>();
+        let (clear_o, _clear) = signal::<Bit, DefaultClock>();
+        let (two_o, _two) = signal::<Bit, DefaultClock>();
+        let mut sim = Running::new(ctl.run(
+            LitePort { aw, ar, w, b, r },
+            (tap_rx, base_o, mode_o, clear_o, two_o),
+        ));
+        // Every value sent, by word: a count that rises by one a cycle,
+        // a slower one, and a margin swinging either side of nought.
+        let mut sent: [Vec<u32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+        let mut k = 0u32;
+        let mut tick = |sim: &mut Running<_>, sent: &mut [Vec<u32>; 3]| {
+            if tap_tx.ready().to_bool() {
+                let margin = ((k * 37) % 401) as i32 - 200;
+                let s = ScanState {
+                    late_rows: U::<16>::from(k & 0xffff),
+                    late_frames: U::<16>::from((k / 7) & 0xffff),
+                    margin: U::<16>::from(margin as u16 as u32),
+                    ..ScanState::default()
+                };
+                sent[0].push(k & 0xffff);
+                sent[1].push((k / 7) & 0xffff);
+                sent[2].push(margin as u32);
+                tap_tx.send(s);
+                k += 1;
+            }
+            sim.cycle();
+        };
+        for n in 0..300u32 {
+            let word = 7 + n % 3;
+            ar_tx.send(LiteAr::<32> {
+                addr: U::<32>::from(4 * word),
+                prot: U::<3>::from(0u8),
+            });
+            let mut got = None;
+            for _ in 0..20 {
+                tick(&mut sim, &mut sent);
+                if let Some(a) = r_rx.recv_if(true) {
+                    got = Some(a.data.raw() as u32);
+                    break;
+                }
+            }
+            let v = got.expect("no answer to a read");
+            let which = (word - 7) as usize;
+            assert!(
+                sent[which].contains(&v),
+                "word {word} read {v:#x}, never sent"
+            );
+        }
+        assert!(k > 300, "the values changed {k} times");
     }
 
     /// The flagship's pair and raster, a line of 640 words in 800
