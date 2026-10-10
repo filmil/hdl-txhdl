@@ -810,7 +810,8 @@ Pass:
 
 The demos redone after each milestone and recorded for the TxHDL directory.
 The GPU's are the icosahedron series, a board image a step, each step adding one of Razboj's features.
-Each image prints `demo ico <n>: <name>` when it starts, then its cycles every 64 frames as the ico demos do, then `demo ico <n> done` after 1200 frames, 20 seconds at 60 Hz, and stops with its last frame on the screen.
+Each image prints `demo ico <n>: <name>` when it starts, then its cycles every 64 frames as the ico demos do, then after 1200 frames, 20 seconds at 60 Hz, `demo ico <n> done: 1200 frames in <m> shown, fps x10 <r>`, and stops with its last frame on the screen.
+The rate is the frames drawn against the frames the scanout showed meanwhile, in tenths of a frame a second, and is each demo's measure from one milestone to the next.
 It draws `ico <n>: <name>` in the top left corner of both buffers, where the solid never reaches.
 
 | Step | Image | What it shows |
@@ -823,7 +824,7 @@ It draws `ico <n>: <name>` in the top left corner of both buffers, where the sol
 | 6 | `demo-ico-6-fog.bin` | Step 5 in linear fog of the backdrop's colour, the solid drifting from 16 units to 26 and back so that it fades into the fog and out |
 | 8 | `demo-ico-8-mirror.bin` | Step 3 over a mirror: the stencil marks the mirror, the solid's reflection is drawn only there, and the mirror is blended over it |
 
-Step 7, blending with smooth alpha, come as the program learns them, and the teapot after.
+Step 7, blending with smooth alpha, comes once Razboj has smooth alpha (#1520).
 A flagship from the same `main`, programmed over JTAG, and the board's serial port open on the board server:
 
 ```sh
@@ -838,6 +839,24 @@ done
 
 The images' sums are in `bazel-bin/demo/canon/SHA256SUMS`.
 srv records each run from the Cam Link and uploads the video and its log to the TxHDL directory, named as the image is.
+
+The canonical teapot is Newell's Utah teapot, `demo-teapot-1-utah.bin`, the same teapot at every milestone.
+Its control points are freeglut's, which `MODULE.bazel` fetches by checksum and `//tools/teapot2rs` writes into `//lib/teapot` at build time.
+Its 32 patches are each cut three by three, 564 triangles once the squares that close to a point are one triangle each.
+It is smooth shaded, lit from the eye diffusely and specularly, leans 20 degrees towards the eye, and turns about its axis once in 128 frames.
+It prints `demo teapot 1: utah`, then `teapot 564 triangles`, and after 256 frames, two turns, `demo teapot 1 done:` with its rate.
+Its tessellation, view, light and frames do not change, so that its rate measures the system; a finer teapot would be a demo of its own.
+On the machine model with the board's timing, a frame's list takes 67.1 million cycles on one hart, and with both harts two frames take 68.5 million, 2.9 frames a second.
+Most of it is GL's work a vertex, which `draw_elements` does again for every index that names the vertex (#1624).
+
+```sh
+bazel build //demo/canon:teapot
+bazel run //cpu/vreteno/board/remote:load -- --reset \
+    --image=/bazel-bin/demo/canon/demo-teapot-1-utah.bin --seconds=120 \
+    2>&1 | tee board-1592-teapot.log
+```
+
+Its sum is in `bazel-bin/demo/canon/TEAPOT.SHA256SUMS`.
 
 ### Ethernet throughput, #1038
 

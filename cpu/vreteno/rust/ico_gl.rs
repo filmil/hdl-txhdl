@@ -61,7 +61,9 @@
 
 use crate::ico_list::{rect, Box, Solid, BACKDROP, BODY, FACES, H, W, WORDS};
 use gles::fixed::{Fx, ONE};
-use gles::{gl, Gl, Vertex};
+#[cfg(not(teapot))]
+use gles::Vertex;
+use gles::{gl, Gl};
 
 /// `ico_list`'s fixed point, ten bits of fraction, and the shift to
 /// GL's sixteen.
@@ -86,10 +88,15 @@ pub const VERTS: usize = 3 * FACES;
 /// face with its second slot when the depth test is on and its two
 /// texture slots when it is textured. Under `mirror` (#1592's step 8),
 /// the reflection's faces as well, and the mirror's two triangles twice.
+#[cfg(not(teapot))]
 pub const MOST: usize = 1
     + 4 * FACES
     + 4 * FLOOR_TRIS
     + if cfg!(mirror) { 2 * FACES + 8 } else { 0 };
+/// The canonical teapot's (#1592): the backdrop's rectangle, and each
+/// triangle with its second slot.
+#[cfg(teapot)]
+pub const MOST: usize = 1 + 2 * crate::teapot::TRIANGLES;
 
 /// The floor's triangles under `mip` (#997): two, each with its second
 /// slot and its two texture slots.
@@ -246,6 +253,15 @@ pub fn frame<'a>(
     g.material(gl::FRONT_AND_BACK, gl::DIFFUSE, &[0, 0, 0, ONE]);
     g.material(gl::FRONT_AND_BACK, gl::SPECULAR, &colour(SPECULAR));
     g.material(gl::FRONT_AND_BACK, gl::SHININESS, &[SHININESS]);
+    // The canonical teapot (#1592) is lit diffusely as well, from the
+    // eye, three tenths of its colour ambient and seven diffuse, so that
+    // its curves read as they turn away.
+    #[cfg(teapot)]
+    {
+        g.light(gl::LIGHT0, gl::DIFFUSE, &[ONE, ONE, ONE, ONE]);
+        g.material(gl::FRONT_AND_BACK, gl::AMBIENT, &colour(3 * ONE / 10));
+        g.material(gl::FRONT_AND_BACK, gl::DIFFUSE, &colour(7 * ONE / 10));
+    }
     g.enable(gl::LIGHTING);
     g.enable(gl::LIGHT0);
     if depth {
@@ -275,8 +291,27 @@ pub fn frame<'a>(
     g.translate(0, 0, -distance(ax));
     #[cfg(mirror)]
     mirror(&mut g, model, ay, ax);
+    // The canonical teapot (#1592) leans twenty degrees towards the eye
+    // and turns about its own axis, once in 128 frames.
+    #[cfg(not(teapot))]
     g.rotate(degrees(ax), ONE, 0, 0);
+    #[cfg(teapot)]
+    g.rotate(20 * ONE, ONE, 0, 0);
     g.rotate(degrees(ay), 0, ONE, 0);
+    #[cfg(teapot)]
+    {
+        // The teapot in the solid's place, untextured.
+        let _ = (model, textured);
+        let t = crate::teapot::get();
+        g.draw_elements(
+            gl::TRIANGLES,
+            &t.indices[..3 * t.triangles],
+            &t.positions,
+            None,
+            Some(&t.normals),
+        );
+    }
+    #[cfg(not(teapot))]
     if textured {
         g.draw_vertices(gl::TRIANGLES, VERTS, |k| Vertex {
             position: model.positions[k],

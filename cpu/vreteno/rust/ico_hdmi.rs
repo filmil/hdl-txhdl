@@ -83,9 +83,11 @@ mod ico_gl;
 // its rectangle are used.
 #[cfg_attr(gl, allow(dead_code))]
 mod ico_list;
+// The canonical teapot (#1592), drawn through GL in the solid's place.
+#[cfg(teapot)]
+mod teapot;
 
 use core::ptr::write_volatile;
-#[cfg(gl)]
 use core::sync::atomic::{AtomicU32, Ordering};
 #[cfg(not(gl))]
 use ico_list::MOST;
@@ -287,7 +289,10 @@ extern "C" fn odd_frames(_hart: u32, _arg: u32) -> ! {
     ALIVE.store(1, Ordering::Release);
     let solid = Solid::new();
     let model = ico_gl::Model::new(&solid);
+    #[cfg(not(teapot))]
     let mut list = [[0u32; WORDS]; ico_gl::MOST];
+    #[cfg(teapot)]
+    let mut list = lists(1);
     let mut last = CORNER;
     let mut f = 1u32;
     loop {
@@ -303,7 +308,7 @@ extern "C" fn odd_frames(_hart: u32, _arg: u32) -> ! {
         last = filled;
         while DRAWN.load(Ordering::Acquire) < f - 1 {}
         let sh = ico_list::H as u32;
-        let b = bin_tiled(&list, n, sh, 1);
+        let b = bin_tiled(&list[..], n, sh, 1);
         while ODD_READY.load(Ordering::Acquire) != 0 {}
         // SAFETY: hart 0 reads the records only while they are ready.
         unsafe { core::ptr::addr_of_mut!(ODD).write(b) };
@@ -409,14 +414,37 @@ fn logo(dy: u32) {
     }
 }
 
-/// The canonical demos (#1592): the step an image is in the icosahedron
-/// series, and its name, given by the build; an image without them runs
-/// for good, as the demos before them do.
+/// The canonical teapot's lists (#1592), one a hart: a frame of it is
+/// more than the stack's 64 KiB.
+#[cfg(teapot)]
+static mut LISTS: [[[u32; WORDS]; ico_gl::MOST]; 2] =
+    [[[0; WORDS]; ico_gl::MOST]; 2];
+
+/// Hart `hart`'s list, which only that hart touches.
+#[cfg(teapot)]
+fn lists(hart: usize) -> &'static mut [[u32; WORDS]; ico_gl::MOST] {
+    // SAFETY: each hart takes its own once, and nothing else does.
+    unsafe { &mut (*core::ptr::addr_of_mut!(LISTS))[hart] }
+}
+
+/// The canonical demos (#1592): the series an image is in, the
+/// icosahedron's or the teapot's, its step in it and its name, given by
+/// the build; an image without them runs for good, as the demos before
+/// them do.
+#[cfg(not(teapot))]
+const SERIES: &[u8] = b"ico";
+#[cfg(teapot)]
+const SERIES: &[u8] = b"teapot";
 const STEP: Option<&str> = option_env!("DEMO_STEP");
 const NAME: Option<&str> = option_env!("DEMO_NAME");
 
-/// How long a canonical demo runs: 1200 frames, 20 seconds at 60 Hz.
+/// How long a canonical demo runs: 1200 frames, 20 seconds at 60 Hz;
+/// the teapot, 256, two turns, since a frame of it takes several of the
+/// scanout's (#1592).
+#[cfg(not(teapot))]
 const DEMO_FRAMES: u32 = 1200;
+#[cfg(teapot)]
+const DEMO_FRAMES: u32 = 256;
 
 /// Where the step's title goes: the top left corner, eight pixels in,
 /// each of a 5 by 7 font's pixels two of the screen's, a glyph twelve
@@ -512,14 +540,23 @@ fn demo_start() {
     let (Some(step), Some(name)) = (STEP, NAME) else {
         return;
     };
-    Uart::say(b"demo ico ");
+    Uart::say(b"demo ");
+    Uart::say(SERIES);
+    Uart::put(b' ');
     Uart::say(step.as_bytes());
     Uart::say(b": ");
     Uart::say(name.as_bytes());
     Uart::put(b'\n');
+    #[cfg(teapot)]
+    {
+        Uart::say(b"teapot ");
+        Uart::put_decimal(teapot::get().triangles as u32);
+        Uart::say(b" triangles\n");
+    }
+    START.store(Video::frames(), Ordering::Relaxed);
     let mut text = [b' '; 40];
     let mut n = 0;
-    for part in [b"ico ".as_slice(), step.as_bytes(), b": ", name.as_bytes()] {
+    for part in [SERIES, b" ", step.as_bytes(), b": ", name.as_bytes()] {
         for &c in part {
             if n < text.len() {
                 text[n] = c;
@@ -531,14 +568,32 @@ fn demo_start() {
     title(&text[..n], SECOND as u32);
 }
 
+/// The video peripheral's count of frames shown when a canonical demo
+/// starts, for the rate it says at the end.
+static START: AtomicU32 = AtomicU32::new(0);
+
 /// A canonical demo's end once it has run its frames (#1592): the
-/// console says so and the core stops, the last frame shown.
+/// console says so, with the frames drawn against the frames the
+/// scanout showed meanwhile, as frames a second at 60 Hz in tenths, and
+/// the core stops, the last frame shown. The rate is a canonical demo's
+/// measure from one milestone to the next.
 fn demo_end(frames: u32) {
     if let Some(step) = STEP {
         if frames >= DEMO_FRAMES {
-            Uart::say(b"demo ico ");
+            let shown = Video::frames()
+                .wrapping_sub(START.load(Ordering::Relaxed))
+                & 0xffff;
+            Uart::say(b"demo ");
+            Uart::say(SERIES);
+            Uart::put(b' ');
             Uart::say(step.as_bytes());
-            Uart::say(b" done\n");
+            Uart::say(b" done: ");
+            Uart::put_decimal(frames);
+            Uart::say(b" frames in ");
+            Uart::put_decimal(shown);
+            Uart::say(b" shown, fps x10 ");
+            Uart::put_decimal(frames * 600 / shown.max(1));
+            Uart::put(b'\n');
             vreteno_hal::halt();
         }
     }
@@ -582,8 +637,10 @@ fn main() -> ! {
     let mut last = [CORNER, CORNER];
     #[cfg(not(gl))]
     let mut list = [[0u32; WORDS]; MOST];
-    #[cfg(gl)]
+    #[cfg(all(gl, not(teapot)))]
     let mut list = [[0u32; WORDS]; ico_gl::MOST];
+    #[cfg(teapot)]
+    let mut list = lists(0);
     #[cfg(gl)]
     let model = ico_gl::Model::new(&solid);
     let (mut ay, mut ax) = (0i32, 0i32);
@@ -657,7 +714,7 @@ fn main() -> ! {
             );
             last[which] = filled;
             let sh = (ico_list::H + dy) as u32;
-            mine = bin_tiled(&list, n, sh, (frames & 1) as usize);
+            mine = bin_tiled(&list[..], n, sh, (frames & 1) as usize);
             if frames == 0 {
                 two = start_odd();
                 Uart::say(if two {

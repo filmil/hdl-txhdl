@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+# Writes the Utah teapot's control points as Rust from freeglut's header
+# (#1592), at build time: //lib/teapot runs it.
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_binary(
+    name = "teapot2rs",
+    srcs = ["main.rs"],
+    edition = "2021",
+)

@@ -531,6 +531,15 @@ http_file(
     urls = ["https://raw.githubusercontent.com/KhronosGroup/EGL-Registry/db3425b8246136faccb5e2782b5694960bd6edf1/api/KHR/khrplatform.h"],
 )
 
+# Newell's teapot as freeglut holds it, for the canonical teapot demo
+# (#1592): //tools/teapot2rs writes //lib/teapot's tables from it.
+http_file(
+    name = "freeglut_teapot_data_h",
+    downloaded_file_path = "fg_teapot_data.h",
+    sha256 = "e6b5587e62acb59564c3801b18ed377c05e78083fbcc70b7bab2caeb4c573ed9",
+    urls = ["https://raw.githubusercontent.com/freeglut/freeglut/66e880894389f79d1b50c5fc5df6c6cf20c0fef6/src/fg_teapot_data.h"],
+)
+
 # Zephyr's Mbed TLS module, at the revision v4.1.0's west.yml pins, for
 # the SHA-256 the entropy driver conditions with (issue 780). Zephyr's
 # own tree holds the module's CMake and Kconfig; this is the library.

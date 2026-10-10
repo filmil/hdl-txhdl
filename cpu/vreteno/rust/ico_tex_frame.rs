@@ -18,6 +18,8 @@
 mod ico_gl;
 #[allow(dead_code)]
 mod ico_list;
+#[cfg(teapot)]
+mod teapot;
 
 use ico_gl::{Model, TEX_ROOM};
 use ico_list::{Box, Solid, BACKDROP, H, SECOND, W, WORDS};
