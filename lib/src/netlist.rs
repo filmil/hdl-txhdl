@@ -5000,6 +5000,17 @@ mod tests {
         assert!(v.contains("assign ticker_tie0 = 8'b00000011;"), "{v}");
     }
 
+    /// The tie's wire is declared before the instance that reads it:
+    /// a name first met in a port connection is an implicit net, and
+    /// Vivado's simulator refuses the declaration after it (#1575).
+    #[test]
+    fn a_tie_is_declared_before_its_instance() {
+        let v = tied_to(Kind::In).checked().verilog();
+        let decl = v.find("wire [7:0] ticker_tie0;").expect("declared");
+        let used = v.find(".step(ticker_tie0)").expect("joined");
+        assert!(decl < used, "declared after its use: {v}");
+    }
+
     /// And to nothing else: an output would be driven twice.
     #[test]
     #[should_panic(expected = "`ticker_tie0` of `two` holds a constant, and \
