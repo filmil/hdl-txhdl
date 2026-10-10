@@ -11,7 +11,7 @@ use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, PerPort};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::bus::router::Router;
-use vreteno32::core::Writeback;
+use vreteno32::core::{is_load_word, Writeback};
 use vreteno32::dmem::Dmem;
 use vreteno32::hart::Hart;
 use vreteno32::isa::{
@@ -261,6 +261,7 @@ fn lockstep_hart<const HID: usize>(
     let (halt_out, _halt) = signal::<Bit, DefaultClock>();
     let (instr_out, _instr) = signal::<U<32>, DefaultClock>();
     let (ir, in_execute) = (cpu.ir, cpu.valid);
+    let ir_ld = cpu.ir_ld;
     let stall = cpu.stall.clone();
     let (wb_out, wb) = signal::<Writeback, DefaultClock>();
     // The timer first, since the core reads its line in the same step.
@@ -505,6 +506,15 @@ fn lockstep_hart<const HID: usize>(
         // the illegal word is zero too, so the flag is kept apart.
         let executing = in_execute.get().to_bool();
         let executed = if executing { ir.get().raw() as u32 } else { 0 };
+        // The fetch's decode of a load, written beside the word, is
+        // the decode of the word itself, in every cycle and on every
+        // path that writes the word (issue 1397).
+        assert_eq!(
+            ir_ld.get(),
+            is_load_word(ir.get()),
+            "ir_ld disagrees with ir {:#010x} in cycle {cycle}",
+            ir.get().raw()
+        );
         // The register holds the load's answer until the cycle in
         // which it retires, which is the next instruction's execute
         // cycle, so it is read before that cycle.

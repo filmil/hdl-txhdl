@@ -73,6 +73,27 @@ pub struct Writeback {
 // each under `#[lower]`, inlined by the lowering where the step calls
 // it.
 
+/// Whether a word is a load as execute takes one: a load, `lr.w`
+/// (whose `rs2` is zero) or one of the nine AMOs, which read as a
+/// load does and store later. The fetch decodes it into `ir_ld`
+/// beside the word, and the lockstep test holds the two equal in
+/// every cycle (issue 1397).
+#[lower]
+pub fn is_load_word(ir: U<32>) -> Bit {
+    let opcode = ir.slice::<0, 7>();
+    let f3 = ir.slice::<12, 3>();
+    let rs2 = ir.slice::<20, 5>();
+    let funct5 = ir.slice::<27, 5>();
+    let is_aop = (opcode == 0x2f) & (f3 == 2);
+    let is_lr = is_aop & (funct5 == 2) & (rs2 == 0);
+    let is_rmw = is_aop
+        & select!(funct5.raw() => {
+            0 | 1 | 4 | 8 | 12 | 16 | 20 | 24 | 28 => Bit::One,
+            _ => Bit::Zero,
+        });
+    (opcode == 0x03) | is_lr | is_rmw
+}
+
 /// The I immediate: the top twelve bits, sign-extended.
 #[lower]
 fn imm_i(ir: U<32>) -> U<32> {
@@ -806,6 +827,12 @@ pub struct Vreteno<
 > {
     pub pc: Reg<U<32>>,
     pub ir: Reg<U<32>>,
+    /// Whether the word in `ir` is a load, `lr.w` and the AMOs
+    /// included: `is_load_word` of the same fetched word, written
+    /// with it, so that execute's stall reads a register rather
+    /// than the decode, whose compare of `rs2` for `lr.w` was on
+    /// the path to the boot memory's next address (issue 1397).
+    pub ir_ld: Reg<Bit>,
     pub ir_c: Reg<Bit>,
     /// The word in execute came from a refused fetch: it is zero, and
     /// its trap is the instruction access fault (issue 423).
@@ -1628,8 +1655,9 @@ impl<
             // does, if its reservation holds. The reservation is
             // compared with the register, not the sum, since an A
             // instruction adds no offset, which keeps the compare off
-            // the adder's path.
-            let is_load = (opcode == 0x03) | is_lr | is_rmw;
+            // the adder's path. Whether the word is a load is decoded
+            // at the fetch, into `ir_ld` (issue 1397).
+            let is_load = self.ir_ld.get();
             let is_store = (opcode == 0x23) | is_sc;
             let sc_hit =
                 self.rsv_valid & (self.rsv_at.get() == a.slice::<2, 30>());
@@ -3539,6 +3567,7 @@ impl<
                 },
                 _ => {
                     self.ir <= fetched;
+                    self.ir_ld <= is_load_word(fetched);
                     self.ir_bad <= f_fault;
                     self.ir_pf <= f_pf;
                     self.ir_pf2 <= !self.f_pf0;
