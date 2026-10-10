@@ -25,6 +25,7 @@ peer=
 ptycheck=
 dhcp=
 applets=
+demo=
 for word in $(/bin/busybox cat /proc/cmdline); do
 	case "$word" in
 	txhdl.net) addr=10.0.0.1/24 peer=10.0.0.2 ;;
@@ -33,6 +34,8 @@ for word in $(/bin/busybox cat /proc/cmdline); do
 	txhdl.ptycheck) ptycheck=1 ;;
 	txhdl.dhcp) dhcp=1 ;;
 	txhdl.applets) applets=1 ;;
+	txhdl.demo) demo=2 ;;
+	txhdl.demo=*) demo=${word#txhdl.demo=} ;;
 	esac
 done
 if [ -n "$addr" ]; then
@@ -72,14 +75,6 @@ if [ -n "$addr" ] && [ -n "$peer" ]; then
 	case "$pinged" in
 	*"3 packets received"*) echo "txhdl: network is up" ;;
 	esac
-fi
-# A shell on the screen too, when there is one (issue 1440): the
-# framebuffer console's first terminal, so a prompt shows on HDMI. Its
-# input waits for a keyboard, or for ssh; the serial port's shell below
-# is the one to type at.
-if [ -c /dev/tty1 ]; then
-	/bin/busybox setsid /bin/busybox sh -c \
-		'exec /bin/busybox sh </dev/tty1 >/dev/tty1 2>&1' &
 fi
 # Two threads, one on each hart, counting three ways (issue 1408).
 if [ -x /bin/smpcount ]; then
@@ -128,6 +123,32 @@ fi
 if [ -n "$applets" ]; then
 	echo "txhdl: awk said $(echo 1 2 | /bin/busybox awk '{print $2}')"
 	/bin/busybox netstat -tln >/dev/null && echo "txhdl: netstat ran"
+fi
+# `txhdl.demo` is the console demo (issue 1592), the last of the
+# steps above, so that its closing line is the last before the prompt:
+# a fixed list of commands, each shown as `# <command>` and then its
+# output, on the serial port and on the screen, with a pause of two
+# seconds after each so a recording can follow it, or of N with
+# `txhdl.demo=N`. The screen's shell starts after it, so the screen
+# shows the list alone.
+if [ -n "$demo" ]; then
+	screen=/dev/null
+	[ -c /dev/tty1 ] && screen=/dev/tty1
+	for cmd in "uname -a" "cat /proc/cpuinfo" "nproc" "free" "ip addr" \
+		"/bin/dynhello" ${peer:+"ping -c 3 -W 5 $peer"}; do
+		echo "# $cmd" | /bin/busybox tee "$screen"
+		/bin/busybox sh -c "$cmd" 2>&1 | /bin/busybox tee "$screen"
+		/bin/busybox sleep "$demo"
+	done
+	echo "txhdl: demo done" | /bin/busybox tee "$screen"
+fi
+# A shell on the screen too, when there is one (issue 1440): the
+# framebuffer console's first terminal, so a prompt shows on HDMI. Its
+# input waits for a keyboard, or for ssh; the serial port's shell below
+# is the one to type at.
+if [ -c /dev/tty1 ]; then
+	/bin/busybox setsid /bin/busybox sh -c \
+		'exec /bin/busybox sh </dev/tty1 >/dev/tty1 2>&1' &
 fi
 # The shell takes the console as its controlling tty, so that Ctrl-C
 # reaches the command in the foreground: with a plain exec it had none,

@@ -453,6 +453,23 @@ sh_test(
     tags = ["manual"],
 )
 
+# The console demo (issue 1592): the board boots the root with musl and
+# dynhello as its initramfs, at its fixed address, and runs the fixed
+# list `txhdl.demo` names, on the serial port and on HDMI, then says
+# "txhdl: demo done". The canonical demos' run (docs/demos.tsv) loads
+# it with fastboot at each milestone.
+boot_image(
+    name = "board_demo_boot",
+    bootargs = "earlycon console=tty0 console=ttySIF0 " +
+               "txhdl.ip=192.168.1.50/24 txhdl.ping=192.168.1.1 txhdl.demo",
+    framebuffer = "0x42000000",
+    initramfs = "root.cpio",
+    kernel = "Image",
+    opensbi = "fw_jump.bin",
+    system_map = "System.map",
+    tags = ["manual"],
+)
+
 # The words the board's image takes, on the machine model (issue 1318):
 # txhdl.ip brings eth0 up at an address and txhdl.ping pings a host, as
 # txhdl.net does with the model's two. The board carries
