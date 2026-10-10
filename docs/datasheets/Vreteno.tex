@@ -70,6 +70,9 @@ register access, \code{dbg\_regno}, \code{dbg\_wdata} and
 \code{halt}, \code{instr}, the word retiring, \code{wb}, a
 \code{Writeback} of \code{done}, \code{rd} and \code{val}, \code{dbg},
 debug mode, and \code{dbg\_rdata}, the register the module asked for.
+\code{asleep} is high while the core waits in \code{wfi} for an
+interrupt, fetching nothing; the board gives the snoop the second
+hart's (issue 1408).
 
 Two additional inputs supply the machine timer count, \code{time}
 (accessed by \code{rdtime}), and \code{seirq}, the supervisor external
@@ -106,6 +109,15 @@ board and the runs do. \\
 default, which is 64~KiB. The netlist the documents simulate and the
 layout maps uses 4, where the window's addresses wrap, since the cell
 library has no RAM. The tables use the default. \\
+\code{IC} & 1 for the instruction and the data cache, the default and
+the board's; 0 for none, in the netlist the documents simulate and the
+layout maps, where the caches' arrays are never written and fold away
+(issue 1323). \\
+\code{HID} & The hart's number, which \code{mhartid} reads, 0 by
+default; the board's second hart has 1 (issue 1408). \\
+\code{EXCL} & 1 on a board whose arbiter and exclusive monitor keep
+exclusive pairs: then \code{lr.w}, \code{sc.w} and an AMO into the
+DDR3 go out with \code{lock}. 0, the default, for none. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -237,6 +249,10 @@ the word's access fault, and leaves the line invalid.
 \item \code{fence.i} and \code{rst} clear the cache's tags, one line a
 cycle, and a lookup waits until they are clear. A store does not reach
 the cache, so code written by stores runs after a \code{fence.i}.
+\item The data cache's valid bits are cleared at \code{rst}, when the bus
+refuses a store of the core's, whose line is not known, and, in a hart
+whose \code{HID} is not 0, as it wakes from \code{wfi}: the other
+harts' writes are not named to it while it waits (issue 1408).
 \item \code{ir\_c} says the instruction in execute was compressed.
 \code{jal} and \code{jalr} link the address two bytes on for a
 compressed one and four for the rest.
