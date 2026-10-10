@@ -366,7 +366,11 @@ dropbear)
   tarball=$root/$1 src=$root/$2 out=$3
   work=$root/.udb
   unpack_sysroot "$tarball" "$work"
-  cp -r "$src" "$work/src"
+  # The files themselves, and not the symlink the sandbox puts the
+  # fetched tree behind: GNU cp -r copies a named symlink as a symlink,
+  # and the build below then wrote into the fetched tree (issue 1581).
+  mkdir -p "$work/src"
+  cp -rL "$src/." "$work/src"
   chmod -R u+w "$work/src"
   (cd "$work/src" && ./configure --host=riscv32-unknown-linux-musl \
     --disable-zlib --disable-lastlog --disable-utmp --disable-utmpx \
