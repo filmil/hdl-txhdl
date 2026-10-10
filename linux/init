@@ -6,8 +6,11 @@
 /bin/busybox mount -t sysfs sysfs /sys
 # The devices, which the kernel mounts itself only on a root it mounted,
 # not on an initramfs: the console's own tty is there, which the shell
-# takes as its controlling tty below (issue 1249).
-/bin/busybox mount -t devtmpfs devtmpfs /dev
+# takes as its controlling tty below (issue 1249). On a root the kernel
+# mounted, the NFS root's say, /dev is its devtmpfs already, and a second
+# mount said "Resource busy" on every boot (issue 1455).
+/bin/busybox grep -q ' /dev devtmpfs ' /proc/mounts ||
+    /bin/busybox mount -t devtmpfs devtmpfs /dev
 /bin/busybox --install -s
 echo "txhdl: userspace is up"
 uname -a

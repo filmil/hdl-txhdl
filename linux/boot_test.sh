@@ -43,6 +43,10 @@ grep -q "^~ # " "$out" ||
     { echo "FAIL: no shell prompt" >&2; fail=1; }
 # The shell has the console as its controlling tty, so Ctrl-C reaches
 # what it runs (issue 1249).
+if grep -q "Resource busy" "$out"; then
+    echo "FAIL: a mount said Resource busy (issue 1455)" >&2
+    fail=1
+fi
 if grep -q "can't access tty" "$out"; then
     echo "FAIL: the shell has no controlling tty" >&2
     fail=1
