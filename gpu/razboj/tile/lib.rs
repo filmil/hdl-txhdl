@@ -242,12 +242,13 @@ fn covers(
 }
 
 /// A second slot for an entry clipped `i` pixels right and `j` rows
-/// down of where its box began: the start of its depth plane, and of its
-/// fog's in words 6 to 8 (Razboj's #998), stepped there, as a shaded
-/// triangle's planes are.
+/// down of where its box began: the start of its depth plane, of its
+/// fog's in words 6 to 8 (Razboj's #998) and of its alpha's in words 12
+/// to 14 (Razboj's #1520), stepped there, as a shaded triangle's planes
+/// are.
 pub fn step_depth(ext: &[u32; WORDS], i: u32, j: u32) -> [u32; WORDS] {
     let mut out = *ext;
-    for at in [0, 6] {
+    for at in [0, 6, 12] {
         out[at] = ext[at]
             .wrapping_add(ext[at + 1].wrapping_mul(i))
             .wrapping_add(ext[at + 2].wrapping_mul(j));

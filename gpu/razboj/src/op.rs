@@ -55,7 +55,8 @@ pub enum Op {
     },
     /// A triangle with a colour at each vertex, blended across it:
     /// Gouraud shading. Vertices in sixteenths of a pixel. Red, green
-    /// and blue are blended; the alpha is the first vertex's, all over.
+    /// and blue are blended; the alpha is the first vertex's, all over,
+    /// unless [`Op::SmoothAlpha`] is on, which blends it too (issue 1520).
     Gouraud {
         a: (i32, i32),
         b: (i32, i32),
@@ -120,6 +121,11 @@ pub enum Op {
     /// with `None` (issue 998): after its texture and before the alpha
     /// test, as GL orders it. Tiled lists only.
     Fog(Option<Fog>),
+    /// From here on, a smooth triangle whose vertices' alphas differ
+    /// interpolates its alpha as it does its colour, or keeps its first
+    /// vertex's with `false` (issue 1520), as GL ES 1.1's section 3.5.1
+    /// asks. State, off at first. Tiled lists only.
+    SmoothAlpha(bool),
     /// From here on, test and write the stencil as `mode` says, or not at
     /// all with `None` (issue 998). Tiled lists only, as depth is.
     Stencil(Option<StencilMode>),
@@ -385,6 +391,14 @@ pub struct Insn {
     pub f0: U<32>,
     pub fdx: U<32>,
     pub fdy: U<32>,
+    /// A shaded triangle's alpha plane (issue 1520): whether the entry has
+    /// one, and the plane, as a colour channel's, with sixteen bits of
+    /// fraction. An entry with it has the pixel's state, which carries it;
+    /// without it, the alpha is the entry's one `alpha` all over.
+    pub ashade: Bit,
+    pub a0: U<32>,
+    pub adx: U<32>,
+    pub ady: U<32>,
     /// The stencil (issue 998): whether the entry tests it, the comparison,
     /// the reference, the value mask and the write mask, and the three
     /// operations, as [`StencilMode`] has them. An entry with the stencil
@@ -600,6 +614,7 @@ impl Op {
             | Op::ColourMask(_)
             | Op::LogicOp(_)
             | Op::Fog(_)
+            | Op::SmoothAlpha(_)
             | Op::Stencil(_)
             | Op::Texture(_) => None,
         }
@@ -883,10 +898,12 @@ pub fn assemble(ops: &[Op], sw: usize, sh: usize) -> Vec<Insn> {
     let mut pixel = Pixel::default();
     let mut texture = None;
     let mut fog = None;
+    let mut smooth_alpha = false;
     let mut out = Vec::new();
     for op in ops {
         match *op {
             Op::Fog(f) => fog = f,
+            Op::SmoothAlpha(on) => smooth_alpha = on,
             Op::Scissor { x, y, w, h } => {
                 within = clip(x, y, x + w - 1, y + h - 1, screen(sw, sh))
             }
@@ -906,6 +923,9 @@ pub fn assemble(ops: &[Op], sw: usize, sh: usize) -> Vec<Insn> {
                         fog.filter(|_| !matches!(op, Op::Clear { .. }))
                     {
                         fogged(&mut insn, op, f, pixel.mask);
+                    }
+                    if smooth_alpha {
+                        shade_alpha(&mut insn, op, pixel.mask);
                     }
                     if let (Some(t), Op::TexTri { .. }) = (texture, op) {
                         insn.tex = Bit::One;
@@ -961,6 +981,50 @@ fn fogged(insn: &mut Insn, op: &Op, f: Fog, mask: u32) {
     }
     insn.fog = Bit::One;
     insn.fcol = U::from(f.colour & 0xff_ffff);
+}
+
+/// `insn`, encoded from `op`, given its alpha plane when `op` is a
+/// smooth triangle whose vertices' alphas differ (issue 1520), as GL
+/// interpolates alpha as it does the colour, with the pixel's state and
+/// `mask` its channels if it had no state: the plane across the
+/// triangle, its vertices' alphas turned with them when the encoder
+/// winds it the other way. Vertices of one alpha keep the entry's one
+/// alpha and no slot.
+fn shade_alpha(insn: &mut Insn, op: &Op, mask: u32) {
+    let (v, colours) = match *op {
+        Op::Gouraud { a, b, c, colours }
+        | Op::GouraudZ {
+            a, b, c, colours, ..
+        }
+        | Op::TexTri {
+            a,
+            b,
+            c,
+            colours,
+            shaded: true,
+            ..
+        } => ([a, b, c], colours),
+        _ => return,
+    };
+    let al = colours.map(|c| (c >> 24) as i64);
+    if al[0] == al[1] && al[1] == al[2] {
+        return;
+    }
+    let [a, b, c] = v;
+    let swap = area2(a, b, c) < 0;
+    let (b, c, al) = if swap {
+        (c, b, [al[0], al[2], al[1]])
+    } else {
+        (b, c, al)
+    };
+    let (x0, y0) = (insn.x0.raw() as i32, insn.y0.raw() as i32);
+    let first = (x0 * SUB + SUB / 2, y0 * SUB + SUB / 2);
+    (insn.a0, insn.adx, insn.ady) = plane(a, b, c, al, first, 16);
+    if !insn.state.to_bool() {
+        insn.state = Bit::One;
+        insn.cmask = U::from(mask);
+    }
+    insn.ashade = Bit::One;
 }
 
 /// What happens to each pixel an entry draws after its coverage and
@@ -1052,6 +1116,63 @@ mod tests {
                 assert_eq!(got, want, "the vertex at {p:?}");
             }
         }
+    }
+
+    /// The alpha plane gives back each vertex's alpha at the pixel whose
+    /// centre the vertex is, wound either way, and gives the entry the
+    /// pixel's state; vertices of one alpha, or smooth alpha off, keep the
+    /// entry's one alpha and no state (issue 1520).
+    #[test]
+    fn a_smooth_triangle_has_its_alphas_at_its_vertices() {
+        let (a, b, c) = ((24, 24), (232, 40), (56, 232));
+        for (b, c, al) in
+            [(b, c, [0x10, 0x80, 0xf0]), (c, b, [0x10, 0xf0, 0x80])]
+        {
+            let colours = al.map(|v: u32| v << 24 | 0x40_80c0);
+            let ops = [Op::SmoothAlpha(true), Op::Gouraud { a, b, c, colours }];
+            let i = super::assemble(&ops, 16, 16)[0];
+            assert!(i.ashade.to_bool() && i.state.to_bool());
+            assert_eq!(i.mask(), 0xf, "every channel written");
+            let (x0, y0) = (i.x0.raw() as i32, i.y0.raw() as i32);
+            let raw = |u: U<32>| u.raw() as u32;
+            for (p, want) in [(a, al[0]), (b, al[1]), (c, al[2])] {
+                let (di, dj) = (p.0 / 16 - x0, p.1 / 16 - y0);
+                let got = channel(raw(i.a0), raw(i.adx), raw(i.ady), di, dj);
+                assert_eq!(got, want, "the vertex at {p:?}");
+            }
+        }
+        let one = [0x80ff_0000, 0x8000_ff00, 0x8000_00ff];
+        let differ = [0x10ff_0000, 0x8000_ff00, 0xf000_00ff];
+        for ops in [
+            [
+                Op::SmoothAlpha(true),
+                Op::Gouraud {
+                    a,
+                    b,
+                    c,
+                    colours: one,
+                },
+            ],
+            [
+                Op::SmoothAlpha(false),
+                Op::Gouraud {
+                    a,
+                    b,
+                    c,
+                    colours: differ,
+                },
+            ],
+        ] {
+            let i = super::assemble(&ops, 16, 16)[0];
+            assert!(!i.ashade.to_bool() && !i.state.to_bool());
+        }
+        let off = [Op::Gouraud {
+            a,
+            b,
+            c,
+            colours: differ,
+        }];
+        assert!(!super::assemble(&off, 16, 16)[0].ashade.to_bool());
     }
 
     /// Fog's factor gives back each vertex's at the pixel whose centre the
