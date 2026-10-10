@@ -416,7 +416,7 @@ sh_test(
 # the board's check, since the model's peer speaks no ssh.
 boot_image(
     name = "model_root_boot",
-    bootargs = "earlycon console=ttySIF0 txhdl.ptycheck",
+    bootargs = "earlycon console=ttySIF0 txhdl.ptycheck txhdl.applets",
     initramfs = "root.cpio",
     kernel = "Image",
     model = True,
@@ -441,6 +441,8 @@ sh_test(
         "EXPECT": "txhdl: a dynamic program ran",
         "EXPECT_ALSO": "txhdl: dropbear is listening on 22;" +
                        "txhdl: a pty session ran on /dev/pts/;" +
+                       "txhdl: awk said 2;" +
+                       "txhdl: netstat ran;" +
                        "txhdl: a module loaded;" +
                        "txhdl_hello [0-9]* 0 - Live;" +
                        "txhdl: a module removed",
