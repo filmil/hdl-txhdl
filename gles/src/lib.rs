@@ -55,6 +55,10 @@ const LOG2_E: i64 = 94_548;
 
 /// A vertex on its way: eye and clip coordinates, and its colour, and
 /// with two-sided lighting the colour its back takes.
+/// The vertices a `glDrawElements` call keeps once worked out (#1624):
+/// the last sixteen, each in the slot its index picks.
+const VCACHE: usize = 16;
+
 #[derive(Clone, Copy, Default)]
 struct Vert {
     eye: [Fx; 4],
@@ -94,6 +98,10 @@ pub struct Gl<'a> {
     /// EGL has put the window lower, on the half of a double buffer not
     /// shown (issue 996). Nothing is drawn above it.
     window_top: u32,
+    /// The vertices `glDrawElements` has worked out in this call, each
+    /// with its index, in the slot the index picks (#1624). A call
+    /// forgets them by its keys; a slot is read only under its own.
+    vcache: [(usize, Vert); VCACHE],
     mode: u32,
     mv: [Mat; gl::MAX_MODELVIEW_STACK_DEPTH],
     mv_top: usize,
@@ -230,6 +238,7 @@ impl<'a> Gl<'a> {
             used: 0,
             screen: (sw, sh),
             window_top: 0,
+            vcache: [(usize::MAX, Vert::default()); VCACHE],
             mode: gl::MODELVIEW,
             mv: [IDENTITY; gl::MAX_MODELVIEW_STACK_DEPTH],
             mv_top: 0,
@@ -1641,12 +1650,17 @@ impl<'a> Gl<'a> {
         {
             return self.fail(gl::INVALID_VALUE);
         }
-        self.draw(mode, n, |k| Vertex {
-            position: positions[k],
-            colour: colours.map(|c| c[k]),
-            normal: normals.map(|v| v[k]),
-            tex: None,
-        });
+        self.draw(
+            mode,
+            n,
+            |_| None,
+            |k| Vertex {
+                position: positions[k],
+                colour: colours.map(|c| c[k]),
+                normal: normals.map(|v| v[k]),
+                tex: None,
+            },
+        );
     }
 
     /// `glDrawElements`: the same, the vertices taken by `indices`.
@@ -1665,7 +1679,14 @@ impl<'a> Gl<'a> {
         {
             return self.fail(gl::INVALID_VALUE);
         }
-        self.draw(mode, indices.len(), |k| {
+        // A grid's vertex is named by several triangles in a row, so it
+        // is worked out once and kept (#1624); what an earlier call kept
+        // is forgotten.
+        for slot in self.vcache.iter_mut() {
+            slot.0 = usize::MAX;
+        }
+        let key = |k: usize| Some(indices[k] as usize);
+        self.draw(mode, indices.len(), key, |k| {
             let i = indices[k] as usize;
             Vertex {
                 position: positions[i],
@@ -1686,7 +1707,7 @@ impl<'a> Gl<'a> {
         count: usize,
         vertex: impl Fn(usize) -> Vertex,
     ) {
-        self.draw(mode, count, vertex);
+        self.draw(mode, count, |_| None, vertex);
     }
 
     /// Records `error` as `glGetError` will report it, if no error is
@@ -1698,11 +1719,13 @@ impl<'a> Gl<'a> {
 
     /// The points, lines or triangles of a draw call: each of `count`
     /// vertices `vertex(k)`, in the order the mode says, the provoking
-    /// vertex last.
+    /// vertex last. A triangle's vertex that `key` gives an index is
+    /// worked out once while it stays in the cache (#1624).
     fn draw(
         &mut self,
         mode: u32,
         count: usize,
+        key: impl Fn(usize) -> Option<usize>,
         vertex: impl Fn(usize) -> Vertex,
     ) {
         let prims = match mode {
@@ -1801,7 +1824,17 @@ impl<'a> Gl<'a> {
                         gl::TRIANGLE_STRIP => (t, t + 1, t + 2),
                         _ => (0, t + 1, t + 2),
                     };
-                    self.triangle([vert(a), vert(b), vert(c)]);
+                    let t = [a, b, c].map(|k| match key(k) {
+                        Some(i) => {
+                            let slot = &mut self.vcache[i % VCACHE];
+                            if slot.0 != i {
+                                *slot = (i, vert(k));
+                            }
+                            slot.1
+                        }
+                        None => vert(k),
+                    });
+                    self.triangle(t);
                 }
             }
             if self.error == gl::OUT_OF_MEMORY {
