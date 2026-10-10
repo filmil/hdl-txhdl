@@ -79,7 +79,8 @@ struct literal as the concatenation of its fields in the order the
 struct declares them, whatever order the literal names them in,
 through the \code{Fields} constant \code{\#[derive(Value)]} puts
 beside the struct under its name (an alias of a struct used in a
-literal declares one of its own; issue 1541); an \code{if} chain
+literal declares one of its own; issue 1541), a constant in a field
+sized to the field (issue 1574); an \code{if} chain
 as arms under their conditions, each arm's statements lowered in
 turn, a \code{send} in an arm hoisted with the arm's path as
 \code{valid}, and a \code{set} of an output under it refused, since
