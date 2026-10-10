@@ -15,7 +15,7 @@ use txhdl::comp::{
 };
 use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
-use txhdl_parts::bus::axi::Resp;
+use txhdl_parts::bus::axi::{Addr, Resp, B, R, W};
 use txhdl_parts::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
 use txhdl_parts::bus::axi_pins::AxiHostPins;
 use txhdl_parts::dtm::Tck;
@@ -842,6 +842,10 @@ fn run_all_in<const LO: usize, const HI: usize>(
             bscan_tdi: signal::<Bit, Tck>().1,
             bscan_reset: signal::<Bit, Tck>().1,
             scan_req,
+            // No design beside the core: the host port offers nothing.
+            host_aw: chan::<Addr<32, 2>, DefaultClock>().1,
+            host_ar: chan::<Addr<32, 2>, DefaultClock>().1,
+            host_w: chan::<W<32, 4>, DefaultClock>().1,
             jtag: AxiHostPins {
                 awid,
                 awaddr,
@@ -921,6 +925,8 @@ fn run_all_in<const LO: usize, const HI: usize>(
             bscan_tdo: signal::<Bit, Tck>().0,
             // A scanout runs only when the run asks for one.
             scan_words,
+            host_b: chan::<B<2>, DefaultClock>().0,
+            host_r: chan::<R<32, 2>, DefaultClock>().0,
         },
     );
     let mut sim = Running::new(join2(

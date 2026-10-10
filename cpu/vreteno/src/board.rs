@@ -260,20 +260,21 @@ pub struct Board<const DIV: u32> {
     /// past the arbiter widens: the JTAG master's IP only ever used one
     /// of the two bits it had. Taking turns, as the arbiter does.
     pub jarb: Arbiter2<32, 32, 4, 1, 2, 0>,
-    /// The seven hosts onto one link: the core, the JTAG master, the
-    /// Ethernet port's two engines, the one that fetches a frame to
-    /// send and the one that stores a frame received, the video
-    /// scanout's fetch (issue 151), the SD card's two engines behind
-    /// `sdarb` (issue 912), and Razboj's rasteriser (issue 985). The peripheral side carries five
-    /// bits of identifier, two for the hosts' own and three for the
-    /// port, which is room for eight: a sixth, seventh and eighth host
-    /// raise the count and widen nothing (issue 1022). Four bits held
-    /// exactly four hosts, and the scanout had shared the send engine's
-    /// port until the user chose widening over nesting further.
+    /// The eight ports onto one link, in order: the core, the JTAG
+    /// master with the debug transport behind `jarb`, the Ethernet
+    /// port's two engines behind `etharb` (issue 1634), the board top's
+    /// host (issue 1634), the video scanout's fetch (issue 151), the SD
+    /// card's two engines behind `sdarb` (issue 912), Razboj's
+    /// rasteriser (issue 985) and the second hart (issue 1408). The
+    /// peripheral side carries five bits of identifier, two for the
+    /// hosts' own and three for the port, which is room for eight (issue
+    /// 1022), and all eight are taken. A ninth host would widen the
+    /// identifier past the arbiter, as far as the DDR3 controller, so
+    /// the Ethernet engines share a port instead (issue 1634).
     ///
     /// Taking turns rather than fixed priority, so that an engine
     /// moving a frame cannot hold the core off the bus for the length
-    /// of it. With every host offering, each wins one turn in seven.
+    /// of it. With every port offering, each wins one turn in eight.
     ///
     /// The exclusive hold is built (issue 1408): from a host's
     /// exclusive read until its exclusive write, no other host's write
@@ -433,10 +434,12 @@ pub struct Board<const DIV: u32> {
     /// Each engine is a host of its own on the link, since each issues
     /// bursts of its own, and the wire is shared with the remote
     /// peripheral by EtherType.
-    pub fhost: AxiHost<32, 32, 4, 2, 4>,
-    pub shost: AxiHost<32, 32, 4, 2, 4>,
-    pub fetch: LineFetch<32, 2, 16, 16>,
-    pub store: LineStore<32, 2, 16, 16>,
+    /// A bit of identifier each, two bursts in flight, since the two
+    /// share the arbiter's third port behind `etharb` (issue 1634).
+    pub fhost: AxiHost<32, 32, 4, 1, 2>,
+    pub shost: AxiHost<32, 32, 4, 1, 2>,
+    pub fetch: LineFetch<32, 1, 16, 16>,
+    pub store: LineStore<32, 1, 16, 16>,
     pub fout: FrameOut,
     pub flen: FrameLen,
     pub fin: FrameIn,
@@ -448,7 +451,14 @@ pub struct Board<const DIV: u32> {
     /// is held by one that uses it no more: the fetch engine's write
     /// beats, and the store engine's read data.
     pub fnobeats: NoBeats,
-    pub snoreads: NoReads<2>,
+    pub snoreads: NoReads<1>,
+    /// The two engines onto the arbiter's third port, as `sdarb`
+    /// puts the SD card's onto its sixth, so that the fourth is free
+    /// for the board top's host (issue 1634). The fetch engine only
+    /// reads and the store engine only writes, and an arbiter keeps
+    /// the turns of reads and writes apart, so sharing a port takes no
+    /// turn from either.
+    pub etharb: Arbiter2<32, 32, 4, 1, 2, 0>,
     // end{ethdma}
     // begin{scan}
     /// The video scanout's bus side (issue 151): `ScanFetch` takes each
@@ -524,6 +534,14 @@ pub struct BoardIn {
     pub bscan_reset: In<Bit, Tck>,
     /// The scanout's line requests, from the pixel clock's side.
     pub scan_req: Rx<U<32>>,
+    /// The board top's host on the arbiter's fourth port (issue 1634):
+    /// a design beside the core that reads and writes memory, its
+    /// registers on the third slot and its interrupt on `irq`. Two bits
+    /// of identifier, so four bursts in flight. A top with nothing
+    /// there offers nothing and takes every answer.
+    pub host_aw: Rx<Aw<32, 2>>,
+    pub host_ar: Rx<Ar<32, 2>>,
+    pub host_w: Rx<W<32, 4>>,
 }
 
 /// The board's outputs: the halt and the serial line, the modulator,
@@ -596,6 +614,9 @@ pub struct BoardOut {
     pub bscan_tdo: Out<Bit, Tck>,
     /// The scanout's words, to the pixel clock's side.
     pub scan_words: Tx<U<32>>,
+    /// The answers to the board top's host (issue 1634).
+    pub host_b: Tx<B<2>>,
+    pub host_r: Tx<R<32, 2>>,
 }
 // end{ports}
 
@@ -625,6 +646,9 @@ impl<const DIV: u32> Unit for Board<DIV> {
             bscan_tdi,
             bscan_reset,
             scan_req,
+            host_aw,
+            host_ar,
+            host_w,
         }: BoardIn,
         BoardOut {
             halt,
@@ -677,6 +701,8 @@ impl<const DIV: u32> Unit for Board<DIV> {
             sd_dat_oe,
             bscan_tdo,
             scan_words,
+            host_b,
+            host_r,
         }: BoardOut,
     ) {
         // The reset, read by the core, the timer and the serial port.
@@ -1028,10 +1054,10 @@ impl<const DIV: u32> Unit for Board<DIV> {
         // Each engine's host, and its place on the arbiter.
         let (fissue_tx, fissue_rx) = chan::<Issue<32>, DefaultClock>();
         let (fwbeat_tx, fwbeat_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (frelease_tx, frelease_rx) = chan::<Grant<2>, DefaultClock>();
-        let (fgrant_tx, fgrant_rx) = chan::<Grant<2>, DefaultClock>();
-        let (fdone_tx, fdone_rx) = chan::<Done<2>, DefaultClock>();
-        let (frdata_tx, frdata_rx) = chan::<R<32, 2>, DefaultClock>();
+        let (frelease_tx, frelease_rx) = chan::<Grant<1>, DefaultClock>();
+        let (fgrant_tx, fgrant_rx) = chan::<Grant<1>, DefaultClock>();
+        let (fdone_tx, fdone_rx) = chan::<Done<1>, DefaultClock>();
+        let (frdata_tx, frdata_rx) = chan::<R<32, 1>, DefaultClock>();
         // The scanout's host onto the arbiter's fifth port.
         let (scaw_tx, scaw_rx) = chan::<Aw<32, 2>, DefaultClock>();
         let (scar_tx, scar_rx) = chan::<Ar<32, 2>, DefaultClock>();
@@ -1069,22 +1095,28 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let (sccount_o, sccount_i) = signal::<U<16>, DefaultClock>();
         let (scstart_o, scstart_i) = signal::<Bit, DefaultClock>();
         let (scrun_o, scrun_i) = signal::<Bit, DefaultClock>();
-        let (faw_tx, faw_rx) = chan::<Aw<32, 2>, DefaultClock>();
-        let (far_tx, far_rx) = chan::<Ar<32, 2>, DefaultClock>();
+        let (faw_tx, faw_rx) = chan::<Aw<32, 1>, DefaultClock>();
+        let (far_tx, far_rx) = chan::<Ar<32, 1>, DefaultClock>();
         let (fw_tx, fw_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (fb_tx, fb_rx) = chan::<B<2>, DefaultClock>();
-        let (fr_tx, fr_rx) = chan::<R<32, 2>, DefaultClock>();
+        let (fb_tx, fb_rx) = chan::<B<1>, DefaultClock>();
+        let (fr_tx, fr_rx) = chan::<R<32, 1>, DefaultClock>();
         let (sissue_tx, sissue_rx) = chan::<Issue<32>, DefaultClock>();
         let (swbeat_tx, swbeat_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (srelease_tx, srelease_rx) = chan::<Grant<2>, DefaultClock>();
-        let (sgrant_tx, sgrant_rx) = chan::<Grant<2>, DefaultClock>();
-        let (sdone_tx, sdone_rx) = chan::<Done<2>, DefaultClock>();
-        let (srdata_tx, srdata_rx) = chan::<R<32, 2>, DefaultClock>();
-        let (saw_tx, saw_rx) = chan::<Aw<32, 2>, DefaultClock>();
-        let (sar_tx, sar_rx) = chan::<Ar<32, 2>, DefaultClock>();
+        let (srelease_tx, srelease_rx) = chan::<Grant<1>, DefaultClock>();
+        let (sgrant_tx, sgrant_rx) = chan::<Grant<1>, DefaultClock>();
+        let (sdone_tx, sdone_rx) = chan::<Done<1>, DefaultClock>();
+        let (srdata_tx, srdata_rx) = chan::<R<32, 1>, DefaultClock>();
+        let (saw_tx, saw_rx) = chan::<Aw<32, 1>, DefaultClock>();
+        let (sar_tx, sar_rx) = chan::<Ar<32, 1>, DefaultClock>();
         let (sw_tx, sw_rx) = chan::<W<32, 4>, DefaultClock>();
-        let (sb_tx, sb_rx) = chan::<B<2>, DefaultClock>();
-        let (sr_tx, sr_rx) = chan::<R<32, 2>, DefaultClock>();
+        let (sb_tx, sb_rx) = chan::<B<1>, DefaultClock>();
+        let (sr_tx, sr_rx) = chan::<R<32, 1>, DefaultClock>();
+        // `etharb`'s side of the arbiter's third port (issue 1634).
+        let (eaw_tx, eaw_rx) = chan::<Aw<32, 2>, DefaultClock>();
+        let (ear_tx, ear_rx) = chan::<Ar<32, 2>, DefaultClock>();
+        let (ew_tx, ew_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (eb_tx, eb_rx) = chan::<B<2>, DefaultClock>();
+        let (er_tx, er_rx) = chan::<R<32, 2>, DefaultClock>();
         // The interrupt controller speaks AXI-Lite too, behind a
         // bridge of its own.
         let (paw_tx, paw_rx) = chan::<LiteAw<32>, DefaultClock>();
@@ -1391,17 +1423,17 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                     self.arb.run(
                                         (
                                             [
-                                                aw_rx, jaw_rx, faw_rx, saw_rx,
+                                                aw_rx, jaw_rx, eaw_rx, host_aw,
                                                 scaw_rx, sdaw_rx, raw_rx,
                                                 haw_rx,
                                             ],
                                             [
-                                                ar_rx, jar_rx, far_rx, sar_rx,
+                                                ar_rx, jar_rx, ear_rx, host_ar,
                                                 scar_rx, sdar_rx, rar_rx,
                                                 har_rx,
                                             ],
                                             [
-                                                w_rx, jw_rx, fw_rx, sw_rx,
+                                                w_rx, jw_rx, ew_rx, host_w,
                                                 scw_rx, sdw_rx, rw_rx,
                                                 hw_rx,
                                             ],
@@ -1413,12 +1445,12 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                             xar_tx,
                                             xw_tx,
                                             [
-                                                b_tx, jb_tx, fb_tx, sb_tx,
+                                                b_tx, jb_tx, eb_tx, host_b,
                                                 scb_tx, sdb_tx, rb_tx,
                                                 hb_tx,
                                             ],
                                             [
-                                                r_tx, jr_tx, fr_tx, sr_tx,
+                                                r_tx, jr_tx, er_tx, host_r,
                                                 scr_tx, sdr_tx, rr_tx,
                                                 hr_tx,
                                             ],
@@ -1826,6 +1858,7 @@ join2(
                     ),
                     join2(
                         join2(
+                            join2(
                             self.fhost.run(
                                 (
                                     fissue_rx,
@@ -1850,6 +1883,23 @@ join2(
                                 (
                                     saw_tx, sar_tx, sw_tx, sgrant_tx, sdone_tx,
                                     srdata_tx,
+                                ),
+                            ),
+                            ),
+                            self.etharb.run(
+                                (
+                                    [faw_rx, saw_rx],
+                                    [far_rx, sar_rx],
+                                    [fw_rx, sw_rx],
+                                    eb_rx,
+                                    er_rx,
+                                ),
+                                (
+                                    eaw_tx,
+                                    ear_tx,
+                                    ew_tx,
+                                    [fb_tx, sb_tx],
+                                    [fr_tx, sr_tx],
                                 ),
                             ),
                         ),

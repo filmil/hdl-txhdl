@@ -234,6 +234,14 @@ module vreteno_board_jtag (
     .vw_data(), .vw_valid(), .vw_ready(1'b1),
     .vb_data(2'd0), .vb_valid(1'b0), .vb_ready(),
     .vr_data(34'd0), .vr_valid(1'b0), .vr_ready(),
+    // The host port on the arbiter's fourth port (issue 1634), for a
+    // design beside the core that reads and writes memory. This board
+    // has none: the port offers nothing and takes every answer.
+    .host_aw_data(63'd0), .host_aw_valid(1'b0), .host_aw_ready(),
+    .host_ar_data(63'd0), .host_ar_valid(1'b0), .host_ar_ready(),
+    .host_w_data(37'd0), .host_w_valid(1'b0), .host_w_ready(),
+    .host_b_data(), .host_b_valid(), .host_b_ready(1'b1),
+    .host_r_data(), .host_r_valid(), .host_r_ready(1'b1),
     // No scanout on this top (issue 151): no line is asked for, and
     // the words' ready is high so nothing could ever wait on it.
     .scan_req_data(32'd0), .scan_req_valid(1'b0), .scan_req_ready(),

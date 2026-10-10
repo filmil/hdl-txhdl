@@ -296,6 +296,15 @@ module flagship (
     .scan_req_ready(sreq_ready),
     .scan_words_data(swords_data), .scan_words_valid(swords_valid),
     .scan_words_ready(swords_ready),
+    // The host port on the arbiter's fourth port (issue 1634), for a
+    // design beside the core that reads and writes memory. The
+    // flagship has none: the port offers nothing and takes every
+    // answer.
+    .host_aw_data(63'd0), .host_aw_valid(1'b0), .host_aw_ready(),
+    .host_ar_data(63'd0), .host_ar_valid(1'b0), .host_ar_ready(),
+    .host_w_data(37'd0), .host_w_valid(1'b0), .host_w_ready(),
+    .host_b_data(), .host_b_valid(), .host_b_ready(1'b1),
+    .host_r_data(), .host_r_valid(), .host_r_ready(1'b1),
     // The remote peripheral at `0x3300`, whose frames leave and
     // arrive on the Ethernet port, crossed below.
     .net_tx_data(net_tx_data), .net_tx_valid(net_tx_valid),
