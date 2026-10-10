@@ -1,10 +1,12 @@
 % SPDX-License-Identifier: Apache-2.0
 % covers: LinePair
 \datasheet{LinePair}{The pixel-clock end of a scanout from memory: two
-lines, one shown while the other fills, each asked for a line ahead.}
+lines, one shown while the other fills, each asked for one or two rows
+ahead.}
 
 \dsfacts{\code{lib/parts/src/scanout.rs}}%
-{\code{txhdl\_parts::scanout::LinePair<LEN, AW, ROWS, TOTAL, STRIDE, C>}}%
+{\code{txhdl\_parts::scanout::LinePair<LEN, AW, ROWS, TOTAL, STRIDE, LO,
+HI, C>}}%
 {\code{//docs:examples}}
 
 \subsection*{Function}
@@ -15,12 +17,16 @@ the pixel clock beside the raster and holds two lines. The beam reads
 one while the other fills, and they change places at the start of each
 line. At that start it asks for the line after the one about to be
 shown, so each line has the entire duration of the preceding line to
-arrive. It asks for nothing until \code{show} is high, and then it asks for a
+arrive. With \code{two} high at the vertical sync it asks two rows
+ahead for the frame that follows, so a line has two rows to come, and
+its words wait in the crossing until the row before its own
+(issue 1523).
+It asks for nothing until \code{show} is high, and then it asks for a
 frame's first line, from the base, before any other. Out of a reset
 the next line's address is zero, and the line there is the boot
 memory's, whose one-beat answer to a burst hung the fetch for good on
-the board (issue 1178). So the picture starts with the first frame
-whose last row begins after \code{show} rises.
+the board (issue 1178). So, one row ahead, the picture starts with
+the first frame whose last row begins after \code{show} rises.
 The bus side of the same scanout is \code{ScanFetch}, and between the
 two the request and the words cross clocks through \code{ChanCdc}
 (issue 151).
@@ -30,11 +36,20 @@ a host that draws into one buffer and shows another flips them with
 one write. A column the beam shows before its word has arrived sets
 \code{starved}, a sticky bit that \code{clear} resets, so a run can
 show that no line starved. The pair keeps the addresses of the lines
-it has asked for and not had whole, at most four. A line that gets no
-word for two line times in a row sets \code{stuck}, sticky too, and
-puts its address on \code{stuck\_at}, so a fetch that hangs says so
-rather than leaving a black screen and a clear \code{starved}
-(issue 1197).
+it has asked for and not had whole, at most four, with the row each is
+for and the time it was asked at. A line that gets no word for two
+line times in a row sets \code{stuck}, sticky too, and puts its
+address on \code{stuck\_at}, so a fetch that hangs says so rather than
+leaving a black screen and a clear \code{starved} (issue 1197).
+\code{worst} is the longest a line took from being asked for to its
+last word, in pixels, and \code{lates} counts the lines not whole when
+their rows began; \code{clear} resets both (issue 1523).
+
+The frame's memory is the bytes from \code{LO} up to but not including
+\code{HI}. A line not wholly inside them is not asked for at all: it
+sets \code{stuck} with its address and shows \code{LATE}, and the
+frame goes on (issue 1382). A base gone wrong once sent a line's burst
+into the serial port's page, and the core's prints stopped behind it.
 
 \subsection*{Parameters}
 
@@ -48,14 +63,18 @@ Parameter & Meaning \\
 \code{ROWS} & The visible rows of a frame. \\
 \code{TOTAL} & The rows of a frame, blanking included. \\
 \code{STRIDE} & The bytes from one line's start in memory to the next's. \\
+\code{LO}, \code{HI} & The frame's memory: the bytes from \code{LO} up
+to but not including \code{HI}. \\
 \code{C} & The pixel clock. \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-The tables below use \code{LinePair<8, 3, 4, 6, 32, ClkPix>}, the pair
-of \code{ex\_scanpair}: lines of eight words, four visible rows of
-six.
+The tables below use \code{LinePair<8, 3, 4, 6, 32, 0, 1024, ClkPix>},
+the pair of \code{ex\_scanpair}: lines of eight words, four visible
+rows of six, and a memory of 1024 bytes from zero. The flagship's,
+inside \code{ScanVideo}, is \code{LinePair<640, 10, 480, 525, 4096,
+0x4000\_0000, 0x8000\_0000, \ldots>}: the board's gigabyte of DDR3.
 
 \dstables{LinePair}
 
@@ -69,13 +88,25 @@ and a line longer than \code{LEN} loses its tail rather than stalling.
 places, and the line filling's count starts again. A word taken in
 that same cycle counts in the line just filled.
 \item At a line's start a request goes out on \code{req}, if it has
-room: the address of the line after the one about to be shown. On the
-frame's last row it is the frame's first line, at the base taken at
-the last vertical sync.
+room: the address of the line for the row one ahead, or two ahead
+when \code{two\_ahead} is set. When that row is the frame's first, it
+is the frame's first line, at the base taken at the last vertical
+sync, or at \code{base} itself when the sync is that same edge.
+\item \code{two\_ahead} is \code{two} as it was at the last vertical
+sync. Two rows ahead, a word is not taken while the oldest line owed
+is for a row other than the one the half filling is for, unless that
+line is late or behind: its words wait in the crossing until the row
+before its own.
+\item A line not wholly inside \code{LO} to \code{HI} is not asked
+for, and is not owed. If \code{stuck} is clear it sets it, with that
+line's address on \code{stuck\_at}. The next line's address moves on
+as if it had been asked for, so the rows after it are asked where they
+belong, and its row shows \code{LATE}.
 \item While \code{show} is low nothing is asked for. The frame's first
-line is asked for at the start of the frame's last row with
-\code{show} high, and the lines after it only once it has been, so the
-first request after a reset or a hide is always the base's line.
+line is asked for at the start of the row before the frame's first, or
+two rows before, with \code{show} high, and the lines after it only
+once it has been, so the first request after a reset or a hide is
+always the base's line.
 With \code{show} low the pair disarms: it asks for nothing more, and
 does not set \code{starved}. Shown again, it starts from the base's
 line as out of a reset.
@@ -94,9 +125,16 @@ show it as its own.
 \item Once the frame's first line has been asked for, a visible column
 at or past the words that line had when it was swapped in sets
 \code{starved}, until \code{clear}.
-\item A line asked for goes after the lines still owed, and no line is
-asked for while four are. A word counts against the oldest owed, and
-that line's last word takes it off.
+\item A line asked for goes after the lines still owed, with its row
+in \code{g0} to \code{g3} and the \code{tick} it was asked at in
+\code{t0} to \code{t3}, and no line is asked for while four are owed.
+A word counts against the oldest owed, and that line's last word takes
+it off.
+\item \code{tick} counts the edges of \code{C}. When a line's last word
+comes, the ticks since it was asked for replace \code{worst} if they
+are more. At the start of each visible row, once armed, a line not
+whole adds one to \code{lates}, which stops at its largest.
+\code{clear} sets both to zero.
 \item Two line starts in a row with lines owed and no word come set
 \code{stuck}, and \code{stuck\_at} is the oldest owed line's address
 then; while \code{stuck} is set it does not change. \code{clear}
@@ -117,6 +155,33 @@ a line sets it, and it stays set until it is cleared.
 \item \code{//docs:scanpair\_sim\_linepair\_linepair\_tb\_test} and
 \code{//docs:scanpair\_vsim\_linepair\_test} simulate the netlist
 against that run under nvc and Verilator.
+\item In \code{//lib/parts:parts\_test}, the flagship's pair and
+raster:
+\begin{itemize}
+\item \code{a\_frame\_with\_its\_words\_on\_time\_has\_no\_late\_line}
+gives the words as fast as the pair takes them, one row ahead and two,
+and from the second frame sees no late line, no starved column and no
+\code{stuck}.
+\item \code{the\_blanking\_columns\_read\_nothing\_past\_the\_line}
+runs two lines of 640 words in 800 columns (issue 1194).
+\end{itemize}
+\item \code{//cpu/vreteno:board\_test} runs the flagship's line,
+\code{LinePair<640, 10, 4, 6, 4096, LO, HI, Pix>}, on a pixel clock a
+quarter of the board's, against the board:
+\begin{itemize}
+\item \code{a\_base\_outside\_the\_memory\_is\_never\_fetched} gives it
+the base \code{0x3000}, the serial port's page: no line is asked for,
+\code{stuck} is set at \code{0x3000}, and the core's greeting comes
+out whole.
+\item \code{a\_stalled\_read\_is\_late\_one\_row\_ahead\_and\_not\_two}
+stalls one line's read for 4000 cycles: one row ahead, four lines are
+late and two rows show \code{LATE}; two rows ahead, one line is late
+and no column starves. Either way every row shows its own line.
+\item \code{a\_flipped\_frame\_is\_shown\_one\_row\_ahead\_and\_two}
+flips between two bases in the middle of every frame, and one
+row ahead and two every row shows its own line from the frame the pair
+took last.
+\end{itemize}
 \end{itemize}
 
 \subsection*{Used by}
@@ -129,4 +194,6 @@ flagship holds in its video slot (issue 151).
 One line a request, and a line is \code{LEN} words; there is no
 horizontal offset or scaling. A column of a line that arrives late
 shows \code{LATE} until its word comes, and \code{starved} says that
-it happened; a line that never comes sets \code{stuck}. It runs on one clock, \code{C}.
+it happened; a line that never comes sets \code{stuck}. A line outside
+\code{LO} to \code{HI} is never shown. It runs on one clock,
+\code{C}.

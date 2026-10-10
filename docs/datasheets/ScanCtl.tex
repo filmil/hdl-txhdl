@@ -1,8 +1,9 @@
 % SPDX-License-Identifier: Apache-2.0
 % covers: ScanCtl, ScanTap
-\datasheet{ScanCtl}{The scanout's registers: the frame's base, the bit
-that shows the scanout, and the underflow and stuck bits, read and
-cleared, with the address of a line that did not come.}
+\datasheet{ScanCtl}{The scanout's registers: the frame's base, the bits
+that show the scanout and ask two rows ahead, and the underflow and
+stuck bits, read and cleared, with the address of a line that did not
+come, the longest line and the count of late lines.}
 
 \dsfacts{\code{lib/parts/src/scanout.rs}}%
 {\code{txhdl\_parts::scanout::ScanCtl}}%
@@ -12,17 +13,21 @@ cleared, with the address of a line that did not come.}
 
 \code{ScanCtl} holds what a program sets and reads of a scanout from
 memory (issue 151): where the next frame starts, whether the screen
-shows the scanout or the video peripheral's own framebuffer, and
-whether a column was ever shown before its word arrived, and whether
-a line asked for never came, with that line's address (issue 1197).
-Its three outputs are registers, for \code{LinePair} and
+shows the scanout or the video peripheral's own framebuffer, whether
+lines are asked for one row ahead or two (issue 1523), and whether a
+column was ever shown before its word arrived, and whether a line
+asked for never came, with that line's address (issue 1197). It also
+reads back the longest a line took to come whole, in pixels, and how
+many lines had not come whole when their rows began (issue 1523).
+Its four outputs are registers, for \code{LinePair} and
 \code{VidMux} to read.
 
-The underflow bit, the stuck bit and the address come back from
-\code{LinePair} over a channel, as one \code{ScanState}, rather than
-on wires. \code{ScanTap}, which this sheet covers too, puts them on it:
-it reads \code{LinePair}'s three wires after \code{LinePair} has
-driven them and sends them whenever the channel has room. \code{ScanCtl} drives
+What it reads comes back from \code{LinePair} over a channel, as one
+\code{ScanState}, rather than on wires: the underflow bit, the stuck
+bit, the address, the longest line and the count of late lines.
+\code{ScanTap}, which this sheet covers too, puts them on it: it reads
+\code{LinePair}'s five wires after \code{LinePair} has driven them and
+sends them whenever the channel has room. \code{ScanCtl} drives
 \code{clear}, which \code{LinePair} reads, so it runs before
 \code{LinePair}, and a wire back would be read a step stale in the run
 while the netlist reads it fresh. A channel commits at the end of the
@@ -33,51 +38,68 @@ step whichever unit ran first.
 The unit decodes the word from address bits 4 to 2. In
 \code{ScanVideo} it sits above \code{1 << SCAN\_BIT}, \code{0x80}, of
 the video slot, so on the board its words are at \code{0x3280} to
-\code{0x3290}, the HAL's \code{map::SCAN}.
+\code{0x3298}, the HAL's \code{map::SCAN}.
 
 \dsregs{ScanCtl}
 
+\code{ctrl} reads back as written, both its bits, so a host may set
+one and keep the other: the HAL's \code{show} and \code{two\_ahead}
+each read \code{ctrl} and write it back with their own bit changed.
 A write to \code{clear} of any value clears the underflow and stuck
-bits; the word itself is not kept. \code{stuck\_at} is the
-first line that did not come since the stuck bit was last clear, and a
-clear leaves it until another line does not come.
+bits, the longest line and the count of late lines; the word itself is
+not kept. \code{stuck\_at} is the first line that did not come since
+the stuck bit was last clear, and a clear leaves it until another line
+does not come.
 
 \dstables{ScanCtl}
 
 \subsection*{Behaviour}
 
 \begin{itemize}
-\item \code{base}, \code{mode} and \code{clear} are driven from the
-registers \code{fbase}, \code{show} and \code{clr}; \code{clr} is high
-for the one cycle after a write to \code{clear}.
+\item \code{base}, \code{mode}, \code{clear} and \code{two} are driven
+from the registers \code{fbase}, \code{show}, \code{clr} and
+\code{ahead}; \code{clr} is high for the one cycle after a write to
+\code{clear}.
 \item \code{mode} also starts the fetch: in \code{ScanVideo} it is
 \code{LinePair}'s \code{show}, so no line is read from memory until
 the show bit is set (issue 1178).
+\item \code{two} is \code{LinePair}'s \code{two}, which the pair takes
+at the vertical sync, so the ahead bit counts from the next frame.
 \item The underflow bit is \code{seen}, the stuck bit
-\code{seen\_stuck} and the address \code{seen\_at}, the last values
-the channel brought. It can read high for a few cycles after a clear, the values
-already in the channel, the same in the run and the netlist.
+\code{seen\_stuck}, the address \code{seen\_at}, the longest line
+\code{seen\_worst} and the count \code{seen\_lates}, the last values
+the channel brought. They can read the old values for a few cycles
+after a clear, the values already in the channel, the same in the run
+and the netlist.
 \item Reads and writes are answered the cycle they are taken.
 \end{itemize}
 
 \subsection*{Verification}
 
-\code{ex\_scanvideo} sets the base and the scanout bit, reads the
+\begin{itemize}
+\item \code{ex\_scanvideo} sets the base and the scanout bit, reads the
 underflow bit clear after a clean frame, set after a frame whose
 memory stalls for a line, and clear again after a write to
 \code{clear}. \code{//docs:scanvideo\_sim\_scanvideo\_tb\_test} and
 \code{//docs:scanvideo\_vsim\_test} simulate it inside
 \code{ScanVideo}'s netlist against that run.
-\code{//cpu/vreteno:board\_test}'s
-\code{a\_line\_that\_never\_comes\_is\_stuck} points the scanout at
-memory that never answers and reads the stuck bit set with that
-line's address.
+\item \code{//lib/parts:parts\_test}'s
+\code{ctrl\_reads\_back\_as\_written} writes \code{ctrl} with each
+combination of its two bits, reads each back, and sees \code{mode}
+and \code{two} follow them.
+\item \code{//cpu/vreteno:board\_test}'s
+\code{a\_line\_that\_never\_comes\_is\_stuck} points the scanout's
+\code{LinePair} at memory that never answers and sees its stuck bit
+set with that line's address.
+\end{itemize}
 
 \subsection*{Used by}
 
 \code{ScanVideo}. On the board, \code{cpu/vreteno/rust/scanprobe.rs}
 uses it through the HAL's \code{Scan}, and says \code{scan stuck} with
-the address when the bit is set.
+the address when the bit is set. \code{cpu/vreteno/rust/ico\_hdmi.rs}
+prints the longest line and the late lines each time it reports, then
+clears them, and built with \code{ahead} it sets the ahead bit.
 
 \subsection*{Limits}
 

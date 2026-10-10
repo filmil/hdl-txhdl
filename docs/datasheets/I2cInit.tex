@@ -17,20 +17,29 @@ is written, and \code{failed} is high when the chip did not acknowledge
 a byte.
 
 The unit has no bus. It writes this table, one transaction per entry.
-\code{//docs:hdmi} and the source both state that no document the part
-was written from gives the chip's registers. The values are
-unconfirmed until checked against the SiI9134's documentation or the
-board vendor's example.
+The source states that the values are those public code for the chip
+writes (issue 1525): an FPGA colour-bar example's system control,
+\code{sii9134\_cfg.v} of \code{n111116/SiI9134\_clor\_bar}, and a
+Linux driver's packing, \code{sii9134.c} of
+\code{starsoc/linux-star-x7}. \code{//docs:hdmi} states that the
+values before them, \code{0x35} and \code{0x00}, were accepted by the
+chip and activated video output on the board. The source states that
+\code{0x35} latched the input on the falling edge, the pixel clock's
+rise, and that while \code{0x00} left the packing bits nought, a
+packing the chip does not define, the board's recordings showed each
+line's last four pixels at the start of the next.
 
 \begin{center}\footnotesize
 \begin{tabular}{@{}llllp{0.4\textwidth}@{}}
 \toprule
-Entry & Address & Register & Value & Meaning, unconfirmed \\
+Entry & Address & Register & Value & Meaning, as the source states \\
 \midrule
-0 & \code{0x72} & \code{0x08} & \code{0x35} & System control: out of
-power down, with the input bus as the board wires it. \\
-1 & \code{0x7a} & \code{0x2f} & \code{0x00} & The output as DVI: no
-HDMI packets, only the picture. \\
+0 & \code{0x72} & \code{0x08} & \code{0x37} & System control: out of
+power down, the 24-bit bus, the syncs followed, and the input latched
+on IDCK's rising edge, mid-pixel. \\
+1 & \code{0x7a} & \code{0x2f} & \code{0x20} & The output as DVI, no
+HDMI packets, with 24 bits a pixel and no packing in bits 5 to 3, as
+the driver writes them with HDMI on, \code{0x21}. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -119,13 +128,16 @@ The example \code{ex\_hdmi}. The demonstration for the AX7A200B:
 \code{hdmi/board/hdmi\_demo.v} instantiates it with open-drain pads on
 the chip's I2C lines and \code{done} and \code{failed} on LEDs.
 \code{//hdmi:demo\_synth} and \code{//hdmi:demo\_pnr} put the design
-through Vivado to a bitstream. \code{//docs:hdmi} states that it has
-not yet run on the board.
+through Vivado to a bitstream. \code{//docs:hdmi} states that it ran
+on the board on September 19, 2026, with every I2C transaction
+acknowledged. \code{flagship/board/flagship.v} instantiates it on the
+flagship's pixel clock.
 
 \subsection*{Limits}
 
-There is one table, and its values are unconfirmed. The unit keeps
-writing after a byte is not acknowledged, and it writes the table once.
+There is one table, and its values are those public code for the chip
+writes. The unit keeps writing after a byte is not acknowledged, and it
+writes the table once.
 It has no input for the clock line. \code{tick} is 16 bits wide, so
 \code{DIV} is at most 65\,536; the counters of the two holds are as
 wide as \code{HOLD} needs, 22 bits in the tables.
