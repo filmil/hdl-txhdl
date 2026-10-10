@@ -5,7 +5,7 @@ beside it, programmed over one AXI-Lite slot.}
 
 \dsfacts{\code{lib/parts/src/scanout.rs}}%
 {\code{txhdl\_parts::scanout::ScanVideo<HV, HFP, HSW, HBP, VV, VFP,
-VSW, VBP, SHIFT, AW, TOTAL, STRIDE>}}%
+VSW, VBP, SHIFT, AW, TOTAL, STRIDE, LO, HI>}}%
 {\code{//docs:examples}}
 
 \subsection*{Function}
@@ -24,14 +24,16 @@ again with \code{Hdmi}'s own functions and parameters, for
 frame starts and the row from registers. It is the scanout's raster,
 not Razboj's rasteriser, which has a sheet of its own under the same
 name (issue 1055).
-\item \code{LinePair} holds two lines and asks for each a line ahead,
-on \code{req}; their words arrive on \code{words}. Both channels
-leave the unit for the bus clock. \code{ScanCtl}'s show bit, which
-picks the scanout's picture at \code{VidMux}, is also
+\item \code{LinePair} holds two lines and asks for each one or two
+rows ahead, on \code{req}; their words arrive on \code{words}. Both
+channels leave the unit for the bus clock. \code{ScanCtl}'s show bit,
+which picks the scanout's picture at \code{VidMux}, is also
 \code{LinePair}'s \code{show}, so the fetch starts only once the
-scanout is shown (issue 1178).
-\item \code{ScanTap} puts \code{LinePair}'s underflow bit on a channel
-back to \code{ScanCtl}.
+scanout is shown (issue 1178). \code{ScanCtl}'s ahead bit is
+\code{LinePair}'s \code{two} (issue 1523).
+\item \code{ScanTap} puts \code{LinePair}'s underflow and stuck bits,
+the stuck line's address, the longest line and the count of late
+lines on a channel back to \code{ScanCtl}.
 \item \code{VidMux} puts \code{Hdmi}'s pixel or the scanout's, a
 \code{0x00RRGGBB} word, on the pins, with \code{Hdmi}'s syncs either
 way.
@@ -40,9 +42,9 @@ way.
 The children run in an order that puts every wire's driver before its
 reader: \code{Raster} and \code{ScanCtl}, then \code{LinePair}, then
 \code{ScanTap} and \code{Hdmi}, then \code{VidMux}. The one path the
-other way, the underflow bit, is a channel. Counting the beam twice is
-what keeps that order possible, and \code{ex\_scanvideo} checks the two
-counts agree on every cycle.
+other way, from \code{LinePair} back to \code{ScanCtl}, is a channel.
+Counting the beam twice is what keeps that order possible, and
+\code{ex\_scanvideo} checks the two counts agree on every cycle.
 
 \subsection*{Parameters}
 
@@ -57,6 +59,8 @@ a framebuffer pixel's size on the screen. \\
 \code{TOTAL} & The rows of a frame, \code{VV + VFP + VSW + VBP}; the
 \code{Default} refuses one that disagrees. \\
 \code{STRIDE} & The bytes from one line to the next in memory. \\
+\code{LO}, \code{HI} & The frame's memory, the bytes from \code{LO} up
+to but not including \code{HI}, outside which no line is asked for. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -65,9 +69,25 @@ The tables below use the flagship's: 640 by 480 at 60~Hz, a
 framebuffer pixel of four by four, ten bits of column, 525 rows and
 4096 bytes a line, as \code{hdmi/src/netlist.rs} writes \code{scan\_video}.
 A line in memory is Razboj's row of 1024 words, of which the first 640
-are shown (issue 985).
+are shown (issue 985). The frame's memory is the board's gigabyte from
+\code{0x4000\_0000} to \code{0x8000\_0000} (issue 1382).
 
 \dstables{ScanVideo}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item The pair's line is \code{HV} words, and its rows are \code{VV}
+visible of \code{TOTAL}.
+\item A line not wholly inside \code{LO} to \code{HI} is not asked
+for: the pair sets its stuck bit with that line's address, the row
+shows \code{LATE}, and the frame goes on (issue 1382). A base gone
+wrong once sent a line's burst into the serial port's page, and the
+core's prints stopped behind it.
+\item With the ahead bit set, the pair asks for lines two rows ahead
+from the next frame, and a line's words wait in the crossing until
+the row before its own (issue 1523).
+\end{itemize}
 
 \subsection*{Verification}
 
@@ -81,6 +101,16 @@ count is \code{Hdmi}'s on every cycle, across a reset.
 \item \code{//docs:scanvideo\_sim\_scanvideo\_tb\_test} and
 \code{//docs:scanvideo\_vsim\_test} simulate its netlist against that
 run under nvc and Verilator.
+\item \code{//lib/parts:parts\_test}'s
+\code{a\_frame\_with\_its\_words}\allowbreak
+\code{\_on\_time\_has\_no\_late\_line} runs the flagship's pair, with this
+sheet's \code{LO} and \code{HI}, and raster over three frames, one row
+ahead and two, and sees no late line once the first frame is over.
+\item \code{//cpu/vreteno:board\_test}'s
+\code{a\_base\_outside\_the\_memory}\allowbreak
+\code{\_is\_never\_fetched} gives the flagship's line the serial
+port's page as its base: no line is asked for, the stuck bit is set at
+that base, and the core's greeting comes out whole.
 \item On the board, \code{scanprobe} shows a frame from the DDR3 and
 reads the underflow bit idle and under load; both read clear
 (\code{docs/board-checks.md}, PR 1041's session).
@@ -90,12 +120,15 @@ reads the underflow bit idle and under load; both read clear
 
 \code{flagship/board/flagship.v}, in the video slot at \code{0x3200},
 with \code{chan\_cdc} transferring \code{req} and \code{words} across
-clock domains to the board's \code{ScanFetch} and \code{LineFetch} engines.
+clock domains to the board's \code{ScanFetch} and \code{LineFetch}
+engines. The words' crossing, \code{swords\_cdc}, holds 2048 words,
+more than two lines, so the bus's read data never waits on the pixel
+side, and two rows ahead the next line waits there whole.
 
 \subsection*{Limits}
 
 The module operates in a single video mode determined by its synthesis
-parameters. Scanout timing and framebuffer addressing share common sync
-generators; scanout resolution matches the native video mode without
-scaling. The underflow status bit propagates to the register interface
-several cycles after \code{LinePair} asserts it due to domain crossing.
+parameters, and its frame's memory is fixed the same way. The
+scanout's picture is the native video mode's, without scaling. The
+bits \code{ScanCtl} reads reach it up to three cycles after
+\code{LinePair} drives them, through the channel between the two.
