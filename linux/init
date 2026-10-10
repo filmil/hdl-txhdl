@@ -22,11 +22,13 @@ uname -a
 # slots and Linux's litex_liteeth all working.
 addr=
 peer=
+ptycheck=
 for word in $(/bin/busybox cat /proc/cmdline); do
 	case "$word" in
 	txhdl.net) addr=10.0.0.1/24 peer=10.0.0.2 ;;
 	txhdl.ip=*) addr=${word#txhdl.ip=} ;;
 	txhdl.ping=*) peer=${word#txhdl.ping=} ;;
+	txhdl.ptycheck) ptycheck=1 ;;
 	esac
 done
 if [ -n "$addr" ]; then
@@ -76,6 +78,22 @@ if [ -x /usr/sbin/dropbear ]; then
 	/bin/busybox mkdir -p /dev/pts /etc/dropbear
 	/bin/busybox mount -t devpts devpts /dev/pts
 	/usr/sbin/dropbear -R && echo "txhdl: dropbear is listening on 22"
+fi
+# `txhdl.ptycheck` logs in to this machine's own ssh server over the
+# loopback and asks for a pseudo-terminal, the path an interactive
+# login takes, which the model's peer cannot: it speaks no ssh.
+if [ -n "$ptycheck" ] && [ -x /usr/bin/dbclient ]; then
+	/bin/busybox ip link set lo up
+	/usr/bin/dropbearkey -t ed25519 -f /root/ptycheck >/dev/null 2>&1
+	/bin/busybox mkdir -p /root/.ssh
+	/usr/bin/dropbearkey -y -f /root/ptycheck |
+		/bin/busybox grep '^ssh-' >>/root/.ssh/authorized_keys
+	# The client sets its own terminal raw, so it runs on one of its
+	# own, which `script` gives it.
+	/bin/busybox script -q -c "/usr/bin/dbclient -y -t \
+		-i /root/ptycheck root@127.0.0.1 \
+		'echo txhdl: a pty session ran on \$(tty)'" /dev/null </dev/null
+	echo "txhdl: the pty check ended with $?"
 fi
 # The shell takes the console as its controlling tty, so that Ctrl-C
 # reaches the command in the foreground: with a plain exec it had none,
