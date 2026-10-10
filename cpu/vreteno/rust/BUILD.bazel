@@ -9,6 +9,7 @@
 # comes with the toolchain, so there is no cross binutils either.
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 load(":defs.bzl", "vreteno_elf", "vreteno_fastboot", "vreteno_flat", "vreteno_image")
+load("//tools:opt_test.bzl", "opt_test")
 
 # The icosahedron's lists, which board_test also times Razboj drawing,
 # flat and in tiles (issue 1255).
@@ -1148,8 +1149,18 @@ rust_test(
 # GL_LINEAR_MIPMAP_LINEAR, the rasteriser's frame byte for byte the
 # model's, and a kept texture with its generated levels drawing as an
 # uploaded one.
-rust_test(
+# Built optimised: unoptimised it took 144 to 186 s alone, and timed
+# out at medium's 300 s in three suites in a row on a loaded host
+# (#1588, the rule of #1448).
+opt_test(
     name = "ico_mip_test",
+    test = ":ico_mip_test_rust",
+)
+
+# The test itself, which `ico_mip_test` above builds optimised and
+# runs. Manual, so that it is not run a second time as it is.
+rust_test(
+    name = "ico_mip_test_rust",
     srcs = [
         "ico_gl.rs",
         "ico_gl_test.rs",
@@ -1158,6 +1169,7 @@ rust_test(
     crate_root = "ico_gl_test.rs",
     edition = "2021",
     rustc_flags = ["--cfg=mip"],
+    tags = ["manual"],
     deps = [
         "//gles",
         "//gpu/razboj",
