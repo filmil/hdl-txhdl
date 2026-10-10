@@ -776,6 +776,18 @@ fn main() -> ! {
             Uart::put_decimal(worst);
             Uart::say(b" lates ");
             Uart::put_decimal(lates);
+            // The rows and frames that showed `LATE`, and the least
+            // margin, in pixels (#1524).
+            let (rows, frames_late, margin) = Scan::late();
+            Uart::say(b" late_rows ");
+            Uart::put_decimal(rows);
+            Uart::say(b" late_frames ");
+            Uart::put_decimal(frames_late);
+            Uart::say(b" margin ");
+            if margin < 0 {
+                Uart::put(b'-');
+            }
+            Uart::put_decimal(margin.unsigned_abs());
             Scan::clear();
             Uart::put(b'\n');
         }
