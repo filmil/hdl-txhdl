@@ -179,7 +179,8 @@ impl Gl<'_> {
             ALIASED_POINT_SIZE_RANGE | ALIASED_LINE_WIDTH_RANGE => {
                 i(&[1, size])
             }
-            SMOOTH_POINT_SIZE_RANGE | SMOOTH_LINE_WIDTH_RANGE => i(&[1, 1]),
+            // What is drawn smooth (#1622): sizes and widths from 1 to 64.
+            SMOOTH_POINT_SIZE_RANGE | SMOOTH_LINE_WIDTH_RANGE => i(&[1, size]),
             CULL_FACE_MODE => e(&[self.cull as i64]),
             FRONT_FACE => e(&[self.front as i64]),
             SHADE_MODEL => {

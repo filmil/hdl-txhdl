@@ -1931,6 +1931,11 @@ impl<'a> Gl<'a> {
                 return self.sprite(&v, (x0, y0, x1, y1), sides);
             }
         }
+        // A point sprite is not antialiased, whatever GL_POINT_SMOOTH
+        // says (OES_point_sprite).
+        if self.point_smooth && !self.sprite_on {
+            return self.smooth_point(&v, (wx, 16 * sh - wy));
+        }
         if let Some(b) = clip(c(x0), c(y0), c(x1), c(y1), self.bounds()) {
             let slot = emit::flat_depth(self.window_z(&v));
             let fog = self.fog_on.then(|| {
@@ -2016,6 +2021,9 @@ impl<'a> Gl<'a> {
         // Razboj's y, turned over.
         let sh16 = 16 * self.screen.1 as i64;
         let (p, q) = ((p.0, sh16 - p.1), (q.0, sh16 - q.1));
+        if self.line_smooth {
+            return self.smooth_line(&a, &b, p, q, flat);
+        }
         let half = 8 * size(self.line_width);
         let o = if (q.0 - p.0).abs() >= (q.1 - p.1).abs() {
             (0, half)
@@ -2051,6 +2059,181 @@ impl<'a> Gl<'a> {
                 self.push_drawn(w, slot, planes);
             }
         }
+    }
+
+    /// A smooth point (#1622): the disc of the point's diameter around
+    /// its centre `at`, in Razboj's sixteenths, as a polygon whose
+    /// pixels a pixel inside its edge are the point's colour and whose
+    /// alpha falls to nought across one pixel out to a pixel past it,
+    /// which is the coverage GL puts in alpha for an antialiased point,
+    /// taken linear across the rim. The size is the point's own, not
+    /// rounded, kept from 1 to 64 pixels as the smooth range says.
+    fn smooth_point(&mut self, v: &Vert, at: (i64, i64)) {
+        let r =
+            (self.point_size.clamp(ONE, gl::MAX_SIZE as Fx * ONE) as i64) >> 13;
+        // Eight sides for a point of a pixel or less across, sixteen
+        // above; the corners pushed out by the factor, in 16.16, that puts
+        // the mean of a side's distance from the centre on the circle.
+        let (steps, out) = if r <= 8 { (6, 68129) } else { (3, 66178) };
+        let (ri, ro) = ((r - 8).max(0), r + 8);
+        let corner = |rad: i64, k: usize| {
+            let (c, s) = CIRCLE[k];
+            let rad = rad * out / 65536;
+            (at.0 + rad * c as i64 / 65536, at.1 - rad * s as i64 / 65536)
+        };
+        let col = colour_word(&v.col);
+        let z = self.window_z(v);
+        let (inner, outer) =
+            (Soft::at(col, z, v), Soft::at(col & 0x00ff_ffff, z, v));
+        let n = 48 / steps;
+        let ks = |k: usize| (k % n) * steps;
+        if ri > 0 {
+            for k in 1..n - 1 {
+                self.soft_tri([
+                    inner.place(corner(ri, ks(0))),
+                    inner.place(corner(ri, ks(k))),
+                    inner.place(corner(ri, ks(k + 1))),
+                ]);
+            }
+        }
+        for k in 0..n {
+            let (a, b) = (ks(k), ks(k + 1));
+            let (i0, i1) =
+                (inner.place(corner(ri, a)), inner.place(corner(ri, b)));
+            let (o0, o1) =
+                (outer.place(corner(ro, a)), outer.place(corner(ro, b)));
+            self.soft_tri([i0, o0, o1]);
+            self.soft_tri([i0, o1, i1]);
+        }
+    }
+
+    /// A smooth line (#1622): the rectangle of the line's width centred
+    /// on the segment from `p` to `q`, in Razboj's sixteenths, as GL
+    /// draws an antialiased line, its colour and depth each end's, or
+    /// `flat`'s colour when shading is flat; and a rim one pixel wide
+    /// all round, half inside the rectangle and half out, across which
+    /// alpha falls to nought, the coverage taken linear. A line of no
+    /// length draws nothing.
+    fn smooth_line(
+        &mut self,
+        a: &Vert,
+        b: &Vert,
+        p: (i64, i64),
+        q: (i64, i64),
+        flat: u32,
+    ) {
+        let (dx, dy) = (q.0 - p.0, q.1 - p.1);
+        let len = (dx * dx + dy * dy).isqrt();
+        if len == 0 {
+            return;
+        }
+        let h =
+            (self.line_width.clamp(ONE, gl::MAX_SIZE as Fx * ONE) as i64) >> 13;
+        let (cp, cq) = if self.smooth {
+            (colour_word(&a.col), colour_word(&b.col))
+        } else {
+            (flat, flat)
+        };
+        let (zp, zq) = (self.window_z(a), self.window_z(b));
+        let (sp, sq) = (Soft::at(cp, zp, a), Soft::at(cq, zq, b));
+        let (fp, fq) = (
+            Soft::at(cp & 0x00ff_ffff, zp, a),
+            Soft::at(cq & 0x00ff_ffff, zq, b),
+        );
+        // A point `t` along the segment and `s` across it, in sixteenths.
+        let pt = |t: i64, s: i64| {
+            (p.0 + (t * dx - s * dy) / len, p.1 + (t * dy + s * dx) / len)
+        };
+        let (t0, t1) = if len > 16 {
+            (8, len - 8)
+        } else {
+            (len / 2, len / 2)
+        };
+        let (si, so) = ((h - 8).max(0), h + 8);
+        // A corner at `t` along and `s` across, an end's colour and depth
+        // by the end it is nearer, its alpha the coverage `cov` of the
+        // end's alpha: one inside, nought out, and a quarter at the middle
+        // of a corner square, where the coverages across and along meet.
+        let mid = |e: u32| (e & 0x00ff_ffff) | (((e >> 24) / 4) << 24);
+        let (mp, mq) = (Soft::at(mid(cp), zp, a), Soft::at(mid(cq), zq, b));
+        let pick = |t: i64, full: bool, quarter: bool| {
+            let near_p = 2 * t < len;
+            match (near_p, full, quarter) {
+                (true, true, _) => sp,
+                (false, true, _) => sq,
+                (true, false, true) => mp,
+                (false, false, true) => mq,
+                (true, false, false) => fp,
+                (false, false, false) => fq,
+            }
+        };
+        let c =
+            |t: i64, s: i64, full: bool| pick(t, full, false).place(pt(t, s));
+        let (ta, tb) = (-8, len + 8);
+        // The rectangle inside the rim.
+        let inner = [
+            c(t0, -si, true),
+            c(t1, -si, true),
+            c(t1, si, true),
+            c(t0, si, true),
+        ];
+        self.soft_tri([inner[0], inner[1], inner[2]]);
+        self.soft_tri([inner[0], inner[2], inner[3]]);
+        // The rim's two sides and two ends, each a strip across which
+        // alpha falls from the inside's to nought.
+        for (i0, i1, o0, o1) in [
+            ((t0, -si), (t1, -si), (t0, -so), (t1, -so)),
+            ((t0, si), (t1, si), (t0, so), (t1, so)),
+            ((t0, -si), (t0, si), (ta, -si), (ta, si)),
+            ((t1, -si), (t1, si), (tb, -si), (tb, si)),
+        ] {
+            let (i0, i1) = (c(i0.0, i0.1, true), c(i1.0, i1.1, true));
+            let (o0, o1) = (c(o0.0, o0.1, false), c(o1.0, o1.1, false));
+            self.soft_tri([i0, o0, o1]);
+            self.soft_tri([i0, o1, i1]);
+        }
+        // The rim's four corner squares, each four triangles about its
+        // middle, so that alpha there is near the product of the two
+        // coverages rather than the smaller of them.
+        for (ti, si_, to, so_) in [
+            (t0, -si, ta, -so),
+            (t1, -si, tb, -so),
+            (t1, si, tb, so),
+            (t0, si, ta, so),
+        ] {
+            let i = c(ti, si_, true);
+            let e1 = c(to, si_, false);
+            let o = c(to, so_, false);
+            let e2 = c(ti, so_, false);
+            let m =
+                pick(ti, false, true).place(pt((ti + to) / 2, (si_ + so_) / 2));
+            self.soft_tri([i, e1, m]);
+            self.soft_tri([e1, o, m]);
+            self.soft_tri([o, e2, m]);
+            self.soft_tri([e2, i, m]);
+        }
+    }
+
+    /// One triangle of a smooth point or line: shaded across its
+    /// corners, so that alpha falls across a rim even when shading is
+    /// flat (its colours then differ in alpha alone), testing depth and
+    /// fogged as the context says.
+    fn soft_tri(&mut self, c: [Soft; 3]) {
+        let s = c.map(|x| x.col);
+        let v = c.map(|x| x.at);
+        let zs = self.depth_test.then(|| c.map(|x| x.z));
+        let Some((w, slot)) =
+            emit::triangle(s[0], v[0], v[1], v[2], Some(s), zs, self.bounds())
+        else {
+            return;
+        };
+        let al = s.map(|x| x >> 24);
+        let planes = Planes {
+            fog: self.fogged(&w, v, c.map(|x| x.end)),
+            alpha: (al[0] != al[1] || al[1] != al[2])
+                .then(|| emit::alpha_plane(&w, v, s)),
+        };
+        self.push_drawn(w, slot, planes);
     }
 
     /// The planes a triangle is clipped against, each as a distance
@@ -2414,6 +2597,91 @@ fn kept_from(frame: &[[u32; WORDS]], window: Bounds) -> usize {
         s += n;
     }
     from
+}
+
+/// The unit circle at 48 even steps, in 16.16, for a smooth point's
+/// polygon (#1622): every sixth, fourth or third step makes 8, 12 or 16
+/// sides.
+const CIRCLE: [(i32, i32); 48] = [
+    (65536, 0),
+    (64975, 8554),
+    (63303, 16962),
+    (60547, 25080),
+    (56756, 32768),
+    (51993, 39896),
+    (46341, 46341),
+    (39896, 51993),
+    (32768, 56756),
+    (25080, 60547),
+    (16962, 63303),
+    (8554, 64975),
+    (0, 65536),
+    (-8554, 64975),
+    (-16962, 63303),
+    (-25080, 60547),
+    (-32768, 56756),
+    (-39896, 51993),
+    (-46341, 46341),
+    (-51993, 39896),
+    (-56756, 32768),
+    (-60547, 25080),
+    (-63303, 16962),
+    (-64975, 8554),
+    (-65536, 0),
+    (-64975, -8554),
+    (-63303, -16962),
+    (-60547, -25080),
+    (-56756, -32768),
+    (-51993, -39896),
+    (-46341, -46341),
+    (-39896, -51993),
+    (-32768, -56756),
+    (-25080, -60547),
+    (-16962, -63303),
+    (-8554, -64975),
+    (0, -65536),
+    (8554, -64975),
+    (16962, -63303),
+    (25080, -60547),
+    (32768, -56756),
+    (39896, -51993),
+    (46341, -46341),
+    (51993, -39896),
+    (56756, -32768),
+    (60547, -25080),
+    (63303, -16962),
+    (64975, -8554),
+];
+
+/// A corner of a smooth point's or line's triangles (#1622): where it
+/// is in Razboj's sixteenths, its colour with the alpha its coverage
+/// gives, its depth, and the vertex it is fogged as.
+#[derive(Clone, Copy)]
+struct Soft<'v> {
+    at: (i32, i32),
+    col: u32,
+    z: u32,
+    end: &'v Vert,
+}
+
+impl<'v> Soft<'v> {
+    fn at(col: u32, z: u32, end: &'v Vert) -> Self {
+        Soft {
+            at: (0, 0),
+            col,
+            z,
+            end,
+        }
+    }
+
+    /// The same corner at `p`, kept inside Razboj's range.
+    fn place(&self, p: (i64, i64)) -> Self {
+        let r = |c: i64| c.clamp(VMIN as i64, VMAX as i64) as i32;
+        Soft {
+            at: (r(p.0), r(p.1)),
+            ..*self
+        }
+    }
 }
 
 /// The planes an entry's second slot may carry besides depth: fog's
