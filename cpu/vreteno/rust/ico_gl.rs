@@ -61,9 +61,7 @@
 
 use crate::ico_list::{rect, Box, Solid, BACKDROP, BODY, FACES, H, W, WORDS};
 use gles::fixed::{Fx, ONE};
-#[cfg(not(teapot))]
-use gles::Vertex;
-use gles::{gl, Gl};
+use gles::{gl, Gl, Vertex};
 
 /// `ico_list`'s fixed point, ten bits of fraction, and the shift to
 /// GL's sixteen.
@@ -88,11 +86,18 @@ pub const VERTS: usize = 3 * FACES;
 /// face with its second slot when the depth test is on and its two
 /// texture slots when it is textured. Under `mirror` (#1592's step 8),
 /// the reflection's faces as well, and the mirror's two triangles twice.
+/// Under `blend` (step 7), the faces drawn twice, back then front, and
+/// the stripes' triangles.
 #[cfg(not(teapot))]
 pub const MOST: usize = 1
     + 4 * FACES
     + 4 * FLOOR_TRIS
-    + if cfg!(mirror) { 2 * FACES + 8 } else { 0 };
+    + if cfg!(mirror) { 2 * FACES + 8 } else { 0 }
+    + if cfg!(blend) {
+        2 * FACES + 4 * STRIPES
+    } else {
+        0
+    };
 /// The canonical teapot's (#1592): the backdrop's rectangle, and each
 /// triangle with its second slot.
 #[cfg(teapot)]
@@ -146,6 +151,11 @@ pub struct Model {
     /// Each corner's texture coordinates: the texture twice across a
     /// face, so its edges repeat it.
     pub texcoords: [[Fx; 4]; VERTS],
+    /// Each corner's colour under `blend` (#1592's step 7): the solid's
+    /// ambient gold, its alpha from how high the corner is on the solid,
+    /// whole at the bottom and nearly clear at the top, which is the part
+    /// the stripes are behind.
+    pub colours: [[Fx; 4]; VERTS],
 }
 
 impl Model {
@@ -155,6 +165,7 @@ impl Model {
             normals: [[0; 3]; VERTS],
             indices: [0; VERTS],
             texcoords: [[0; 4]; VERTS],
+            colours: [[0; 4]; VERTS],
         };
         let corners = [[0, 0], [2 * ONE, 0], [ONE, 2 * ONE]];
         let mut f = 0;
@@ -173,6 +184,9 @@ impl Model {
                 m.indices[v] = v as u16;
                 let [s, t] = corners[c];
                 m.texcoords[v] = [s, t, 0, ONE];
+                let down = ONE as i64 - outward(p)[1] as i64;
+                let [r, g, b, _] = colour(AMBIENT);
+                m.colours[v] = [r, g, b, ONE * 3 / 20 + (down * 17 / 40) as Fx];
                 c += 1;
             }
             f += 1;
@@ -287,6 +301,10 @@ pub fn frame<'a>(
         floor(&mut g);
     }
 
+    if cfg!(blend) {
+        stripes(&mut g);
+    }
+
     // `ico_list` turns about y and then about x.
     g.translate(0, 0, -distance(ax));
     #[cfg(mirror)]
@@ -319,6 +337,8 @@ pub fn frame<'a>(
             normal: Some(model.normals[k]),
             tex: Some(model.texcoords[k]),
         });
+    } else if cfg!(blend) {
+        translucent(&mut g, model);
     } else {
         g.draw_elements(
             gl::TRIANGLES,
@@ -463,6 +483,68 @@ fn mirror(g: &mut Gl<'_>, model: &Model, ay: i32, ax: i32) {
     draw_square(g);
     g.disable(gl::BLEND);
     g.enable(gl::LIGHTING);
+}
+
+/// The stripes behind the solid under `blend` (#1592's step 7): six
+/// upright bars, teal and grey by turns, 24 units off, unlit and opaque,
+/// so that the solid in front of them shows what blending does. On the
+/// screen they run from row 60 to row 300, above the logo, and from
+/// column 60 to 580.
+pub const STRIPES: usize = 6;
+fn stripes(g: &mut Gl<'_>) {
+    let (z, top, bottom) = (-24 * ONE, 18 * ONE / 5, -6 * ONE / 5);
+    let width = 52 * ONE / 30;
+    let left = -26 * ONE / 5;
+    g.disable(gl::LIGHTING);
+    for k in 0..STRIPES as i32 {
+        let x0 = left + k * width;
+        let x1 = x0 + width;
+        let c = if k % 2 == 0 {
+            [ONE / 8, 7 * ONE / 16, ONE / 2, ONE]
+        } else {
+            [3 * ONE / 4, 3 * ONE / 4, 3 * ONE / 4, ONE]
+        };
+        let corners = [[x0, bottom], [x1, bottom], [x1, top], [x0, top]];
+        let order = [0usize, 1, 2, 0, 2, 3];
+        g.draw_vertices(gl::TRIANGLES, order.len(), |i| {
+            let [x, y] = corners[order[i]];
+            Vertex {
+                position: [x, y, z, ONE],
+                colour: Some(c),
+                normal: None,
+                tex: None,
+            }
+        });
+    }
+    g.enable(gl::LIGHTING);
+}
+
+/// The solid under `blend` (#1592's step 7), translucent: each corner's
+/// colour from `colours`, which colour material makes the lit colour's
+/// ambient and its alpha, so that smooth shading carries the alpha across
+/// each face as a plane; blended over what is behind it, its back faces
+/// first and its front ones after, without writing depth, so that each
+/// face blends over the ones behind it.
+fn translucent(g: &mut Gl<'_>, model: &Model) {
+    g.enable(gl::BLEND);
+    g.blend_func(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+    g.enable(gl::COLOR_MATERIAL);
+    g.depth_mask(false);
+    g.enable(gl::CULL_FACE);
+    for cull in [gl::FRONT, gl::BACK] {
+        g.cull_face(cull);
+        g.draw_elements(
+            gl::TRIANGLES,
+            &model.indices,
+            &model.positions,
+            Some(&model.colours),
+            Some(&model.normals),
+        );
+    }
+    g.disable(gl::CULL_FACE);
+    g.depth_mask(true);
+    g.disable(gl::COLOR_MATERIAL);
+    g.disable(gl::BLEND);
 }
 
 /// How far away the solid is at angle `ax`: `D`, or under `fog` (#1592's

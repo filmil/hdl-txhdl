@@ -1160,6 +1160,27 @@ rust_test(
     ],
 )
 
+# The smooth frame translucent over stripes, as #1592's step 7 draws it.
+rust_binary(
+    name = "ico_blend_frame",
+    srcs = [
+        "ico_gl.rs",
+        "ico_list.rs",
+        "ico_tex_frame.rs",
+    ],
+    crate_root = "ico_tex_frame.rs",
+    edition = "2021",
+    rustc_flags = [
+        "--cfg=blend",
+        "--cfg=smooth",
+    ],
+    deps = [
+        "//gles",
+        "//gpu/razboj",
+        "//lib/logo:txhdl_logo",
+    ],
+)
+
 # The smooth frame over a mirror, as #1592's step 8 draws it.
 rust_binary(
     name = "ico_mirror_frame",
@@ -1697,7 +1718,6 @@ vreteno_flat(
 # step of the GPU's features, the step's number and name given to the
 # program, which prints them, draws them in a corner and stops after
 # 1200 frames. //demo/canon:ico_series names the images and sums them.
-# Step 7 follows.
 _DEMO_ICO = [
     ("1", "flat", [], []),
     ("2", "depth", ["--cfg=gl"], ["//gles", "//gpu/razboj:tile"]),
@@ -1723,6 +1743,12 @@ _DEMO_ICO = [
         "6",
         "fog",
         ["--cfg=gl", "--cfg=tex", "--cfg=mip", "--cfg=fog"],
+        ["//gles", "//gpu/razboj:tile"],
+    ),
+    (
+        "7",
+        "blend",
+        ["--cfg=gl", "--cfg=smooth", "--cfg=blend"],
         ["//gles", "//gpu/razboj:tile"],
     ),
     (
