@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: Apache-2.0
+# Is every name a board-level netlist uses declared before its use?
+# Vivado's simulator refuses a name met first in a port connection and
+# declared after it, synthesis and Verilator do not, and every Vivado
+# target is manual, so without this the board simulation can break
+# behind a green suite (issue 1575).
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_binary(
+    name = "declcheck",
+    srcs = ["main.rs"],
+    edition = "2021",
+)
+
+rust_test(
+    name = "declcheck_unit_test",
+    crate = ":declcheck",
+    edition = "2021",
+)
+
+# The netlists the boards are built from: the flagship's three, the
+# board and its simulation, and the other tops'.
+NETLISTS = [
+    "//cpu/vreteno:board_boot_v",
+    "//cpu/vreteno:board_sim_v",
+    "//cpu/vreteno:board_v",
+    "//eth:mac_v",
+    "//hdmi:demo_v",
+    "//hdmi:scan_v",
+    "//pcie:bar_v",
+]
+
+sh_test(
+    name = "declcheck_test",
+    srcs = ["declcheck_test.sh"],
+    args = ["$(rootpath :declcheck)"] +
+           ["$(rootpath %s)" % n for n in NETLISTS],
+    data = [":declcheck"] + NETLISTS,
+)
