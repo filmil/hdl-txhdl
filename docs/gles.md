@@ -57,7 +57,7 @@ A later issue means the entry point is accepted from the start but does what tha
 | Reading back | `glReadPixels`, `glPixelStorei(GL_PACK_ALIGNMENT)` | From #999, `GL_RGBA` and `GL_UNSIGNED_BYTE`, the frame so far drawn first |
 | Hints | `glHint` | Accepted and ignored, as the specification allows, from #1490 |
 
-Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit (#1510), which wait for a program that needs them; and four parts of ES 1.1 that #999's conformance suite found missing: the point size array of `OES_point_size_array` (#1507), `glPointParameterx` (#1508), the multisampling state (#1509), and the switches `GL_POINT_SMOOTH` and `GL_LINE_SMOOTH` (#1513).
+Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit (#1510), which wait for a program that needs them; and three parts of ES 1.1 that #999's conformance suite found missing: the point size array of `OES_point_size_array` (#1507), `glPointParameterx` (#1508), and the switches `GL_POINT_SMOOTH` and `GL_LINE_SMOOTH` (#1513).
 An entry point that is left out still exists, so that a program links, and sets `GL_INVALID_ENUM` or `GL_INVALID_OPERATION` as the specification says for an unsupported value.
 
 The limits the library reports are the specification's minimums: a modelview stack of 16, projection and texture stacks of 2, eight lights, one clip plane.
@@ -385,13 +385,12 @@ The first group is the state tables of the specification's section 6.2: every st
 The second is the errors: for each command, the error section 2.5 and the command's own section give a bad argument, each recorded once, and that the command changes nothing.
 The third is the rendering: scenes read back with `glReadPixels` and held, pixel for pixel, to a reference in double precision that follows the specification's rules for points, polygons, lines by the four rules section 3.4.1 sets an algorithm other than the diamond exit, the viewport, smooth shading, every per-fragment test and operation, fog, the texture environments and lighting, and the depth and the stencil kept across a read in the middle of a frame, skipping only a pixel whose centre lies on an edge, which GL leaves to the implementation.
 The fourth is four of piglit's ES 1 tests, in `gles/conform/piglit`, ported with their float calls made fixed point for Common-Lite, each change marked.
-Of 203 state checks, 163 pass; of 100 error checks, 99; of 83 rendering checks, 83; and of piglit's four, two. The 43 failures fall under seven issues:
+Of 203 state checks, 171 pass; of 100 error checks, 99; of 83 rendering checks, 83; and of piglit's four, two. The 35 failures fall under six issues:
 
 | Issue | Checks | What is missing or wrong |
 |---|---|---|
 | #1507 | 6 | `OES_point_size_array` |
 | #1508 | 5 | `glPointParameterx`, without which piglit's point sprite test draws nothing |
-| #1509 | 8 | The multisampling state |
 | #1510 | 1 | A second texture unit |
 | #1512 | 17 | `GL_COMBINE`, its state and its scales |
 | #1513 | 2 | `GL_POINT_SMOOTH` and `GL_LINE_SMOOTH` |
@@ -403,6 +402,7 @@ With that fixed the board and the host should agree check for check, and every f
 
 The queries are issue 1484's.
 `glGetIntegerv`, `glGetFixedv` and `glGetBooleanv` answer every name the library keeps state for: the viewport and the depth range, the matrix mode, the three matrices and their stacks' depths, the current colour, normal and texture coordinates, the clears, the depth, blend, alpha test and colour mask settings, the faces and the shading, the point size and the line width, the bound texture, the unpack alignment, the light model, and every switch `glIsEnabled` knows.
+The multisampling state is kept with no multisample buffer, where it changes nothing drawn (#1509): `GL_MULTISAMPLE` on at first, the three sample switches off, `glSampleCoveragex`'s value and invert, and no sample buffers and no samples.
 They also give the limits: the stacks, 8 lights, 1 clip plane, textures to 1024, 1 texture unit, 4 bits under the pixel, 8 bits a channel, 16 of depth and 8 of stencil, and sizes from 1 to 64.
 Each finds its values once, in the kind GL keeps them in, and each call converts them as GL ES 1.1's section 6.1.2 says.
 A boolean is one or nought; a fixed value asked for as an integer is rounded; a colour, a normal, a depth range, the depth's clear value and the alpha reference asked for as integers map minus one to one onto the integers' whole range; an integer asked for as fixed is that many ones; and anything not nought is true.
