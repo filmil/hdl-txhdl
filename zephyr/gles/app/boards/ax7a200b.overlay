@@ -1,0 +1,26 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/*
+ * The program's RAM, its stacks, the GL and EGL state and its data
+ * among it, is the core's own data memory: the 64 KiB at 0x1_0000 on
+ * the core's port (#1275), which a load reaches in a cycle or two where
+ * the DDR3 takes tens even behind the data cache (issue 1287). Code
+ * stays in the DDR3, since a fetch from the core's memory faults.
+ * Nothing Razboj reads is here: the framebuffers, the display list, the
+ * textures and the buffers are at fixed addresses in the DDR3, in
+ * gles/vreteno/lib.rs. Linked as execute-in-place, as fastboot is: the
+ * image is code in the DDR3, and its data is copied to the core's
+ * memory as it starts.
+ */
+/ {
+	chosen {
+		zephyr,sram = &lram;
+		zephyr,flash = &ddr;
+	};
+
+	soc {
+		lram: memory@10000 {
+			compatible = "mmio-sram";
+			reg = <0x00010000 DT_SIZE_K(64)>;
+		};
+	};
+};
