@@ -141,6 +141,11 @@ pub struct Gl<'a> {
     /// sample switches, off, and `glSampleCoveragex`'s value and invert.
     /// There is no multisample buffer, so they are state GL keeps and
     /// change nothing drawn (section 3.2.1).
+    /// `GL_POINT_SMOOTH` and `GL_LINE_SMOOTH` (#1513), off at first. The
+    /// switches are kept, and a point or a line is drawn as with them off,
+    /// aliased, until #1622.
+    point_smooth: bool,
+    line_smooth: bool,
     multisample: bool,
     alpha_to_coverage: bool,
     alpha_to_one: bool,
@@ -255,6 +260,8 @@ impl<'a> Gl<'a> {
             offset_on: false,
             offset: (0, 0),
             dither: true,
+            point_smooth: false,
+            line_smooth: false,
             multisample: true,
             alpha_to_coverage: false,
             alpha_to_one: false,
@@ -473,6 +480,8 @@ impl<'a> Gl<'a> {
             gl::DEPTH_TEST => self.depth_test = on,
             gl::POLYGON_OFFSET_FILL => self.offset_on = on,
             gl::DITHER => self.dither = on,
+            gl::POINT_SMOOTH => self.point_smooth = on,
+            gl::LINE_SMOOTH => self.line_smooth = on,
             gl::MULTISAMPLE => self.multisample = on,
             gl::SAMPLE_ALPHA_TO_COVERAGE => self.alpha_to_coverage = on,
             gl::SAMPLE_ALPHA_TO_ONE => self.alpha_to_one = on,
@@ -520,6 +529,8 @@ impl<'a> Gl<'a> {
             gl::DEPTH_TEST => self.depth_test,
             gl::POLYGON_OFFSET_FILL => self.offset_on,
             gl::DITHER => self.dither,
+            gl::POINT_SMOOTH => self.point_smooth,
+            gl::LINE_SMOOTH => self.line_smooth,
             gl::MULTISAMPLE => self.multisample,
             gl::SAMPLE_ALPHA_TO_COVERAGE => self.alpha_to_coverage,
             gl::SAMPLE_ALPHA_TO_ONE => self.alpha_to_one,
