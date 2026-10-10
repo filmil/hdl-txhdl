@@ -199,7 +199,7 @@ fn totals(p: &Place) -> String {
         let _ = writeln!(
             s,
             "\\textcolor{{{}}}{{$\\blacksquare$}} & {} & {} & {} & {} \
-             & {}--{} & {}--{} \\\\",
+             & {} to {} & {} to {} \\\\",
             colour(&t.who),
             label(&t.who),
             group(t.cells),
