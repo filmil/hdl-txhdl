@@ -16,7 +16,7 @@ use gles_machine::Machine;
 use razboj::dl::{decode, decode_list};
 use razboj::model::{render_over, render_textured, Textures};
 use razboj::op::Kind;
-use razboj_tile::{TILE_WORDS, WORDS};
+use razboj_tile::{ENTRIES_AT, TILE_WORDS, WORDS};
 
 /// The framebuffer's words a row, and its rows.
 const FW: usize = 1024;
@@ -65,9 +65,25 @@ impl Machine for Model {
 
     fn draw_tiled(
         &mut self,
-        _tiles: &[[u32; TILE_WORDS]],
+        tiles: &[[u32; TILE_WORDS]],
         entries: &[[u32; WORDS]],
     ) {
+        // The tile table laid out over the list, its records first and its
+        // entries `ENTRIES_AT` past them, as the board's machine lays it
+        // out where Razboj reads it (#1596): what GL keeps in its frame
+        // across a draw must not rely on the list being left alone.
+        let words = self.list.as_flattened_mut();
+        for (k, w) in tiles.as_flattened().iter().enumerate() {
+            if let Some(slot) = words.get_mut(k) {
+                *slot = *w;
+            }
+        }
+        let first = ENTRIES_AT / 4;
+        for (k, w) in entries.as_flattened().iter().enumerate() {
+            if let Some(slot) = words.get_mut(first + k) {
+                *slot = *w;
+            }
+        }
         let words = &*self.textures;
         let read = |a: u32| {
             let at = (a.wrapping_sub(TEX_BUS) / 4) as usize;
