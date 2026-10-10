@@ -481,6 +481,32 @@ pub fn derive_value(input: TokenStream) -> TokenStream {
             .map(|n| format!("\"{n}\""))
             .collect::<Vec<_>>()
             .join(", ");
+        // And each field's width, where the constant can name it: a
+        // type that names one of the struct's generic parameters
+        // cannot be read outside the struct's own impl, so it reads
+        // nought, and a constant put in it is refused (issue 1574).
+        let generic: Vec<&str> = item
+            .args
+            .trim_start_matches('<')
+            .trim_end_matches('>')
+            .split(',')
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .collect();
+        let widths = types
+            .iter()
+            .map(|t| {
+                let named = t
+                    .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .any(|w| generic.contains(&w));
+                if named {
+                    "0".to_string()
+                } else {
+                    format!("<{t} as ::txhdl::types::Value>::WIDTH")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
         format!(
             "impl{b} ::txhdl::types::Value for {n}{a} {{\n\
              const WIDTH: usize = {width};\n\
@@ -493,7 +519,7 @@ pub fn derive_value(input: TokenStream) -> TokenStream {
              #[doc(hidden)]\n\
              #[allow(non_upper_case_globals, dead_code)]\n\
              {v} const {n}: ::txhdl::types::Fields = \
-             ::txhdl::types::Fields(&[{order}]);",
+             ::txhdl::types::Fields(&[{order}], &[{widths}]);",
             b = item.bounds,
             n = item.name,
             a = item.args,

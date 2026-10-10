@@ -363,18 +363,46 @@ pub fn literal(
     let mut fields: Vec<(&str, Option<Expr>)> =
         fields.into_iter().map(|(n, e)| (n, Some(e))).collect();
     let mut acc: Option<Expr> = None;
-    for want in order.0 {
+    for (k, want) in order.0.iter().enumerate() {
         let e = fields
             .iter_mut()
             .find(|(n, _)| n == want)
             .and_then(|(_, e)| e.take())
             .unwrap_or_else(|| panic!("a struct literal leaves out {want}"));
+        // A constant is sized to its field: unsized, it would be a
+        // 32-bit integer inside the concatenation (issue 1574).
+        let e = match e {
+            Expr::Num(v) => match order.1[k] {
+                0 => panic!(
+                    "the constant {v} in field `{want}` of a struct \
+                     literal has no width: the field's type names \
+                     a generic parameter of the struct (issue 1574)"
+                ),
+                w => Expr::Bits(w, bits_of(v, w)),
+            },
+            e => e,
+        };
         acc = Some(match acc {
             None => e,
             Some(a) => Expr::Cat(Box::new(a), Box::new(e)),
         });
     }
     acc.expect("a struct with no fields")
+}
+
+/// `v` as `w` binary digits, the highest first; a value wider than `w`
+/// keeps its low bits, as a field of that width would.
+fn bits_of(v: u128, w: usize) -> String {
+    (0..w)
+        .rev()
+        .map(|i| {
+            if i < 128 && (v >> i) & 1 == 1 {
+                '1'
+            } else {
+                '0'
+            }
+        })
+        .collect()
 }
 
 /// One end a unit may take as a port, as the netlist needs it: what
