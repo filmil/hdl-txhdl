@@ -20,5 +20,5 @@ ico-6-fog	//cpu/vreteno/rust:demo_ico_6_fog_bin	serial	110	-	-
 ico-7-blend	//cpu/vreteno/rust:demo_ico_7_blend_bin	serial	110	-	-
 ico-8-mirror	//cpu/vreteno/rust:demo_ico_8_mirror_bin	serial	110	-	-
 teapot	//cpu/vreteno/rust:demo_teapot_1_utah_bin	serial	60	-	-
-#linux-console	//linux:board_demo_boot	fastboot	120	txhdl: demo done	-
+linux-console	//linux:board_demo_boot	fastboot	120	txhdl: demo done	-
 doom	//demo/doom:doom	fastboot	60	-	freedoom1.wad
