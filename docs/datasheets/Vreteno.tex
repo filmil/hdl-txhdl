@@ -41,6 +41,22 @@ strobes in the cycle it runs. Whether an access is in the window comes
 from the upper half of \code{rs1} and the carry out of the lower
 halves' sum, without the full add.
 
+A load from the DDR3, whose physical address's top two bits are 01,
+goes through a data cache (issue 1275): four kilobytes, 256 lines of
+four words, one way, in \code{dc\_data} and \code{dc\_tag}, with a
+valid bit a line. A miss asks for its line, a burst of four beats,
+once every store of the core's is answered, so that the line has them,
+and keeps it unless another host wrote the line meanwhile; a load
+found after translation not to be in the DDR3 reads its one word
+around the cache. A store goes to the bus as before, and writes its word into
+a line the cache holds, under its lanes, so the cache is write
+through. \code{lr.w}, \code{sc.w} and an AMO go around the cache and
+take their line out of it. Another host's write into the DDR3 is named
+to the core on \code{dc\_snoop}, a line's index in bits 7 to 0 and bit
+8 valid, from the board's \code{DcSnoop}, and the core clears that
+line. With \code{IC} of 0 the data cache, as the instruction cache, is
+off, and every load goes to the bus.
+
 The bus side is an AXI host written as hardware. The core issues a
 burst on \code{issue}, sends a store's beat on \code{wbeat}, and hands
 identifiers back on \code{release}. It receives \code{grant},
@@ -54,6 +70,9 @@ register access, \code{dbg\_regno}, \code{dbg\_wdata} and
 \code{halt}, \code{instr}, the word retiring, \code{wb}, a
 \code{Writeback} of \code{done}, \code{rd} and \code{val}, \code{dbg},
 debug mode, and \code{dbg\_rdata}, the register the module asked for.
+\code{asleep} is high while the core waits in \code{wfi} for an
+interrupt, fetching nothing; the board gives the snoop the second
+hart's (issue 1408).
 
 Two additional inputs supply the machine timer count, \code{time}
 (accessed by \code{rdtime}), and \code{seirq}, the supervisor external
@@ -90,6 +109,15 @@ board and the runs do. \\
 default, which is 64~KiB. The netlist the documents simulate and the
 layout maps uses 4, where the window's addresses wrap, since the cell
 library has no RAM. The tables use the default. \\
+\code{IC} & 1 for the instruction and the data cache, the default and
+the board's; 0 for none, in the netlist the documents simulate and the
+layout maps, where the caches' arrays are never written and fold away
+(issue 1323). \\
+\code{HID} & The hart's number, which \code{mhartid} reads, 0 by
+default; the board's second hart has 1 (issue 1408). \\
+\code{EXCL} & 1 on a board whose arbiter and exclusive monitor keep
+exclusive pairs: then \code{lr.w}, \code{sc.w} and an AMO into the
+DDR3 go out with \code{lock}. 0, the default, for none. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -97,44 +125,103 @@ library has no RAM. The tables use the default. \\
 \subsection*{Register map}
 
 The control registers, by CSR number. Software reaches them through
-the six CSR instructions. They are not on the bus.
+the six CSR instructions. They are not on the bus. A number names a
+register only from a mode at or above the one its bits 9 and 8 give,
+so a supervisor register is reached from supervisor and machine mode
+and a machine register from machine mode alone.
 
 \begin{center}\footnotesize
-\begin{tabular}{@{}llp{0.6\textwidth}@{}}
+\begin{tabular}{@{}p{0.2\textwidth}p{0.22\textwidth}p{0.5\textwidth}@{}}
 \toprule
 Number & Register & What the core keeps \\
 \midrule
-\code{0x300} & \code{mstatus} & Bits 3 and 7 only; a write is masked
-with \code{0x88}. \\
-\code{0x304} & \code{mie} & Bits 11 and 7 only, the external and the
-timer enable. \\
+\code{0x300} & \code{mstatus} & \code{SIE}, \code{MIE}, \code{SPIE},
+\code{MPIE}, \code{SPP}, \code{MPP}, \code{MPRV}, \code{SUM},
+\code{MXR}, \code{TVM}, \code{TW} and \code{TSR}, the bits of
+\code{0x007e\_19aa}; a write of 2 to \code{MPP} leaves user mode. \\
+\code{0x301} & \code{misa} & Nothing: it reads \code{0x4014\_1105},
+\code{MXL} of 1 and the letters \code{A}, \code{C}, \code{I},
+\code{M}, \code{S} and \code{U}. Writable and ignored. \\
+\code{0x302} & \code{medeleg} & The exceptions delegated: causes 0 to
+9, 12, 13 and 15. \\
+\code{0x303} & \code{mideleg} & The interrupts delegated: the
+supervisor's software, timer and external, bits 1, 5 and 9. \\
+\code{0x304} & \code{mie} & Bits 1, 3, 5, 7, 9 and 11. \\
 \code{0x305} & \code{mtvec} & The handler's address; a write clears
 bits 1 and 0. \\
+\code{0x306} & \code{mcounteren} & Bits 0 to 2: \code{cycle},
+\code{time} and \code{instret} below machine mode. \\
+\code{0x30a} & \code{menvcfg} & Bit 0, \code{FIOM}; the rest reads
+zero. \\
+\code{0x310}, \code{0x31a} & \code{mstatush}, \code{menvcfgh} & Nothing:
+zero. \\
 \code{0x340} & \code{mscratch} & Entire 32-bit register. \\
 \code{0x341} & \code{mepc} & The trap's address; a write clears
 bit 0. \\
 \code{0x342} & \code{mcause} & Entire 32-bit register. \\
 \code{0x343} & \code{mtval} & Entire 32-bit register. \\
-\code{0x344} & \code{mip} & Bit 11 is stored: \code{irq} sets it and
-a write keeps only that bit. Bit 7 reads as \code{tirq}. \\
+\code{0x344} & \code{mip} & Reads the external line \code{irq} as bit
+11, \code{tirq} as bit 7, \code{sirq} as bit 3 and \code{seirq} as bit
+9, ORed with bits 1, 5 and 9 as software wrote them; a write keeps only
+those three. \\
+\code{0x100} & \code{sstatus} & \code{mstatus} seen through
+\code{0x000c\_0122}: \code{SIE}, \code{SPIE}, \code{SPP}, \code{SUM}
+and \code{MXR}. \\
+\code{0x104}, \code{0x144} & \code{sie}, \code{sip} & \code{mie} and
+\code{mip} under \code{mideleg}; a write to \code{sip} reaches only bit
+1, and only when delegated. \\
+\code{0x105} & \code{stvec} & The handler's address; a write clears
+bits 1 and 0. \\
+\code{0x106} & \code{scounteren} & Bits 0 to 2: \code{cycle},
+\code{time} and \code{instret} in user mode. \\
+\code{0x10a} & \code{senvcfg} & Bit 0, \code{FIOM}; the rest reads
+zero. \\
+\code{0x140} & \code{sscratch} & Entire 32-bit register. \\
+\code{0x141} & \code{sepc} & The trap's address; a write clears
+bit 0. \\
+\code{0x142}, \code{0x143} & \code{scause}, \code{stval} & Entire
+32-bit registers. \\
+\code{0x180} & \code{satp} & Entire 32-bit register; with \code{TVM} set,
+supervisor mode may not name it. \\
+\code{0xb00}, \code{0xb80} & \code{mcycle}, \code{mcycleh} & The
+cycle counter, writable a half at a time. \\
+\code{0xb02}, \code{0xb82} & \code{minstret}, \code{minstreth} & The
+retired-instruction counter, writable a half at a time. \\
+\code{0xc00} to \code{0xc02}, \code{0xc80} to \code{0xc82} &
+\code{cycle}, \code{time}, \code{instret} and their halves & Read
+only: \code{mcycle}, the input \code{time} and \code{minstret}, below
+machine mode as \code{mcounteren} and \code{scounteren} allow. \\
+\code{0x320}, \code{0x323} to \code{0x33f}, \code{0xb03} to
+\code{0xb1f}, \code{0xb83} to \code{0xb9f}, \code{0xc03} to
+\code{0xc1f}, \code{0xc83} to \code{0xc9f} & \code{mcountinhibit},
+the event selectors and the counters that count nothing & Nothing:
+zero (issue 1460); the user's copies, \code{0xc03} up, in machine
+mode only. \\
+\code{0x7b0} & \code{dcsr} & In debug mode only: \code{ebreakm}, bit
+15, and \code{step}, bit 2, as written; the cause and the mode kept;
+version 4 in bits 31 to 28. \\
+\code{0x7b1} & \code{dpc} & In debug mode only: the address to resume
+at; a write clears bit 0. \\
 \code{0x7c0} & \code{mhalt} & Nothing: it reads as zero. A write of an
 odd value stops the core when that instruction retires. \\
-\code{0x301} & \code{misa} & Nothing: it reads
-\code{0x4000\_1104}, which is \code{MXL} of 1 and the letters
-\code{C}, \code{I} and \code{M}. Writable and ignored, as the
-specification allows. \\
-\code{0xf11} & \code{mvendorid} & Nothing: zero, which means
-unimplemented. Read only. \\
-\code{0xf12} & \code{marchid} & Nothing: zero. Read only. \\
-\code{0xf13} & \code{mimpid} & Nothing: zero. Read only. \\
-\code{0xf14} & \code{mhartid} & Nothing: zero, this machine's one
-hart. Read only. \\
+\code{0x7c1} & \code{mbusquiet} & Bit 0: a load the bus refuses reads
+zero, and a store it refuses is dropped, instead of trapping (issue
+417). \\
+\code{0xf11} to \code{0xf13} & \code{mvendorid}, \code{marchid},
+\code{mimpid} & Nothing: zero. Read only. \\
+\code{0xf14} & \code{mhartid} & The hart's number, \code{HID}. Read
+only. \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-A CSR instruction that names any other number is an illegal word and
-traps.
+A CSR instruction that names any other number, or a number its mode may
+not reach, traps as an illegal instruction, as does a write to a
+read-only one, whose number's bits 11 and 10 are both set. A read of a
+read-only one does not. In supervisor mode, \code{TVM} also makes
+\code{sfence.vma} illegal, \code{TW} makes \code{wfi} illegal, and
+\code{TSR} makes \code{sret} illegal, so that machine mode can take
+them over (issue 1347).
 
 \dstables{Vreteno}
 
@@ -162,6 +249,10 @@ the word's access fault, and leaves the line invalid.
 \item \code{fence.i} and \code{rst} clear the cache's tags, one line a
 cycle, and a lookup waits until they are clear. A store does not reach
 the cache, so code written by stores runs after a \code{fence.i}.
+\item The data cache's valid bits are cleared at \code{rst}, when the bus
+refuses a store of the core's, whose line is not known, and, in a hart
+whose \code{HID} is not 0, as it wakes from \code{wfi}: the other
+harts' writes are not named to it while it waits (issue 1408).
 \item \code{ir\_c} says the instruction in execute was compressed.
 \code{jal} and \code{jalr} link the address two bytes on for a
 compressed one and four for the rest.

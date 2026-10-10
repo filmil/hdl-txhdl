@@ -55,6 +55,12 @@ for two hosts and three for five to eight. Nothing checks it; too
 small a \code{J} loses the top of the tag. \\
 \code{FIXED} & Zero for round robin, anything else for fixed
 priority. \\
+\code{HOLD} & Zero, the default, for no exclusive hold; anything else
+builds it (issue 1408). With \code{HOLD} zero the hold never starts
+and synthesis folds its registers away. \\
+\code{PRIO} & The host whose read address phase wins whenever it
+offers one, ahead of the round robin (issue 1523). Eight, the
+default, names none. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -97,6 +103,21 @@ peripheral side is not taken from until it is.
 that won, so a host that keeps asking cannot shut another out. With
 \code{FIXED} not zero every host is eligible always, so the lowest
 numbered one that is offering wins.
+\item \textbf{The priority host.} When the host \code{PRIO} names offers
+a read address phase, it is granted ahead of the turn, and the round
+robin goes on among the others. Writes are not affected.
+\item \textbf{The exclusive hold.} With \code{HOLD} not zero, a read
+granted with \code{lock} set takes the hold for its host:
+\code{hold} is set, \code{howner} names the host and \code{hleft}
+starts at 127. While the hold stands, no other host's write address
+phase is granted. A write already granted keeps its beats, so the
+writes in flight drain. Reads are never held.
+\item The hold ends when its host's write is granted with
+\code{lock} set, or when \code{hleft} has counted down to zero, about
+128 cycles. A hold that runs out adds one to \code{htimeouts}, a
+16-bit count that a test reads. A host whose exclusive read comes
+while another host holds goes without the hold; the holder's own next
+exclusive read takes it again.
 \end{itemize}
 
 \subsection*{Verification}
@@ -111,6 +132,13 @@ the same moment and checks the memory was given two whole bursts;
 \code{four\_hosts\_share\_the\_link} has four read as fast as they can
 for twelve hundred cycles and checks the counts come out within one of
 each other.
+\code{an\_exclusive\_pair\_holds}\allowbreak
+\code{\_the\_other\_hosts\_writes} has host 1's
+next write wait for host 0's exclusive write with the hold and go
+first without it, and no hold runs out;
+\code{a\_hold\_without\_its\_write\_runs\_out} has a hold whose host
+never writes run out once, counted in \code{htimeouts}, and the other
+host's write finish only after more than 120 cycles.
 \item \code{//lib/examples:ex\_axi\_arbiter} is the same shape as a
 run, and the build simulates the netlist against it under nvc and
 Verilator: \code{//docs:axi\_arbiter\_sim\_axi\_arbiter\_tb\_test} and
@@ -120,15 +148,19 @@ Verilator: \code{//docs:axi\_arbiter\_sim\_axi\_arbiter\_tb\_test} and
 \subsection*{Used by}
 
 \code{Board}, three times. As \code{arb}, an
-\code{Arbiter7<32, 32, 4, 2, 5, 0>} in front of its router, it takes
+\code{Arbiter<8, 32, 32, 4, 2, 5, 0, 1, SCAN\_PRIO>} in front of the
+exclusive monitor and the router, with the hold built and
+\code{SCAN\_PRIO} eight, naming no host (issue 1523), it takes
 the core's tracker on port 0; on port 1 \code{jarb}, which shares it
 between the JTAG master's pins (issue 241) and the debug transport's
 bridge (issue 154); the Ethernet port's fetch and store engines on
 ports 2 and 3 (issue 151); the video scanout's fetch on port 4 (issue
 151); on port 5 \code{sdarb}, the SD card host's two engines
-(issue 912); and on port 6 Razboj's rasteriser (issue 985). Its peripheral side has five bits of identifier, two for
-a host's own and three for the port, so up to eight hosts fit without
-widening anything past it (issue 1022). \code{jarb} and \code{sdarb}
+(issue 912); on port 6 Razboj's rasteriser (issue 985); and on port 7
+the second hart's tracker, \code{host1} (issue 1408). Its peripheral
+side has five bits of identifier, two for a host's own and three for
+the port, so the eight hosts fit without widening anything past it
+(issue 1022). \code{jarb} and \code{sdarb}
 are each an \code{Arbiter2<32, 32, 4, 1, 2, 0>}, giving their two hosts
 one bit of identifier each. The SD engines never offer at the same
 time, so neither takes a turn from the other.
@@ -139,6 +171,8 @@ The turn is three bits, which is what eight hosts need and no more,
 and nothing checks that \code{N} is at most eight.
 \code{J} is not checked against \code{I} and the count. There is no
 arbitration on quality of service, though the address phase provides
-the field. A host that stops taking its answers stops the peripheral
+the field, and \code{PRIO} favours one host's reads and no writes.
+The hold is one, for one host at a time, and its length, 128 cycles,
+is fixed. A host that stops taking its answers stops the peripheral
 side for every host, since the arbiter holds the beat rather than
 dropping it.

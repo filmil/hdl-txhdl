@@ -74,10 +74,10 @@ Table~\ref{tab:w-units} details the hardware units lowered to Verilog and VHDL,
 while Table~\ref{tab:w-systems} catalogues the integrated systems composed from
 them. These tables reflect the documented corpus baseline; ongoing peripheral
 development is tracked via active repository issues. In aggregate, the
-implementation spans 109\,038 physical lines of Rust: 19\,734 across runtime
-abstractions and procedural macros, 27\,826 in reusable subsystem parts,
-19\,149 distributed across 123 compiled examples, 30\,939 comprising the
-Vreteno processor and its FPGA board envelope, and 11\,390 spanning the Razboj
+implementation spans 115\,289 physical lines of Rust: 19\,887 across runtime
+abstractions and procedural macros, 28\,624 in reusable subsystem parts,
+19\,169 distributed across 123 compiled examples, 34\,749 comprising the
+Vreteno processor and its FPGA board envelope, and 12\,860 spanning the Razboj
 GPU, DDR3 controller, Ethernet MAC, HDMI rasterizer, PCIe bridge, and unified
 SoC.
 
@@ -118,8 +118,8 @@ A flash read as memory, mode 0 only & parts & both \\
 The configuration flash through \code{STARTUPE2}, write enable refused & parts & yes \\
 A peripheral written as software, behind a channel & parts & both \\
 Its wire: each transaction one Ethernet frame & parts & both \\
-Vreteno, a hart with its Sv32 unit; boot and data memory, timer, serial port & \code{cpu} & four of five \\
-The board, one unit of units, with DDR3 & \code{cpu} & under Vivado \\
+Vreteno, a hart with its Sv32 unit and data cache; boot and data memory, timer, serial port & \code{cpu} & four of five \\
+The board, one unit of units, with two harts and DDR3 & \code{cpu} & under Vivado \\
 Rasteriser; framebuffer & \code{gpu} & both \\
 PCIe BAR registers; the BAR as one unit & \code{pcie} & not yet \\
 The examples' own units & examples & 79, in 62 files, all 62 \\
@@ -168,8 +168,11 @@ across deterministic benchmark binaries and 64 randomised instruction
 sequences. Outside local boot memory, instruction fetch traverses a 16\,KB
 direct-mapped cache, sustaining 3.3 cycles per instruction on loop execution
 from system memory, compared to 14.7 cycles per instruction when fetching
-unbuffered across the system bus. The core integrates supervisor and user
-privilege modes alongside an Sv32 memory management unit featuring dual 8-entry
+unbuffered across the system bus. Loads from DDR3 pass through a 4\,KB
+direct-mapped, write-through data cache, whose lines another host's writes
+clear. The board carries two harts, and the kernel brings up both. The
+core integrates supervisor and user privilege modes alongside an Sv32
+memory management unit featuring dual 8-entry
 instruction and data TLBs; targeting the physical development board, it boots a
 full Linux distribution to an interactive shell within thirty seconds of image
 receipt.
@@ -440,16 +443,17 @@ divergence between text and reality. Each lowered module in
 Table~\ref{tab:w-units} is verified twice in parallel: as VHDL under \code{nvc}
 and as Verilog under Verilator, with port transitions asserted against the
 golden trace captured during native Rust simulation. Running \code{bazel test
-//...} invokes 493 automated targets, including 262 co-simulated netlists, the
+//...} invokes 840 automated targets, including 264 co-simulated netlists, the
 golden ISA CPU model, bare-metal software test programs, in-circuit debug
 sessions linking OpenOCD and GDB over the JTAG transport, Razboj graphics
 regressions, peripheral unit tests, full SoC integration runs, ten formal
 property proofs, automated diagram boundary checks, and compiler toolchains.
-Seventeen long-running targets are reserved for manual or nightly qualification:
-optimized board simulations, DDR3 memory controller verification under the
-Vivado simulator, standalone and root-port PCIe endpoint regressions, randomized
+Nineteen long-running targets are reserved for manual or nightly qualification:
+optimized board simulations, the mipmapped GL test's plain build, DDR3
+memory controller verification under the Vivado simulator, standalone and
+root-port PCIe endpoint regressions, randomized
 AXI link fuzzing, datasheet completeness audits, bitstream flash preservation
-checks, and six Linux runs: four boots verifying networking and interactive
+checks, and seven Linux runs: five boots verifying networking and interactive
 shell responsiveness, the initramfs, and the root on NFS.
 
 Simulation tests validate targeted input stimuli; formal verification proves

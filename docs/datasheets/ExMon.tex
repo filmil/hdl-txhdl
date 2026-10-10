@@ -1,0 +1,171 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: ExMon
+\datasheet{ExMon}{The exclusive monitor: reservations for two ports, and the answer to each exclusive write.}
+
+\dsfacts{\code{lib/parts/src/bus/exmon.rs}}%
+{\code{txhdl\_parts::bus::exmon::ExMon<J, I, P0, P1, RB, RM>}}%
+{\code{//docs:axi}}
+
+\subsection*{Function}
+
+The monitor makes \code{lr.w}, \code{sc.w} and the AMOs of two harts
+atomic against each other and against every other host on the memory
+(issue 1408). It stands on an AXI4 link after the arbiter, where every
+write passes in the order the peripherals take it, and watches two of
+the arbiter's ports, \code{P0} and \code{P1}.
+
+An exclusive read, one with \code{lock} set, from a watched port makes
+a reservation for that port of the sixteen-byte line it reads. A write
+into the range that passes clears every reservation whose line its
+burst covers, whoever made it. An exclusive write is the other half.
+It passes when its port's reservation stands for its line and it is
+one beat, and its answer goes back as \code{ExOkay}, which is how the
+host learns that it stored. Otherwise it fails: the monitor takes its
+beats, writes nothing, and answers \code{Okay} itself, so the write
+never reaches the peripheral or anything between. An exclusive write,
+whether it stores or not, uses its port's reservation up, as \code{sc.w} does.
+
+The monitor keeps exclusives for one range of addresses, the memory's:
+an address \code{a} with \code{(a \& RM) == RB}. An exclusive read
+outside it makes no reservation, and an exclusive write outside it
+fails.
+
+It passes \code{lock} on as zero, since the peripheral behind it does
+not keep exclusives itself. It has no read data channel: the read data
+goes back around it.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{J} & The identifier width on the link, in bits, at most five:
+\code{wids} keeps a bit for each identifier, 32 of them. \\
+\code{I} & The host's own bits at the bottom of the identifier; the
+port is the identifier shifted right by \code{I}. \\
+\code{P0} & The first watched port. \\
+\code{P1} & The second watched port. \\
+\code{RB} & The base of the range kept. \\
+\code{RM} & The mask of the range kept. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Addresses and data are 32 bits, and the write strobe four bits, fixed
+in the source. The tables below are generated for the board's,
+\code{ExMon<5, 2, 0, 7, 0x4000\_0000, 0xc000\_0000>}: identifiers of
+five bits with two of the host's own, the harts on ports 0 and 7, and
+the range of the DDR3.
+
+\dstables{ExMon}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item \textbf{Reads.} A read passes when the link onward has room. An
+exclusive read into the range also waits until every write into the
+range the monitor has passed is answered, which \code{wids} records by
+identifier. So it reads what those writes wrote, and no write in flight
+when it was taken lands after it. Writes outside the range, which a slow
+peripheral may hold for long, it does not wait for.
+\item \textbf{Reservations.} An exclusive read into the range from port
+\code{P0} sets \code{v0} and keeps the line, the address above its four
+low bits, in \code{line0}; from \code{P1}, \code{v1} and \code{line1}.
+From any other port it makes none.
+\item \textbf{Clears.} A write into the range that passes is kept in
+\code{fwv}, \code{fwline} and \code{fwcnt}, its first line and how many
+it covers. The cycle after, every reservation in those lines is
+cleared. That clear wins over a reservation set in the write's own
+cycle.
+\item \textbf{Write address.} One burst is taken at a time
+(\code{wpend}), and none while a failed write's answer waits
+(\code{binj}). A plain write passes when the link onward has room.
+\item \textbf{The decision.} An exclusive write waits a cycle at the
+head, where it is decided into \code{xk\_v}, \code{xk\_ok} and
+\code{xk\_p0}, and goes on the next, so only registers stand before the
+router. It stores when its port is \code{P0} or \code{P1}, that port's
+reservation stands, is not being cleared, and is for its line, it is
+one beat (\code{len} zero), and it is in the range.
+\item \textbf{A stored exclusive write} passes, and \code{x0} or
+\code{x1} keeps its identifier. Its answer, if \code{Okay}, goes back
+as \code{ExOkay}. As a write into its own line it clears its port's
+reservation the cycle after.
+\item \textbf{A failed exclusive write} is taken and not passed on;
+\code{wdrop} marks its beats, which are taken and dropped. It clears its
+port's reservation and adds one to \code{fails}. After its last beat
+\code{binj} holds its answer, \code{Okay} with its identifier in
+\code{binjid}. That answer is given once every write into the range is
+answered, so it never overtakes an answer to a write its host sent
+before it.
+\item \textbf{Answers.} The peripheral's answers pass otherwise
+unchanged, and each clears its identifier's bit in \code{wids}. A failed
+write's answer goes first when both are ready.
+\item \textbf{\code{xdup}} is set for good when a write passes under the
+identifier of an exclusive write whose answer is still to come, which
+would make that answer ambiguous. A test reads it.
+\item \textbf{\code{alternate}} is a test's: set, it fails every other
+exclusive write, the first included, as if its reservation were gone,
+with \code{flip} keeping which (issue 1474). Nothing in the design sets
+it.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item Six tests in \code{bus::exmon}, in \code{//lib/parts:parts\_test},
+run two hosts, an arbiter and the monitor before a memory that takes a
+read's words at its address. Every run checks that \code{xdup} stays
+clear.
+\begin{itemize}
+\item \code{a\_pair\_with\_nothing\_between\_stores} gets \code{ExOkay}
+and the word stored.
+\item \code{a\_write\_between\_breaks\_the\_pair}, with the arbiter's
+hold not built, gets \code{Okay} and nothing stored.
+\item \code{an\_exclusive\_read\_waits\_for\_a\_write\_in\_flight} reads
+the word of another host's burst still being written, and the pair
+keeps.
+\item \code{a\_failed\_writes\_answer\_overtakes\_nothing} checks a
+failed write's answer comes after the host's earlier write's.
+\item \code{a\_failed\_exclusive\_write\_uses\_the\_reservation\_up}
+checks that after a failed \code{sc} of one word an \code{sc} of the
+reserved word fails too.
+\item \code{alternate\_fails\_every\_other\_exclusive\_write} checks the
+first try fails and the second stores.
+\end{itemize}
+\item \code{//cpu/vreteno:board\_test} runs the board.
+\begin{itemize}
+\item Three read \code{fails}:\\
+\code{the\_a\_instructions\_on\_the\_ddr3\_are\_exclusive\_pairs},\\
+\code{another\_hosts\_write\_breaks\_a\_reservation} and\\
+\code{amos\_lose\_no\_count\_to\_the\_other\_hosts\_writes}.
+\item Two set \code{alternate}:\\
+\code{every\_amo\_reads\_again\_ending\_a\_line} and\\
+\code{an\_amo\_reads\_again\_while\_a\_walk\_is\_due}.
+\item \code{two\_harts\_lose\_no\_count} has both harts count with
+\code{amoadd.w} and with \code{lr.w} and \code{sc.w}.
+\end{itemize}
+\item \code{//cpu/vreteno/act:vreteno\_excl\_tests} runs the A
+extension's architectural tests with the monitor between the hart's
+tracker and the memory, which \code{act\_run} sets up for those
+tests.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Board}, as \code{exmon}, an
+\code{ExMon<5, 2, 0, 7, 0x4000\_0000, 0xc000\_0000>} between the arbiter
+and the router: the harts are on the arbiter's ports 0 and 7, and the
+range is the DDR3's. \code{act\_run} uses
+\code{ExMon<2, 2, 0, 1, 0x4000\_0000, 0xc000\_0000>} with one host.
+
+\subsection*{Limits}
+
+Two ports are watched; an exclusive read from any other makes no
+reservation. One range is kept. A reservation is a line of sixteen
+bytes, and an exclusive write of more than one beat fails. Write bursts
+pass one at a time. \code{J} is at most five, and nothing checks it.
+The monitor relies on the arbiter's hold to keep new writes from other
+hosts out while a pair is open, so that the wait of an exclusive read
+ends.

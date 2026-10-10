@@ -32,9 +32,25 @@ Parameter & Meaning \\
 \midrule
 \code{IW} & The width of the AXI identifier, passed to the core. The
 tables use 2, as the board and the runs do. \\
+\code{DW} & The words in each lane of the core's data RAM, a power of
+two, which the core asserts (issue 1275). The default is 16384, as on
+the board. \\
+\code{IC} & 1, the default, for the core's instruction and data
+caches; 0 leaves them out, as in the netlist the documents simulate and
+the layout maps (issue 1323). \\
+\code{HID} & The hart's number, which \code{mhartid} reads (issue
+1408). The default is 0. \\
+\code{EXCL} & Zero, the default, or not zero on a board whose arbiter
+and exclusive monitor keep exclusive pairs (issue 1408). Then
+\code{lr.w}, \code{sc.w} and an AMO's read and store to the DDR3,
+\code{0x4000\_0000} to \code{0x7fff\_ffff}, go on the bus with
+\code{lock} set. \\
 \bottomrule
 \end{tabular}
 \end{center}
+
+All five are passed to the core, \code{Vreteno<IW, DW, IC, HID,
+EXCL>}. The tables use \code{Hart<2>}, the defaults for the rest.
 
 \dstables{Hart}
 
@@ -49,6 +65,15 @@ cycles on every request before it believes an answer, which is right
 in both, since the unit holds its answer while the request is held.
 \item The hart adds no register and no logic of its own: every
 register in it is the core's or the unit's.
+\item \code{asleep} is the core's \code{waiting}, set while it waits
+in \code{wfi} for an interrupt (issue 275).
+\item \code{dc\_snoop} names a line of the data cache to invalidate, in
+bits 7 to 0, while bit 8 is set; on the board it comes from
+\code{DcSnoop} (issue 1275).
+\item A hart whose \code{HID} is not 0 clears its whole data cache as
+it wakes from \code{wfi}, whatever woke it, since the other harts'
+writes are not named to it while it waits (issue 1408). A hart with
+\code{HID} 0 keeps its cache.
 \end{itemize}
 
 \subsection*{Verification}
@@ -62,11 +87,23 @@ and over random tables.
 \item The build simulates \code{Hart<2>}'s netlist, under the entity
 name \code{vreteno} and with the demonstration program in the core's
 instruction memory, against the trace of \code{//cpu/vreteno:vreteno}
-under nvc and Verilator: \code{//docs:vreteno\_sim\_vreteno}\allowbreak\code{\_vreteno\_tb\_test}
+under nvc and Verilator: \code{//docs:vreteno\_sim\_vreteno}\allowbreak
+\code{\_vreteno\_tb\_test}
 and \code{//docs:vreteno\_vsim\_vreteno\_test}.
 \item \code{//cpu/vreteno:openocd\_test} runs a stock OpenOCD against a
 hart on the simulated board, and \code{//cpu/vreteno:pair\_test} runs
 two harts in step.
+\item \code{//cpu/vreteno:board\_test} runs the board's two harts:
+\code{hart\_one\_starts\_twice}\allowbreak\code{\_from\_the\_mailbox},
+\code{two\_harts\_lose\_no\_count},
+\code{both\_harts\_storing\_share\_the\_path} and
+\code{hart\_one\_takes\_an}\allowbreak
+\code{\_external\_interrupt}. Two hold the wake:
+\code{a\_hart\_woken\_as\_a}\allowbreak\code{\_write\_lands\_sees\_it} and
+\code{a\_woken\_harts\_first}\allowbreak
+\code{\_read\_is\_the\_new\_word} have hart 1
+cache a word, wait in \code{wfi}, and read the word hart 0 wrote once
+woken.
 \item \code{//cpu/vreteno:vreteno\_synth} and
 \code{//cpu/vreteno:vreteno\_pnr}, which are manual, synthesise and
 place the hart's netlist; on the board it is in every flagship.
@@ -74,12 +111,15 @@ place the hart's netlist; on the board it is in every flagship.
 
 \subsection*{Used by}
 
-\code{Hart<2>} as \code{cpu} in \code{Board}, and so in the flagship;
-two of them in \code{Pair}; and the machine of \code{run.rs}.
+\code{Hart<2, 16384, 1, 0, 1>} as \code{cpu} and
+\code{Hart<2, 16384, 1, 1, 1>} as \code{cpu1} in \code{Board}, and so
+in the flagship; two \code{Hart<IW>} in \code{Pair}; and the machine of
+\code{run.rs}.
 
 \subsection*{Limits}
 
-One hart: there is no second core sharing the unit or the bus port.
+One core: a second hart is a second \code{Hart}, with its own unit and
+its own bus port, as on the board.
 The core's fetch and data requests each take the unit's cycle of
 latency, which the core's own rules account for (\code{Vreteno}'s
 sheet).

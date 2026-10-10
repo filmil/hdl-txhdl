@@ -29,7 +29,13 @@ the link, and the twenty-six pins the peripheral reads.
 written as a simulation, and \code{pins}, which makes the wires.
 \code{PinRam} can take a warm-up, before which it is not ready, and a
 read and a write latency, and it can take an address past its end
-modulo its size; that is how \code{ddr3::Ddr3} models AMD's controller.
+modulo its size. With \code{reading\_at\_address()} it takes a read's
+words when it takes the read's address, rather than when it offers
+each beat, as a controller that reads the memory before it answers
+does (issue 1424). A write that lands between the two is then not in
+the read's words. The link allows that, since it orders a read against
+nothing written on the other channel. Those three are how
+\code{ddr3::Ddr3} models AMD's controller.
 
 \subsection*{Parameters}
 
@@ -88,6 +94,11 @@ end, answered \code{SlvErr}.
 \item \code{a\_timed\_memory\_waits\_and\_then\_answers\_late} there
 holds \code{PinRam}'s timing: a warm-up holds a write off, and a latency
 delays an answer by itself and no more.
+\item \code{a\_memory\_reading\_at\_the\_address}\allowbreak
+\code{\_lets\_a\_read\_pass\_a\_write}
+there sends a read that waits twenty cycles and then a write to its
+word that lands while it waits: the read gets the old word with
+\code{reading\_at\_address()} and the new word without it.
 \item \code{ex\_axi\_per\_pins} runs \code{AxiPerPins<30, 32, 4, 5>} with
 a host on the link and a \code{PinRam} on the pins, and the build
 simulates its netlist against that run under nvc and Verilator:
