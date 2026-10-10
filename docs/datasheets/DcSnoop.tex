@@ -1,0 +1,140 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: DcSnoop
+\datasheet{DcSnoop}{The data cache's snoop: the lines a write into the DDR3 covers, named to each hart that did not write them before the write is answered.}
+
+\dsfacts{\code{cpu/vreteno/src/dcsnoop.rs}}%
+{\code{vreteno32::dcsnoop::DcSnoop<P1>}}%
+{\code{//docs:vreteno}}
+
+\subsection*{Function}
+
+The snoop keeps a hart's data cache of the DDR3 true when another host
+writes the DDR3 (issue 1275). It stands on the router's port to the
+DDR3, in the write address, write data and write response channels.
+Reads do not pass through it.
+
+The write address and data pass on as they come. A write burst into
+the DDR3 is noted at its address phase: its identifier, the port it
+came from, the first cache line it falls in and how many lines it
+covers. When the burst's response comes back, which is when the
+controller has made the write good, the snoop names the burst's lines
+one a cycle on \code{inv}, to the first hart, and on \code{inv1}, to
+the second. It holds the response until the last line is named and a
+cycle more, so that a host's answer means the hart's copy is gone.
+
+A line is named by its index alone, bits 4 to 11 of the address. That
+may take out a line of another page, which the source calls harmless:
+it keeps the compare out of the snoop.
+
+Each line is named to each hart that did not write it: on \code{inv}
+unless the writer was port 0, on \code{inv1} unless it was port
+\code{P1}. With \code{P1} zero there is one hart: its own writes are
+not noted, and \code{inv1} names nothing. With a second hart (issue
+1408) every write into the DDR3 is noted, the first hart's too.
+
+Whom to tell is decided when the response comes, not at the address
+phase. The second hart is told nothing while its \code{asleep1} input
+is set, that is while it waits in \code{wfi}: it forgets its cache as
+it wakes. A noted write that nobody is to be told of is not held for a
+walk: its answer passes as any other does.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{P1} & The arbiter port of the second hart, or zero for none. The
+default is zero. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Everything else is fixed in the source: addresses and data are 32 bits,
+identifiers five bits with the port in the top three, as the board's
+arbiter puts it, and the DDR3 is the addresses whose bits 31 and 30 are
+\code{01}, \code{0x4000\_0000} to \code{0x7fff\_ffff}.
+
+\subsection*{The line on \code{inv} and \code{inv1}}
+
+Each is a \code{U<9>}. Bit 8 is set in a cycle that names a line, and
+bits 0 to 7 are the line's index. In every other cycle the word is
+zero.
+
+The tables below are generated for \code{DcSnoop<7>}, the board's.
+
+\dstables{DcSnoop}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item \textbf{The table.} Four bursts may be noted at once, in the
+slots \code{v0} to \code{v3}, each with its \code{id}, \code{line},
+\code{cnt} and \code{pt}. A write to be noted while all four are full
+waits at its address phase. A write not to be noted passes even then.
+\item \textbf{The count.} A burst covers
+\code{((addr[3:2] + len) >> 2) + 1} lines of sixteen bytes, from the
+line its first word is in.
+\item \textbf{Write data.} The beats pass on when the DDR3's side has
+room, whatever the table holds.
+\item \textbf{A response.} It is matched by identifier alone against
+the noted bursts. Each host's identifiers are its own and none is
+reused while its burst is out, as the source states. A response for no
+noted burst passes. A response for a noted burst with someone to tell
+starts the walk and waits; one with nobody to tell passes and empties
+its slot.
+\item \textbf{The walk.} \code{walking} is set, \code{wline} holds the
+next line and \code{wleft} how many are left; one line is named each
+cycle. \code{wport} and \code{wtell1} hold whom the walk is for. The
+last line empties the slot in \code{wslot} and sets \code{settle}, the
+cycle after the walk in which the response still waits.
+\item \textbf{Waiting.} While \code{walking} or \code{settle} is set, no
+response passes, not even one for a burst that was not noted.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item Two tests in \code{dcsnoop.rs} run \code{DcSnoop<7>}, in
+\code{//cpu/vreteno:isa\_test}. Ports 0, 7 and 3 each write one word
+of a line of their own.
+\begin{itemize}
+\item \code{each\_hart\_is\_told\_of\_the\_others\_writes}: hart 0 is
+told the lines ports 7 and 3 wrote, hart 1 the lines ports 0 and 3
+wrote, and all three answers pass.
+\item \code{a\_waiting\_hart\_is\_told\_nothing} sets \code{asleep1}:
+hart 1 is told nothing, and port 0's answer passes earlier than with
+hart 1 awake.
+\end{itemize}
+\item \code{//cpu/vreteno:board\_test} runs the board.
+\begin{itemize}
+\item \code{the\_data\_cache\_sees\_another\_hosts\_write} has the JTAG
+host write a word of the DDR3 that the core has cached, or is filling,
+and the core must read the new word.
+\item \code{two\_harts\_lose\_no\_count} has each hart hand the other a
+word the other has cached.
+\item \code{a\_hart\_woken\_as\_a\_write\_lands\_sees\_it} wakes hart 1
+on either side of the cycle a write's answer comes.
+\item Two time stores into the DDR3 with the snoop on the path:\\
+\code{both\_harts\_storing\_share\_the\_path} and\\
+\code{the\_ddr3\_path\_is\_timed\_by\_the\_core}.
+\end{itemize}
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{Board}, as \code{dcsnoop}, a \code{DcSnoop<7>}: its write
+channels are the router's port 3, the DDR3, and its \code{inv} and
+\code{inv1} go to hart 0 and hart 1, the second hart on the arbiter's
+port 7. Hart 1's \code{asleep} output is its \code{asleep1}.
+
+\subsection*{Limits}
+
+Four bursts at a time; a fifth to be noted waits. One walk at a time,
+and every response waits while it runs. A line is named by index alone,
+so a line of another page with the same index goes too. A burst's span
+is read as words from \code{addr} and \code{len}; \code{size} and
+\code{burst} are not looked at. The range of the DDR3, the identifier
+width and the port's place in it are fixed in the source, not
+parameters.

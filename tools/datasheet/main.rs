@@ -27,6 +27,7 @@ use txhdl_parts::bus::axi::{Issue, R};
 use txhdl_parts::bus::axi_lite::LiteBridge;
 use txhdl_parts::bus::axi_per_pins::AxiPerPins;
 use txhdl_parts::bus::axi_pins::AxiPins;
+use txhdl_parts::bus::exmon::ExMon;
 use txhdl_parts::bus::lite_split::LiteSplit;
 use txhdl_parts::bus::noc::bridge::{HostBridge, PerBridge};
 use txhdl_parts::bus::noc::mesh::Mesh;
@@ -63,6 +64,7 @@ use txhdl_parts::trng::{Entropy, Trng};
 use txhdl_parts::wdog::Wdog;
 use vreteno32::board::{Board, BoardRouter};
 use vreteno32::core::Vreteno;
+use vreteno32::dcsnoop::DcSnoop;
 use vreteno32::debug::Dm;
 use vreteno32::dmem::Dmem;
 use vreteno32::hart::Hart;
@@ -513,6 +515,11 @@ fn main() {
         Arbiter2::<16, 32, 4, 2, 5, 0>::lowered("arbiter"),
     );
     sheet(
+        "ExMon",
+        "ExMon<5, 2, 0, 7, 0x40000000, 0xc0000000>",
+        ExMon::<5, 2, 0, 7, 0x4000_0000, 0xc000_0000>::lowered("exmon"),
+    );
+    sheet(
         "LiteBridge",
         "LiteBridge<1, SerialMap, 32, 32, 4, 2>",
         LiteBridge::<1, SerialMap, 32, 32, 4, 2>::lowered("lite_bridge"),
@@ -626,6 +633,7 @@ fn main() {
     sheet("Hart", "Hart<2>", Hart::<2>::lowered("hart"));
     sheet("Mmu", "Mmu8", Mmu8::lowered("mmu"));
     sheet("Dmem", "Dmem<4>", Dmem::<4>::lowered("dmem"));
+    sheet("DcSnoop", "DcSnoop<7>", DcSnoop::<7>::lowered("dcsnoop"));
     sheet("Rom", "Rom<4>", Rom::<4>::lowered("rom"));
     sheet("Timer", "Timer<4>", Timer::<4>::lowered("timer"));
     sheet("Plic", "Plic3<0>", Plic3::<0>::lowered("plic"));
