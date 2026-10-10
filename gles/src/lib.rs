@@ -53,12 +53,12 @@ const MAXV: usize = 10;
 /// `log2 e` in 16.16, for fog's `e^-x` as a power of two (#998).
 const LOG2_E: i64 = 94_548;
 
-/// A vertex on its way: eye and clip coordinates, and its colour, and
-/// with two-sided lighting the colour its back takes.
 /// The vertices a `glDrawElements` call keeps once worked out (#1624):
 /// the last sixteen, each in the slot its index picks.
 const VCACHE: usize = 16;
 
+/// A vertex on its way: eye and clip coordinates, and its colour, and
+/// with two-sided lighting the colour its back takes.
 #[derive(Clone, Copy, Default)]
 struct Vert {
     eye: [Fx; 4],
