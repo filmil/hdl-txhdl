@@ -17,7 +17,7 @@ ico-3-smooth	//cpu/vreteno/rust:demo_ico_3_smooth_bin	serial	60	-	-
 ico-4-textured	//cpu/vreteno/rust:demo_ico_4_textured_bin	serial	70	-	-
 ico-5-mipmapped	//cpu/vreteno/rust:demo_ico_5_mipmapped_bin	serial	110	-	-
 ico-6-fog	//cpu/vreteno/rust:demo_ico_6_fog_bin	serial	110	-	-
-#ico-7-blend	//cpu/vreteno/rust:demo_ico_7_blend_bin	serial	110	-	-
+ico-7-blend	//cpu/vreteno/rust:demo_ico_7_blend_bin	serial	110	-	-
 ico-8-mirror	//cpu/vreteno/rust:demo_ico_8_mirror_bin	serial	110	-	-
 teapot	//cpu/vreteno/rust:demo_teapot_1_utah_bin	serial	60	-	-
 #linux-console	//linux:board_demo_boot	fastboot	120	txhdl: demo done	-
