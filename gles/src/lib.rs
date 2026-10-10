@@ -37,7 +37,9 @@ use emit::{VMAX, VMIN};
 use fixed::{div, div_round, Fx, ONE};
 use light::{Light, Material};
 use matrix::{Mat, IDENTITY};
-use razboj_tile::{bin, clip, Binned, Bounds, Refused, TILE_WORDS, WORDS};
+use razboj_tile::{
+    bin, clip, has_ext, slots_of, Binned, Bounds, Refused, TILE_WORDS, WORDS,
+};
 
 /// The guard band's edges in sixteenths, a pixel inside Razboj's range,
 /// so that a vertex clipped onto the band and rounded stays in range.
@@ -1540,6 +1542,31 @@ impl<'a> Gl<'a> {
         Ok(r)
     }
 
+    /// [`Gl::flush`] for a read in the middle of a frame (#1504): the
+    /// frame binned, then kept as what rebuilds its depth and its stencil
+    /// rather than begun again, so that what GL draws after the read
+    /// tests what it drew before. Each entry that tests the depth or the
+    /// stencil stays with every colour channel masked off, and the rest
+    /// go: drawn again into a fresh tile, those entries leave exactly the
+    /// depth and the stencil the frame had, since neither depends on the
+    /// colour already at a pixel, and with the mask empty Razboj writes
+    /// no colour and marks none, so the framebuffer the read saw stands.
+    pub fn flush_keeping(
+        &mut self,
+        entries: &mut [[u32; WORDS]],
+        tiles: &mut [[u32; TILE_WORDS]],
+    ) -> Result<Binned, Refused> {
+        let (sw, sh) = self.screen;
+        let r = bin(&self.frame[..self.used], sw, sh, entries, tiles)?;
+        let window = (0, self.window_top, sw - 1, sh - 1);
+        let from = kept_from(&self.frame[..self.used], window);
+        let kept = depth_and_stencil(&mut self.frame[from..self.used]);
+        self.frame.copy_within(from..from + kept, 0);
+        self.used = kept;
+        self.deep = kept > 0;
+        Ok(r)
+    }
+
     /// `glDrawArrays`: `positions` in object coordinates with their w,
     /// each vertex's colour from `colours` and its normal from `normals`
     /// or, without them, the current colour and normal.
@@ -2215,3 +2242,78 @@ pub const HINTS: [u32; 5] = [
     gl::FOG_HINT,
     gl::GENERATE_MIPMAP_HINT,
 ];
+
+/// The entries of `frame` that test the depth or the stencil, moved to
+/// its start with every colour channel masked off, and how many slots
+/// they take (#1504): what [`Gl::flush_keeping`] keeps. An entry with a
+/// pixel state keeps it, the alpha test and the stencil among it, its
+/// mask emptied; one that only tests depth takes a state that does
+/// nothing but empty the mask, since only a state holds one.
+fn depth_and_stencil(frame: &mut [[u32; WORDS]]) -> usize {
+    const DEPTH: u32 = 1 << 8;
+    const STATE: u32 = 1 << 13;
+    let (mut s, mut out) = (0, 0);
+    while s < frame.len() {
+        let e = frame[s];
+        let n = slots_of(&e);
+        let stated = e[15] & STATE != 0;
+        let stencil = stated && has_ext(&e) && frame[s + 1][10] & 1 != 0;
+        if e[15] & DEPTH != 0 || stencil {
+            frame.copy_within(s..s + n, out);
+            let ext = &mut frame[out + 1];
+            if stated {
+                ext[4] &= !(0xf << 16);
+            } else {
+                // No blend, alpha test, logic operation, fog or stencil,
+                // and no channel written.
+                for w in [3, 4, 5, 9, 10, 11] {
+                    ext[w] = 0;
+                }
+                frame[out][15] |= STATE;
+            }
+            out += n;
+        }
+        s += n;
+    }
+    out
+}
+
+/// Where what rebuilds `frame`'s depth and stencil begins (#1504): at its
+/// last clear of the depth over the whole of `window`, after which
+/// nothing before it can change a pixel's depth, or nought when there is
+/// none. A clear that leaves the stencil as it was does not count when an
+/// entry before it touched the stencil, which still holds. A frame that
+/// is read again and again before a swap, as the conformance suite's
+/// tests are, so keeps only what has held since its last clear rather
+/// than all it ever drew.
+fn kept_from(frame: &[[u32; WORDS]], window: Bounds) -> usize {
+    const DEPTH: u32 = 1 << 8;
+    const STATE: u32 = 1 << 13;
+    let (wx0, wy0, wx1, wy1) = window;
+    let (mut s, mut from, mut stencil_held) = (0, 0, false);
+    while s < frame.len() {
+        let e = &frame[s];
+        let n = slots_of(e);
+        let stencil = e[15] & STATE != 0 && frame[s + 1][10] & 1 != 0;
+        let lo = |w: u32| (w & 0x3ff, (w >> 16) & 0x3ff);
+        let ((x0, y0), (x1, y1)) = (lo(e[1]), lo(e[2]));
+        let whole =
+            e[0] & 3 == 1 && x0 <= wx0 && y0 <= wy0 && x1 >= wx1 && y1 >= wy1;
+        // Depth on, GL_ALWAYS, written.
+        let clears_depth =
+            whole && e[15] & (DEPTH | 0xf << 9) == DEPTH | 0xf << 9;
+        let clears_stencil = clears_depth
+            && stencil
+            && (frame[s + 1][10] >> 1) & 7 == 7
+            && frame[s + 1][10] >> 24 == 0xff
+            && (frame[s + 1][11] >> 6) & 7 == 2;
+        if clears_depth && (clears_stencil || !stencil_held) {
+            from = s;
+            stencil_held = false;
+        } else if stencil {
+            stencil_held = true;
+        }
+        s += n;
+    }
+    from
+}
