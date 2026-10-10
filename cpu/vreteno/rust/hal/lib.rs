@@ -429,6 +429,9 @@ impl Scan {
     const STUCK_AT: usize = map::SCAN + scan::STUCK_AT;
     const WORST: usize = map::SCAN + scan::WORST;
     const LATES: usize = map::SCAN + scan::LATES;
+    const LATE_ROWS: usize = map::SCAN + scan::LATE_ROWS;
+    const LATE_FRAMES: usize = map::SCAN + scan::LATE_FRAMES;
+    const MARGIN: usize = map::SCAN + scan::MARGIN;
 
     /// Columns and rows of a frame, and bytes from one line to the next.
     pub const WIDTH: u32 = 640;
@@ -464,6 +467,19 @@ impl Scan {
     /// rows began, since the bits were last cleared (issue 1523).
     pub fn timing() -> (u32, u32) {
         (rd(Self::WORST), rd(Self::LATES))
+    }
+
+    /// How many shown rows and frames showed `LATE` in a column, and
+    /// the least margin, in pixel clocks: how long before its column
+    /// was shown a word came, at its closest, negative when it came
+    /// after, and 32767 when no word has been timed; all since the bits
+    /// were last cleared (issue 1524).
+    pub fn late() -> (u32, u32, i32) {
+        (
+            rd(Self::LATE_ROWS),
+            rd(Self::LATE_FRAMES),
+            rd(Self::MARGIN) as i32,
+        )
     }
 
     /// Whether a column has been shown before its word arrived since
