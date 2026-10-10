@@ -1103,6 +1103,27 @@ rust_binary(
     ],
 )
 
+# The mipmapped frame fogged, as #1592's step 6 draws it.
+rust_binary(
+    name = "ico_fog_frame",
+    srcs = [
+        "ico_gl.rs",
+        "ico_list.rs",
+        "ico_tex_frame.rs",
+    ],
+    crate_root = "ico_tex_frame.rs",
+    edition = "2021",
+    rustc_flags = [
+        "--cfg=fog",
+        "--cfg=mip",
+    ],
+    deps = [
+        "//gles",
+        "//gpu/razboj",
+        "//lib/logo:txhdl_logo",
+    ],
+)
+
 # The same frame smooth and untextured, as #1592's step 3 draws it.
 rust_binary(
     name = "ico_smooth_frame",
@@ -1619,7 +1640,7 @@ vreteno_flat(
 # step of the GPU's features, the step's number and name given to the
 # program, which prints them, draws them in a corner and stops after
 # 1200 frames. //demo/canon:ico_series names the images and sums them.
-# Steps 6 to 8 follow.
+# Steps 7 and 8 follow.
 _DEMO_ICO = [
     ("1", "flat", [], []),
     ("2", "depth", ["--cfg=gl"], ["//gles", "//gpu/razboj:tile"]),
@@ -1639,6 +1660,12 @@ _DEMO_ICO = [
         "5",
         "mipmapped",
         ["--cfg=gl", "--cfg=tex", "--cfg=mip"],
+        ["//gles", "//gpu/razboj:tile"],
+    ),
+    (
+        "6",
+        "fog",
+        ["--cfg=gl", "--cfg=tex", "--cfg=mip", "--cfg=fog"],
         ["//gles", "//gpu/razboj:tile"],
     ),
 ]
