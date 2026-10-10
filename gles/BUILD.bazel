@@ -141,6 +141,15 @@ rust_test(
     ],
 )
 
+# glDrawElements keeps the vertices it has worked out (#1624), and
+# writes what drawing each triangle's corners one by one writes.
+rust_test(
+    name = "elements_test",
+    srcs = ["tests/elements.rs"],
+    edition = "2021",
+    deps = [":gles"],
+)
+
 # Lighting against floating point: the sum at a vertex, and lit
 # triangles through the pipeline (issue 1164).
 rust_test(
