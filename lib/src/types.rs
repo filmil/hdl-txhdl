@@ -782,6 +782,13 @@ pub trait Value: Copy {
     }
 }
 
+/// A struct's fields by name, in the order it declares them, which
+/// `#[derive(Value)]` writes as a constant of the struct's own name, so
+/// that a struct literal under `#[lower]` packs its fields in that order
+/// whatever order it names them in (issue 1541).
+#[derive(Clone, Copy, Debug)]
+pub struct Fields(pub &'static [&'static str]);
+
 /// One field of a compound value in a trace.
 pub struct Part {
     /// The field's name, which becomes the signal's name under the
