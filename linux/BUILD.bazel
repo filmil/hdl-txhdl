@@ -45,17 +45,20 @@ genrule(
     name = "kernel",
     srcs = [
         "@linux//:src",
+        "txhdl_hello.c",
         "vreteno.config",
     ],
     outs = [
         "Image",
         "kernel.config",
         "System.map",
+        "txhdl_hello.ko",
     ],
     cmd = _ENV + " $(execpath build.sh) kernel $(execpath @linux//:src) " +
           "$(execpath vreteno.config) $(execpath Image) " +
           "$(execpath kernel.config) " +
-          "$(execpath System.map)",
+          "$(execpath System.map) " +
+          "$(execpath txhdl_hello.c) $(execpath txhdl_hello.ko)",
     tags = ["manual"],
     tools = _TOOLS,
 )
@@ -270,6 +273,7 @@ genrule(
         "bin/dynhello",
         "init",
         "lib/libc.so",
+        "txhdl_hello.ko",
     ],
     outs = [
         "nfs_root.tar",
@@ -278,8 +282,8 @@ genrule(
     cmd = _ENV + " $(execpath userspace.sh) roottar " +
           "$(execpath bin/busybox) $(execpath init) " +
           "$(execpath lib/libc.so) $(execpath bin/dropbearmulti) " +
-          "$(execpath bin/dynhello) $(execpath nfs_root.tar) " +
-          "$(execpath root.cpio)",
+          "$(execpath bin/dynhello) $(execpath txhdl_hello.ko) " +
+          "$(execpath nfs_root.tar) $(execpath root.cpio)",
     tags = ["manual"],
     tools = _TOOLS,
 )
@@ -416,7 +420,10 @@ sh_test(
     ],
     env = {
         "EXPECT": "txhdl: a dynamic program ran",
-        "EXPECT_ALSO": "txhdl: dropbear is listening on 22",
+        "EXPECT_ALSO": "txhdl: dropbear is listening on 22;" +
+                       "txhdl: a module loaded;" +
+                       "txhdl_hello [0-9]* 0 - Live;" +
+                       "txhdl: a module removed",
     },
     tags = ["manual"],
 )

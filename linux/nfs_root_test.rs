@@ -89,4 +89,8 @@ fn the_nfs_root_is_the_initramfs_system_owned_by_root() {
     assert_eq!(e["usr/bin/dropbearmulti"].mode, 0o755);
     assert_eq!(e["etc/shadow"].mode, 0o600, "shadow is root's alone");
     assert_eq!(e["root/.ssh/"].mode, 0o700, "the keys' directory");
+    // A module for /init to load and remove (issue 1441).
+    let ko = &e["lib/modules/txhdl_hello.ko"];
+    assert_eq!((ko.kind, ko.mode), (b'0', 0o644), "{ko:?}");
+    assert!(ko.size > 0, "an empty module");
 }

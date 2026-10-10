@@ -33,9 +33,13 @@ if [ -n "${EXPECT:-}" ]; then
 fi
 # And a second line, as boot_root_test asks for both the dynamic
 # program's and the ssh server's (issue 1439).
+# More lines, separated by `;`.
 if [ -n "${EXPECT_ALSO:-}" ]; then
-    grep -q "$EXPECT_ALSO" "$out" ||
-        { echo "FAIL: never said: $EXPECT_ALSO" >&2; fail=1; }
+    IFS=';' read -ra also <<<"$EXPECT_ALSO"
+    for line in "${also[@]}"; do
+        grep -q "$line" "$out" ||
+            { echo "FAIL: never said: $line" >&2; fail=1; }
+    done
 fi
 grep -q "txhdl: userspace is up" "$out" ||
     { echo "FAIL: /init never said userspace is up" >&2; fail=1; }

@@ -268,16 +268,17 @@ roottar)
   # and unpacked there with `tar -xpf` as root. Every entry at time
   # nought, so the archive is the same each build.
   # With musl's shared library, Dropbear and a dynamic program beside
-  # BusyBox (issue 1439), and the accounts an ssh login reads.
+  # BusyBox (issue 1439), the accounts an ssh login reads, and a module
+  # for /init to load and remove (issue 1441).
   busybox=$root/$1 init=$root/$2 libc=$root/$3 dropbear=$root/$4
-  dynhello=$root/$5 out=$6 cpio_out=$7
-  "$PYTHON3" - "$busybox" "$init" "$libc" "$dropbear" "$dynhello" "$out" \
-    "$cpio_out" <<'PY'
+  dynhello=$root/$5 module=$root/$6 out=$7 cpio_out=$8
+  "$PYTHON3" - "$busybox" "$init" "$libc" "$dropbear" "$dynhello" \
+    "$module" "$out" "$cpio_out" <<'PY'
 import io
 import sys
 import tarfile
 
-busybox, init, libc, dropbear, dynhello, out, cpio_out = sys.argv[1:]
+busybox, init, libc, dropbear, dynhello, module, out, cpio_out = sys.argv[1:]
 # The same tree as a newc archive too, the format the kernel unpacks as
 # an initramfs, so the model, which has no NFS server, boots it.
 cpio = bytearray()
@@ -346,6 +347,10 @@ with tarfile.open(out, "w", format=tarfile.GNU_FORMAT) as t:
     add("etc/group", tarfile.REGTYPE, 0o644, b"root:x:0:\n")
     add("etc/shadow", tarfile.REGTYPE, 0o600, b"root:*:0:0:99999:7:::\n")
     add("root/.ssh", tarfile.DIRTYPE, 0o700)
+    # A module built against this kernel (issue 1441).
+    add("lib/modules", tarfile.DIRTYPE, 0o755)
+    with open(module, "rb") as f:
+        add("lib/modules/txhdl_hello.ko", tarfile.REGTYPE, 0o644, f.read())
 newc("TRAILER!!!", 0)
 cpio.extend(b"\0" * (-len(cpio) % 512))
 with open(cpio_out, "wb") as f:

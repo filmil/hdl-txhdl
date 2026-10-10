@@ -573,6 +573,13 @@ has no password, so a login is by a key in
 not into the tree. On the model, which has no NFS server,
 \code{boot\_root\_test} boots the same tree as an initramfs and sees
 the dynamic program run and Dropbear listen.
+The kernel loads modules (issue~\#1441): the kernel's build makes
+\code{txhdl\_hello.ko} out of the tree against it, as any module a
+user adds is made, and the root keeps it in \code{/lib/modules}, where
+\code{/init} loads it, lists it and removes it, and it says so each
+way. It is the tree's one GPL-2.0 file, since a module is built against
+the kernel, and loading it marks the kernel only as having a module
+from outside its tree.
 
 Linux reaches the network through its own LiteEth driver,
 \code{litex\_liteeth}, on the Ethernet port (issue~\#1203). The
