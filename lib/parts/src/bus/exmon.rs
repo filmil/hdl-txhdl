@@ -73,6 +73,13 @@ pub struct ExMon<
     /// The exclusive writes that failed, which a test reads to know a
     /// host had to try again.
     pub fails: Reg<U<16>>,
+    /// A test's: with it set, every other exclusive write fails as if
+    /// its reservation were gone, the first of them included, so a host
+    /// tries each pair twice (issue 1474). Nothing in the design sets
+    /// it, so it stays zero and synthesis folds it away with `flip`.
+    pub alternate: Reg<Bit>,
+    /// Whether the last exclusive write taken was one `alternate` failed.
+    pub flip: Reg<Bit>,
     /// The last write passed on, for its clears a cycle later: whether
     /// there was one into the range, its first line, and how many lines
     /// it covers.
@@ -197,7 +204,9 @@ impl<
             // decided into a register, and goes on that the next: only
             // registers stand before the router. Nothing else can pass
             // while it waits, so the decision holds.
-            let fail = aw.lock & !self.xk_ok.get();
+            let fail = aw.lock
+                & (!self.xk_ok.get()
+                    | (self.alternate.get() & !self.flip.get()));
             let aw_take =
                 aw_here & !wpend & !binj & (!aw.lock | self.xk_v.get());
             let aw_fwd = aw_take & !fail & aw_out.ready();
@@ -275,6 +284,7 @@ impl<
                 wids: (wids | w_set) & !w_clr,
                 dup ? xdup: Bit::One,
                 aw_abs ? fails: self.fails.get() + 1,
+                (aw_fwd | aw_abs) & aw.lock ? flip: !self.flip.get(),
                 aw_fwd | aw_abs ? { wpend: Bit::One, wdrop: aw_abs },
                 aw_abs ? binjid: aw.id,
                 w_end ? wpend: Bit::Zero,
@@ -315,7 +325,7 @@ mod tests {
     use crate::bus::axi_per_pins::AxiPerPins;
     use std::cell::RefCell;
     use std::rc::Rc;
-    use txhdl::comp::{join2, now, Clock, DefaultClock, Running, Unit};
+    use txhdl::comp::{join2, now, Clock, DefaultClock, Reg, Running, Unit};
     use txhdl::types::{Bit, U};
 
     type Client = Host<32, 32, 4, 2, 8>;
@@ -353,6 +363,44 @@ mod tests {
         }
     }
 
+    std::thread_local! {
+        // Whether this thread's rigs have the monitor fail every other
+        // exclusive write (issue 1474).
+        static ALTERNATE: std::cell::Cell<bool> =
+            const { std::cell::Cell::new(false) };
+    }
+
+    /// With `alternate` set, the first exclusive write fails though its
+    /// reservation holds, answered OKAY with nothing stored, and the same
+    /// pair again stores, answered EXOKAY (issue 1474).
+    #[test]
+    fn alternate_fails_every_other_exclusive_write() {
+        let got = Rc::new(RefCell::new((Resp::SlvErr, Resp::SlvErr)));
+        let g = got.clone();
+        ALTERNATE.with(|a| a.set(true));
+        let ram = rig::<1>(
+            move |host| {
+                Box::new(Box::pin(async move {
+                    let seven = [U::from(7u32)];
+                    host.read(xrd(0x100)).await.done().await;
+                    let a = host.write(xwr(0x100), &seven).await.done().await;
+                    host.read(xrd(0x100)).await.done().await;
+                    let b = host.write(xwr(0x100), &seven).await.done().await;
+                    *g.borrow_mut() = (a.resp, b.resp);
+                }))
+            },
+            |_| Box::new(Box::pin(async {})),
+            300,
+        );
+        ALTERNATE.with(|a| a.set(false));
+        assert_eq!(
+            *got.borrow(),
+            (Resp::Okay, Resp::ExOkay),
+            "the first failed, the second stored"
+        );
+        assert_eq!(ram.word(0x100 / 4).raw(), 7, "stored by the second");
+    }
+
     /// Two hosts on ports 0 and 1, the arbiter with the hold built or
     /// not, the monitor watching both, and a memory of 1024 words that
     /// answers a read 8 cycles after its address and takes its words
@@ -378,6 +426,9 @@ mod tests {
         let words = ram.memory();
         let mut arb = Arbiter::<2, 32, 32, 4, 2, 5, 0, HOLD>::default();
         let mut mon = ExMon::<5, 2, 0, 1, 0, 0>::default();
+        if ALTERNATE.with(|a| a.get()) {
+            mon.alternate = Reg::new(Bit::One);
+        }
         let xdup = mon.xdup;
         // The arbiter's link goes into the monitor, whose outputs are a
         // link of their own to the memory's unit; the read data goes

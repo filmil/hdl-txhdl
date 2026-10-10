@@ -586,6 +586,12 @@ struct ScanLog {
 /// the bus's one stream of read data (issue 1523).
 const SCAN_CDC_WORDS: usize = 2048;
 
+std::thread_local! {
+    // Whether the runs of this thread have the exclusive monitor fail
+    // every other exclusive write, its `alternate` (issue 1474).
+    static ALTERNATE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 fn run_all(
     text: &[u32],
     data: &[u8],
@@ -671,6 +677,11 @@ fn run_all_in<const LO: usize, const HI: usize>(
         dmem: Dmem::with(data),
         ..Default::default()
     };
+    // A test may have the exclusive monitor fail every other exclusive
+    // write (issue 1474).
+    if ALTERNATE.with(|a| a.get()) {
+        board.exmon.alternate = txhdl::comp::Reg::new(Bit::One);
+    }
     let (xfails, htimeouts) = (board.exmon.fails, board.arb.htimeouts);
     let ddr3 = &board.ddr3.pins;
     let (p_cur, p_beats, p_sent) = (ddr3.cur, ddr3.beats, ddr3.sent);
@@ -4486,7 +4497,8 @@ fn amos_lose_no_count_to_the_other_hosts_writes() {
 /// an AMO's exclusive read, which is what fails one. So an AMO reading
 /// again while a fill could go is not reached here; the core keeps every
 /// other read back from the cycle the read again may go until its
-/// answer, by construction, and a directed test is #1474.
+/// answer, by construction. The directed tests below make every AMO read
+/// again, and reach no such read either (#1474).
 #[test]
 fn amos_from_the_bus_lose_no_count() {
     use vreteno32::isa::{addi, amoadd_w, bne, fence_i, jalr, lui, lw};
@@ -4525,7 +4537,7 @@ fn amos_from_the_bus_lose_no_count() {
 /// an AMO's read again was to go or out, which the harness checks every
 /// cycle. An AMO reads again only when the other host's write was
 /// granted in its exclusive read's cycle, which this sweep reaches about
-/// once, so the check has not yet caught the guard cut back (#1474).
+/// once; the directed tests below make every AMO read again (#1474).
 #[test]
 fn amos_from_the_ddr3_lose_no_count() {
     use vreteno32::isa::{addi, amoadd_w, bne, fence, fence_i, jalr, lw, sw};
@@ -4560,6 +4572,124 @@ fn amos_from_the_ddr3_lose_no_count() {
         rereads += ran.amo_rereads;
     }
     println!("reads again across the sweep: {rereads}");
+}
+
+/// Every AMO reads again, in code whose next line is still to be filled
+/// (issue 1474). The monitor fails every other exclusive write, so each
+/// AMO's first write fails and it reads its word again. The AMOs are
+/// straight-line code in the DDR3, each the last of a line of sixteen
+/// bytes, run cold. Every AMO reads again, the count is exact, no hold
+/// runs out, and no other read of the core's goes while a read again is
+/// to go or out, which the harness checks every cycle. The next line's
+/// fill has gone by then: the fetch runs ahead of the stalled pipeline.
+#[test]
+fn every_amo_reads_again_ending_a_line() {
+    use vreteno32::isa::{addi, amoadd_w, fence, fence_i, jalr, lw, sw};
+    const N: u32 = 16;
+    let mut body = Checked::new();
+    body.li(5, 0x4000_0000).li(6, 1);
+    // Up to the next line's start, so each AMO ends a line.
+    while (body.p.len() * 4) % 16 != 0 {
+        body.op(addi(0, 0, 0));
+    }
+    for _ in 0..N {
+        body.op(addi(0, 0, 0))
+            .op(addi(0, 0, 0))
+            .op(addi(0, 0, 0))
+            .op(amoadd_w(0, 5, 6));
+    }
+    body.op(lw(11, 5, 0)).eq(11, N);
+    let body = body.done();
+    let mut boot = Checked::new();
+    boot.li(8, 0x4001_0000);
+    for (i, &w) in body.iter().enumerate() {
+        boot.li(7, w).op(sw(7, 8, (i * 4) as i32));
+    }
+    boot.op(fence()).op(fence_i()).op(jalr(0, 8, 0));
+    let boot = boot.p.clone();
+    ALTERNATE.with(|a| a.set(true));
+    let ran = run_debugged(&boot, &[], 80_000, &[]);
+    ALTERNATE.with(|a| a.set(false));
+    assert!(ran.halted_at.is_some(), "the count was wrong");
+    assert_eq!(ran.htimeouts, 0, "no hold ran out");
+    assert!(
+        ran.xfails >= N,
+        "every AMO's first write failed: {}",
+        ran.xfails
+    );
+    assert!(
+        ran.amo_rereads >= N,
+        "every AMO read again: {}",
+        ran.amo_rereads
+    );
+    assert!(!ran.amo_shared, "a read went with an AMO's read again");
+}
+
+/// An AMO reads again while a page walk is due (issue 1474). Two 4 MiB
+/// pages map the DDR3 as it is, and supervisor mode runs a store, then
+/// `gap` no-ops, then an AMO in the last word of the first page, with
+/// the next instruction the second page's first, which the TLB does not
+/// hold. The fetch's walk waits for every store to be answered, the
+/// AMO's own write among them, which the monitor fails; across the gaps
+/// the walk comes free near the cycle the AMO is to read again. No read
+/// of the core's other than the read again goes then. The handler, in
+/// machine mode, checks the count.
+#[test]
+fn an_amo_reads_again_while_a_walk_is_due() {
+    use vreteno32::isa::{
+        addi, amoadd_w, csrrs, csrrw, ecall, fence, fence_i, lw, mret,
+        sfence_vma, sw, CSR_MEPC, CSR_MSTATUS, CSR_MTVEC, CSR_SATP,
+    };
+    // The page table at the data memory, two megapages: valid, read,
+    // write, execute, accessed and dirty, for supervisor mode.
+    const ROOT: u32 = 0x1000;
+    let pte = |pa: u32| (pa >> 12) << 10 | 0xcf;
+    let mut rereads = 0;
+    for gap in 0..10u32 {
+        let mut code = vec![sw(6, 5, 0x100)];
+        code.extend(std::iter::repeat_n(addi(0, 0, 0), gap as usize));
+        code.push(amoadd_w(0, 5, 6));
+        code.push(ecall());
+        let at = 0x4040_0000 - 4 * (gap + 2);
+        let build = |handler: u32| {
+            let mut c = Checked::new();
+            c.li(8, ROOT + 4 * (0x4000_0000 >> 22))
+                .li(9, pte(0x4000_0000))
+                .op(sw(9, 8, 0))
+                .li(9, pte(0x4040_0000))
+                .op(sw(9, 8, 4));
+            c.li(8, at);
+            place(&mut c, 8, &code);
+            c.op(fence()).op(fence_i());
+            c.li(9, handler).op(csrrw(0, CSR_MTVEC, 9));
+            c.li(9, at).op(csrrw(0, CSR_MEPC, 9));
+            // mstatus.MPP: supervisor.
+            c.li(9, 0x800).op(csrrs(0, CSR_MSTATUS, 9));
+            c.li(9, 0x8000_0000 | (ROOT >> 12))
+                .op(csrrw(0, CSR_SATP, 9));
+            c.op(sfence_vma(0, 0));
+            c.li(5, 0x4000_0000).li(6, 1);
+            c.op(mret());
+            c
+        };
+        let handler = build(0).p.len() as u32 * 4;
+        let mut c = build(handler);
+        assert_eq!(c.p.len() as u32 * 4, handler);
+        // The handler: the AMO's count, then the halt.
+        c.op(lw(11, 5, 0)).eq(11, 1);
+        ALTERNATE.with(|a| a.set(true));
+        let ran = run_debugged(&c.done(), &[], 80_000, &[]);
+        ALTERNATE.with(|a| a.set(false));
+        println!(
+            "gap {gap}: rereads {} shared {} halted {:?}",
+            ran.amo_rereads, ran.amo_shared, ran.halted_at
+        );
+        assert!(ran.halted_at.is_some(), "the count was wrong, gap {gap}");
+        assert_eq!(ran.htimeouts, 0, "no hold ran out, gap {gap}");
+        assert!(!ran.amo_shared, "the walk went with the read again, {gap}");
+        rereads += ran.amo_rereads;
+    }
+    assert!(rereads >= 10, "every AMO read again: {rereads}");
 }
 
 /// Words for hart 0 to write `code` into memory at the address in `at`,
