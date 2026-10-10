@@ -821,14 +821,15 @@ It draws `ico <n>: <name>` in the top left corner of both buffers, where the sol
 | 4 | `demo-ico-4-textured.bin` | A texture on each face, nearest filtering |
 | 5 | `demo-ico-5-mipmapped.bin` | Trilinear mipmaps, over a floor receding to the horizon |
 | 6 | `demo-ico-6-fog.bin` | Step 5 in linear fog of the backdrop's colour, the solid drifting from 16 units to 26 and back so that it fades into the fog and out |
+| 8 | `demo-ico-8-mirror.bin` | Step 3 over a mirror: the stencil marks the mirror, the solid's reflection is drawn only there, and the mirror is blended over it |
 
-Steps 7 and 8, blending with smooth alpha and the stencil, come as the program learns them, and the teapot after.
+Step 7, blending with smooth alpha, come as the program learns them, and the teapot after.
 A flagship from the same `main`, programmed over JTAG, and the board's serial port open on the board server:
 
 ```sh
 bazel build //demo/canon:ico_series
 bazel run //flagship:flagship_prog -- "${PROG[@]}"
-for s in 1-flat 2-depth 3-smooth 4-textured 5-mipmapped 6-fog; do
+for s in 1-flat 2-depth 3-smooth 4-textured 5-mipmapped 6-fog 8-mirror; do
   bazel run //cpu/vreteno/board/remote:load -- --reset \
       --image=$PWD/bazel-bin/demo/canon/demo-ico-$s.bin --seconds=30 \
       2>&1 | tee board-1592-ico-$s.log
