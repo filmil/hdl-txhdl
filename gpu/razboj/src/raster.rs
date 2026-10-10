@@ -319,6 +319,16 @@ pub struct Raster<
     pub fsg: Reg<U<17>>,
     pub fsb: Reg<U<17>>,
     pub fsa: Reg<U<8>>,
+    /// A shaded triangle's alpha plane (issue 1520), in the second slot's
+    /// words 12 to 15: whether it is on, and the plane at this pixel, at
+    /// the start of this row, and its two steps, as the colour channels'
+    /// are. With it on, the pixel's alpha is the plane's rather than the
+    /// entry's one alpha.
+    pub pon: Reg<Bit>,
+    pub pac: Reg<U<32>>,
+    pub par: Reg<U<32>>,
+    pub padx: Reg<U<32>>,
+    pub pady: Reg<U<32>>,
     /// The tile's colour again, written where and as the bank is and
     /// read only by the walk, for the colour already at a pixel, so that
     /// each of the two is a block RAM of one write and one read; the
@@ -1232,7 +1242,12 @@ impl<
                         .concat::<8, 24>(channel(self.cb.get()));
                     let shaded = self.kind.get() == Kind::Shaded;
                     let rgb = mux(shaded, shade, self.colour.get());
-                    self.rgb.set(self.alpha.get().concat::<24, 32>(rgb));
+                    // The alpha plane's, where the entry has one (issue
+                    // 1520), which only the pixel's state carries.
+                    let planed = self.son.get() & self.pon.get();
+                    let alpha =
+                        mux(planed, channel(self.pac.get()), self.alpha.get());
+                    self.rgb.set(alpha.concat::<24, 32>(rgb));
                     let open = self.issued.get() - self.answered.get();
                     self.inflight.set(open);
                     with!(self <= {
@@ -1634,7 +1649,7 @@ impl<
                                               + ((self.insn.get() + 1)
                                                   .resize::<A>()
                                                   << SHIFT),
-                                          len: U::<8>::from(11u8),
+                                          len: U::<8>::from(15u8),
                                           size: U::<3>::from(2u8),
                                           burst: BurstKind::Incr,
                                           lock: Bit::Zero,
@@ -1805,6 +1820,50 @@ impl<
                                           szfail: w11.slice::<3, 3>(),
                                           szpass: w11.slice::<6, 3>(),
                                       });
+                                      // A shaded triangle's alpha plane,
+                                      // words 12 to 15 (issue 1520): the
+                                      // plane, then whether it is on.
+                                      until(DefaultClock::rising, || {
+                                          landing(
+                                              rdata.peek().is_some(),
+                                              release.ready(),
+                                              done.peek().is_some(),
+                                          )
+                                          .to_bool()
+                                      })
+                                      .await;
+                                      let a0 = rdata.head().data;
+                                      with!(self <= { pac: a0, par: a0 });
+                                      until(DefaultClock::rising, || {
+                                          landing(
+                                              rdata.peek().is_some(),
+                                              release.ready(),
+                                              done.peek().is_some(),
+                                          )
+                                          .to_bool()
+                                      })
+                                      .await;
+                                      self.padx.set(rdata.head().data);
+                                      until(DefaultClock::rising, || {
+                                          landing(
+                                              rdata.peek().is_some(),
+                                              release.ready(),
+                                              done.peek().is_some(),
+                                          )
+                                          .to_bool()
+                                      })
+                                      .await;
+                                      self.pady.set(rdata.head().data);
+                                      until(DefaultClock::rising, || {
+                                          landing(
+                                              rdata.peek().is_some(),
+                                              release.ready(),
+                                              done.peek().is_some(),
+                                          )
+                                          .to_bool()
+                                      })
+                                      .await;
+                                      self.pon.set(rdata.head().data.bit(0));
                                   }
                                   // A textured entry's two slots more
                                   // (issue 997). In a tile, slot A's
@@ -3106,6 +3165,7 @@ impl<
                                         cb: self.cb.get() + self.cbx.get(),
                                         zc: self.zc.get() + self.zdx.get(),
                                         fc: self.fc.get() + self.fdx.get(),
+                                        pac: self.pac.get() + self.padx.get(),
                                         tuc: self.tuc.get() + self.tudx.get(),
                                         tvc: self.tvc.get() + self.tvdx.get(),
                                         tqc: self.tqc.get() + self.tqdx.get(),
@@ -3128,6 +3188,7 @@ impl<
                                 let qb = self.lb.get() + self.cby.get();
                                 let qz = self.zr.get() + self.zdy.get();
                                 let qf = self.fr.get() + self.fdy.get();
+                                let qa = self.par.get() + self.pady.get();
                                 let qu = self.tur.get() + self.tudy.get();
                                 let qv = self.tvr.get() + self.tvdy.get();
                                 let qq = self.tqr.get() + self.tqdy.get();
@@ -3136,6 +3197,7 @@ impl<
                                     y: self.y.get() + 1,
                                     zc: qz, zr: qz,
                                     fc: qf, fr: qf,
+                                    pac: qa, par: qa,
                                     tuc: qu, tur: qu,
                                     tvc: qv, tvr: qv,
                                     tqc: qq, tqr: qq,
