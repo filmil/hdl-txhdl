@@ -63,3 +63,12 @@ fn a_literal_out_of_order_lowers_as_one_in_order() {
     let swapped = Swapped::lowered("m").verilog();
     assert_eq!(swapped, declared, "the literal's order changed the netlist");
 }
+
+/// A constant field is sized to its field: an unsized decimal inside a
+/// Verilog concatenation is not allowed, and a tool that takes it reads
+/// it as thirty-two bits wide (issue 1574).
+#[test]
+fn a_constant_field_is_sized_to_its_field() {
+    let v = Declared::lowered("m").verilog();
+    assert!(v.contains("{4'b0101, inp_data}"), "a sized constant: {v}");
+}
