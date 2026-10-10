@@ -67,6 +67,108 @@ struct Vert {
     back: [Fx; 4],
     /// Its texture coordinates, through the texture matrix (#997).
     tex: [Fx; 4],
+    /// Whether it lies inside every plane a triangle is clipped against,
+    /// near, far, the user's and the guard band's four edges (not the
+    /// viewport's, which the rasteriser's box clips to),
+    /// and if so its place in the window and its window depth, worked out
+    /// with the vertex, so that a cached vertex keeps them (#1624).
+    inside: bool,
+    win: (i64, i64),
+    zw: u32,
+}
+
+/// What placing a vertex in the window reads of the context, copied out
+/// once a draw call, so that a vertex is placed as it is worked out
+/// (#1624).
+#[derive(Clone, Copy)]
+struct View {
+    viewport: (i32, i32, i32, i32),
+    screen_h: u32,
+    depth_range: (Fx, Fx),
+    plane: [Fx; 4],
+    plane_on: bool,
+    depth_test: bool,
+}
+
+impl View {
+    /// A clipped vertex in GL's window, in sixteenths of a pixel, its y
+    /// growing upwards: the divide and the viewport. `None` for a vertex
+    /// at or behind the eye, which clipping leaves only in a degenerate
+    /// case.
+    fn window(&self, v: &Vert) -> Option<(i64, i64)> {
+        let [x, y, _, w] = v.clip.map(|c| c as i64);
+        if w <= 0 {
+            return None;
+        }
+        let (vx, vy, vw, vh) = self.viewport;
+        let wx =
+            16 * vx as i64 + 8 * vw as i64 + div_round(x * 8 * vw as i64, w);
+        let wy =
+            16 * vy as i64 + 8 * vh as i64 + div_round(y * 8 * vh as i64, w);
+        Some((wx, wy))
+    }
+
+    /// A clipped vertex's window depth, of sixteen bits: its z over its
+    /// w, from minus one to one, carried into the depth range, then
+    /// times 65535 and rounded to the nearest. Called only where
+    /// [`View::window`] found the vertex in front of the eye.
+    fn window_z(&self, v: &Vert) -> u32 {
+        let (z, w) = (v.clip[2] as i128, v.clip[3] as i128);
+        let (n, f) = (self.depth_range.0 as i128, self.depth_range.1 as i128);
+        // n + (f - n) (z / w + 1) / 2, in 16.16, is
+        // (2 n w + (f - n) (z + w)) / (2 w).
+        let num = (2 * n * w + (f - n) * (z + w)) * emit::FAR as i128;
+        let den = 2 * w * ONE as i128;
+        (2 * num + den)
+            .div_euclid(2 * den)
+            .clamp(0, emit::FAR as i128) as u32
+    }
+
+    /// A vertex's distance from a clipping plane, scaled, nought or more
+    /// inside: near and far, the user's plane, then the guard band's four
+    /// edges.
+    fn distances(&self, v: &Vert, plane: usize) -> i128 {
+        let [x, y, z, w] = v.clip.map(|c| c as i64);
+        let (vx, vy, vw, vh) = self.viewport;
+        let (vx16, vy16) = (16 * vx as i64, 16 * vy as i64);
+        let (vw8, vh8) = (8 * vw as i64, 8 * vh as i64);
+        let sh16 = 16 * self.screen_h as i64;
+        // Window x in sixteenths is vx16 + vw8 + x vw8 / w, and GL's
+        // window y vy16 + vh8 + y vh8 / w, which Razboj's y turns over
+        // as sh16 less it; each edge is that kept inside the band, times
+        // w, which is positive inside the near plane.
+        (match plane {
+            0 => z + w,
+            1 => w - z,
+            2 => {
+                return (0..4)
+                    .map(|i| self.plane[i] as i128 * v.eye[i] as i128)
+                    .sum()
+            }
+            3 => x * vw8 + w * (vx16 + vw8 - GMIN),
+            4 => w * (GMAX - vx16 - vw8) - x * vw8,
+            5 => y * vh8 + w * (vy16 + vh8 - (sh16 - GMAX)),
+            _ => w * ((sh16 - GMIN) - vy16 - vh8) - y * vh8,
+        }) as i128
+    }
+
+    /// The vertex with its place: whether no plane a triangle is clipped
+    /// against cuts it, and then where it lands and at what depth. A
+    /// triangle of three such vertices is drawn from these as it is,
+    /// unclipped (#1624).
+    fn placed(&self, mut v: Vert) -> Vert {
+        v.inside = v.clip[3] > 0
+            && (0..7).all(|p| {
+                (p == 2 && !self.plane_on) || self.distances(&v, p) >= 0
+            });
+        if v.inside {
+            v.win = self.window(&v).unwrap_or_default();
+            if self.depth_test {
+                v.zw = self.window_z(&v);
+            }
+        }
+        v
+    }
 }
 
 /// A colour in 16.16, each channel nominally nought to one, as the
@@ -1781,6 +1883,7 @@ impl<'a> Gl<'a> {
                     col,
                     back: col,
                     tex,
+                    ..Vert::default()
                 };
             }
             let n = matrix::mul3(&nm, &v.normal.unwrap_or(normal));
@@ -1802,8 +1905,12 @@ impl<'a> Gl<'a> {
                 col: front,
                 back,
                 tex,
+                ..Vert::default()
             }
         };
+        // A triangle's vertex is placed in the window as it is worked
+        // out, so that a cached one keeps its place (#1624).
+        let view = self.view();
         // A strip's or a loop's vertex ends one segment and starts the
         // next, so it is lit once and carried over.
         let mut last = None;
@@ -1828,11 +1935,11 @@ impl<'a> Gl<'a> {
                         Some(i) => {
                             let slot = &mut self.vcache[i % VCACHE];
                             if slot.0 != i {
-                                *slot = (i, vert(k));
+                                *slot = (i, view.placed(vert(k)));
                             }
                             slot.1
                         }
-                        None => vert(k),
+                        None => view.placed(vert(k)),
                     });
                     self.triangle(t);
                 }
@@ -1863,37 +1970,26 @@ impl<'a> Gl<'a> {
         clip(x0, y0, x1, y1, window).unwrap_or((1, 1, 0, 0))
     }
 
-    /// A clipped vertex in GL's window, in sixteenths of a pixel, its y
-    /// growing upwards: the divide and the viewport. `None` for a vertex
-    /// at or behind the eye, which clipping leaves only in a degenerate
-    /// case.
-    fn window(&self, v: &Vert) -> Option<(i64, i64)> {
-        let [x, y, _, w] = v.clip.map(|c| c as i64);
-        if w <= 0 {
-            return None;
+    /// What placing a vertex reads of the context, for this draw call.
+    fn view(&self) -> View {
+        View {
+            viewport: self.viewport,
+            screen_h: self.screen.1,
+            depth_range: self.depth_range,
+            plane: self.plane,
+            plane_on: self.plane_on,
+            depth_test: self.depth_test,
         }
-        let (vx, vy, vw, vh) = self.viewport;
-        let wx =
-            16 * vx as i64 + 8 * vw as i64 + div_round(x * 8 * vw as i64, w);
-        let wy =
-            16 * vy as i64 + 8 * vh as i64 + div_round(y * 8 * vh as i64, w);
-        Some((wx, wy))
     }
 
-    /// A clipped vertex's window depth, of sixteen bits: its z over its
-    /// w, from minus one to one, carried into the depth range, then
-    /// times 65535 and rounded to the nearest. Called only where
-    /// [`Gl::window`] found the vertex in front of the eye.
+    /// [`View::window`] for this context.
+    fn window(&self, v: &Vert) -> Option<(i64, i64)> {
+        self.view().window(v)
+    }
+
+    /// [`View::window_z`] for this context.
     fn window_z(&self, v: &Vert) -> u32 {
-        let (z, w) = (v.clip[2] as i128, v.clip[3] as i128);
-        let (n, f) = (self.depth_range.0 as i128, self.depth_range.1 as i128);
-        // n + (f - n) (z / w + 1) / 2, in 16.16, is
-        // (2 n w + (f - n) (z + w)) / (2 w).
-        let num = (2 * n * w + (f - n) * (z + w)) * emit::FAR as i128;
-        let den = 2 * w * ONE as i128;
-        (2 * num + den)
-            .div_euclid(2 * den)
-            .clamp(0, emit::FAR as i128) as u32
+        self.view().window_z(v)
     }
 
     /// A point, as GL draws one that is not antialiased: kept only when
@@ -2241,47 +2337,31 @@ impl<'a> Gl<'a> {
     /// plane when it is on, and the guard band's four edges when some
     /// vertex is outside them.
     fn distances(&self, v: &Vert, plane: usize) -> i128 {
-        let [x, y, z, w] = v.clip.map(|c| c as i64);
-        let (vx, vy, vw, vh) = self.viewport;
-        let (vx16, vy16) = (16 * vx as i64, 16 * vy as i64);
-        let (vw8, vh8) = (8 * vw as i64, 8 * vh as i64);
-        let sh16 = 16 * self.screen.1 as i64;
-        // Window x in sixteenths is vx16 + vw8 + x vw8 / w, and GL's
-        // window y vy16 + vh8 + y vh8 / w, which Razboj's y turns over
-        // as sh16 less it; each edge is that kept inside the band, times
-        // w, which is positive inside the near plane.
-        (match plane {
-            0 => z + w,
-            1 => w - z,
-            2 => {
-                return (0..4)
-                    .map(|i| self.plane[i] as i128 * v.eye[i] as i128)
-                    .sum()
-            }
-            3 => x * vw8 + w * (vx16 + vw8 - GMIN),
-            4 => w * (GMAX - vx16 - vw8) - x * vw8,
-            5 => y * vh8 + w * (vy16 + vh8 - (sh16 - GMAX)),
-            _ => w * ((sh16 - GMIN) - vy16 - vh8) - y * vh8,
-        }) as i128
+        self.view().distances(v, plane)
     }
 
     /// One triangle through clipping, the window, culling and shading
     /// into the frame.
     fn triangle(&mut self, tri: [Vert; 3]) {
+        let view = self.view();
         let mut poly = [Vert::default(); MAXV];
         poly[..3].copy_from_slice(&tri);
         let mut n = 3;
-        let guard =
-            (3..7).any(|p| tri.iter().any(|v| self.distances(v, p) < 0));
+        // A triangle no plane cuts is drawn as it is, from where its
+        // vertices were placed as they were worked out (#1624); clipping
+        // it would keep the same three, in the same order.
+        let placed = tri.iter().all(|v| v.inside);
+        let guard = !placed
+            && (3..7).any(|p| tri.iter().any(|v| view.distances(v, p) < 0));
         for p in 0..7 {
-            if (p == 2 && !self.plane_on) || (p >= 3 && !guard) {
+            if placed || (p == 2 && !self.plane_on) || (p >= 3 && !guard) {
                 continue;
             }
             let mut out = [Vert::default(); MAXV];
             let mut m = 0;
             for i in 0..n {
                 let (a, b) = (poly[i], poly[(i + 1) % n]);
-                let (da, db) = (self.distances(&a, p), self.distances(&b, p));
+                let (da, db) = (view.distances(&a, p), view.distances(&b, p));
                 if da >= 0 {
                     out[m] = a;
                     m += 1;
@@ -2301,7 +2381,8 @@ impl<'a> Gl<'a> {
         let sh16 = 16 * self.screen.1 as i64;
         let mut win = [(0i64, 0i64); MAXV];
         for (k, v) in poly[..n].iter().enumerate() {
-            let Some(at) = self.window(v) else {
+            let Some(at) = (if placed { Some(v.win) } else { self.window(v) })
+            else {
                 return;
             };
             win[k] = at;
@@ -2345,7 +2426,7 @@ impl<'a> Gl<'a> {
         let mut zw = [0u32; MAXV];
         if self.depth_test {
             for (k, v) in poly[..n].iter().enumerate() {
-                zw[k] = self.window_z(v);
+                zw[k] = if placed { v.zw } else { self.window_z(v) };
             }
         }
         // The texture, when texturing is on and it is complete (#997).
@@ -2512,6 +2593,7 @@ fn between(a: &Vert, b: &Vert, da: i128, db: i128) -> Vert {
         col: mix(&a.col, &b.col),
         back: mix(&a.back, &b.back),
         tex: mix(&a.tex, &b.tex),
+        ..Vert::default()
     }
 }
 
