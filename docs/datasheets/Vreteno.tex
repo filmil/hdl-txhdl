@@ -41,6 +41,22 @@ strobes in the cycle it runs. Whether an access is in the window comes
 from the upper half of \code{rs1} and the carry out of the lower
 halves' sum, without the full add.
 
+A load from the DDR3, whose physical address's top two bits are 01,
+goes through a data cache (issue 1275): four kilobytes, 256 lines of
+four words, one way, in \code{dc\_data} and \code{dc\_tag}, with a
+valid bit a line. A miss asks for its line, a burst of four beats,
+once every store of the core's is answered, so that the line has them,
+and keeps it unless another host wrote the line meanwhile; a load
+found after translation not to be in the DDR3 reads its one word
+around the cache. A store goes to the bus as before, and writes its word into
+a line the cache holds, under its lanes, so the cache is write
+through. \code{lr.w}, \code{sc.w} and an AMO go around the cache and
+take their line out of it. Another host's write into the DDR3 is named
+to the core on \code{dc\_snoop}, a line's index in bits 7 to 0 and bit
+8 valid, from the board's \code{DcSnoop}, and the core clears that
+line. With \code{IC} of 0 the data cache, as the instruction cache, is
+off, and every load goes to the bus.
+
 The bus side is an AXI host written as hardware. The core issues a
 burst on \code{issue}, sends a store's beat on \code{wbeat}, and hands
 identifiers back on \code{release}. It receives \code{grant},
