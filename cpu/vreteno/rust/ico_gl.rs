@@ -259,13 +259,16 @@ pub fn frame<'a>(
         }
     }
 
+    #[cfg(fog)]
+    fog(&mut g);
+
     #[cfg(mip)]
     if textured {
         floor(&mut g);
     }
 
     // `ico_list` turns about y and then about x.
-    g.translate(0, 0, -D);
+    g.translate(0, 0, -distance(ax));
     g.rotate(degrees(ax), ONE, 0, 0);
     g.rotate(degrees(ay), 0, ONE, 0);
     if textured {
@@ -347,6 +350,35 @@ pub fn kept<'a>(g: &mut Gl<'a>, room: &'a mut [u32], bus: u32) {
     let modulate = gl::MODULATE as Fx;
     g.tex_env(gl::TEXTURE_ENV, gl::TEXTURE_ENV_MODE, &[modulate]);
     g.enable(gl::TEXTURE_2D);
+}
+
+/// How far away the solid is at angle `ax`: `D`, or under `fog` (#1592's
+/// step 6) from `D` out to `D + SWING` and back once a turn of `ax`, its
+/// speed easing to nothing at either end, so that it recedes into the
+/// fog and comes back out of it.
+fn distance(ax: i32) -> Fx {
+    if !cfg!(fog) {
+        return D;
+    }
+    const SWING: i64 = 10 * ONE as i64;
+    let a = (ax & 255) as i64;
+    let t = (if a < 128 { a } else { 256 - a }) * ONE as i64 / 128;
+    let eased = t * t / ONE as i64 * (3 * ONE as i64 - 2 * t) / ONE as i64;
+    D + (eased * SWING / ONE as i64) as Fx
+}
+
+/// Under `fog` (#1592's step 6): linear fog from the floor's near edge
+/// to its far one, in the backdrop's colour. The floor fades into the
+/// backdrop towards the horizon, and the solid keeps four fifths of its
+/// own colour at `D` and a quarter at its farthest.
+#[cfg(fog)]
+fn fog(g: &mut Gl<'_>) {
+    g.enable(gl::FOG);
+    g.fog(gl::FOG_MODE, gl::LINEAR as Fx);
+    g.fog(gl::FOG_START, 12 * ONE);
+    g.fog(gl::FOG_END, 31 * ONE);
+    let b = |shift: u32| ((BACKDROP >> shift) & 0xff) as Fx * ONE / 255;
+    g.fog_colour([b(16), b(8), b(0), ONE]);
 }
 
 /// Under `mip` (#997), a floor below the solid and behind it, receding
