@@ -45,5 +45,3 @@ state.TEXTURE_MATRIX_FLOAT_AS_INT_BITS_OES #1522
 state.EXTENSION_OES_point_size_array     #1507
 piglit.oes_matrix_get-api                #1522
 piglit.arb_point_sprite-checkerboard_gles1 #1508
-render.read_keeps_depth                  #1596
-render.read_keeps_stencil                #1596

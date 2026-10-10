@@ -484,7 +484,13 @@ pub extern "C" fn eglDestroyContext(
 /// and one that does not as the flat list it is. Too little room to bin
 /// it in draws it flat, its depth untested, and says so with `false`.
 /// With `keep`, for a read, a tiled frame stays as what rebuilds its
-/// depth and its stencil rather than being begun again (#1504).
+/// depth and its stencil rather than being begun again (#1504). A
+/// machine may lay the tile table out over the list, where GL keeps
+/// that frame, as the board's does where Razboj reads it, so the kept
+/// entries wait in the scratch room past the binned ones while Razboj
+/// draws and go back to the list once it is done (#1596); with too
+/// little room for them as well the frame is begun again, its depth and
+/// stencil lost, and `false` says so.
 fn draw_frame(m: &mut dyn Machine, keep: bool) -> bool {
     if gles_frame_tiled() {
         let mut tiles = [[0u32; TILE_WORDS]; MAX_TILES];
@@ -495,7 +501,23 @@ fn draw_frame(m: &mut dyn Machine, keep: bool) -> bool {
             gles_flush(room, &mut tiles)
         };
         match binned {
-            Some(b) => m.draw_tiled(&tiles[..b.tiles], &room[..b.entries]),
+            Some(b) => {
+                let kept = if keep { gles_frame_len() } else { 0 };
+                let fits = b.entries + kept <= room.len();
+                let list = m.list();
+                if keep && fits {
+                    room[b.entries..b.entries + kept]
+                        .copy_from_slice(&list[..kept]);
+                }
+                m.draw_tiled(&tiles[..b.tiles], &room[..b.entries]);
+                if keep {
+                    if !fits {
+                        return false;
+                    }
+                    list[..kept]
+                        .copy_from_slice(&room[b.entries..b.entries + kept]);
+                }
+            }
             None => {
                 m.draw(gles_frame_len());
                 return false;
