@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # The generated half of the datasheets, and the check that every
 # component has a datasheet.
-load("@rules_rust//rust:defs.bzl", "rust_binary")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -48,5 +48,37 @@ sh_test(
         "//gpu/razboj:sources",
         "//pcie:sources",
         "//lib/parts:sources",
+    ],
+)
+
+# Every row of every generated table is on a page of the datasheets
+# (issue 1614): a table LaTeX cannot break runs off its page, and the
+# rows past the edge are set on no page at all, which //docs:edge_test
+# cannot see.
+rust_binary(
+    name = "whole",
+    srcs = ["whole.rs"],
+    edition = "2021",
+)
+
+rust_test(
+    name = "whole_unit_test",
+    crate = ":whole",
+    edition = "2021",
+)
+
+sh_test(
+    name = "tables_whole_test",
+    srcs = ["tables_whole_test.sh"],
+    args = [
+        "$(rootpath :whole)",
+        "$(rootpath :tables)",
+        "$(rootpath //docs:datasheets)",
+    ],
+    data = [
+        ":tables",
+        ":whole",
+        "//docs:datasheets",
+        "//third_party/poppler:tree",
     ],
 )
