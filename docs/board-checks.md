@@ -806,6 +806,36 @@ Pass:
 * The log's failures are the host's, which `gles/conform/known_failures.txt` lists, or each difference has an issue: the board draws with Razboj itself and reads back from the DDR3, where the host draws with its model.
   `comm -3 <(tr -d '\r' < board-999.log | sed -n 's/^FAIL \([^:]*\):.*/\1/p' | sort) <(grep -v '^#' gles/conform/known_failures.txt | awk 'NF {print $1}' | sort)` prints the differences.
 
+### The canonical demos, #1592
+
+The demos redone after each milestone and recorded for the TxHDL directory.
+The GPU's are the icosahedron series, a board image a step, each step adding one of Razboj's features.
+Each image prints `demo ico <n>: <name>` when it starts, then its cycles every 64 frames as the ico demos do, then `demo ico <n> done` after 1200 frames, 20 seconds at 60 Hz, and stops with its last frame on the screen.
+It draws `ico <n>: <name>` in the top left corner of both buffers, where the solid never reaches.
+
+| Step | Image | What it shows |
+|---|---|---|
+| 1 | `demo-ico-1-flat.bin` | Flat faces, back faces culled, Razboj's flat list without GL |
+| 2 | `demo-ico-2-depth.bin` | Through GL, depth-tested in tiles, lit per face |
+| 4 | `demo-ico-4-textured.bin` | A texture on each face, nearest filtering |
+| 5 | `demo-ico-5-mipmapped.bin` | Trilinear mipmaps, over a floor receding to the horizon |
+
+Steps 3, smooth shading, and 6 to 8, fog, blending with smooth alpha, and the stencil, come as the program learns them, and the teapot after.
+A flagship from the same `main`, programmed over JTAG, and the board's serial port open on the board server:
+
+```sh
+bazel build //demo/canon:ico_series
+bazel run //flagship:flagship_prog -- "${PROG[@]}"
+for s in 1-flat 2-depth 4-textured 5-mipmapped; do
+  bazel run //cpu/vreteno/board/remote:load -- --reset \
+      --image=$PWD/bazel-bin/demo/canon/demo-ico-$s.bin --seconds=30 \
+      2>&1 | tee board-1592-ico-$s.log
+done
+```
+
+The images' sums are in `bazel-bin/demo/canon/SHA256SUMS`.
+srv records each run from the Cam Link and uploads the video and its log to the TxHDL directory, named as the image is.
+
 ### Ethernet throughput, #1038
 
 The Ethernet half of #151: the port's throughput through the slots and the DMA engines, against the core's own copy of each frame.
