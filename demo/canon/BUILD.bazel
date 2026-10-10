@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: Apache-2.0
+# The canonical demos (#1592), redone after each milestone and recorded
+# on the board: the icosahedron series, a step a GPU feature, each image
+# named for its step, with the images' sums beside them.
+#   bazel build //demo/canon:ico_series
+# hil boots each image as it boots the ico demos; each prints
+# `demo ico <n>: <name>`, its cycles every 64 frames, and
+# `demo ico <n> done` after 1200 frames.
+
+_STEPS = [
+    "1_flat",
+    "2_depth",
+    "4_textured",
+    "5_mipmapped",
+]
+
+genrule(
+    name = "ico_series",
+    srcs = ["//cpu/vreteno/rust:demo_ico_%s_bin" % s for s in _STEPS],
+    outs = ["demo-ico-%s.bin" % s.replace("_", "-") for s in _STEPS] + [
+        "SHA256SUMS",
+    ],
+    cmd = " && ".join([
+        "cp $(location //cpu/vreteno/rust:demo_ico_%s_bin) $(RULEDIR)/demo-ico-%s.bin" % (s, s.replace("_", "-"))
+        for s in _STEPS
+    ] + [
+        "(cd $(RULEDIR) && sha256sum demo-ico-*.bin > SHA256SUMS)",
+    ]),
+    tags = ["manual"],
+)
