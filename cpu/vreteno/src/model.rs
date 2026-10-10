@@ -232,6 +232,11 @@ pub struct Model {
     /// writes its word (issue 1408).
     pub wrote: Option<u32>,
     pub rsv_pa: Option<u32>,
+    /// A window of the DDR3 the model keeps itself, its base and its
+    /// words, for a harness with no bus (issue 1443): a load there is
+    /// the model's own word, not what the core said the bus answered,
+    /// so a wrong word from the core's data cache disagrees with it.
+    pub ddr: Option<(u32, Vec<u32>)>,
     /// The step's exclusive access, `lr.w` 1, `sc.w` 2 or an AMO 3, and its
     /// physical word, for the timing mode (issue 1554).
     pub excl: std::cell::Cell<Option<(u8, u32)>>,
@@ -437,6 +442,7 @@ impl Default for Model {
             access: std::cell::Cell::new(None),
             wrote: None,
             rsv_pa: None,
+            ddr: None,
             excl: std::cell::Cell::new(None),
             dc: Vec::new(),
             wfi_now: std::cell::Cell::new(false),
@@ -600,6 +606,9 @@ impl Model {
         if in_dram(addr) {
             return Some(self.dram[((addr - DRAM_BASE) / 4) as usize]);
         }
+        if let Some(i) = self.ddr_index(addr) {
+            return self.ddr.as_ref().map(|(_, m)| m[i]);
+        }
         if let Some(bus) = &self.bus {
             return bus.load(addr & !3);
         }
@@ -748,9 +757,23 @@ impl Model {
     /// into the boot memory is refused by the memory and ignored by the
     /// core, which does not look at a write's answer, so it changes
     /// nothing here either.
+    /// The word of the model's own DDR3 window at `addr`, if it has one
+    /// and `addr` is in it (issue 1443).
+    fn ddr_index(&self, addr: u32) -> Option<usize> {
+        let (base, m) = self.ddr.as_ref()?;
+        let i = (addr.wrapping_sub(*base) / 4) as usize;
+        (addr >= *base && i < m.len()).then_some(i)
+    }
+
     fn set_word(&mut self, addr: u32, v: u32) -> bool {
         if in_dram(addr) {
             self.dram[((addr - DRAM_BASE) / 4) as usize] = v;
+            return true;
+        }
+        if let Some(i) = self.ddr_index(addr) {
+            if let Some((_, m)) = self.ddr.as_mut() {
+                m[i] = v;
+            }
             return true;
         }
         if let Some(bus) = &self.bus {

@@ -319,7 +319,13 @@ clock and no bus, so what a device answers is not its own. The caller
 sets \code{dev\_word} before a step to what the bus answered the
 core's load from a device, and \code{tirq} to the line as the core
 saw it; the data memory's words the model keeps itself, and the
-memory unit's lanes are compared with them at the halt. A store to a
+memory unit's lanes are compared with them at the halt. So are the
+words of a window of the DDR3 when a harness gives the model one: 16
+KiB at \code{0x4000\_0000} in the lockstep harness, which the core
+reaches through its data cache. A load there is the model's own word
+rather than what the core said the bus answered, so a word the cache
+gets wrong is a register the two disagree on; before, a stale word
+from the cache passed (issue~\#1443). A store to a
 device is the device's business; the model keeps what it can check
 at the end, the timer's compare and the bytes given to the serial
 port. Which
@@ -1448,7 +1454,12 @@ what one instruction per cycle at most means. The demonstration program passes w
 comments promise, and sixty-four random programs of two hundred
 words each pass, more than two hundred instructions where some are
 compressed, which covers every instruction the generator
-emits many times over with operands it did not choose. The test also
+emits many times over with operands it did not choose. Thirty-two more put
+their data in the harness's 16 KiB of DDR3, whose words the model keeps
+itself, so their loads, stores, narrow stores,
+\code{lr.w}, \code{sc.w} and AMOs all go through the data cache, and a
+directed program stores and loads back to back there at every width.
+With the cache's update by a store taken out, both fail. The test also
 walks each random program from its start and counts its instructions
 by length: across the sixty-four there must be more than three
 thousand compressed ones, more than three thousand whole words, and
