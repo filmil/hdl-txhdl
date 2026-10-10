@@ -247,15 +247,55 @@ static ALIVE: AtomicU32 = AtomicU32::new(0);
 #[cfg(gl)]
 static DRAWN: AtomicU32 = AtomicU32::new(0);
 
-/// An odd frame binned by hart 1 and not yet rung, and its number plus
-/// one while it waits, zero once hart 0 has rung it.
+/// The last frame rung, so that each hart rings its own frames in turn
+/// (#1639): a frame is rung once the one before it is.
 #[cfg(gl)]
-static mut ODD: Binned = Binned {
-    tiles: [[0; razboj_tile::TILE_WORDS]; razboj_tile::MAX_TILES],
-    count: 0,
-};
+static RUNG: AtomicU32 = AtomicU32::new(0);
+
+/// The video peripheral's count of frames shown when either hart last
+/// had the scanout show a frame (#1639).
 #[cfg(gl)]
-static ODD_READY: AtomicU32 = AtomicU32::new(0);
+static LAST_SHOW: AtomicU32 = AtomicU32::new(0);
+
+/// A hart's showing of its frames, paced (#1639). Each hart shows the
+/// frame before its own when its own is ready to ring. Shown as soon as
+/// each was ready, the two harts' frames went up in pairs, back to back,
+/// one of each pair on the screen for one blanking and the other for the
+/// rest; so a hart first waits until half its own work has passed since
+/// either hart showed a frame. Its work is the frames from its last
+/// showing to its being ready again, without the wait, so that a wait
+/// never lengthens the period it is worked out from. The first waits put
+/// the harts half a period apart, and from then on each is ready about
+/// when its turn comes and waits for nothing.
+#[cfg(gl)]
+struct Pacer {
+    /// The frames shown when this hart last showed one.
+    prev: Option<u32>,
+}
+
+#[cfg(gl)]
+impl Pacer {
+    const fn new() -> Pacer {
+        Pacer { prev: None }
+    }
+
+    /// Show the frame at `base` from the next blanking, once half this
+    /// hart's work has passed since the last frame either hart showed.
+    fn show(&mut self, base: u32) {
+        let ready = Video::frames();
+        let work = self.prev.map_or(0, |p| ready.wrapping_sub(p) & 0xffff);
+        let since = || {
+            Video::frames().wrapping_sub(LAST_SHOW.load(Ordering::Acquire))
+                & 0xffff
+        };
+        while since() < work / 2 {}
+        Scan::base(base);
+        wait_blanking();
+        let now = Video::frames();
+        self.prev = Some(now);
+        LAST_SHOW.store(now, Ordering::Release);
+    }
+}
 
 /// The texture `ico_gl::frame` is given: none untextured, else the
 /// room, the checker uploaded into it when `upload`.
@@ -278,12 +318,9 @@ fn texture(upload: bool) -> Option<(&'static mut [u32], u32, bool)> {
 }
 
 /// Hart 1 (#1408): the odd frames, each built into the first buffer, at
-/// row 0, and binned
-/// into the second half of the room once the frame before last, which
-/// took that half, is drawn, then left for hart 0 to ring. Its entries'
-/// stores are answered before it says they are there: a release store
-/// is a fence first, and the core's fence waits for the stores posted
-/// (issue 1553).
+/// row 0, and binned into the second half of the room once the frame
+/// before last, which took that half, is drawn. Once hart 0 has rung the
+/// frame before, it shows that one, paced, and rings its own (#1639).
 #[cfg(gl)]
 extern "C" fn odd_frames(_hart: u32, _arg: u32) -> ! {
     ALIVE.store(1, Ordering::Release);
@@ -294,6 +331,7 @@ extern "C" fn odd_frames(_hart: u32, _arg: u32) -> ! {
     #[cfg(teapot)]
     let mut list = lists(1);
     let mut last = CORNER;
+    let mut pacer = Pacer::new();
     let mut f = 1u32;
     loop {
         let (ay, ax) = ((2 * f as i32) & 255, f as i32 & 255);
@@ -309,10 +347,14 @@ extern "C" fn odd_frames(_hart: u32, _arg: u32) -> ! {
         while DRAWN.load(Ordering::Acquire) < f - 1 {}
         let sh = ico_list::H as u32;
         let b = bin_tiled(&list[..], n, sh, 1);
-        while ODD_READY.load(Ordering::Acquire) != 0 {}
-        // SAFETY: hart 0 reads the records only while they are ready.
-        unsafe { core::ptr::addr_of_mut!(ODD).write(b) };
-        ODD_READY.store(f + 1, Ordering::Release);
+        // The frame before is hart 0's, in the second buffer: drawn, then
+        // shown, paced, and this one rung.
+        while RUNG.load(Ordering::Acquire) != f - 1 {}
+        wait_drawn();
+        DRAWN.store(f, Ordering::Release);
+        pacer.show(Razboj::FRAME + SECOND as u32 * Scan::STRIDE);
+        ring_tiled(&b);
+        RUNG.store(f, Ordering::Release);
         f = f.wrapping_add(2);
     }
 }
@@ -680,25 +722,22 @@ fn main() -> ! {
     // shows it from the next blanking, which frees the buffer this frame
     // draws into, and rings this one. Once the first frame is built,
     // hart 1 is started on the odd frames, and this hart builds the even
-    // ones and rings them all in order (#1408). The cycles line says
-    // what the list and its binning took, or the wait for hart 1's; what
-    // was left of the drawing to wait for; the whole frame, blanking
+    // ones (#1408); each hart shows the frame before its own, paced, and
+    // rings its own in turn (#1639). The cycles line says what the list
+    // and its binning took; what was left of the frame before to wait
+    // for, hart 1's ringing and the drawing; the whole frame, blanking
     // included; and the two frames up to this one's showing.
     #[cfg(gl)]
     let mut two = false;
+    #[cfg(gl)]
+    let mut pacer = Pacer::new();
     #[cfg(gl)]
     let mut shown_at = [0u32; 2];
     #[cfg(gl)]
     loop {
         let start = mcycle();
         let dy = which as i32 * SECOND;
-        let odd = two && frames & 1 == 1;
-        let mine;
-        let binned = if odd {
-            while ODD_READY.load(Ordering::Acquire) != frames + 1 {}
-            // SAFETY: hart 1 leaves the records alone until they are rung.
-            unsafe { &*core::ptr::addr_of!(ODD) }
-        } else {
+        let binned = {
             // The first frame uploads the texture, and every frame after
             // it finds it where it is (#1433).
             let tex = texture(frames == 0);
@@ -714,7 +753,12 @@ fn main() -> ! {
             );
             last[which] = filled;
             let sh = (ico_list::H + dy) as u32;
-            mine = bin_tiled(&list[..], n, sh, (frames & 1) as usize);
+            // The frame before last took this half of the room; with
+            // two harts it is hart 1 that waits for its drawing.
+            if two {
+                while DRAWN.load(Ordering::Acquire) < frames - 1 {}
+            }
+            let mine = bin_tiled(&list[..], n, sh, (frames & 1) as usize);
             if frames == 0 {
                 two = start_odd();
                 Uart::say(if two {
@@ -723,17 +767,21 @@ fn main() -> ! {
                     b"ico one hart\n"
                 });
             }
-            &mine
+            mine
         };
+        let binned = &binned;
         let listed = mcycle();
-        // The frame before: drawn, then shown from the next blanking.
+        // The frame before, hart 1's with two harts, once rung: drawn,
+        // then shown from the next blanking, paced.
+        if two && frames != 0 {
+            while RUNG.load(Ordering::Acquire) != frames - 1 {}
+        }
         wait_drawn();
         DRAWN.store(frames, Ordering::Release);
         let drawn = mcycle();
         if frames != 0 {
             let before = (which ^ 1) as u32 * SECOND as u32;
-            Scan::base(Razboj::FRAME + before * Scan::STRIDE);
-            wait_blanking();
+            pacer.show(Razboj::FRAME + before * Scan::STRIDE);
         }
         // Built with `diag` (#1551): the drawn pixels of the buffer just
         // shown, read while Razboj is idle, before it is rung.
@@ -746,12 +794,10 @@ fn main() -> ! {
             [(0, 0); 2]
         };
         ring_tiled(binned);
+        RUNG.store(frames, Ordering::Release);
         // And what was rung, and what Razboj said straight after.
         #[cfg(diag)]
         let rung = (binned.count as u32, Razboj::count(), Razboj::idle());
-        if odd {
-            ODD_READY.store(0, Ordering::Release);
-        }
         let shown = mcycle();
         let pair = shown.wrapping_sub(shown_at[which]);
         shown_at[which] = shown;
@@ -796,5 +842,13 @@ fn main() -> ! {
         which ^= 1;
         ay = (ay + 2) & 255;
         ax = (ax + 1) & 255;
+        // With two harts the odd frame is hart 1's to build and ring.
+        if two {
+            frames = frames.wrapping_add(1);
+            demo_end(frames);
+            which ^= 1;
+            ay = (ay + 2) & 255;
+            ax = (ax + 1) & 255;
+        }
     }
 }
