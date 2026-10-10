@@ -2705,6 +2705,28 @@ with \code{lr.w} and \code{sc.w}, every add counted; and hands a word
 each way with a \code{fence} and a flag, the other hart having the
 word's line cached.
 
+With the second hart all eight ports were taken, and a design beside
+the core that reads and writes memory wanted one more (issue~\#1634).
+A ninth port would widen the identifier past the arbiter again, as
+far as the DDR3 controller, whose identifier width is fixed when the
+controller is generated, and it would put a ninth input on the grant
+that every host passes, the core's included. So the Ethernet port's
+two engines share the third port through an \code{Arbiter2} of their
+own, as the SD card's share the sixth, and the fourth is the board
+top's. The reason against nesting does not apply here either: the
+fetch engine only reads and the store engine only writes, and the
+arbiter keeps the turns of reads and writes apart, so the two never
+contend for one. Each engine has one bit of identifier and two bursts
+in flight rather than four. The board top's host has the port whole,
+two bits of identifier, and leaves the unit as ports beside the third
+slot's, its registers on that slot and its interrupt on \code{irq}; a
+top with nothing there ties it off. Its writes into the DDR3 pass the
+snoop, which tells each hart of the lines another host wrote.
+\code{the\_board\_tops\_host\_writes\_and\_reads\_the\_ddr3} writes a
+burst through the port and reads it back, and
+\code{the\_board\_tops\_host\_writes\_are\_snooped} has the core hold the
+line of a word the port then writes, and read the new word.
+
 The snoop notes the first hart's writes too, to tell the second's
 cache, and holding each answer while it named the lines made sixteen
 stores into the DDR3 take 29 cycles more than into the data memory,
