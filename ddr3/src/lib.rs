@@ -333,7 +333,8 @@ pub struct Ddr3Per {
 impl Unit for Ddr3Per {
     async fn run(
         &mut self,
-        (aw, ar, w, b, r): (
+        (rst, aw, ar, w, b, r): (
+            In<Bit>,
             Rx<Aw<32, 5>>,
             Rx<Ar<32, 5>>,
             Rx<W<32, 4>>,
@@ -443,6 +444,7 @@ impl Unit for Ddr3Per {
             ),
             self.pins.run(
                 AxiPerPinsIn {
+                    rst,
                     pins: AxiPerDriven {
                         awready: awready_i,
                         wready: wready_i,
@@ -551,7 +553,7 @@ mod tests {
             h.run(host_in, host_out),
             join2(
                 mem.run(
-                    (aw, ar, w, b, r),
+                    (signal::<Bit, DefaultClock>().1, aw, ar, w, b, r),
                     (
                         sys_clk,
                         sys_rst,

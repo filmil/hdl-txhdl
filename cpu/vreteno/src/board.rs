@@ -681,6 +681,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
         let rst_uart = rst.clone();
         let rst_plic = rst.clone();
         let rst_bell = rst.clone();
+        let rst_ddr3 = rst.clone();
         // The core and its tracker.
         let (issue_tx, issue_rx) = chan::<Issue<32>, DefaultClock>();
         let (wbeat_tx, wbeat_rx) = chan::<W<32, 4>, DefaultClock>();
@@ -1777,7 +1778,7 @@ join2(
                                 ),
                             ),
                             self.ddr3.run(
-                                (aw3_rx, ar3_rx, w3_rx, b3_tx, r3_tx),
+                                (rst_ddr3, aw3_rx, ar3_rx, w3_rx, b3_tx, r3_tx),
                                 (
                                     sys_clk, sys_rst, calib, ui_clk, ui_rst,
                                     ck_p, ck_n, mem_rst_n, cke, cs_n, ras_n,

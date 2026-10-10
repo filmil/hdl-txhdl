@@ -80,6 +80,10 @@ struct Ran {
     bursts: Vec<BurstSeen>,
     /// The cycle a reset asked for began, when it did.
     reset_from: Option<u64>,
+    /// What the DDR3 controller's pins owed when that reset began: the
+    /// beats of the write being given, the responses and the read beats
+    /// outstanding (issue 1532).
+    owed_at_reset: Option<(u32, u32, u32)>,
     /// The exclusive writes the monitor failed, and the arbiter's
     /// exclusive holds that ran out (issue 1408).
     xfails: u32,
@@ -482,6 +486,10 @@ struct Net<'a> {
     /// model, whose state is the controller's and not a register, keeps
     /// what it was doing, as MIG does, which that reset does not reach.
     reset_at: Option<(u64, u64)>,
+    /// A second stream and its blocks, typed by a fresh terminal once
+    /// that reset ends, after the loader says its first line, as
+    /// `load --reset` sends an image to the board (issue 1532).
+    reload: Option<(&'a [u8], &'a [usize])>,
 }
 
 /// A scanout's pixel side on the board's `scan_req` and `scan_words`:
@@ -611,6 +619,7 @@ fn run_all_in<const LO: usize, const HI: usize>(
         video,
         until_planned,
         reset_at,
+        reload,
     } = net;
     // The scanout's two channels to the board, each tapped here so the
     // run sees what was asked for and what came back.
@@ -663,6 +672,10 @@ fn run_all_in<const LO: usize, const HI: usize>(
         ..Default::default()
     };
     let (xfails, htimeouts) = (board.exmon.fails, board.arb.htimeouts);
+    let ddr3 = &board.ddr3.pins;
+    let (p_cur, p_beats, p_sent) = (ddr3.cur, ddr3.beats, ddr3.sent);
+    let (p_bowe, p_rowe) = (ddr3.bowe, ddr3.rowe);
+    let mut owed_at_reset = None;
     let (r_tile, r_tiles) = (board.raster.tile, board.raster.tiles);
     let core = &board.cpu.core;
     let (amo_ph, f_wait, p_wait, ic_st) =
@@ -907,6 +920,8 @@ fn run_all_in<const LO: usize, const HI: usize>(
     irq_o.set(Bit::Zero);
     rx_o.set(Bit::One);
     let mut said_at: Vec<u64> = Vec::new();
+    // What the core said before a reload's terminal took over.
+    let mut said_before = String::new();
     let mut term = if blocks.is_empty() {
         Terminal::new(reply)
     } else {
@@ -946,12 +961,25 @@ fn run_all_in<const LO: usize, const HI: usize>(
             let words = scan.is_none() || words_cdc.len() >= 64;
             if reset_from.is_none() && cycle >= from && words {
                 reset_from = Some(cycle);
+                owed_at_reset = Some((
+                    if p_cur.get().to_bool() {
+                        (p_beats.get().raw() - p_sent.get().raw()) as u32
+                    } else {
+                        0
+                    },
+                    p_bowe.get().raw() as u32,
+                    p_rowe.get().raw() as u32,
+                ));
                 set_reset(true);
                 rst_o.set(Bit::One);
             }
             if reset_from.map(|f| f + cycles) == Some(cycle) {
                 set_reset(false);
                 rst_o.set(Bit::Zero);
+                if let Some((r, b)) = reload {
+                    said_before.push_str(&term.said);
+                    term = Terminal::paced(r, b);
+                }
             }
         }
         if let Some(Op::Irq(high)) = plan.get(master.at) {
@@ -1019,7 +1047,7 @@ fn run_all_in<const LO: usize, const HI: usize>(
             card.dat_out()
         }));
         term.see(tx.get().to_bool());
-        while said_at.len() < term.said.len() {
+        while said_at.len() < said_before.len() + term.said.len() {
             said_at.push(cycle);
         }
         rx_o.set(Bit::from_bool(term.level()));
@@ -1207,7 +1235,7 @@ fn run_all_in<const LO: usize, const HI: usize>(
         term.see(tx.get().to_bool());
     }
     Ran {
-        said: term.said.clone(),
+        said: format!("{said_before}{}", term.said),
         said_at,
         typed: term.typed(),
         typed_at,
@@ -1218,6 +1246,7 @@ fn run_all_in<const LO: usize, const HI: usize>(
         steps: master.at,
         bursts: master.bursts,
         reset_from,
+        owed_at_reset,
         xfails: xfails.get().raw() as u32,
         htimeouts: htimeouts.get().raw() as u32,
         amo_rereads,
@@ -3624,6 +3653,106 @@ fn the_bus_answers_after_a_reset_in_the_middle_of_its_load() {
             after.len()
         );
     }
+}
+
+/// `load --reset` after `load --reset`, as the board takes them (issue
+/// 1532): the loader takes a program that copies in the DDR3, sends on
+/// the Ethernet port and has Razboj draw, with the scanout reading its
+/// lines, and the serial line's reset lands while it runs. The DDR3
+/// controller, which that reset does not reach, keeps what it was
+/// doing. The loader must then take the next image whole: acknowledge
+/// every block, read back the sum it was sent, and run it.
+///
+/// The reset lands at a different distance into the first program in
+/// each run, `RELOAD_AFTER` cycles, so that across them it meets the
+/// bus in different states. Before the fix the second load failed after
+/// 40 009 and 90 001; at 22 008 a write owes ten beats. A wider sweep,
+/// 24 distances from 2 003 to 94 026 by 4 001, all recovered, 22 of
+/// them with a write's beats owed.
+#[test]
+fn the_loader_takes_an_image_after_a_reset_in_the_middle_of_a_program() {
+    let addr = 0x4000_0000;
+    let busy = load_program(true);
+    let first = stream(addr, &busy);
+    let first_blocks = blocks(busy.len());
+    let words = payload();
+    let second = stream(addr, &words);
+    let second_blocks = blocks(words.len());
+    let sum = words.iter().fold(0u32, |s, w| s.wrapping_add(*w));
+    let scan = || {
+        Some(Scan {
+            base: 0x4200_0000,
+            show_at: 6 * SCAN_LINE,
+            ..Scan::default()
+        })
+    };
+    // When the first program starts, and how long a stream takes.
+    let clean = run_all(
+        boot_program::TEXT,
+        boot_program::DATA,
+        &first,
+        &first_blocks,
+        2_000_000,
+        Net {
+            scan: scan(),
+            until_planned: true,
+            ..Net::default()
+        },
+        &[Op::Wait(1_500_000)],
+    );
+    let ok = clean.said.find("ok 40000000").expect("the first loads");
+    let started = clean.said_at[ok + "ok 40000000".len()];
+    let typing = started;
+    let afters: Vec<u64> = std::env::var("RELOAD_AFTER")
+        .ok()
+        .map(|s| s.split(',').map(|v| v.parse().unwrap()).collect())
+        .unwrap_or_else(|| vec![22_008, 40_009, 90_001]);
+    let mut bad = Vec::new();
+    // Whether a reset landed with a write's beats still owed, the state
+    // that left the controller one write behind.
+    let mut half = false;
+    for after in afters {
+        let from = started + after;
+        let ran = run_all(
+            boot_program::TEXT,
+            boot_program::DATA,
+            &first,
+            &first_blocks,
+            from + BRK_PULSE + 2 * typing + 400_000,
+            Net {
+                scan: scan(),
+                reset_at: Some((from, BRK_PULSE)),
+                reload: Some((&second, &second_blocks)),
+                ..Net::default()
+            },
+            &[],
+        );
+        let back = ran.reset_from.expect("the reset began") + BRK_PULSE;
+        let tail: String = ran
+            .said
+            .chars()
+            .zip(&ran.said_at)
+            .filter(|(_, at)| **at >= back)
+            .map(|(c, _)| c)
+            .collect();
+        let acks = tail.matches('K').count();
+        let good = tail.contains(&format!("mem {sum:08x}\nok 40000000\nhi\n"));
+        eprintln!(
+            "reset {after} into the program, owing {:?}: {acks} of {} acks, \
+             typed {}, {}: {:?}",
+            ran.owed_at_reset,
+            words.len() + 1,
+            ran.typed,
+            if good { "ran" } else { "FAILED" },
+            tail.replace('K', "")
+        );
+        half |= ran.owed_at_reset.is_some_and(|(w, _, _)| w > 0);
+        if !good {
+            bad.push(after);
+        }
+    }
+    assert!(bad.is_empty(), "the second load failed after {bad:?}");
+    assert!(half, "no reset landed with a write's beats owed");
 }
 
 /// A program that times the core's loads from the DDR3 (issue 1209):

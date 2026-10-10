@@ -5,12 +5,14 @@
 //! peripheral, such as AMD's DDR3 controller generated with its AXI4
 //! port, has pins, a `valid` and a `ready` per channel and a wire per
 //! field, and the parts here speak the link as channels. [`AxiPerPins`]
-//! stands where [`AxiPer`] would, on the link's peripheral end, and holds
-//! nothing: an address phase or a write beat at the head of its channel
-//! is the peripheral's `valid` and fields, taken when the peripheral's
-//! `ready` is high; a response or a read beat the peripheral offers is
-//! sent on its channel when the channel has room, and that room is the
-//! peripheral's `ready`.
+//! stands where [`AxiPer`] would, on the link's peripheral end: an
+//! address phase or a write beat at the head of its channel is the
+//! peripheral's `valid` and fields, taken when the peripheral's `ready`
+//! is high; a response or a read beat the peripheral offers is sent on
+//! its channel when the channel has room, and that room is the
+//! peripheral's `ready`. What it holds is the one write it is giving,
+//! kept through the design's reset, which the peripheral need not share
+//! (issue 1532); [`AxiPerPins`] says how.
 //!
 //! Every field of the link's address phase goes out on a pin but one:
 //! `AxREGION`. AMD's controller has no region pins, as many peripherals
@@ -26,9 +28,9 @@
 //! [`AxiPins`]: super::axi_pins::AxiPins
 //! [`AxiPer`]: super::axi::AxiPer
 use crate::bus::axi::{Ar, Aw, BurstKind, Resp, B, R, W};
-use txhdl::comp::{Clock, DefaultClock, In, Out, Rx, Tx, Unit};
+use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, select, Ports, Trace};
+use txhdl::{lower, select, with, Ports, Trace};
 
 // begin{ports}
 /// What the peripheral drives: its eleven pins, named as AXI4 names
@@ -70,6 +72,9 @@ pub struct AxiPerPinsIn<
     const S: usize,
     const I: usize,
 > {
+    /// The design's reset, which the peripheral does not share: the
+    /// unit answers it itself (issue 1532).
+    pub rst: In<Bit>,
     /// The peripheral's pins.
     pub pins: AxiPerDriven<D, I>,
     /// The write address phases, from the link.
@@ -149,13 +154,66 @@ pub struct AxiPerPinsOut<
 
 /// The link's peripheral end joined to a peripheral's AXI4 pins; see
 /// the module.
+///
+/// What it holds is what it owes the peripheral, kept through the
+/// design's reset, which a peripheral such as AMD's DDR3 controller
+/// does not share (issue 1532). A reset can land after the peripheral
+/// took a write's address and before it took the beats, which lived in
+/// the link's channel and went with the reset; the peripheral would
+/// then pair every later write's beats with the address before it, and
+/// a write's response would never come. So the unit keeps the write it
+/// is giving the peripheral: one at a time, its address in registers of
+/// its own from the cycle it is first offered until the peripheral takes
+/// it, and a count of its beats, and it counts the responses and read
+/// beats outstanding. Under the reset and after it, until nothing is
+/// owed or outstanding, it drains: it goes on offering the kept address,
+/// gives the rest of the write's beats with no byte enabled, which
+/// writes nothing, takes the responses and read beats meant for the
+/// design that was reset and passes none of them on, and offers the
+/// peripheral nothing new. Nothing it offers waits on a `ready`, as AXI4
+/// asks of a host, and an offer is never withdrawn.
 #[derive(Trace, Default)]
 pub struct AxiPerPins<
     const A: usize,
     const D: usize,
     const S: usize,
     const I: usize,
-> {}
+> {
+    /// A write is being given: offered, and its address or a beat not
+    /// yet taken.
+    pub cur: Reg<Bit>,
+    /// Its address is not yet taken, and is offered from the fields
+    /// below.
+    pub held: Reg<Bit>,
+    /// Its beats.
+    pub beats: Reg<U<9>>,
+    /// How many of its beats have gone.
+    pub sent: Reg<U<9>>,
+    /// Its address phase as the pins carry it: `AWID`.
+    pub h_id: Reg<U<I>>,
+    /// `AWADDR`.
+    pub h_addr: Reg<U<A>>,
+    /// `AWLEN`.
+    pub h_len: Reg<U<8>>,
+    /// `AWSIZE`.
+    pub h_size: Reg<U<3>>,
+    /// `AWBURST`.
+    pub h_burst: Reg<U<2>>,
+    /// `AWLOCK`.
+    pub h_lock: Reg<Bit>,
+    /// `AWCACHE`.
+    pub h_cache: Reg<U<4>>,
+    /// `AWPROT`.
+    pub h_prot: Reg<U<3>>,
+    /// `AWQOS`.
+    pub h_qos: Reg<U<4>>,
+    /// Writes taken whose response has not come.
+    pub bowe: Reg<U<8>>,
+    /// Read beats asked for that have not come.
+    pub rowe: Reg<U<14>>,
+    /// Draining after a reset.
+    pub drain: Reg<Bit>,
+}
 
 // begin{unit}
 #[lower]
@@ -164,17 +222,27 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize> Unit
 {
     async fn run(
         &mut self,
-        inp: AxiPerPinsIn<A, D, S, I>,
+        AxiPerPinsIn {
+            rst,
+            pins,
+            aw,
+            ar,
+            w,
+        }: AxiPerPinsIn<A, D, S, I>,
         outp: AxiPerPinsOut<A, D, S, I>,
     ) {
         loop {
             DefaultClock::rising().await;
-            // An address phase or a beat at the head of its channel is
-            // the peripheral's `valid` and fields, taken when the
-            // peripheral is ready.
-            let awh = inp.aw.head();
-            let arh = inp.ar.head();
-            let wh = inp.w.head();
+            // Draining: under the reset, and after it until nothing is
+            // owed or outstanding.
+            let bowe = self.bowe.get();
+            let rowe = self.rowe.get();
+            let drain = self.drain.get() | rst.get();
+            let cur = self.cur.get();
+            let held = self.held.get();
+            let awh = aw.head();
+            let arh = ar.head();
+            let wh = w.head();
             let awburst = select!(awh.burst => {
                 BurstKind::Fixed => U::<2>::from(0u8),
                 BurstKind::Incr => U::<2>::from(1u8),
@@ -187,17 +255,29 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize> Unit
                 BurstKind::Wrap => U::<2>::from(2u8),
                 _ => U::<2>::from(3u8),
             });
-            outp.awvalid.set(Bit::from(inp.aw.peek().is_some()));
-            outp.awid.set(awh.id);
-            outp.awaddr.set(awh.addr);
-            outp.awlen.set(awh.len);
-            outp.awsize.set(awh.size);
-            outp.awburst.set(awburst);
-            outp.awlock.set(awh.lock);
-            outp.awcache.set(awh.cache);
-            outp.awprot.set(awh.prot);
-            outp.awqos.set(awh.qos);
-            outp.arvalid.set(Bit::from(inp.ar.peek().is_some()));
+            // A write starts when none is being given: its address is
+            // offered from the link's channel, and kept from then on, so
+            // the offer stands until the peripheral takes it, through a
+            // reset too. One write follows another with no step between
+            // them (issue 1121).
+            let start = !cur & Bit::from(aw.peek().is_some()) & !drain;
+            let active = cur | start;
+            let len = awh.len.zext::<9>() + U::<9>::from(1u16);
+            let beats = mux(cur, self.beats.get(), len);
+            let sent = mux(cur, self.sent.get(), U::<9>::from(0u16));
+            let more = Bit::from(sent != beats);
+            outp.awvalid.set(held | start);
+            outp.awid.set(mux(held, self.h_id.get(), awh.id));
+            outp.awaddr.set(mux(held, self.h_addr.get(), awh.addr));
+            outp.awlen.set(mux(held, self.h_len.get(), awh.len));
+            outp.awsize.set(mux(held, self.h_size.get(), awh.size));
+            outp.awburst.set(mux(held, self.h_burst.get(), awburst));
+            outp.awlock.set(mux(held, self.h_lock.get(), awh.lock));
+            outp.awcache.set(mux(held, self.h_cache.get(), awh.cache));
+            outp.awprot.set(mux(held, self.h_prot.get(), awh.prot));
+            outp.awqos.set(mux(held, self.h_qos.get(), awh.qos));
+            let arvalid = Bit::from(ar.peek().is_some()) & !drain;
+            outp.arvalid.set(arvalid);
             outp.arid.set(arh.id);
             outp.araddr.set(arh.addr);
             outp.arlen.set(arh.len);
@@ -207,48 +287,94 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize> Unit
             outp.arcache.set(arh.cache);
             outp.arprot.set(arh.prot);
             outp.arqos.set(arh.qos);
-            outp.wvalid.set(Bit::from(inp.w.peek().is_some()));
+            // The write's beats from the link, or under the drain beats
+            // with no byte enabled, until its count is sent.
+            let fill = drain & cur & more;
+            let wvalid =
+                fill | (active & more & !drain & Bit::from(w.peek().is_some()));
+            let lastb = Bit::from(sent + U::<9>::from(1u16) == beats);
+            outp.wvalid.set(wvalid);
             outp.wdata.set(wh.data);
-            outp.wstrb.set(wh.strb);
-            outp.wlast.set(wh.last);
-            let _ = inp.aw.recv_if(inp.pins.awready.get());
-            let _ = inp.ar.recv_if(inp.pins.arready.get());
-            let _ = inp.w.recv_if(inp.pins.wready.get());
+            outp.wstrb.set(mux(fill, U::<S>::from(0u8), wh.strb));
+            outp.wlast.set(mux(fill, lastb, wh.last));
+            let aw_go = (held | start) & pins.awready.get();
+            let ar_go = arvalid & pins.arready.get();
+            let w_go = wvalid & pins.wready.get();
+            let _ = aw.recv_if(start);
+            let _ = ar.recv_if(ar_go);
+            let _ = w.recv_if(w_go & !fill);
             // A response or a read beat the peripheral offers goes onto
             // its channel when the channel has room; the room is the
             // peripheral's `ready`.
             let b_room = outp.b.ready();
             let r_room = outp.r.ready();
-            let bresp_pin = inp.pins.bresp.get();
+            let bresp_pin = pins.bresp.get();
             let bresp = select!(bresp_pin.raw() => {
                 0 => Resp::Okay,
                 1 => Resp::ExOkay,
                 2 => Resp::SlvErr,
                 _ => Resp::DecErr,
             });
-            let rresp_pin = inp.pins.rresp.get();
+            let rresp_pin = pins.rresp.get();
             let rresp = select!(rresp_pin.raw() => {
                 0 => Resp::Okay,
                 1 => Resp::ExOkay,
                 2 => Resp::SlvErr,
                 _ => Resp::DecErr,
             });
-            if (inp.pins.bvalid.get() & b_room).to_bool() {
+            if (pins.bvalid.get() & b_room & !drain).to_bool() {
                 outp.b.send(B {
-                    id: inp.pins.bid.get(),
+                    id: pins.bid.get(),
                     resp: bresp,
                 });
             }
-            if (inp.pins.rvalid.get() & r_room).to_bool() {
+            if (pins.rvalid.get() & r_room & !drain).to_bool() {
                 outp.r.send(R {
-                    id: inp.pins.rid.get(),
-                    data: inp.pins.rdata.get(),
+                    id: pins.rid.get(),
+                    data: pins.rdata.get(),
                     resp: rresp,
-                    last: inp.pins.rlast.get(),
+                    last: pins.rlast.get(),
                 });
             }
-            outp.bready.set(b_room);
-            outp.rready.set(r_room);
+            // Draining, every response and read beat is taken and
+            // dropped.
+            let bready = drain | b_room;
+            let rready = drain | r_room;
+            outp.bready.set(bready);
+            outp.rready.set(rready);
+            let b_go = pins.bvalid.get() & bready;
+            let r_go = pins.rvalid.get() & rready;
+            // The write is done once its address is taken and its beats
+            // have all gone.
+            let sent_now = mux(w_go, sent + U::<9>::from(1u16), sent);
+            let held_now = (held | start) & !aw_go;
+            let done = active & Bit::from(sent_now == beats) & !held_now;
+            let rlen = arh.len.zext::<14>() + U::<14>::from(1u16);
+            let bnext = mux(aw_go, bowe + U::<8>::from(1u8), bowe);
+            let rnext = mux(ar_go, rowe + rlen, rowe);
+            let none = !cur
+                & Bit::from(bowe == U::<8>::from(0u8))
+                & Bit::from(rowe == U::<14>::from(0u16));
+            with!(self <= {
+                cur: active & !done,
+                held: held_now,
+                beats: beats,
+                sent: mux(done, U::<9>::from(0u16), sent_now),
+                start ? {
+                    h_id: awh.id,
+                    h_addr: awh.addr,
+                    h_len: awh.len,
+                    h_size: awh.size,
+                    h_burst: awburst,
+                    h_lock: awh.lock,
+                    h_cache: awh.cache,
+                    h_prot: awh.prot,
+                    h_qos: awh.qos
+                },
+                bowe: mux(b_go, bnext - U::<8>::from(1u8), bnext),
+                rowe: mux(r_go, rnext - U::<14>::from(1u16), rnext),
+                drain: rst.get() | (self.drain.get() & !none),
+            });
         }
     }
 }
@@ -557,7 +683,7 @@ pub mod sim {
     /// Make the pins between an [`AxiPerPins`](super::AxiPerPins) and a
     /// [`PinRam`] of `words` words, with the link's channel ends given to
     /// the unit where they belong. The pins the memory leaves unread are
-    /// wires nobody reads.
+    /// wires nobody reads, and the unit's reset is a line nobody raises.
     #[allow(clippy::type_complexity)]
     pub fn pins<
         const A: usize,
@@ -638,6 +764,7 @@ pub mod sim {
                 words as u128,
             ),
             AxiPerPinsIn {
+                rst: wire::<Bit>().1,
                 pins: AxiPerDriven {
                     awready,
                     wready,
