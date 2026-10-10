@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-# Is every name a board-level netlist uses declared before its use?
+# Is every name a board-level netlist uses declared before its use,
+# and every number it concatenates sized (issue 1574)?
 # Vivado's simulator refuses a name met first in a port connection and
 # declared after it, synthesis and Verilator do not, and every Vivado
 # target is manual, so without this the board simulation can break

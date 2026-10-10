@@ -15,6 +15,12 @@
 //! named after a `.`, a number's base, a system task and a directive
 //! are not uses.
 //!
+//! It fails as well on an unsized decimal that is an operand of a
+//! concatenation, which Verilog-2005 does not allow and a tool that
+//! takes it reads as 32 bits wide. Verilator and synthesis say nothing
+//! of that either, and a constant put in a field of a struct literal
+//! lowered that way, `{5, inp_data}` (#1574).
+//!
 //! Usage:
 //!
 //! ```text
@@ -263,6 +269,59 @@ pub fn check(src: &str) -> Vec<Late> {
     late
 }
 
+/// One unsized number that is an operand of a concatenation.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Unsized {
+    pub number: String,
+    pub line: usize,
+}
+
+/// Every decimal that is itself an operand of a concatenation: not
+/// sized, as `4'b0101` is, not a replication count, as the `4` of
+/// `{4{x}}` is, and not inside an index or a parenthesised expression,
+/// whose sizing is another rule (#1574).
+pub fn unsized_numbers(src: &str) -> Vec<Unsized> {
+    let t = tokens(src);
+    let mut found = Vec::new();
+    // One entry per open brace: how deep in brackets and parentheses
+    // the text is since that brace.
+    let mut braces: Vec<i32> = Vec::new();
+    for (i, tok) in t.iter().enumerate() {
+        let w = tok.text.as_str();
+        match w {
+            "{" => braces.push(0),
+            "}" => {
+                braces.pop();
+            }
+            "[" | "(" => {
+                if let Some(d) = braces.last_mut() {
+                    *d += 1;
+                }
+            }
+            "]" | ")" => {
+                if let Some(d) = braces.last_mut() {
+                    *d -= 1;
+                }
+            }
+            _ if w.chars().all(|c| c.is_ascii_digit()) => {
+                let prev = i.checked_sub(1).map(|j| t[j].text.as_str());
+                let next = t.get(i + 1).map(|x| x.text.as_str());
+                let operand = braces.last() == Some(&0);
+                let sized = prev == Some("'") || next == Some("'");
+                let count = next == Some("{");
+                if operand && !sized && !count {
+                    found.push(Unsized {
+                        number: w.to_string(),
+                        line: tok.line,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
 fn main() -> ExitCode {
     let mut bad = 0;
     for path in std::env::args().skip(1) {
@@ -280,9 +339,19 @@ fn main() -> ExitCode {
             );
             bad += 1;
         }
+        for u in unsized_numbers(&src) {
+            eprintln!(
+                "{path}:{}: `{}` is an unsized number in a concatenation",
+                u.line, u.number
+            );
+            bad += 1;
+        }
     }
     if bad > 0 {
-        eprintln!("{bad} names used before their declaration");
+        eprintln!(
+            "{bad} names used before their declaration or unsized \
+             numbers in a concatenation"
+        );
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
@@ -352,5 +421,42 @@ mod tests {
         let src = "module a(input x);\nendmodule\n\
                    module b(input y);\n  assign x = y;\nendmodule\n";
         assert_eq!(check(src)[0].module, "b");
+    }
+
+    #[test]
+    fn the_constant_of_1574_is_found() {
+        let src = "module m(input [7:0] inp_data, output [11:0] o);\n  \
+                   assign o = {5, inp_data};\nendmodule\n";
+        assert_eq!(
+            unsized_numbers(src),
+            vec![Unsized {
+                number: "5".into(),
+                line: 2
+            }]
+        );
+    }
+
+    #[test]
+    fn a_sized_constant_is_not() {
+        let src = "assign o = {4'b0101, inp_data, 8'h0, 3'd5};\n";
+        assert_eq!(unsized_numbers(src), vec![]);
+    }
+
+    #[test]
+    fn a_count_an_index_and_an_expression_are_not() {
+        let src = "assign o = {{4{x[7]}}, x[3:0], (y + 1), y[2]};\n";
+        assert_eq!(unsized_numbers(src), vec![]);
+    }
+
+    #[test]
+    fn a_number_outside_any_concatenation_is_not() {
+        let src = "assign o = x + 1;\nalways @(posedge clk) r <= 0;\n";
+        assert_eq!(unsized_numbers(src), vec![]);
+    }
+
+    #[test]
+    fn a_nested_concatenation_is_read() {
+        let src = "assign o = {x, {0, y}};\n";
+        assert_eq!(unsized_numbers(src)[0].number, "0");
     }
 }
