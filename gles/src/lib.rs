@@ -137,6 +137,15 @@ pub struct Gl<'a> {
     /// framebuffer keeps every bit of the colour, and Razboj's keeps eight
     /// a channel, as many as a colour has here.
     dither: bool,
+    /// Multisampling (#1509): `GL_MULTISAMPLE`, on at first, the three
+    /// sample switches, off, and `glSampleCoveragex`'s value and invert.
+    /// There is no multisample buffer, so they are state GL keeps and
+    /// change nothing drawn (section 3.2.1).
+    multisample: bool,
+    alpha_to_coverage: bool,
+    alpha_to_one: bool,
+    sample_coverage: bool,
+    coverage: (Fx, bool),
     /// The logic operation (#998): its switch, and which of GL's sixteen,
     /// `GL_CLEAR` to `GL_SET` less `0x1500`, `GL_COPY` at first.
     logic_on: bool,
@@ -246,6 +255,11 @@ impl<'a> Gl<'a> {
             offset_on: false,
             offset: (0, 0),
             dither: true,
+            multisample: true,
+            alpha_to_coverage: false,
+            alpha_to_one: false,
+            sample_coverage: false,
+            coverage: (ONE, false),
             logic_on: false,
             logic: gl::COPY - gl::CLEAR,
             fog_on: false,
@@ -459,6 +473,10 @@ impl<'a> Gl<'a> {
             gl::DEPTH_TEST => self.depth_test = on,
             gl::POLYGON_OFFSET_FILL => self.offset_on = on,
             gl::DITHER => self.dither = on,
+            gl::MULTISAMPLE => self.multisample = on,
+            gl::SAMPLE_ALPHA_TO_COVERAGE => self.alpha_to_coverage = on,
+            gl::SAMPLE_ALPHA_TO_ONE => self.alpha_to_one = on,
+            gl::SAMPLE_COVERAGE => self.sample_coverage = on,
             gl::COLOR_LOGIC_OP => self.logic_on = on,
             gl::FOG => self.fog_on = on,
             gl::STENCIL_TEST => self.stencil_on = on,
@@ -502,6 +520,10 @@ impl<'a> Gl<'a> {
             gl::DEPTH_TEST => self.depth_test,
             gl::POLYGON_OFFSET_FILL => self.offset_on,
             gl::DITHER => self.dither,
+            gl::MULTISAMPLE => self.multisample,
+            gl::SAMPLE_ALPHA_TO_COVERAGE => self.alpha_to_coverage,
+            gl::SAMPLE_ALPHA_TO_ONE => self.alpha_to_one,
+            gl::SAMPLE_COVERAGE => self.sample_coverage,
             gl::COLOR_LOGIC_OP => self.logic_on,
             gl::FOG => self.fog_on,
             gl::STENCIL_TEST => self.stencil_on,
@@ -1330,6 +1352,13 @@ impl<'a> Gl<'a> {
     /// and one.
     pub fn clear_depth(&mut self, depth: Fx) {
         self.clear_depth = depth.clamp(0, ONE);
+    }
+
+    /// `glSampleCoveragex`: the coverage value, kept between nought and
+    /// one, and whether it is inverted (#1509). With no multisample
+    /// buffer it changes nothing drawn.
+    pub fn sample_coverage(&mut self, value: Fx, invert: bool) {
+        self.coverage = (value.clamp(0, ONE), invert);
     }
 
     /// `glDepthRangex`: where the near and the far planes fall in the
