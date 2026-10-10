@@ -3,7 +3,7 @@
 #ifndef SCAN_REGS_H
 #define SCAN_REGS_H
 
-#define SCAN_SPAN 0x20
+#define SCAN_SPAN 0x40
 #define SCAN_BASE 0x00 /* read, write: the byte the next frame starts at in memory */
 #define SCAN_CTRL 0x04 /* read, write: what the screen shows */
 #define SCAN_CTRL_SCAN_SHIFT 0 /* read, write: the scanout when set, the framebuffer when clear */
@@ -27,5 +27,8 @@
 #define SCAN_STUCK_AT 0x10 /* read only: the address of the line that did not come */
 #define SCAN_WORST 0x14 /* read only: the longest a line took to come whole, in pixels */
 #define SCAN_LATES 0x18 /* read only: how many lines had not come whole when their rows began */
+#define SCAN_LATE_ROWS 0x1c /* read only: how many shown rows showed LATE in a column */
+#define SCAN_LATE_FRAMES 0x20 /* read only: how many frames showed LATE in a row */
+#define SCAN_MARGIN 0x24 /* read only: the least margin in pixel clocks, signed */
 
 #endif

@@ -144,10 +144,14 @@ fn main() {
     let (stuck_o, stuck) = signal::<Bit, ClkPix>();
     let (stuck_at_o, stuck_at) = signal::<U<32>, ClkPix>();
     // Asked one row ahead, as the flagship starts, and the pair's
-    // longest line and late count, which this run does not read.
+    // longest line, late counts and margin, which this run does not
+    // read.
     let (two_o, two) = signal::<Bit, ClkPix>();
     let (worst_o, worst) = signal::<U<16>, ClkPix>();
     let (lates_o, lates) = signal::<U<16>, ClkPix>();
+    let (late_rows_o, late_rows) = signal::<U<16>, ClkPix>();
+    let (late_frames_o, late_frames) = signal::<U<16>, ClkPix>();
+    let (margin_o, margin) = signal::<U<16>, ClkPix>();
     two_o.set(Bit::Zero);
     // The words, bus side and pixel side; the requests, pixel side
     // and bus side.
@@ -193,6 +197,9 @@ fn main() {
         w.add("two", &two);
         w.add("worst", &worst);
         w.add("lates", &lates);
+        w.add("late_rows", &late_rows);
+        w.add("late_frames", &late_frames);
+        w.add("margin", &margin);
         w.add("linepair", &pair);
         w.add("lines", &lines);
         w.add("running", &running);
@@ -232,8 +239,16 @@ fn main() {
                 pair.run(
                     (inp, col, vis, line, row, frame, base, clear, show, two),
                     (
-                        pix_o, req, starved_o, stuck_o, stuck_at_o, worst_o,
+                        pix_o,
+                        req,
+                        starved_o,
+                        stuck_o,
+                        stuck_at_o,
+                        worst_o,
                         lates_o,
+                        late_rows_o,
+                        late_frames_o,
+                        margin_o,
                     ),
                 ),
             ),

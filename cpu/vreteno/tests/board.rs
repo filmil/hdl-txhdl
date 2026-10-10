@@ -647,6 +647,9 @@ fn run_all_in<const LO: usize, const HI: usize>(
     let (stuck_at_o, stuck_at) = signal::<U<32>, Pix>();
     let (worst_o, worst) = signal::<U<16>, Pix>();
     let (lates_o, lates) = signal::<U<16>, Pix>();
+    let (late_rows_o, _late_rows) = signal::<U<16>, Pix>();
+    let (late_frames_o, _late_frames) = signal::<U<16>, Pix>();
+    let (margin_o, _margin) = signal::<U<16>, Pix>();
     let (two_o, two) = signal::<Bit, Pix>();
     // The raster, as `txhdl_parts::hdmi::Raster` counts, a column a
     // pixel: the column and row the pair is shown next.
@@ -920,8 +923,16 @@ fn run_all_in<const LO: usize, const HI: usize>(
         pair.run(
             (pair_inp, col, vis, line, row, frame, base, clear, show, two),
             (
-                pix_o, pair_req, starved_o, stuck_o, stuck_at_o, worst_o,
+                pix_o,
+                pair_req,
+                starved_o,
+                stuck_o,
+                stuck_at_o,
+                worst_o,
                 lates_o,
+                late_rows_o,
+                late_frames_o,
+                margin_o,
             ),
         ),
     ));

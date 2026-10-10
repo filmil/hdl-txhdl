@@ -184,6 +184,37 @@ pub struct LinePair<
     /// How many lines had not come whole when their rows began. Kept
     /// until cleared, and stops at its largest.
     pub late_lines: Reg<U<16>, C>,
+    /// The tick the current row started at (issue 1524).
+    pub row_tick: Reg<U<16>, C>,
+    /// A row's length in pixel clocks, measured between two starts.
+    pub period: Reg<U<16>, C>,
+    /// A row start has been seen, so the next measures `period`.
+    pub row_seen: Reg<Bit, C>,
+    /// `period` has been measured.
+    pub period_known: Reg<Bit, C>,
+    /// From a row's start to the tick its first column is shown.
+    pub lead: Reg<U<16>, C>,
+    /// `lead` has been measured.
+    pub lead_known: Reg<Bit, C>,
+    /// The row being shown is a visible one.
+    pub row_shown: Reg<Bit, C>,
+    /// A column of the row being shown showed `LATE`.
+    pub row_late: Reg<Bit, C>,
+    /// A row of this frame showed `LATE`.
+    pub frame_late: Reg<Bit, C>,
+    /// Shown rows in which a column showed `LATE`, until cleared, and
+    /// stops at its largest.
+    pub late_row_count: Reg<U<16>, C>,
+    /// Frames in which a row did, the same way.
+    pub late_frame_count: Reg<U<16>, C>,
+    /// The least margin since the last clear, in pixel clocks, as a
+    /// two's complement sixteen bits: a word's column's showing less
+    /// its arrival, less one, so that nought is the last tick a word
+    /// may come and a word on its column's own tick, which `LATE`
+    /// shows, is minus one.
+    pub least: Reg<U<16>, C>,
+    /// `least` holds a margin: none has been taken since the clear.
+    pub has_least: Reg<Bit, C>,
 }
 // end{pair}
 
@@ -237,6 +268,19 @@ impl<
             t3: Reg::default(),
             longest: Reg::default(),
             late_lines: Reg::default(),
+            row_tick: Reg::default(),
+            period: Reg::default(),
+            row_seen: Reg::default(),
+            period_known: Reg::default(),
+            lead: Reg::default(),
+            lead_known: Reg::default(),
+            row_shown: Reg::default(),
+            row_late: Reg::default(),
+            frame_late: Reg::default(),
+            late_row_count: Reg::default(),
+            late_frame_count: Reg::default(),
+            least: Reg::default(),
+            has_least: Reg::default(),
         }
     }
 }
@@ -268,12 +312,26 @@ impl<
             In<Bit, C>,
             In<Bit, C>,
         ),
-        (pix, req, starved, stuck, stuck_at, worst, lates): (
+        (
+            pix,
+            req,
+            starved,
+            stuck,
+            stuck_at,
+            worst,
+            lates,
+            late_rows,
+            late_frames,
+            margin,
+        ): (
             Out<U<32>, C>,
             Tx<U<32>, C>,
             Out<Bit, C>,
             Out<Bit, C>,
             Out<U<32>, C>,
+            Out<U<16>, C>,
+            Out<U<16>, C>,
+            Out<U<16>, C>,
             Out<U<16>, C>,
             Out<U<16>, C>,
         ),
@@ -289,6 +347,14 @@ impl<
             stuck_at.set(self.hung_at.get());
             worst.set(self.longest.get());
             lates.set(self.late_lines.get());
+            late_rows.set(self.late_row_count.get());
+            late_frames.set(self.late_frame_count.get());
+            // No margin taken since the clear reads as the largest.
+            margin.set(mux(
+                self.has_least.get(),
+                self.least.get(),
+                U::<16>::from(0x7fffu32),
+            ));
             let w = self.wsel.get();
             let at = self.at.get();
             // A word is taken whenever one is offered, one row ahead:
@@ -491,6 +557,54 @@ impl<
             let quiet = self.quiet.get();
             let silent = l & (owing != none) & !heard;
             let lost = silent & (quiet != U::<2>::from(0u8));
+            // The late-row and late-frame counts and the least margin
+            // (issue 1524). A shown row that showed `LATE` in any column
+            // is counted when it ends, at the next row's start, and its
+            // frame at the vertical sync.
+            let row_late = self.row_late.get() | starve;
+            let ended_late = l & self.row_shown.get() & self.row_late.get();
+            let frame_late = self.frame_late.get() | ended_late;
+            let n_rows = self.late_row_count.get();
+            let n_frames = self.late_frame_count.get();
+            let most = U::<16>::from(0xffffu32);
+            let row_more = ended_late & (n_rows != most);
+            let frame_more = frame.get() & frame_late & (n_frames != most);
+            // A row's length and the tick its first column is shown at,
+            // from a row's start, measured as the rows go by: the pair is
+            // given neither, and both are fixed by the raster.
+            let row_tick = self.row_tick.get();
+            let first_col = vis.get() & (c == U::<AW>::from(0u8));
+            // A word's margin: the tick its column of its own row is
+            // shown at, less the tick it arrived, less one. Its row is the
+            // oldest line owed's, which is the row being shown for a late
+            // line's word, a whole number of rows on from this one,
+            // counted round the frame, since a frame's first row is
+            // asked for in the last rows' blanking. At a row's start this
+            // tick is that row's start.
+            let g = self.g0.get();
+            let rows_on = mux(g >= r_now, g - r_now, g + total - r_now);
+            let start = mux(l, tick, row_tick);
+            let period = self.period.get();
+            let span = mux(
+                rows_on == U::<12>::from(0u8),
+                U::<16>::from(0u8),
+                mux(rows_on == U::<12>::from(1u8), period, period + period),
+            );
+            let column = mux(to_shown, came, at);
+            let shown_at = start + span + self.lead.get() + column;
+            let m = shown_at - tick - U::<16>::from(1u8);
+            let timed = self.period_known.get() & self.lead_known.get();
+            let measured = (to_shown | normal)
+                & timed
+                & self.armed.get()
+                & (rows_on <= U::<12>::from(2u8))
+                & (g < U::<12>::from(ROWS as u32))
+                & (column < U::<16>::from(LEN as u32));
+            // A signed comparison: the sign bit turned over makes the
+            // two's complement order the unsigned one.
+            let flip = U::<16>::from(0x8000u32);
+            let lower = !self.has_least.get()
+                | ((m ^ flip) < (self.least.get() ^ flip));
             with!(self <= {
                 // A column whose word has not arrived shows LATE, not the
                 // word left there by the line before (issue 1209).
@@ -555,9 +669,33 @@ impl<
                 frame.get() ? two_ahead: two.get(),
                 longer ? longest: took,
                 counted_late ? late_lines: n_late + 1,
+                row_late: mux(l, starve, row_late),
+                l ? row_shown: starts,
+                frame_late: mux(frame.get(), Bit::Zero, frame_late),
+                row_more ? late_row_count: n_rows + 1,
+                frame_more ? late_frame_count: n_frames + 1,
+                l ? {
+                    row_tick: tick,
+                    row_seen: Bit::One,
+                },
+                l & self.row_seen.get() ? {
+                    period: tick - row_tick,
+                    period_known: Bit::One,
+                },
+                first_col ? {
+                    lead: tick - start,
+                    lead_known: Bit::One,
+                },
+                measured & lower ? {
+                    least: m,
+                    has_least: Bit::One,
+                },
                 clear.get() ? {
                     longest: U::<16>::from(0u8),
                     late_lines: U::<16>::from(0u8),
+                    late_row_count: U::<16>::from(0u8),
+                    late_frame_count: U::<16>::from(0u8),
+                    has_least: Bit::Zero,
                 },
             });
             if asked.to_bool() {
@@ -625,7 +763,7 @@ impl<const A: usize, const WC: usize, const LEN: usize> Unit
 
 // begin{regs}
 // The scanout's AXI-Lite words, in the upper half of the video slot.
-regmap! { scan (scan_read, scan_we), 3: [
+regmap! { scan (scan_read, scan_we), 4: [
     (0, base, rw, "the byte the next frame starts at in memory"),
     (1, ctrl, rw, "what the screen shows", [
         (scan, 0, 1, rw, 0, "the scanout when set, the framebuffer when clear"),
@@ -639,6 +777,9 @@ regmap! { scan (scan_read, scan_we), 3: [
     (4, stuck_at, ro, "the address of the line that did not come"),
     (5, worst, ro, "the longest a line took to come whole, in pixels"),
     (6, lates, ro, "how many lines had not come whole when their rows began"),
+    (7, late_rows, ro, "how many shown rows showed LATE in a column"),
+    (8, late_frames, ro, "how many frames showed LATE in a row"),
+    (9, margin, ro, "the least margin in pixel clocks, signed"),
 ] }
 
 /// What the pair says about how it has kept up, for [`ScanCtl`]: the
@@ -656,6 +797,12 @@ pub struct ScanState {
     pub worst: U<16>,
     /// How many lines were late when their rows began.
     pub lates: U<16>,
+    /// How many shown rows showed `LATE` in a column (issue 1524).
+    pub late_rows: U<16>,
+    /// How many frames showed `LATE` in a row.
+    pub late_frames: U<16>,
+    /// The least margin, in pixel clocks, as sixteen signed bits.
+    pub margin: U<16>,
 }
 // end{regs}
 
@@ -694,6 +841,12 @@ pub struct ScanCtl {
     pub seen_worst: Reg<U<16>>,
     /// The count of late lines, the same way.
     pub seen_lates: Reg<U<16>>,
+    /// The count of rows that showed `LATE`, the same way (issue 1524).
+    pub seen_late_rows: Reg<U<16>>,
+    /// The count of frames that did, the same way.
+    pub seen_late_frames: Reg<U<16>>,
+    /// The least margin, the same way.
+    pub seen_margin: Reg<U<16>>,
 }
 // end{ctl}
 
@@ -722,8 +875,8 @@ impl Unit for ScanCtl {
             let _ = under.recv_if(heard);
             let arh = bus.ar.head();
             let awh = bus.aw.head();
-            let rsel = arh.addr.slice::<2, 3>();
-            let wsel = awh.addr.slice::<2, 3>();
+            let rsel = arh.addr.slice::<2, 4>();
+            let wsel = awh.addr.slice::<2, 4>();
             let rgo = bus.r.ready() & bus.ar.peek().is_some();
             let _ = bus.ar.recv_if(bus.r.ready());
             let wgo = bus.b.ready()
@@ -742,6 +895,10 @@ impl Unit for ScanCtl {
                 self.seen_at.get(),
                 self.seen_worst.get().resize::<32>(),
                 self.seen_lates.get().resize::<32>(),
+                self.seen_late_rows.get().resize::<32>(),
+                self.seen_late_frames.get().resize::<32>(),
+                // Signed, so a host reads a negative margin as one.
+                self.seen_margin.get().sext::<32>(),
             );
             with!(self <= {
                 we.bit(0) ? fbase: written,
@@ -756,6 +913,9 @@ impl Unit for ScanCtl {
                     seen_at: said.at,
                     seen_worst: said.worst,
                     seen_lates: said.lates,
+                    seen_late_rows: said.late_rows,
+                    seen_late_frames: said.late_frames,
+                    seen_margin: said.margin,
                 },
             });
             if rgo.to_bool() {
@@ -783,10 +943,13 @@ pub struct ScanTap {}
 impl Unit for ScanTap {
     async fn run(
         &mut self,
-        (starved, stuck, at, worst, lates): (
+        (starved, stuck, at, worst, lates, late_rows, late_frames, margin): (
             In<Bit>,
             In<Bit>,
             In<U<32>>,
+            In<U<16>>,
+            In<U<16>>,
+            In<U<16>>,
             In<U<16>>,
             In<U<16>>,
         ),
@@ -801,6 +964,9 @@ impl Unit for ScanTap {
                     at: at.get(),
                     worst: worst.get(),
                     lates: lates.get(),
+                    late_rows: late_rows.get(),
+                    late_frames: late_frames.get(),
+                    margin: margin.get(),
                 });
             }
         }
@@ -1028,6 +1194,9 @@ impl<
         let (stuck_at_o, stuck_at) = signal::<U<32>, DefaultClock>();
         let (worst_o, worst) = signal::<U<16>, DefaultClock>();
         let (lates_o, lates) = signal::<U<16>, DefaultClock>();
+        let (late_rows_o, late_rows) = signal::<U<16>, DefaultClock>();
+        let (late_frames_o, late_frames) = signal::<U<16>, DefaultClock>();
+        let (margin_o, margin) = signal::<U<16>, DefaultClock>();
         let (two_o, two) = signal::<Bit, DefaultClock>();
         let (tap_tx, tap_rx) = chan::<ScanState, DefaultClock>();
         let (hrgb_o, hrgb) = signal::<U<24>, DefaultClock>();
@@ -1063,16 +1232,35 @@ impl<
                             show, two,
                         ),
                         (
-                            pix_o, req, starved_o, stuck_o, stuck_at_o,
-                            worst_o, lates_o,
+                            pix_o,
+                            req,
+                            starved_o,
+                            stuck_o,
+                            stuck_at_o,
+                            worst_o,
+                            lates_o,
+                            late_rows_o,
+                            late_frames_o,
+                            margin_o,
                         ),
                     ),
                 ),
             ),
             join2(
                 join2(
-                    self.tap
-                        .run((starved, stuck, stuck_at, worst, lates), tap_tx),
+                    self.tap.run(
+                        (
+                            starved,
+                            stuck,
+                            stuck_at,
+                            worst,
+                            lates,
+                            late_rows,
+                            late_frames,
+                            margin,
+                        ),
+                        tap_tx,
+                    ),
                     self.hdmi.run(
                         LitePort {
                             aw: lo_aw_rx,
@@ -1212,6 +1400,9 @@ mod tests {
             let (stuck_at_o, _stuck_at) = signal::<U<32>, DefaultClock>();
             let (worst_o, worst) = signal::<U<16>, DefaultClock>();
             let (lates_o, lates) = signal::<U<16>, DefaultClock>();
+            let (late_rows_o, _late_rows) = signal::<U<16>, DefaultClock>();
+            let (late_frames_o, _late_frames) = signal::<U<16>, DefaultClock>();
+            let (margin_o, _margin) = signal::<U<16>, DefaultClock>();
             let (two_o, two) = signal::<Bit, DefaultClock>();
             let (words_tx, words) = chan::<U<32>, DefaultClock>();
             let (req, req_rx) = chan::<U<32>, DefaultClock>();
@@ -1224,8 +1415,16 @@ mod tests {
                 pair.run(
                     (words, col, vis, line, row, frame, base, clear, show, two),
                     (
-                        pix_o, req, starved_o, stuck_o, stuck_at_o, worst_o,
+                        pix_o,
+                        req,
+                        starved_o,
+                        stuck_o,
+                        stuck_at_o,
+                        worst_o,
                         lates_o,
+                        late_rows_o,
+                        late_frames_o,
+                        margin_o,
                     ),
                 ),
             ));
@@ -1296,6 +1495,9 @@ mod tests {
         let (stuck_at_o, _stuck_at) = signal::<U<32>, DefaultClock>();
         let (worst_o, _worst) = signal::<U<16>, DefaultClock>();
         let (lates_o, _lates) = signal::<U<16>, DefaultClock>();
+        let (late_rows_o, _late_rows) = signal::<U<16>, DefaultClock>();
+        let (late_frames_o, _late_frames) = signal::<U<16>, DefaultClock>();
+        let (margin_o, _margin) = signal::<U<16>, DefaultClock>();
         let (_two_o, two) = signal::<Bit, DefaultClock>();
         let (words_tx, words) = chan::<U<32>, DefaultClock>();
         let (req, req_rx) = chan::<U<32>, DefaultClock>();
@@ -1306,7 +1508,18 @@ mod tests {
             raster.run((), (col_o, vis_o, line_o, row_o, frame_o)),
             pair.run(
                 (words, col, vis, line, row, frame, base, clear, show, two),
-                (pix_o, req, starved_o, stuck_o, stuck_at_o, worst_o, lates_o),
+                (
+                    pix_o,
+                    req,
+                    starved_o,
+                    stuck_o,
+                    stuck_at_o,
+                    worst_o,
+                    lates_o,
+                    late_rows_o,
+                    late_frames_o,
+                    margin_o,
+                ),
             ),
         ));
         let mut owed = 0usize;
