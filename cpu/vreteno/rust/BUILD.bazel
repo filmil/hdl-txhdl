@@ -1103,6 +1103,24 @@ rust_binary(
     ],
 )
 
+# The same frame smooth and untextured, as #1592's step 3 draws it.
+rust_binary(
+    name = "ico_smooth_frame",
+    srcs = [
+        "ico_gl.rs",
+        "ico_list.rs",
+        "ico_tex_frame.rs",
+    ],
+    crate_root = "ico_tex_frame.rs",
+    edition = "2021",
+    rustc_flags = ["--cfg=smooth"],
+    deps = [
+        "//gles",
+        "//gpu/razboj",
+        "//lib/logo:txhdl_logo",
+    ],
+)
+
 # The icosahedron's display lists (issue 986), the part of ico_hdmi
 # with no hardware in it, rendered on the host through Razboj's model:
 # the faces tile the silhouette once, they are the front faces, and
@@ -1601,10 +1619,16 @@ vreteno_flat(
 # step of the GPU's features, the step's number and name given to the
 # program, which prints them, draws them in a corner and stops after
 # 1200 frames. //demo/canon:ico_series names the images and sums them.
-# Steps 3 and 6 to 8 follow.
+# Steps 6 to 8 follow.
 _DEMO_ICO = [
     ("1", "flat", [], []),
     ("2", "depth", ["--cfg=gl"], ["//gles", "//gpu/razboj:tile"]),
+    (
+        "3",
+        "smooth",
+        ["--cfg=gl", "--cfg=smooth"],
+        ["//gles", "//gpu/razboj:tile"],
+    ),
     (
         "4",
         "textured",

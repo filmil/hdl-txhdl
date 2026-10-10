@@ -10,6 +10,7 @@
 _STEPS = [
     "1_flat",
     "2_depth",
+    "3_smooth",
     "4_textured",
     "5_mipmapped",
 ]
