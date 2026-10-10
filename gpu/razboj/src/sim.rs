@@ -1133,6 +1133,115 @@ mod tests {
         assert_eq!(changed, 12, "the fog changed the picture in every round");
     }
 
+    /// Smooth shading of alpha in tiles (issue 1520). Each round, over a
+    /// backdrop the tiles load, smooth triangles whose vertices' alphas
+    /// differ, with and without depth, under a blend that makes the
+    /// alpha show in most rounds, an alpha test in some and a colour mask
+    /// in others, and one triangle with the alpha plane off, are drawn as
+    /// the model draws them, byte for byte; and the plane changes the
+    /// picture in every round.
+    #[test]
+    fn smooth_alpha_in_tiles_is_the_models() {
+        use crate::op::{AlphaTest, BlendMode, DepthMode, GREATER, LESS};
+        use crate::op::{ONE_MINUS_SRC_ALPHA, SRC_ALPHA};
+        const A: usize = 20;
+        const LOGW: usize = 7;
+        const W: usize = 1 << LOGW;
+        const H: usize = 64;
+        const N: usize = 16384;
+        const DL: usize = 0xa000;
+        const CTRL: usize = 0xfffc;
+        let mut x = 0x1b87_3593u32;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x
+        };
+        let backdrop: Vec<Op> = (0..4)
+            .map(|k| Op::Rect {
+                colour: 0x5a_3ca5u32.wrapping_mul(k + 3) | (k * 0x40) << 24,
+                x: 0,
+                y: k as i32 * 16,
+                w: W as i32,
+                h: 16,
+            })
+            .collect();
+        let first = assemble(&backdrop, W, H);
+        let mut changed = 0;
+        for round in 0..10u32 {
+            let mut ops = vec![
+                Op::Blend((round % 4 != 3).then_some(BlendMode {
+                    src: SRC_ALPHA,
+                    dst: ONE_MINUS_SRC_ALPHA,
+                })),
+                Op::AlphaTest((round % 4 == 3).then_some(AlphaTest {
+                    func: GREATER,
+                    reference: 0x70,
+                })),
+                Op::ColourMask(if round % 5 == 2 { 0b1101 } else { 0xf }),
+                Op::Depth((round % 2 == 1).then_some(DepthMode {
+                    func: LESS,
+                    write: true,
+                })),
+                Op::SmoothAlpha(true),
+            ];
+            for k in 0..5 {
+                let (r, q, s) = (next(), next(), next());
+                ops.push(Op::SmoothAlpha(k != 2));
+                let p = |v: u32| {
+                    (
+                        (v % (W as u32 * 16)) as i32 - 64,
+                        ((v >> 12) % (H as u32 * 16)) as i32 - 64,
+                    )
+                };
+                let z = [r & 0xffff, q & 0xffff, (r >> 16) ^ (q >> 16)];
+                let (a, b, c) = (p(r), p(q), p(r ^ q.rotate_left(7)));
+                // Alphas from transparent to opaque at the three corners.
+                let colours = [q & 0x00ff_ffff, r | 0xff00_0000, s];
+                ops.push(if k % 2 == 0 {
+                    Op::Gouraud { a, b, c, colours }
+                } else {
+                    Op::GouraudZ {
+                        a,
+                        b,
+                        c,
+                        colours,
+                        z,
+                    }
+                });
+            }
+            let over = assemble(&ops, W, H);
+            assert!(over.iter().any(|i| i.ashade.to_bool()));
+            let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
+                &[Work::tiled(&first, W, H), Work::tiled(&over, W, H)],
+                false,
+                false,
+            );
+            let base = model::render(&first, W, H);
+            let want = model::render_over(&over, W, H, base.clone());
+            let at = want.iter().zip(&runs[1].fb).position(|(p, q)| p != q);
+            assert_eq!(
+                at,
+                None,
+                "round {round}: {:08x} not {:08x}",
+                at.map_or(0, |a| runs[1].fb[a]),
+                at.map_or(0, |a| want[a])
+            );
+            // Against the same entries with the first vertex's alpha.
+            let flat: Vec<_> = over
+                .iter()
+                .map(|i| {
+                    let mut i = *i;
+                    i.ashade = txhdl::types::Bit::Zero;
+                    i
+                })
+                .collect();
+            changed += (model::render_over(&flat, W, H, base) != want) as u32;
+        }
+        assert_eq!(changed, 10, "the alpha plane changed every round");
+    }
+
     /// The stencil in tiles (issue 998). Each round, in one list:
     /// - a rectangle that writes only the stencil, under some of its bits;
     /// - triangles that test the stencil under each comparison, with an
