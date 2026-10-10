@@ -1124,6 +1124,29 @@ rust_binary(
     ],
 )
 
+# One frame of the canonical teapot (#1592) on the host, as a PNG.
+rust_binary(
+    name = "teapot_frame",
+    srcs = [
+        "ico_gl.rs",
+        "ico_list.rs",
+        "ico_tex_frame.rs",
+        "teapot.rs",
+    ],
+    crate_root = "ico_tex_frame.rs",
+    edition = "2021",
+    rustc_flags = [
+        "--cfg=smooth",
+        "--cfg=teapot",
+    ],
+    deps = [
+        "//gles",
+        "//gpu/razboj",
+        "//lib/logo:txhdl_logo",
+        "//lib/teapot:teapot_data",
+    ],
+)
+
 # The smooth frame over a mirror, as #1592's step 8 draws it.
 rust_binary(
     name = "ico_mirror_frame",
@@ -1731,3 +1754,46 @@ _DEMO_ICO = [
     )
     for (step, name, _, _) in _DEMO_ICO
 ]
+
+# The canonical teapot (#1592): Newell's teapot, its 32 patches cut into
+# three by three squares each, smooth shaded under the icosahedron's
+# light, turning about its axis once in 128 frames. Its tessellation,
+# view, light and frames are fixed, so that each milestone draws the
+# same teapot and its frame rate, which the image says at the end, is
+# the measure; a finer teapot would be a demo of its own.
+rust_binary(
+    name = "demo_teapot_1_utah",
+    srcs = [
+        "ico_gl.rs",
+        "ico_hdmi.rs",
+        "ico_list.rs",
+        "teapot.rs",
+    ],
+    compile_data = ["vreteno_ram.ld"],
+    crate_root = "ico_hdmi.rs",
+    edition = "2021",
+    rustc_env = {
+        "DEMO_NAME": "utah",
+        "DEMO_STEP": "1",
+    },
+    rustc_flags = VRETENO_RAM_FLAGS + [
+        "--cfg=gl",
+        "--cfg=smooth",
+        "--cfg=teapot",
+    ],
+    tags = ["manual"],
+    deps = [
+        "//cpu/vreteno/rust/hal:vreteno_hal",
+        "//cpu/vreteno/rust/regs:vreteno_regs",
+        "//gles",
+        "//gpu/razboj:tile",
+        "//lib/logo:txhdl_logo",
+        "//lib/teapot:teapot_data",
+    ],
+)
+
+vreteno_flat(
+    name = "demo_teapot_1_utah_bin",
+    platform = ":vreteno",
+    program = ":demo_teapot_1_utah",
+)

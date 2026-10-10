@@ -5,7 +5,7 @@
 #   bazel build //demo/canon:ico_series
 # hil boots each image as it boots the ico demos; each prints
 # `demo ico <n>: <name>`, its cycles every 64 frames, and
-# `demo ico <n> done` after 1200 frames.
+# `demo ico <n> done:` after 1200 frames, with the frames a second.
 
 _STEPS = [
     "1_flat",
@@ -29,5 +29,21 @@ genrule(
     ] + [
         "(cd $(RULEDIR) && sha256sum demo-ico-*.bin > SHA256SUMS)",
     ]),
+    tags = ["manual"],
+)
+
+# The canonical teapot (#1592), the same teapot at every milestone: it
+# prints `demo teapot 1: utah`, its triangles, and after 256 frames its
+# frames against the scanout's, the rate that is its measure.
+#   bazel build //demo/canon:teapot
+genrule(
+    name = "teapot",
+    srcs = ["//cpu/vreteno/rust:demo_teapot_1_utah_bin"],
+    outs = [
+        "demo-teapot-1-utah.bin",
+        "TEAPOT.SHA256SUMS",
+    ],
+    cmd = "cp $< $(RULEDIR)/demo-teapot-1-utah.bin && " +
+          "(cd $(RULEDIR) && sha256sum demo-teapot-1-utah.bin > TEAPOT.SHA256SUMS)",
     tags = ["manual"],
 )
