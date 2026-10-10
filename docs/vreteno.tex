@@ -2846,6 +2846,27 @@ without, over 9 loads and 6, the medians both 0 and the difference not
 significant (issue~\#1523). So \code{SCAN\_PRIO} names no port, and the
 round robin is as it was.
 
+Counting lines says whether a line was late, and not by how much, so
+three more words measure the margin itself (issue~\#1524).
+\code{late\_rows} counts the shown rows that showed \code{LATE} in a
+column, and \code{late\_frames} the frames that showed it in a row.
+\code{margin} is the least, over every word of a shown row since the
+bits were cleared, of the pixel clocks from the word's arrival to the
+last one before its column is shown: nought for a word that came just
+in time, negative for one that came after, and 32767 when no word has
+been timed. The pair measures a row's period and the clocks from a
+row's start to its first column itself, so the margin needs no
+constant of the raster's.
+\code{the\_margin\_is\_nought\_at\_the\_last\_tick\_a\_word\_may\_come}
+pins the nought: one row ahead, words given as fast as the pair takes
+them leave a margin of 797, words held back 797 cycles leave nought
+and no row \code{LATE}, and one cycle more gives minus one and rows
+\code{LATE}. The three words are counted on the pixel clock and read
+on the bus's, so they cross together, in the one message that already
+carries \code{worst} and \code{lates}, and a read returns a value the
+pair sent whole even while it changes every cycle, which
+\code{a\_read\_of\_a\_changing\_value\_is\_one\_the\_pair\_sent} checks.
+
 \code{vreteno\_board\_jtag.v} is the top with the master, the board's
 own top with one block added, and every other top ties the pins off,
 so the shipping bitstreams are unchanged in what they do.
