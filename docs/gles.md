@@ -57,7 +57,7 @@ A later issue means the entry point is accepted from the start but does what tha
 | Reading back | `glReadPixels`, `glPixelStorei(GL_PACK_ALIGNMENT)` | From #999, `GL_RGBA` and `GL_UNSIGNED_BYTE`, the frame so far drawn first |
 | Hints | `glHint` | Accepted and ignored, as the specification allows, from #1490 |
 
-Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit (#1510), which wait for a program that needs them; and two parts of ES 1.1 that #999's conformance suite found missing: the point size array of `OES_point_size_array` (#1507) and `glPointParameterx` (#1508). Antialiased points and lines are left out too (#1622): the switches `GL_POINT_SMOOTH` and `GL_LINE_SMOOTH` are kept (#1513), and a point or a line is drawn as with them off.
+Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit (#1510), which wait for a program that needs them; and two parts of ES 1.1 that #999's conformance suite found missing: the point size array of `OES_point_size_array` (#1507) and `glPointParameterx` (#1508).
 An entry point that is left out still exists, so that a program links, and sets `GL_INVALID_ENUM` or `GL_INVALID_OPERATION` as the specification says for an unsupported value.
 
 The limits the library reports are the specification's minimums: a modelview stack of 16, projection and texture stacks of 2, eight lights, one clip plane.
@@ -326,6 +326,12 @@ A line segment is clipped against the planes a triangle is.
 It then becomes the parallelogram GL's wide lines describe: the segment moved half the width up and down when it is more across than down, or left and right when not.
 That parallelogram is two of Razboj's triangles, shaded smooth from one end's colour to the other's, or flat in the second vertex's, the provoking one.
 With the top-left rule, every column of such a line between its ends, or row when it is more down than across, holds exactly as many pixels as the line is wide.
+With `GL_POINT_SMOOTH` or `GL_LINE_SMOOTH` on (#1513), a point or a line is drawn antialiased instead (#1622), its size or width kept unrounded between 1 and 64, which `GL_SMOOTH_POINT_SIZE_RANGE` and `GL_SMOOTH_LINE_WIDTH_RANGE` give.
+A point is the disc of its diameter, as a polygon of eight sides, or sixteen above a pixel across, whose corners sit so that each side's mean distance from the centre is the radius; a line is the rectangle of its width centred on the segment.
+Each has a rim a pixel wide, half inside its edge and half out, across which the fragment's alpha falls from the colour's to nought: the coverage GL puts in alpha, taken linear across the rim, and near the product of the two at a line's corners, where each corner is a square of four triangles about a middle with a quarter of the alpha.
+The rim's triangles carry an alpha plane, Razboj's smooth alpha (#1520), whatever the shading, so that alpha falls across them even when the colour is flat.
+Blending is the program's, as GL leaves it.
+A point sprite is not antialiased, as `OES_point_sprite` says.
 `//gles:prims_test` checks that through Razboj's model at 120 slopes and four widths, with every pixel within half the width of the line.
 It also checks points of sizes 1 to 8 at sub-pixel positions against GL's square, and the segments each mode makes.
 With `GL_POINT_SPRITE_OES` on and `GL_COORD_REPLACE_OES` set by `glTexEnv`, a point drawn while a texture is bound and complete is a point sprite (#998).
@@ -384,8 +390,9 @@ On the host they draw through Razboj's model as EGL's machine, and `//gles:confo
 The first group is the state tables of the specification's section 6.2: every state variable's initial value, through the query its table names and through the others with section 6.1.2's conversions, and every implementation-dependent value against its minimum.
 The second is the errors: for each command, the error section 2.5 and the command's own section give a bad argument, each recorded once, and that the command changes nothing.
 The third is the rendering: scenes read back with `glReadPixels` and held, pixel for pixel, to a reference in double precision that follows the specification's rules for points, polygons, lines by the four rules section 3.4.1 sets an algorithm other than the diamond exit, the viewport, smooth shading, every per-fragment test and operation, fog, the texture environments and lighting, and the depth and the stencil kept across a read in the middle of a frame, skipping only a pixel whose centre lies on an edge, which GL leaves to the implementation.
+Antialiased points and lines are held to each pixel's coverage, sampled 8 by 8, within 40 of 255, since the rim is linear where the coverage is not; the largest difference measured is 30.
 The fourth is four of piglit's ES 1 tests, in `gles/conform/piglit`, ported with their float calls made fixed point for Common-Lite, each change marked.
-Of 203 state checks, 173 pass; of 100 error checks, 99; of 83 rendering checks, 83; and of piglit's four, two. The 33 failures fall under five issues:
+Of 203 state checks, 173 pass; of 100 error checks, 99; of 87 rendering checks, 87; and of piglit's four, two. The 33 failures fall under five issues:
 
 | Issue | Checks | What is missing or wrong |
 |---|---|---|
