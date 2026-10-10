@@ -114,8 +114,8 @@ The example \code{ex\_hdmi}. The demonstration for the AX7A200B:
 values. \code{hdmi/board/hdmi\_demo.v} instantiates it on a 25.2~MHz
 pixel clock, with its AXI-Lite inputs held idle.
 \code{//hdmi:demo\_synth} and \code{//hdmi:demo\_pnr} put the design
-through Vivado to a bitstream. \code{//docs:hdmi} states that it has
-not yet run on the board.
+through Vivado to a bitstream. \code{//docs:hdmi} states that on
+September 19, 2026 a monitor on the board showed the test picture.
 
 \subsection*{Limits}
 
@@ -126,5 +126,6 @@ is fixed when the type is named. The whole unit runs on the pixel
 clock, bus included. A host on another clock needs a crossing of the
 five AXI-Lite channels, and nothing in the tree provides one. The
 framebuffer cannot be read over the bus. On the board, \code{//docs:hdmi}
-marks two things as unconfirmed: which of the chip's data inputs are
-red, green and blue, and the I/O standard of the chip's pins.
+states that the picture confirmed the order of red, green and blue on
+the chip's data inputs and the 3.3~V LVCMOS standard of its pins,
+and that the setup and hold windows at the connector are unmeasured.
