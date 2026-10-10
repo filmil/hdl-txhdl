@@ -29,6 +29,7 @@ Those reasons live here.
 | `gles.md` | The GL ES 1.1 Common-Lite library on Vreteno, designed before its language is chosen: the API subset, the pipeline on the CPU, the fixed-point formats against Razboj's display list, the frame and the tiles, the icosahedron as the first program, and the language choice for the user (issue 995) |
 | `razboj-tiles.md` | Razboj drawing in tiles, as the user decided: the tile size, the tile buffer in block RAM, binning on the CPU, finished tiles to DDR3 in bursts, the block RAM budget, and the order to build it in (issue 991) |
 | `board-checks.md` | Every board check the issues owe, as commands in session order: the bitstreams to build first, what each run should print, what to keep, and which issue it closes |
+| `demos.md` | The canonical demos redone after each bigger milestone: the list in `demos.tsv`, the tool that runs them on the board, and where the videos go (issue 1592) |
 | `sv32-timing.md` | Where Sv32 translation sits in the core, the walker and the TLB sizes, the core's two critical paths measured with a prototype TLB and with operands read at the edge, the cost in cycles of each option, and the recommendation (issue 1009) |
 
 The documents typeset here are the ones `cover.tex` names:

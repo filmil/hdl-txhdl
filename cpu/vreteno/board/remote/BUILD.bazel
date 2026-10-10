@@ -104,3 +104,19 @@ sh_binary(
     ],
     tags = ["manual"],
 )
+
+# The canonical demos, run in the order docs/demos.tsv gives on the
+# flagship built at this commit, with their logs and stage times kept
+# for the videos (issue 1592). Needs the board token.
+#
+#   bazel run //cpu/vreteno/board/remote:demos -- --out=$HOME/txhdl-demos
+sh_binary(
+    name = "demos",
+    srcs = ["demos.sh"],
+    data = [
+        ":load",
+        "//docs:demos.tsv",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
+    tags = ["manual"],
+)
