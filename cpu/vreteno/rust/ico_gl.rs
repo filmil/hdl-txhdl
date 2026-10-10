@@ -154,7 +154,11 @@ impl Model {
                 let v = 3 * f + c;
                 let p = BODY[solid.face[f][c]];
                 m.positions[v] = [p[0] << UP, p[1] << UP, p[2] << UP, ONE];
-                m.normals[v] = [n[0] << UP, n[1] << UP, n[2] << UP];
+                m.normals[v] = if cfg!(smooth) {
+                    outward(p)
+                } else {
+                    [n[0] << UP, n[1] << UP, n[2] << UP]
+                };
                 m.indices[v] = v as u16;
                 let [s, t] = corners[c];
                 m.texcoords[v] = [s, t, 0, ONE];
@@ -164,6 +168,21 @@ impl Model {
         }
         m
     }
+}
+
+/// Under `smooth` (#1592's step 3), a corner's normal: the way from the
+/// centre to it, of unit length, the solid's surface there if it were the
+/// sphere through its corners, so that smooth shading blends the light
+/// across faces as on a ball.
+fn outward(p: [i32; 3]) -> [Fx; 3] {
+    let sq = p.iter().map(|&c| c as i64 * c as i64).sum::<i64>();
+    let mut len = sq.max(1);
+    let mut next = (len + sq / len) / 2;
+    while next < len {
+        len = next;
+        next = (len + sq / len) / 2;
+    }
+    p.map(|c| (c as i64 * ONE as i64 / len.max(1)) as Fx)
 }
 
 /// A channel of `LIT` scaled by `k`, in 16.16.
@@ -230,7 +249,7 @@ pub fn frame<'a>(
     } else {
         g.enable(gl::CULL_FACE);
     }
-    g.shade_model(gl::FLAT);
+    g.shade_model(if cfg!(smooth) { gl::SMOOTH } else { gl::FLAT });
     let textured = tex.is_some();
     if let Some((room, bus, upload)) = tex {
         if upload {
