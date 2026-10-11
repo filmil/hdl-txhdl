@@ -339,3 +339,52 @@ fn a_smooth_lines_depth_is_its_own_at_the_ends() {
         assert_eq!(shows_line, line_in_front, "{x}: {px:08x}");
     }
 }
+
+/// A smooth line whose ends lie at the near and far ends of the depth
+/// range is drawn at both ends (#1684): the depths its corners carry past
+/// its ends lie outside the range, and Razboj takes a pixel's as the near
+/// end below it and the far end above it rather than wrapping.
+#[test]
+fn a_smooth_line_from_the_nearest_to_the_farthest_is_drawn_at_its_ends() {
+    let mut frame = [[0u32; 16]; 64];
+    let mut g = context(&mut frame);
+    g.enable(gl::DEPTH_TEST);
+    let white = [ONE, ONE, ONE, ONE];
+    // Window depth (1 - z) / 2: nought at z one, one at z minus one, the
+    // far end a little short of it so that `GL_LESS` passes against the
+    // cleared depth.
+    short_smooth_line(&mut g, (white, white), (ONE, -ONE + ONE / 64));
+    let n = g.frame().len();
+    let fb = listed(&frame[..n]);
+    let row = (S - 1 - 64) as usize;
+    for x in [30usize, 33] {
+        let px = fb[row * S as usize + x];
+        assert_eq!(px & 0x00ff_ffff, 0x00ff_ffff, "{x}: {px:08x}");
+    }
+}
+
+/// A smooth line half a pixel long, black to white, centred on a pixel's
+/// centre: that pixel has the line's middle colour, half white, though
+/// its corners past the ends carry the colour on over four times the
+/// line's length.
+#[test]
+fn a_smooth_line_shorter_than_a_pixel_has_its_middle_colour() {
+    let mut frame = [[0u32; 16]; 64];
+    let mut g = context(&mut frame);
+    g.enable(gl::LINE_SMOOTH);
+    g.line_width(4 * ONE);
+    let y = 64 * 16 + 8;
+    let (black, white) = ([0, 0, 0, ONE], [ONE, ONE, ONE, ONE]);
+    g.draw_arrays(
+        gl::LINES,
+        &[at(40 * 16 + 4, y), at(40 * 16 + 12, y)],
+        Some(&[black, white]),
+        None,
+    );
+    assert_eq!(g.get_error(), gl::NO_ERROR);
+    let n = g.frame().len();
+    let fb = listed(&frame[..n]);
+    let row = (S - 1 - 64) as usize;
+    let red = (fb[row * S as usize + 40] >> 16 & 0xff) as f64;
+    assert!((red - 127.5).abs() <= 2.5, "red {red}");
+}
