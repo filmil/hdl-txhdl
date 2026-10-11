@@ -440,7 +440,9 @@ static void blended_white(void) {
  * a pixel wide, so a pixel is held to the exact coverage within 40 of
  * 255, which an aliased square fails at every edge. */
 static void smooth_points(void) {
-  static const double sizes[5] = {3.0, 8.5, 1.0, 1.125, 1.5};
+  /* A size added goes last, so every check keeps the name it had in
+   * past runs. */
+  static const double sizes[5] = {3.0, 8.5, 1.0, 1.5, 1.125};
   char name[64];
   for (int k = 0; k < 5; k++) {
     disc_x = 200.3 + 100 * k, disc_y = 150.6, disc_r = sizes[k] / 2;
@@ -459,7 +461,7 @@ static void smooth_points(void) {
      * is scaled by the disc's area, are held within 16, and the point of
      * one and a half, which is not scaled, within 20, since it passes 16
      * with no room. Unscaled, the point of one pixel is at least 34 off. */
-    report(name, window_is(want_covered, k == 4 ? 20 : k >= 2 ? 16 : 40));
+    report(name, window_is(want_covered, k == 3 ? 20 : k >= 2 ? 16 : 40));
   }
 }
 
