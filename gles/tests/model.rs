@@ -244,10 +244,11 @@ fn dist(s: &State, v: &V, plane: usize) -> i128 {
 /// plane times their own scales are `wa` and `wb`, as the library makes
 /// it (#1661): the colours and the rest at the true distances' ratio, and
 /// the kept point `wa b - wb a` over `wa sb - wb sa`, by the same shifts.
-fn cross(a: &V, b: &V, wa: i128, wb: i128) -> V {
-    let (wa2, wb2) = fit(wa, wb, 60);
-    let (sa2, sb2) = fit(a.scale, b.scale, 60);
-    let (ta, tb) = fit(wa2 * sb2, wb2 * sa2, 60);
+fn cross(a: &V, b: &V, wa: i128, wb: i128, truth: Option<(i128, i128)>) -> V {
+    let (ta, tb) = truth.unwrap_or_else(|| {
+        let (wa, wb) = fit(wa, wb, 60);
+        fit(wa * b.scale, wb * a.scale, 60)
+    });
     let mix = |p: &[i128; 4], q: &[i128; 4]| {
         std::array::from_fn(|i| {
             (p[i] + rdiv((q[i] - p[i]) * ta, ta - tb))
@@ -321,18 +322,17 @@ fn reference(s: &State, tri: [V; 3], out: &mut Vec<Op>) {
             let (da, db) = (dist(s, &a, p), dist(s, &b, p));
             // The user's plane reads the eye, unscaled; it is scaled as
             // the library scales it.
-            let (da, db) = if p == 2 {
-                let (sa, sb) = fit(a.scale, b.scale, 60);
+            let (da, db, truth) = if p == 2 {
                 let (da, db) = fit(da, db, 60);
-                (da * sa, db * sb)
+                (da * a.scale, db * b.scale, Some((da, db)))
             } else {
-                (da, db)
+                (da, db, None)
             };
             if da >= 0 {
                 next.push(a);
             }
             if (da >= 0) != (db >= 0) {
-                next.push(cross(&a, &b, da, db));
+                next.push(cross(&a, &b, da, db, truth));
             }
         }
         poly = next;

@@ -2436,16 +2436,19 @@ impl<'a> Gl<'a> {
                 let ((ha, sa), (hb, sb)) = (exact[i], exact[j]);
                 // Each end's distance from the plane times its own scale,
                 // which a scaled point's distance is; the user's plane
-                // reads the eye, unscaled, so it is scaled here. Their
-                // signs are the distances' signs.
-                let (wa, wb) = if p == 2 {
+                // reads the eye, unscaled, so its distances are the true
+                // ones and are scaled here. Their signs are the distances'
+                // signs. A scale is at most 62 bits and a fitted distance
+                // 60, so a product fits in i128; a scale is never shifted,
+                // since a corner's is 1 and would go to 0.
+                let (wa, wb, truth) = if p == 2 {
                     let (da, db) =
-                        (view.distances(&a, p), view.distances(&b, p));
-                    let (sa, sb) = fit(sa, sb, 60);
-                    let (da, db) = fit(da, db, 60);
-                    (da * sa, db * sb)
+                        fit(view.distances(&a, p), view.distances(&b, p), 60);
+                    (da * sa, db * sb, Some((da, db)))
                 } else {
-                    (view.distance_of(&ha, p), view.distance_of(&hb, p))
+                    let (wa, wb) =
+                        (view.distance_of(&ha, p), view.distance_of(&hb, p));
+                    (wa, wb, None)
                 };
                 if wa >= 0 {
                     out[m] = a;
@@ -2455,10 +2458,12 @@ impl<'a> Gl<'a> {
                 if (wa >= 0) != (wb >= 0) {
                     // The crossing's place along the edge from the true
                     // distances, wa / sa and wb / sb, for the colours and
-                    // the rest that are carried as they were.
-                    let (wa2, wb2) = fit(wa, wb, 60);
-                    let (sa2, sb2) = fit(sa, sb, 60);
-                    let (ta, tb) = fit(wa2 * sb2, wb2 * sa2, 60);
+                    // the rest that are carried as they were; the user's
+                    // plane has them already.
+                    let (ta, tb) = truth.unwrap_or_else(|| {
+                        let (wa, wb) = fit(wa, wb, 60);
+                        fit(wa * sb, wb * sa, 60)
+                    });
                     out[m] = between(&a, &b, ta, tb);
                     kept[m] = cut((ha, sa), (hb, sb), wa, wb);
                     m += 1;
@@ -2690,7 +2695,10 @@ fn fit(a: i128, b: i128, bits: u32) -> (i128, i128) {
 /// is, so the crossing is `wa b - wb a` over `wa sb - wb sa`, kept as that
 /// point times that scale, made positive so that distances keep their
 /// signs. The weights and the result are shifted down to stay within
-/// i128, which costs only bits far below the window's sixteenth.
+/// i128, which costs only bits far below the window's sixteenth. A
+/// point's coordinates over its scale are a corner's, or between
+/// corners', so at most 2^31 in size, and the shift leaves the scale at
+/// least 31 bits: the floor of 1 is a guard that does not fire.
 fn cut(
     (ha, sa): ([i128; 4], i128),
     (hb, sb): ([i128; 4], i128),
