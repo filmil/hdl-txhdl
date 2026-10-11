@@ -1107,6 +1107,8 @@ latex_document(
         ":dtm_timing",
         ":group_run",
         ":group_timing",
+        ":port_arrays_run",
+        ":port_arrays_timing",
         ":regs_run",
         ":regs_timing",
         ":wide_run",
@@ -2554,6 +2556,29 @@ waveform(
         "//out/rx_data=>out",
         "//tap/seen=>seen",
         "//tap/passed=>passed",
+    ],
+)
+
+# Arrays of ports inside a struct of ports (issue 1636): the lanes of a
+# bus read in a loop, and an array of a split group's fields handed to a
+# child.
+waveform(
+    name = "port_arrays",
+    example = "//lib/examples:ex_port_arrays",
+    lowered = [
+        ("waiter", "waiter"),
+        ("gate", "gate"),
+    ],
+    signals = [
+        "//clocks/clk=>clk",
+        "//cdb_valid_0=>valid0",
+        "//cdb_valid_1=>valid1",
+        "//cdb_valid_2=>valid2",
+        "//cdb_tag_0=>tag0",
+        "//cdb_tag_1=>tag1",
+        "//cdb_tag_2=>tag2",
+        "//waiter/ready=>ready",
+        "//woke=>woke",
     ],
 )
 
