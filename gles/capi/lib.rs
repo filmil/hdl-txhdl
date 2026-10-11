@@ -507,6 +507,29 @@ pub extern "C" fn glPointSizex(size: Fx) {
 }
 
 #[no_mangle]
+pub extern "C" fn glPointParameterx(pname: u32, param: Fx) {
+    with(|g| g.point_parameter(pname, param));
+}
+
+/// # Safety
+///
+/// `params` points at the values `pname` has: three for the distance
+/// attenuation, one for the rest.
+#[no_mangle]
+pub unsafe extern "C" fn glPointParameterxv(pname: u32, params: *const Fx) {
+    if params.is_null() {
+        return;
+    }
+    let n = if pname == gl::POINT_DISTANCE_ATTENUATION {
+        3
+    } else {
+        1
+    };
+    let v = core::slice::from_raw_parts(params, n);
+    with(|g| g.point_parameterv(pname, v));
+}
+
+#[no_mangle]
 pub extern "C" fn glLineWidthx(width: Fx) {
     with(|g| g.line_width(width));
 }

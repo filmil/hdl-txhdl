@@ -196,6 +196,11 @@ impl Gl<'_> {
             CURRENT_NORMAL => u(&self.normal),
             CURRENT_TEXTURE_COORDS => f(&self.tex_coords),
             POINT_SIZE => f(&[self.point_size]),
+            // `glPointParameterx`'s (#1508).
+            gl::POINT_SIZE_MIN => f(&[self.point_min]),
+            gl::POINT_SIZE_MAX => f(&[self.point_max]),
+            gl::POINT_FADE_THRESHOLD_SIZE => f(&[self.point_fade]),
+            gl::POINT_DISTANCE_ATTENUATION => f(&self.point_atten),
             LINE_WIDTH => f(&[self.line_width]),
             ALIASED_POINT_SIZE_RANGE | ALIASED_LINE_WIDTH_RANGE => {
                 i(&[1, size])

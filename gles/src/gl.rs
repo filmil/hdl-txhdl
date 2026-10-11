@@ -148,6 +148,13 @@ pub const MAX_LIGHTS: usize = 8;
 /// bottom is one (#994).
 pub const MAX_SIZE: u32 = 64;
 
+/// `glPointParameterx`'s names (#1508): the derived size's range, the
+/// fade threshold, and the distance attenuation's three coefficients.
+pub const POINT_SIZE_MIN: u32 = 0x8126;
+pub const POINT_SIZE_MAX: u32 = 0x8127;
+pub const POINT_FADE_THRESHOLD_SIZE: u32 = 0x8128;
+pub const POINT_DISTANCE_ATTENUATION: u32 = 0x8129;
+
 /// Blending and the alpha test (#993): the switches, and the factors of
 /// `glBlendFunc`, GL's `ZERO` and `ONE`, then `SRC_COLOR` to
 /// `SRC_ALPHA_SATURATE` in GL's order, which is Razboj's from two.
