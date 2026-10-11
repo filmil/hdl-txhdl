@@ -139,6 +139,11 @@ extern "C" fn main() -> ! {
 }
 
 /// The entry point, at address zero, as `ddr3.rs` has it.
+///
+/// # Safety
+///
+/// Only the core's reset enters it, with nothing set up; no code calls
+/// it.
 #[no_mangle]
 #[link_section = ".text.init"]
 pub unsafe extern "C" fn _start() -> ! {

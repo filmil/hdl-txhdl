@@ -242,7 +242,9 @@ fn main() -> ! {
     // halts only when every check passed, and the first LED shows the
     // halt. A failure spins here instead, and that LED stays dark.
     if !ok {
-        loop {}
+        loop {
+            core::hint::spin_loop();
+        }
     }
     halt()
 }

@@ -74,9 +74,9 @@ fn say(line: &[u8]) {
 fn drain() {
     use vreteno_regs::uart::{IP, IP_TXWM_MASK, TXCTRL, TXCTRL_TXCNT_SHIFT};
     unsafe {
-        let txctrl = UART.add(TXCTRL as usize / 4);
+        let txctrl = UART.add(TXCTRL / 4);
         txctrl.write_volatile(txctrl.read_volatile() | 1 << TXCTRL_TXCNT_SHIFT);
-        while UART.add(IP as usize / 4).read_volatile() & IP_TXWM_MASK == 0 {}
+        while UART.add(IP / 4).read_volatile() & IP_TXWM_MASK == 0 {}
     }
 }
 
@@ -152,13 +152,20 @@ extern "C" fn main() -> ! {
     // shows the halt, says the test passed. A failure spins here
     // instead, and that LED stays dark. See issue #195.
     if bad != 0 {
-        loop {}
+        loop {
+            core::hint::spin_loop();
+        }
     }
     unsafe { core::arch::asm!("csrwi 0x7c0, 1", options(noreturn)) }
 }
 
 /// The entry point, at address zero, which is where the core's
 /// program counter starts.
+///
+/// # Safety
+///
+/// Only the core's reset enters it, with nothing set up; no code calls
+/// it.
 #[no_mangle]
 #[link_section = ".text.init"]
 pub unsafe extern "C" fn _start() -> ! {

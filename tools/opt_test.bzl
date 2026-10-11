@@ -15,6 +15,8 @@ What is built for the core is not affected: the transition to the core
 sets its own flags (issue 1248).
 """
 
+load("//tools:rust_checks.bzl", "RUST_CHECK_ASPECTS", "rust_check_groups")
+
 OPT_RUSTC_FLAGS = [
     "-Copt-level=3",
     "-Cdebug-assertions=yes",
@@ -37,7 +39,10 @@ def _opt_test_impl(ctx):
     out = ctx.actions.declare_file(ctx.label.name)
     ctx.actions.symlink(output = out, target_file = exe, is_executable = True)
     runfiles = ctx.runfiles(files = [exe]).merge(test.default_runfiles)
-    return [DefaultInfo(executable = out, runfiles = runfiles)]
+    return [
+        DefaultInfo(executable = out, runfiles = runfiles),
+        rust_check_groups(ctx.attr.test),
+    ]
 
 opt_test = rule(
     implementation = _opt_test_impl,
@@ -48,6 +53,7 @@ opt_test = rule(
         "test": attr.label(
             doc = "The `rust_test` to build optimised and run.",
             cfg = _opt_transition,
+            aspects = RUST_CHECK_ASPECTS,
             executable = True,
             mandatory = True,
         ),

@@ -7,7 +7,7 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_static_library", "rust_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//cpu/vreteno/cpp:defs.bzl", "vreteno_c_program")
-load("//cpu/vreteno/rust:defs.bzl", "vreteno_static")
+load("//cpu/vreteno/rust:defs.bzl", "vreteno_checked", "vreteno_static")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -386,6 +386,15 @@ rust_library(
         "//cpu/vreteno/rust/regs:vreteno_regs",
         "//gpu/razboj:tile",
     ],
+)
+
+# Clippy and rustfmt on the board's machine as the core builds it: its
+# code for the core is under a `cfg` this machine's build leaves out
+# (issue 1629).
+vreteno_checked(
+    name = "vreteno_checked",
+    platform = "//cpu/vreteno/rust:vreteno",
+    targets = [":vreteno"],
 )
 
 # GL, EGL and the board's machine as one static library for a Zephyr

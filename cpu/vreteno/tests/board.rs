@@ -4708,7 +4708,7 @@ fn every_amo_reads_again_ending_a_line() {
     let mut body = Checked::new();
     body.li(5, 0x4000_0000).li(6, 1);
     // Up to the next line's start, so each AMO ends a line.
-    while (body.p.len() * 4) % 16 != 0 {
+    while !(body.p.len() * 4).is_multiple_of(16) {
         body.op(addi(0, 0, 0));
     }
     for _ in 0..N {

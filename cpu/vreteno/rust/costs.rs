@@ -76,11 +76,19 @@ fn main() -> ! {
     say(b"load", timed!("lw a2, 0(a0)"), empty);
     say(b"store", timed!("sw a2, 0(a0)"), empty);
     say(b"amoadd.w", timed!("amoadd.w a2, a2, (a0)"), empty);
-    say(b"lr.w+sc.w", timed!("lr.w a2, (a0)", "sc.w a3, a2, (a0)"), empty);
+    say(
+        b"lr.w+sc.w",
+        timed!("lr.w a2, (a0)", "sc.w a3, a2, (a0)"),
+        empty,
+    );
     say(b"lr.w", timed!("lr.w a2, (a0)"), empty);
     say(b"fence", timed!("fence"), empty);
     say(b"store+fence", timed!("sw a2, 0(a0)", "fence"), empty);
-    say(b"load-miss+step", timed!("lw a2, 0(a1)", "addi a1, a1, 256"), empty);
+    say(
+        b"load-miss+step",
+        timed!("lw a2, 0(a1)", "addi a1, a1, 256"),
+        empty,
+    );
     say(b"mul", timed!("mul a2, a2, a2"), empty);
     say(b"divu", timed!("lw a3, 0(a0)", "divu a2, a2, a3"), empty);
     Uart::say(b"costs done\n");
