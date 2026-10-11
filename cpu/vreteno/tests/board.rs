@@ -497,24 +497,36 @@ struct Net<'a> {
     host: Option<HostPlan>,
 }
 
-/// A burst written through the board top's host port and read back
-/// (issue 1634): from cycle `at`, `words` written from `addr` in one
-/// burst with identifier `id`, and once that is answered, read back in
-/// one burst with the same identifier.
+/// Bursts written through the board top's host port and, if `read`,
+/// read back (issue 1634): from cycle `at`, `bursts` bursts of `words`
+/// words each, burst `k` with identifier `k` at `addr` plus `k` times
+/// its length, every address phase given as soon as the port takes it,
+/// so that the bursts are in flight together; once every write is
+/// answered, the reads the same way. Burst `k`'s word `i` is
+/// [`host_word`]`(k, i)`.
 struct HostPlan {
     at: u64,
     addr: u32,
-    id: u8,
-    words: Vec<u32>,
+    bursts: usize,
+    words: usize,
+    read: bool,
 }
 
-/// What the board top's host met: the write's answer and the cycle it
-/// came, and every beat read back with its identifier, its answer and
-/// whether it was the last, and the cycle the last came.
+/// The word a [`HostPlan`] writes as burst `k`'s word `i`.
+fn host_word(k: usize, i: usize) -> u32 {
+    0x1634_0000 | (k as u32) << 8 | i as u32
+}
+
+/// What the board top's host met: each write's answer with the cycle,
+/// identifier and response, every beat read back with its identifier,
+/// word, response and whether it was its burst's last, how many reads
+/// were asked before the first beat came, and the cycle the last
+/// burst's last beat came.
 #[derive(Default)]
 struct HostLog {
-    wrote: Option<(u64, u8, Resp)>,
+    wrote: Vec<(u64, u8, Resp)>,
     read: Vec<(u8, u32, Resp, bool)>,
+    asked_before_first: usize,
     read_at: Option<u64>,
 }
 
@@ -670,10 +682,12 @@ fn run_all_in<const LO: usize, const HI: usize>(
     let (host_b, host_b_rx) = chan::<B<2>, DefaultClock>();
     let (host_r, host_r_rx) = chan::<R<32, 2>, DefaultClock>();
     let mut host_log = HostLog::default();
-    // Where the plan is: 0 waiting, 1 address given, 2 beats given,
-    // 3 written, 4 read asked, 5 done.
-    let mut host_step = 0u8;
-    let mut host_beat = 0usize;
+    // How far the plan is: the address phases and beats given, the
+    // reads asked, and the bursts read whole.
+    let (mut host_aws, mut host_burst, mut host_beat) =
+        (0usize, 0usize, 0usize);
+    let (mut host_ars, mut host_whole) = (0usize, 0usize);
+
     let (pair_req, pair_req_rx) = chan::<U<32>, Pix>();
     let (pair_inp_tx, pair_inp) = chan::<U<32>, Pix>();
     let (col_o, col) = signal::<U<10>, Pix>();
@@ -1288,59 +1302,82 @@ fn run_all_in<const LO: usize, const HI: usize>(
                 hc = if h_last { 0 } else { hc + 1 };
             }
         }
+        let mut host_idle = true;
         if let Some(p) = &host {
-            let addr = |a: u32| Addr::<32, 2> {
-                id: U::<2>::from(p.id),
-                addr: U::<32>::from(a),
-                len: U::<8>::from((p.words.len() - 1) as u8),
+            let addr = |k: usize| Addr::<32, 2> {
+                id: U::<2>::from(k as u8),
+                addr: U::<32>::from(p.addr + (4 * p.words * k) as u32),
+                len: U::<8>::from((p.words - 1) as u8),
                 size: U::<3>::from(2u8),
                 burst: BurstKind::Incr,
                 ..Default::default()
             };
-            if host_step == 0 && cycle >= p.at && host_aw_tx.ready().to_bool() {
-                host_aw_tx.send(addr(p.addr));
-                host_step = 1;
-            }
-            if host_step >= 1
-                && host_beat < p.words.len()
-                && host_w_tx.ready().to_bool()
+            if cycle >= p.at
+                && host_aws < p.bursts
+                && host_aw_tx.ready().to_bool()
             {
+                host_aw_tx.send(addr(host_aws));
+                host_aws += 1;
+            }
+            // A burst's beats follow its address phase, in its order.
+            if host_burst < host_aws && host_w_tx.ready().to_bool() {
                 host_w_tx.send(W {
-                    data: U::<32>::from(p.words[host_beat]),
+                    data: U::<32>::from(host_word(host_burst, host_beat)),
                     strb: U::<4>::from(0xfu8),
-                    last: Bit::from_bool(host_beat + 1 == p.words.len()),
+                    last: Bit::from_bool(host_beat + 1 == p.words),
                 });
                 host_beat += 1;
-            }
-            if let Some(b) = host_b_rx.recv_if(true) {
-                host_log.wrote = Some((cycle, b.id.raw() as u8, b.resp));
-                host_step = 3;
-            }
-            if host_step == 3 && host_ar_tx.ready().to_bool() {
-                host_ar_tx.send(addr(p.addr));
-                host_step = 4;
-            }
-            if let Some(r) = host_r_rx.recv_if(true) {
-                let last = r.last.to_bool();
-                host_log.read.push((
-                    r.id.raw() as u8,
-                    r.data.raw() as u32,
-                    r.resp,
-                    last,
-                ));
-                if last {
-                    host_log.read_at = Some(cycle);
-                    host_step = 5;
+                if host_beat == p.words {
+                    (host_burst, host_beat) = (host_burst + 1, 0);
                 }
             }
+            // An answer counts only once its burst's address was given.
+            if host_log.wrote.len() < host_aws {
+                if let Some(b) = host_b_rx.recv_if(true) {
+                    host_log.wrote.push((cycle, b.id.raw() as u8, b.resp));
+                }
+            }
+            let written = host_log.wrote.len() == p.bursts;
+            if p.read
+                && written
+                && host_ars < p.bursts
+                && host_ar_tx.ready().to_bool()
+            {
+                host_ar_tx.send(addr(host_ars));
+                host_ars += 1;
+            }
+            if host_whole < host_ars {
+                if let Some(r) = host_r_rx.recv_if(true) {
+                    if host_log.read.is_empty() {
+                        host_log.asked_before_first = host_ars;
+                    }
+                    let last = r.last.to_bool();
+                    host_log.read.push((
+                        r.id.raw() as u8,
+                        r.data.raw() as u32,
+                        r.resp,
+                        last,
+                    ));
+                    if last {
+                        host_whole += 1;
+                        if host_whole == p.bursts {
+                            host_log.read_at = Some(cycle);
+                        }
+                    }
+                }
+            }
+            host_idle = written && (!p.read || host_whole == p.bursts);
         }
-        let host_idle = host.is_none() || host_step == 5;
+        // The cycle the core halted is kept even while the host's plan
+        // runs on, so that it is the halt's and not the plan's end.
+        if scan.is_none() && halt.get().to_bool() && halted_at.is_none() {
+            halted_at = Some(cycle);
+        }
         if until_planned {
             if master.at >= plan.len() {
                 break;
             }
-        } else if scan.is_none() && halt.get().to_bool() && host_idle {
-            halted_at = Some(cycle);
+        } else if scan.is_none() && halted_at.is_some() && host_idle {
             break;
         }
     }
@@ -5381,20 +5418,24 @@ fn hart_one_takes_an_external_interrupt() {
     assert!(ran.halted_at.is_some(), "hart 1's handler never claimed 2");
 }
 
-/// The board top's host (issue 1634): a burst of eight words written
-/// into the DDR3 through the port is answered once, with its own
-/// identifier, and a burst read of the same eight gives them back, in
-/// order, with that identifier, the last beat marked last. The core
-/// runs its program meanwhile and says what it always says.
+/// The board top's host (issue 1634): four bursts of eight words, one
+/// under each of the port's four identifiers, written into the DDR3
+/// through the port with their address phases given back to back, so
+/// that they are in flight together. Each is answered once, under its
+/// own identifier. The four reads, asked back to back as well, give
+/// every word back, in order within its burst, under its burst's
+/// identifier, its last beat marked last. The core runs its program
+/// meanwhile and says what it always says.
 #[test]
 fn the_board_tops_host_writes_and_reads_the_ddr3() {
-    let words: Vec<u32> = (0..8).map(|i| 0x1634_0000 | (i * 0x111)).collect();
+    let (bursts, words) = (4, 8);
     let net = Net {
         host: Some(HostPlan {
             at: 200,
             addr: 0x4010_0000,
-            id: 2,
-            words: words.clone(),
+            bursts,
+            words,
+            read: true,
         }),
         ..Net::default()
     };
@@ -5407,19 +5448,34 @@ fn the_board_tops_host_writes_and_reads_the_ddr3() {
         net,
         &[],
     );
-    let (wrote_at, id, resp) = ran.host.wrote.expect("the write answered");
-    assert_eq!((id, resp), (2, Resp::Okay), "the write's answer");
-    let read_at = ran.host.read_at.expect("the read's last beat came");
-    assert!(read_at > wrote_at, "read after the write");
-    assert_eq!(ran.host.read.len(), words.len(), "{:x?}", ran.host.read);
-    for (i, &(rid, data, resp, last)) in ran.host.read.iter().enumerate() {
-        assert_eq!(rid, 2, "beat {i}'s identifier");
-        assert_eq!(resp, Resp::Okay, "beat {i}'s answer");
-        assert_eq!(data, words[i], "beat {i}");
-        assert_eq!(last, i + 1 == words.len(), "beat {i}'s last");
+    let log = &ran.host;
+    assert_eq!(log.wrote.len(), bursts, "the writes answered");
+    let mut ids: Vec<u8> = log.wrote.iter().map(|w| w.1).collect();
+    ids.sort();
+    assert_eq!(ids, [0, 1, 2, 3], "each write answered under its own");
+    assert!(log.wrote.iter().all(|w| w.2 == Resp::Okay), "{:?}", ids);
+    let read_at = log.read_at.expect("every read came whole");
+    assert_eq!(log.read.len(), bursts * words, "the beats read");
+    for k in 0..bursts {
+        let beats: Vec<_> =
+            log.read.iter().filter(|b| b.0 as usize == k).collect();
+        assert_eq!(beats.len(), words, "burst {k}'s beats");
+        for (i, &&(_, data, resp, last)) in beats.iter().enumerate() {
+            assert_eq!(resp, Resp::Okay, "burst {k} beat {i}'s answer");
+            assert_eq!(data, host_word(k, i), "burst {k} beat {i}");
+            assert_eq!(last, i + 1 == words, "burst {k} beat {i}'s last");
+        }
     }
+    assert!(
+        log.asked_before_first > 1,
+        "only {} read in flight",
+        log.asked_before_first
+    );
     eprintln!(
-        "host port: write answered at {wrote_at}, read whole at {read_at}"
+        "host port: writes answered by {}, {} reads in flight, all whole \
+         at {read_at}",
+        log.wrote.last().map_or(0, |w| w.0),
+        log.asked_before_first
     );
     assert!(ran.halted_at.is_some(), "the core halted: {}", ran.said);
 }
@@ -5450,19 +5506,20 @@ fn watch_program() -> Vec<u32> {
 /// word rather than the line it held.
 #[test]
 fn the_board_tops_host_writes_are_snooped() {
-    let words: Vec<u32> = (0..8).map(|i| 0x5ee0_0000 | i).collect();
     let net = Net {
         host: Some(HostPlan {
             at: 4000,
             addr: 0x4010_0000,
-            id: 1,
-            words,
+            bursts: 1,
+            words: 8,
+            read: false,
         }),
         ..Net::default()
     };
     let ran = run_all(&watch_program(), &[], b"", &[], 100_000, net, &[]);
     assert_eq!(ran.said, "r\nc\n", "what the core said");
-    let (wrote_at, _, resp) = ran.host.wrote.expect("the write answered");
+    let &(wrote_at, _, resp) =
+        ran.host.wrote.first().expect("the write answered");
     assert_eq!(resp, Resp::Okay, "the write's answer");
     // `r` went out before the write; the core queues `c` and halts once
     // it reads the new word, so its halt is when it saw it.
