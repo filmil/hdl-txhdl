@@ -194,6 +194,9 @@ struct V {
     eye: [i128; 4],
     clip: [i128; 4],
     col: [i128; 4],
+    /// The clip coordinates kept exactly through clipping, by a positive
+    /// factor, which the window places come from (#1661).
+    exact: [i128; 4],
 }
 
 fn narrow(acc: i128) -> i128 {
@@ -215,7 +218,7 @@ const GMIN: i128 = -16384 + 16;
 const GMAX: i128 = 16383 - 16;
 
 fn dist(s: &State, v: &V, plane: usize) -> i128 {
-    let [x, y, z, w] = v.clip;
+    let [x, y, z, w] = v.exact;
     let (vx, vy, vw, vh) = s.viewport;
     let (vx16, vy16, vw8, vh8) = (
         16 * vx as i128,
@@ -246,7 +249,25 @@ fn cross(a: &V, b: &V, da: i128, db: i128) -> V {
         eye: mix(&a.eye, &b.eye),
         clip: mix(&a.clip, &b.clip),
         col: mix(&a.col, &b.col),
+        exact: cut(&a.exact, &b.exact, da, db),
     }
+}
+
+/// The crossing kept exactly, as the library keeps it (#1661):
+/// `da b - db a` by a positive factor, the distances and the result
+/// shifted down by the same rule to stay within i128.
+fn cut(a: &[i128; 4], b: &[i128; 4], da: i128, db: i128) -> [i128; 4] {
+    let bits = |v: i128| 128 - v.unsigned_abs().leading_zeros();
+    let shift = |v: i128, s: u32| if s == 0 { v } else { v >> s };
+    let s = bits(da).max(bits(db)).saturating_sub(60);
+    let (da, db) = (shift(da, s), shift(db, s));
+    let mut h: [i128; 4] = std::array::from_fn(|i| da * b[i] - db * a[i]);
+    if da - db < 0 {
+        h = h.map(|v| -v);
+    }
+    let top = h.iter().map(|&v| bits(v)).max().unwrap_or(0);
+    let s = top.saturating_sub(62);
+    h.map(|v| shift(v, s))
 }
 
 fn word(c: &[i128; 4]) -> u32 {
@@ -282,7 +303,7 @@ fn reference(s: &State, tri: [V; 3], out: &mut Vec<Op>) {
     let (vx, vy, vw, vh) = s.viewport;
     let mut win = vec![];
     for v in &poly {
-        let [x, y, _, w] = v.clip;
+        let [x, y, _, w] = v.exact;
         if w <= 0 {
             return;
         }
@@ -417,6 +438,7 @@ fn agree(
                     eye,
                     clip,
                     col: d.col[i].map(|c| c as i128),
+                    exact: clip,
                 }
             };
             reference(&s, [v(t[0]), v(t[1]), v(t[2])], &mut ops);
