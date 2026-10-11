@@ -163,7 +163,8 @@ impl View {
             3 => x * vw8 + w * (vx16 + vw8 - gmin),
             4 => w * (gmax - vx16 - vw8) - x * vw8,
             5 => y * vh8 + w * (vy16 + vh8 - (sh16 - gmax)),
-            _ => w * ((sh16 - gmin) - vy16 - vh8) - y * vh8,
+            6 => w * ((sh16 - gmin) - vy16 - vh8) - y * vh8,
+            _ => unreachable!("the user's plane reads the eye"),
         }
     }
 
@@ -2407,12 +2408,14 @@ impl<'a> Gl<'a> {
         let view = self.view();
         let mut poly = [Vert::default(); MAXV];
         poly[..3].copy_from_slice(&tri);
-        // Each vertex's clip coordinates kept exactly, in i128, so that a
-        // vertex clipping makes, and one made from it, lands where the
-        // edges say rather than where rounding puts it (#1661).
-        let mut exact = [[0i128; 4]; MAXV];
+        // Each vertex's clip coordinates kept in i128, far finer than the
+        // window's sixteenth, as a point times a positive scale and the
+        // scale, so that a vertex clipping makes, and one made from it,
+        // lands where the edges say rather than where rounding puts it
+        // (#1661). The corners' scale is one.
+        let mut exact = [([0i128; 4], 1i128); MAXV];
         for k in 0..3 {
-            exact[k] = tri[k].clip.map(|c| c as i128);
+            exact[k] = (tri[k].clip.map(|c| c as i128), 1);
         }
         let mut n = 3;
         // A triangle no plane cuts is drawn as it is, from where its
@@ -2426,27 +2429,39 @@ impl<'a> Gl<'a> {
                 continue;
             }
             let mut out = [Vert::default(); MAXV];
-            let mut kept = [[0i128; 4]; MAXV];
+            let mut kept = [([0i128; 4], 1i128); MAXV];
             let mut m = 0;
             for i in 0..n {
                 let j = (i + 1) % n;
                 let (a, b) = (poly[i], poly[j]);
-                let (da, db) = if p == 2 {
-                    (view.distances(&a, p), view.distances(&b, p))
+                let ((ha, sa), (hb, sb)) = (exact[i], exact[j]);
+                // Each end's distance from the plane times its own scale,
+                // which a scaled point's distance is; the user's plane
+                // reads the eye, unscaled, so it is scaled here. Their
+                // signs are the distances' signs.
+                let (wa, wb) = if p == 2 {
+                    let (da, db) =
+                        (view.distances(&a, p), view.distances(&b, p));
+                    let (sa, sb) = fit(sa, sb, 60);
+                    let (da, db) = fit(da, db, 60);
+                    (da * sa, db * sb)
                 } else {
-                    (
-                        view.distance_of(&exact[i], p),
-                        view.distance_of(&exact[j], p),
-                    )
+                    (view.distance_of(&ha, p), view.distance_of(&hb, p))
                 };
-                if da >= 0 {
+                if wa >= 0 {
                     out[m] = a;
                     kept[m] = exact[i];
                     m += 1;
                 }
-                if (da >= 0) != (db >= 0) {
-                    out[m] = between(&a, &b, da, db);
-                    kept[m] = cut(&exact[i], &exact[j], da, db);
+                if (wa >= 0) != (wb >= 0) {
+                    // The crossing's place along the edge from the true
+                    // distances, wa / sa and wb / sb, for the colours and
+                    // the rest that are carried as they were.
+                    let (wa2, wb2) = fit(wa, wb, 60);
+                    let (sa2, sb2) = fit(sa, sb, 60);
+                    let (ta, tb) = fit(wa2 * sb2, wb2 * sa2, 60);
+                    out[m] = between(&a, &b, ta, tb);
+                    kept[m] = cut((ha, sa), (hb, sb), wa, wb);
                     m += 1;
                 }
             }
@@ -2460,16 +2475,17 @@ impl<'a> Gl<'a> {
         // The window, in sixteenths: GL's y, and Razboj's.
         let sh16 = 16 * self.screen.1 as i64;
         let mut win = [(0i64, 0i64); MAXV];
+        let mut zp = [0u32; MAXV];
         for (k, v) in poly[..n].iter().enumerate() {
             let at = if placed {
-                Some(v.win)
+                Some((v.win, v.zw))
             } else {
-                view.place(&exact[k]).map(|p| p.0)
+                view.place(&exact[k].0)
             };
-            let Some(at) = at else {
+            let Some((at, z)) = at else {
                 return;
             };
-            win[k] = at;
+            (win[k], zp[k]) = (at, z);
         }
         // Which way it faces, in GL's window, where counter-clockwise
         // has a positive area.
@@ -2507,16 +2523,7 @@ impl<'a> Gl<'a> {
         };
         let flat = colour_word(&face(&tri[2]));
         // Each vertex's window depth, when the depth test wants it.
-        let mut zw = [0u32; MAXV];
-        if self.depth_test {
-            for (k, v) in poly[..n].iter().enumerate() {
-                zw[k] = if placed {
-                    v.zw
-                } else {
-                    view.place(&exact[k]).map_or(0, |p| p.1)
-                };
-            }
-        }
+        let zw = if self.depth_test { zp } else { [0u32; MAXV] };
         // The texture, when texturing is on and it is complete (#997).
         let texture = self.texturing();
         for k in 1..n - 1 {
@@ -2665,24 +2672,47 @@ fn size(s: Fx) -> i64 {
 /// distances to it, which have different signs: each coordinate and
 /// each colour channel interpolated in clip space, as the
 /// specification says, rounded to the nearest.
-/// The point where the edge from `a` to `b`, in exact homogeneous clip
-/// coordinates, crosses a plane they lie either side of, at distances
-/// `da` and `db` (#1661): `(da b - db a) / (da - db)`, kept as a
-/// multiple of itself, by a positive factor so that its distances keep
-/// their signs. The distances and the result are shifted down to keep
-/// within i128, which costs only bits far below the window's sixteenth.
-fn cut(a: &[i128; 4], b: &[i128; 4], da: i128, db: i128) -> [i128; 4] {
-    let bits = |v: i128| 128 - v.unsigned_abs().leading_zeros();
-    let shift = |v: i128, s: u32| if s == 0 { v } else { v >> s };
-    let s = bits(da).max(bits(db)).saturating_sub(60);
-    let (da, db) = (shift(da, s), shift(db, s));
-    let mut h: [i128; 4] = core::array::from_fn(|i| da * b[i] - db * a[i]);
-    if da - db < 0 {
-        h = h.map(|v| -v);
+/// `a` and `b` shifted down together until the larger fits in `bits`,
+/// so that their ratio is kept and a product of two stays within i128.
+fn fit(a: i128, b: i128, bits: u32) -> (i128, i128) {
+    let size = |v: i128| 128 - v.unsigned_abs().leading_zeros();
+    let s = size(a).max(size(b)).saturating_sub(bits);
+    if s == 0 {
+        (a, b)
+    } else {
+        (a >> s, b >> s)
     }
-    let top = h.iter().map(|&v| bits(v)).max().unwrap_or(0);
-    let s = top.saturating_sub(62);
-    h.map(|v| shift(v, s))
+}
+
+/// The point where the edge from `a` to `b`, each a point in homogeneous
+/// clip coordinates times a positive scale and that scale, crosses a
+/// plane they lie either side of (#1661). `wa` and `wb` are their
+/// distances from it times their own scales, as a scaled point's distance
+/// is, so the crossing is `wa b - wb a` over `wa sb - wb sa`, kept as that
+/// point times that scale, made positive so that distances keep their
+/// signs. The weights and the result are shifted down to stay within
+/// i128, which costs only bits far below the window's sixteenth.
+fn cut(
+    (ha, sa): ([i128; 4], i128),
+    (hb, sb): ([i128; 4], i128),
+    wa: i128,
+    wb: i128,
+) -> ([i128; 4], i128) {
+    let (wa, wb) = fit(wa, wb, 60);
+    let mut h: [i128; 4] = core::array::from_fn(|i| wa * hb[i] - wb * ha[i]);
+    let mut s = wa * sb - wb * sa;
+    if s < 0 {
+        h = h.map(|v| -v);
+        s = -s;
+    }
+    let size = |v: i128| 128 - v.unsigned_abs().leading_zeros();
+    let top = h.iter().map(|&v| size(v)).max().unwrap_or(0).max(size(s));
+    let k = top.saturating_sub(62);
+    if k == 0 {
+        (h, s)
+    } else {
+        (h.map(|v| v >> k), (s >> k).max(1))
+    }
 }
 
 fn between(a: &Vert, b: &Vert, da: i128, db: i128) -> Vert {

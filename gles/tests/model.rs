@@ -194,9 +194,11 @@ struct V {
     eye: [i128; 4],
     clip: [i128; 4],
     col: [i128; 4],
-    /// The clip coordinates kept exactly through clipping, by a positive
-    /// factor, which the window places come from (#1661).
+    /// The clip coordinates kept through clipping as the library keeps
+    /// them, a point times a positive scale and that scale, which the
+    /// window places come from (#1661).
     exact: [i128; 4],
+    scale: i128,
 }
 
 fn narrow(acc: i128) -> i128 {
@@ -238,36 +240,65 @@ fn dist(s: &State, v: &V, plane: usize) -> i128 {
     }
 }
 
-fn cross(a: &V, b: &V, da: i128, db: i128) -> V {
+/// The crossing of the edge from `a` to `b`, whose distances from the
+/// plane times their own scales are `wa` and `wb`, as the library makes
+/// it (#1661): the colours and the rest at the true distances' ratio, and
+/// the kept point `wa b - wb a` over `wa sb - wb sa`, by the same shifts.
+fn cross(a: &V, b: &V, wa: i128, wb: i128) -> V {
+    let (wa2, wb2) = fit(wa, wb, 60);
+    let (sa2, sb2) = fit(a.scale, b.scale, 60);
+    let (ta, tb) = fit(wa2 * sb2, wb2 * sa2, 60);
     let mix = |p: &[i128; 4], q: &[i128; 4]| {
         std::array::from_fn(|i| {
-            (p[i] + rdiv((q[i] - p[i]) * da, da - db))
+            (p[i] + rdiv((q[i] - p[i]) * ta, ta - tb))
                 .clamp(i32::MIN as i128, i32::MAX as i128)
         })
     };
+    let (exact, scale) = cut(&a.exact, a.scale, &b.exact, b.scale, wa, wb);
     V {
         eye: mix(&a.eye, &b.eye),
         clip: mix(&a.clip, &b.clip),
         col: mix(&a.col, &b.col),
-        exact: cut(&a.exact, &b.exact, da, db),
+        exact,
+        scale,
     }
 }
 
-/// The crossing kept exactly, as the library keeps it (#1661):
-/// `da b - db a` by a positive factor, the distances and the result
-/// shifted down by the same rule to stay within i128.
-fn cut(a: &[i128; 4], b: &[i128; 4], da: i128, db: i128) -> [i128; 4] {
-    let bits = |v: i128| 128 - v.unsigned_abs().leading_zeros();
-    let shift = |v: i128, s: u32| if s == 0 { v } else { v >> s };
-    let s = bits(da).max(bits(db)).saturating_sub(60);
-    let (da, db) = (shift(da, s), shift(db, s));
-    let mut h: [i128; 4] = std::array::from_fn(|i| da * b[i] - db * a[i]);
-    if da - db < 0 {
-        h = h.map(|v| -v);
+/// `a` and `b` shifted down together until the larger fits in `bits`.
+fn fit(a: i128, b: i128, bits: u32) -> (i128, i128) {
+    let size = |v: i128| 128 - v.unsigned_abs().leading_zeros();
+    let s = size(a).max(size(b)).saturating_sub(bits);
+    if s == 0 {
+        (a, b)
+    } else {
+        (a >> s, b >> s)
     }
-    let top = h.iter().map(|&v| bits(v)).max().unwrap_or(0);
-    let s = top.saturating_sub(62);
-    h.map(|v| shift(v, s))
+}
+
+/// The kept crossing, as the library's `cut`.
+fn cut(
+    ha: &[i128; 4],
+    sa: i128,
+    hb: &[i128; 4],
+    sb: i128,
+    wa: i128,
+    wb: i128,
+) -> ([i128; 4], i128) {
+    let (wa, wb) = fit(wa, wb, 60);
+    let mut h: [i128; 4] = std::array::from_fn(|i| wa * hb[i] - wb * ha[i]);
+    let mut s = wa * sb - wb * sa;
+    if s < 0 {
+        h = h.map(|v| -v);
+        s = -s;
+    }
+    let size = |v: i128| 128 - v.unsigned_abs().leading_zeros();
+    let top = h.iter().map(|&v| size(v)).max().unwrap_or(0).max(size(s));
+    let k = top.saturating_sub(62);
+    if k == 0 {
+        (h, s)
+    } else {
+        (h.map(|v| v >> k), (s >> k).max(1))
+    }
 }
 
 fn word(c: &[i128; 4]) -> u32 {
@@ -288,6 +319,15 @@ fn reference(s: &State, tri: [V; 3], out: &mut Vec<Op>) {
         for i in 0..poly.len() {
             let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
             let (da, db) = (dist(s, &a, p), dist(s, &b, p));
+            // The user's plane reads the eye, unscaled; it is scaled as
+            // the library scales it.
+            let (da, db) = if p == 2 {
+                let (sa, sb) = fit(a.scale, b.scale, 60);
+                let (da, db) = fit(da, db, 60);
+                (da * sa, db * sb)
+            } else {
+                (da, db)
+            };
             if da >= 0 {
                 next.push(a);
             }
@@ -439,6 +479,7 @@ fn agree(
                     clip,
                     col: d.col[i].map(|c| c as i128),
                     exact: clip,
+                    scale: 1,
                 }
             };
             reference(&s, [v(t[0]), v(t[1]), v(t[2])], &mut ops);
