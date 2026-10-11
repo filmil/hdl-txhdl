@@ -31,13 +31,17 @@ platform(
 # maps, which runs on it as it is. Optimising for size is not a
 # preference: the instruction memory is 4 KiB, and a debug assertion
 # pulls in `core`'s panic formatting, which does not fit.
+# The linker script is named by its label, so that a module depending on
+# this one finds it under its own external root (issue 1651); a target
+# using these flags lists the script in its `compile_data`, which
+# `$(execpath)` needs.
 VRETENO_FLAGS = [
     "-Copt-level=z",
     "-Cdebug-assertions=no",
     "-Coverflow-checks=no",
     "-Cpanic=abort",
     "-Clinker=rust-lld",
-    "-Clink-arg=-Tcpu/vreteno/rust/vreteno.ld",
+    "-Clink-arg=-T$(execpath :vreteno.ld)",
 ]
 
 # The same, for a program that is loaded into the board's memory and
@@ -48,7 +52,7 @@ VRETENO_RAM_FLAGS = [
     "-Coverflow-checks=no",
     "-Cpanic=abort",
     "-Clinker=rust-lld",
-    "-Clink-arg=-Tcpu/vreteno/rust/vreteno_ram.ld",
+    "-Clink-arg=-T$(execpath :vreteno_ram.ld)",
     # A program loaded into the DDR3 reports its own faults (issue 1413).
     "--cfg=vreteno_ram",
 ]
