@@ -338,7 +338,7 @@ A point is the disc of its diameter, as a polygon of eight sides, or sixteen abo
 Each has a rim a pixel wide, half inside its edge and half out, across which the fragment's alpha falls from the colour's to nought: the coverage GL puts in alpha, taken linear across the rim, and near the product of the two at a line's corners, where each corner is a square of four triangles about a middle with a quarter of the alpha.
 The rim's triangles carry an alpha plane, Razboj's smooth alpha (#1520), whatever the shading, so that alpha falls across them even when the colour is flat.
 A line's colour and depth at each corner are the segment's own at that point, rounded to the nearest, so they follow the segment along its length; across the half pixel of rim past an end they run to that end's own, which leaves the end itself a quarter pixel's share of the gradient off its value.
-At the smallest sizes the inside is gone: a line one pixel wide is all rim across its width, and a point one pixel across is all rim, a cone. A point's brightest pixel can be covered no more than its disc is large, so below a pixel and an eighth across its alpha is scaled by the disc's area in pixels, pi over four for a point of one pixel.
+At the smallest sizes the inside is gone: a line one pixel wide is all rim across its width, and a point one pixel across is all rim, a cone. A point's brightest pixel can be covered no more than its disc is large, so up to a pixel and an eighth across its alpha is scaled by the disc's area in pixels, pi over four for a point of one pixel and 0.994 for one of a pixel and an eighth; larger points are not scaled.
 A line shorter than a pixel has its alpha scaled by its length, since its rim spans a pixel along it whatever its own length.
 Blending is the program's, as GL leaves it.
 A point sprite is not antialiased, as `OES_point_sprite` says.
@@ -400,11 +400,11 @@ On the host they draw through Razboj's model as EGL's machine, and `//gles:confo
 The first group is the state tables of the specification's section 6.2: every state variable's initial value, through the query its table names and through the others with section 6.1.2's conversions, and every implementation-dependent value against its minimum.
 The second is the errors: for each command, the error section 2.5 and the command's own section give a bad argument, each recorded once, and that the command changes nothing.
 The third is the rendering: scenes read back with `glReadPixels` and held, pixel for pixel, to a reference in double precision that follows the specification's rules for points, polygons, lines by the four rules section 3.4.1 sets an algorithm other than the diamond exit, the viewport, smooth shading, every per-fragment test and operation, fog, the texture environments and lighting, and the depth and the stencil kept across a read in the middle of a frame, skipping only a pixel whose centre lies on an edge, which GL leaves to the implementation.
-Antialiased points and lines are held to each pixel's coverage, sampled 8 by 8, within 40 of 255, since the rim is linear where the coverage is not: points of 1, 1.5, 3 and 8.5 pixels, and lines of widths 1 and 3.5 slanting, 2 level, and 1 shorter than a pixel.
-The largest difference is under 33, on the 8.5 pixel point; the points of 1 and 1.5 pixels are held within 16, which the point of one pixel misses unscaled by at least 34.
+Antialiased points and lines are held to each pixel's coverage, sampled 8 by 8, within 40 of 255, since the rim is linear where the coverage is not: points of 1, 1.125, 1.5, 3 and 8.5 pixels, and lines of widths 1 and 3.5 slanting, 2 level, and 1 shorter than a pixel.
+The largest difference is under 33, on the 8.5 pixel point; the points of 1 and 1.125 pixels, which are scaled, are held within 16, and the point of 1.5 pixels, which is not, within 20; the point of one pixel misses unscaled by at least 34.
 A four-pixel line shaded from red to blue is read at its three inner pixels, each within 8 of the mix a quarter, a half and three quarters along.
 The fourth is four of piglit's ES 1 tests, in `gles/conform/piglit`, ported with their float calls made fixed point for Common-Lite, each change marked.
-Of 203 state checks, 173 pass; of 100 error checks, 99; of 92 rendering checks, 92; and of piglit's four, two. The 33 failures fall under five issues:
+Of 203 state checks, 173 pass; of 100 error checks, 99; of 93 rendering checks, 93; and of piglit's four, two. The 33 failures fall under five issues:
 
 | Issue | Checks | What is missing or wrong |
 |---|---|---|
