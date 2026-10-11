@@ -154,6 +154,10 @@ pub struct Devices {
     /// the board's 60 Hz is asked for, [`BOARD_RASTER`] and
     /// [`BOARD_BLANKING`] (#1639).
     pub raster: (u64, u64),
+    /// When the next vertical blanking begins, in the same clock, so that
+    /// a step compares one number rather than divides; nought until the
+    /// first step works it out from `raster`.
+    pub(crate) next_blank: u64,
     /// The lines the PLIC drives, as last worked out, and whether they
     /// have to be worked out again: they change only when a program
     /// reaches the PLIC or the serial port, or when a byte arrives, so
@@ -388,6 +392,7 @@ impl Machine {
             flips: Vec::new(),
             shown: None,
             raster: (RASTER, BLANKING),
+            next_blank: 0,
             meip: false,
             seip: false,
             meip1: false,
@@ -445,16 +450,24 @@ impl Machine {
             let before = d.steps;
             d.steps += d.elapsed;
             // As each vertical blanking begins the scanout takes the base
-            // it was last given, as the board's does (#1639).
-            let (period, blanking) = d.raster;
-            let starts = |t: u64| (t + blanking) / period;
-            if starts(d.steps) != starts(before) {
-                let taken = d.scanout();
-                if taken != d.shown {
-                    d.shown = taken;
-                    if let Some(base) = taken {
-                        let frame = d.steps / period;
-                        d.flips.push((base, frame));
+            // it was last given, as the board's does at the blanking's
+            // first row (`hdmi`'s frame pulse; #1639).
+            if d.steps >= d.next_blank {
+                let (period, blanking) = d.raster;
+                if d.next_blank == 0 {
+                    // The first step: the first blanking's start.
+                    d.next_blank = period - blanking;
+                } else {
+                    let taken = d.scanout();
+                    if taken != d.shown {
+                        d.shown = taken;
+                        if let Some(base) = taken {
+                            let frame = d.next_blank / period;
+                            d.flips.push((base, frame));
+                        }
+                    }
+                    while d.next_blank <= d.steps {
+                        d.next_blank += period;
                     }
                 }
             }
@@ -647,6 +660,48 @@ mod tests {
     }
 
     use super::*;
+
+    /// The scanout takes the base it was last given as each vertical
+    /// blanking begins, not when it is written, and the flips say each
+    /// base it took once, with the frame it took it in (#1639). A raster
+    /// of a hundred steps, the last ten the blanking, over a program that
+    /// jumps to itself.
+    #[test]
+    fn the_scanout_takes_its_base_as_the_blanking_begins() {
+        use crate::model::Bus;
+        let mut m = Machine::new();
+        m.load(0x4000_0000, &0x0000_006fu32.to_le_bytes()); // j .
+        m.boot(0x4000_0000, 0);
+        m.board.0.borrow_mut().raster = (100, 10);
+        let video = m.board.0.borrow().map.video.0;
+        let run_to = |m: &mut Machine, t: u64| {
+            while m.board.0.borrow().steps < t {
+                m.step();
+            }
+        };
+        let shown = |m: &Machine| m.board.0.borrow().shown;
+        run_to(&mut m, 20);
+        assert!(m.board.store(video + 0x80, 0x4200_0000, !0));
+        assert!(m.board.store(video + 0x84, 1, !0));
+        run_to(&mut m, 89);
+        assert_eq!(shown(&m), None, "not taken before the blanking");
+        run_to(&mut m, 90);
+        assert_eq!(shown(&m), Some(0x4200_0000), "taken as it began");
+        // Given another mid-frame, then the same again: one more flip.
+        run_to(&mut m, 140);
+        assert!(m.board.store(video + 0x80, 0x4220_0000, !0));
+        run_to(&mut m, 189);
+        assert_eq!(shown(&m), Some(0x4200_0000), "still the first");
+        run_to(&mut m, 190);
+        assert_eq!(shown(&m), Some(0x4220_0000), "the second");
+        assert!(m.board.store(video + 0x80, 0x4220_0000, !0));
+        run_to(&mut m, 300);
+        assert_eq!(shown(&m), Some(0x4220_0000));
+        assert_eq!(
+            m.board.0.borrow().flips,
+            [(0x4200_0000, 0), (0x4220_0000, 1)]
+        );
+    }
 
     /// The sources the model drives are the board's: the serial port's
     /// and the Ethernet port's, each where `board::PLIC_SOURCES` puts
