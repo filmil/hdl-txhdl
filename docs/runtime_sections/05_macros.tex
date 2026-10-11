@@ -176,7 +176,17 @@ implemented for arrays, their fields the indices, so its ports are
 \code{ins\_0} to \code{ins\_\{N-1\}} and are found when \code{lowered}
 runs. A \code{for i in lo..hi} at the top of the loop is unrolled
 there too, since \code{N} is a const parameter the macro cannot see
-(issue 500). A process's body is written as a block that pushes its
+(issue 500). Such an array may be a field of a struct of ports:
+\code{port\_fields} reads \code{side.f[k]} as the port
+\code{side\_f\_k}, and \code{side.f[i]} with a loop's variable as a
+name formatted with \code{i}, as it does an array side, and goes on
+reading the chain after the index, so \code{side.lanes[0].valid} is a
+port too. A struct of ports may sit beside an array or a port in one
+tuple side, a side of its own under its element's name, and an array
+passed to a child may hold a channel of a bundle made whole or a field
+of a split port group, which \code{lower\_structural} reads by
+\code{link\_field} and \code{split\_field} as it reads a scalar
+(issue 1636). A process's body is written as a block that pushes its
 statements, so a loop is a Rust \code{for} among the pushes;
 \code{port\_fields} writes \code{ins[i]} as a name holding \code{i}
 between two marks, and \code{dyn\_names} turns every quoted name
