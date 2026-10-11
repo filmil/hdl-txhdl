@@ -141,10 +141,19 @@ pub struct Devices {
     /// the first and last rows its entries' boxes span, a clear's being
     /// the raster's rows 0 to 479 (#1605).
     pub rings: Vec<(u32, Option<u32>, Option<(u32, u32)>)>,
-    /// Every base the scanout is given, with the stand-in raster's frame
-    /// it was written in (#1639), so that a test sees how many frames
-    /// each buffer stays on the screen.
+    /// Every base the scanout takes, with the stand-in raster's frame it
+    /// is taken in (#1639), so that a test sees how many frames each
+    /// buffer stays on the screen. The scanout takes the base it was last
+    /// given as each vertical blanking begins, as the board's does.
     pub flips: Vec<(u32, u64)>,
+    /// The base the scanout took at the last blanking's start, once its
+    /// control bit shows it: what is on the screen (#1639).
+    pub shown: Option<u32>,
+    /// The stand-in raster's frame and its vertical blanking, in steps,
+    /// or cycles in the timing mode: [`RASTER`] and [`BLANKING`] unless
+    /// the board's 60 Hz is asked for, [`BOARD_RASTER`] and
+    /// [`BOARD_BLANKING`] (#1639).
+    pub raster: (u64, u64),
     /// The lines the PLIC drives, as last worked out, and whether they
     /// have to be worked out again: they change only when a program
     /// reaches the PLIC or the serial port, or when a byte arrives, so
@@ -180,8 +189,14 @@ impl Devices {
 
 /// The stand-in raster's frame and vertical blanking, in steps (issue
 /// 1551).
-const RASTER: u64 = 100_000;
-const BLANKING: u64 = 5_000;
+pub const RASTER: u64 = 100_000;
+pub const BLANKING: u64 = 5_000;
+
+/// The board's raster in the core's cycles at 100 MHz, for the timing
+/// mode (#1639): 640 by 480 at 60 Hz, 800 columns by 525 rows of the
+/// 25.175 MHz pixel clock, the last 45 rows the vertical blanking.
+pub const BOARD_RASTER: u64 = 800 * 525 * 100_000_000 / 25_175_000;
+pub const BOARD_BLANKING: u64 = 800 * 45 * 100_000_000 / 25_175_000;
 
 /// Where a program puts Razboj's list and tile table, the HAL's
 /// `Razboj::LIST`, and the count's bit that says it rang a tile table
@@ -247,8 +262,9 @@ impl Bus for Board {
             // frames counted in the top half, so a program that waits for
             // the blanking runs here (issue 1551).
             if off == 0 {
-                let (frame, at) = (d.steps / RASTER, d.steps % RASTER);
-                let blank = (at >= RASTER - BLANKING) as u32;
+                let (period, blanking) = d.raster;
+                let (frame, at) = (d.steps / period, d.steps % period);
+                let blank = (at >= period - blanking) as u32;
                 return Some(((frame as u32 & 0xffff) << 16) | blank);
             }
             return Some(d.video[(off / 4) as usize % 64]);
@@ -305,17 +321,12 @@ impl Bus for Board {
             return true;
         }
         if let Some(off) = inside(map.video, addr) {
-            use txhdl_parts::scanout::{scan, SCAN_BIT};
-            if off == (1 << SCAN_BIT) + scan::base {
-                let frame = d.steps / RASTER;
-                d.flips.push((v, frame));
-            }
             d.video[(off / 4) as usize % 64] = v;
             return true;
         }
         if let Some(off) = inside(map.doorbell, addr) {
             if off == 0 {
-                let shown = d.scanout();
+                let shown = d.shown;
                 // A tile table's records, the second word of each the
                 // tile's origin, its row in bits 25 to 16.
                 let rows = if v & TILED != 0 {
@@ -375,6 +386,8 @@ impl Machine {
             video: [0; 64],
             rings: Vec::new(),
             flips: Vec::new(),
+            shown: None,
+            raster: (RASTER, BLANKING),
             meip: false,
             seip: false,
             meip1: false,
@@ -431,6 +444,20 @@ impl Machine {
             let mut d = self.board.0.borrow_mut();
             let before = d.steps;
             d.steps += d.elapsed;
+            // As each vertical blanking begins the scanout takes the base
+            // it was last given, as the board's does (#1639).
+            let (period, blanking) = d.raster;
+            let starts = |t: u64| (t + blanking) / period;
+            if starts(d.steps) != starts(before) {
+                let taken = d.scanout();
+                if taken != d.shown {
+                    d.shown = taken;
+                    if let Some(base) = taken {
+                        let frame = d.steps / period;
+                        d.flips.push((base, frame));
+                    }
+                }
+            }
             // The fastboot client on the cable, every microsecond of the
             // core's: its stack moves on and what it sent goes onto the
             // wire towards the port (issue 1390). In the timing mode a
