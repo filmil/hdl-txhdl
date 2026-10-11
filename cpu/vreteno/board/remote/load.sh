@@ -56,7 +56,7 @@ done
 }
 [[ -n "$image" ]] || { echo "--image=PATH is required" >&2; exit 2; }
 
-sender="$(rlocation _main/cpu/vreteno/board/remote/load_bin_/load_bin)"
+sender="$(rlocation txhdl/cpu/vreteno/board/remote/load_bin_/load_bin)"
 dir='~/txhdl_load'
 ssh -o BatchMode=yes "$server" "mkdir -p $dir && rm -f $dir/load $dir/image.bin"
 scp -q -o BatchMode=yes "$sender" "$server:$dir/load"

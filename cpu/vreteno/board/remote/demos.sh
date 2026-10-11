@@ -51,8 +51,8 @@ for a in "$@"; do
 done
 [[ -n "$server" ]] || { echo "--server=HOST or TXHDL_BOARD_SERVER" >&2; exit 2; }
 ws="${BUILD_WORKSPACE_DIRECTORY:?run this with bazel run}"
-list="$(rlocation _main/docs/demos.tsv)"
-load="$(rlocation _main/cpu/vreteno/board/remote/load)"
+list="$(rlocation txhdl/docs/demos.tsv)"
+load="$(rlocation txhdl/cpu/vreteno/board/remote/load)"
 port=/dev/ttyUSB0
 fbdir='~/txhdl_fastboot'
 lock=/data/cache/vivado-install/vivado.lock

@@ -41,8 +41,8 @@ done
   exit 2
 }
 
-bin="$(rlocation _main/cpu/vreteno/board/remote/bin/hw_server)"
-remote_sh="$(rlocation _main/cpu/vreteno/board/remote/hw_server_remote.sh)"
+bin="$(rlocation txhdl/cpu/vreteno/board/remote/bin/hw_server)"
+remote_sh="$(rlocation txhdl/cpu/vreteno/board/remote/hw_server_remote.sh)"
 bundle="$(cd "$(dirname "$bin")/.." && pwd)"
 dir='~/txhdl_hw_server'
 
