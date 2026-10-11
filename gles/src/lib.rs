@@ -976,8 +976,9 @@ impl<'a> Gl<'a> {
         at: [&Vert; 3],
     ) -> Option<[u32; 4]> {
         let colour = colour_word(&self.fog_colour);
-        self.fog_on
-            .then(|| emit::fog(w, v, at.map(|a| self.fog_factor(a)), colour))
+        self.fog_on.then(|| {
+            emit::fog(w, v, at.map(|a| self.fog_factor(a) as i64), colour)
+        })
     }
 
     /// `glStencilFunc` (#998): the comparison, `GL_NEVER` to `GL_ALWAYS`,
@@ -2232,7 +2233,11 @@ impl<'a> Gl<'a> {
         let al = (col >> 24) as i64 * area / 65536;
         let col = (col & 0x00ff_ffff) | (al as u32) << 24;
         let z = self.window_z(v);
-        let fog = self.fog_factor(v);
+        let fog = if self.fog_on {
+            self.fog_factor(v) as i64
+        } else {
+            255
+        };
         let (inner, outer) =
             (Soft::at(col, z, fog), Soft::at(col & 0x00ff_ffff, z, fog));
         let n = 48 / steps;
@@ -2285,7 +2290,11 @@ impl<'a> Gl<'a> {
             (flat, flat)
         };
         let (zp, zq) = (self.window_z(a) as i64, self.window_z(b) as i64);
-        let (fp, fq) = (self.fog_factor(a) as i64, self.fog_factor(b) as i64);
+        let (fp, fq) = if self.fog_on {
+            (self.fog_factor(a) as i64, self.fog_factor(b) as i64)
+        } else {
+            (255, 255)
+        };
         // A point `t` along the segment and `s` across it, in sixteenths.
         let pt = |t: i64, s: i64| {
             (p.0 + (t * dx - s * dy) / len, p.1 + (t * dy + s * dx) / len)
@@ -2296,14 +2305,16 @@ impl<'a> Gl<'a> {
             (len / 2, len / 2)
         };
         let (si, so) = ((h - 8).max(0), h + 8);
-        // A corner at `t` along and `s` across: its colour, depth and fog
-        // factor those of the segment at `t`, between the ends' and the
-        // ends' own past them, so that the ends' values stand at the ends
-        // (#1662); its alpha the coverage of that colour's, one inside,
-        // nought out, and a quarter at the middle of a corner square,
-        // where the coverages across and along meet. A line shorter than
-        // a pixel has its alpha scaled by
-        // its length, since its rim would otherwise cover a pixel's
+        // A corner at `t` along and `s` across: its colour and depth
+        // those of the segment at `t`, between the ends' and the ends'
+        // own past them, so that the ends' values stand at the ends; its
+        // fog factor the line's at `t`, carried on past the ends as well,
+        // so that the fog plane across an end is the line's (#1662); its
+        // alpha the coverage of that colour's, one inside, nought out,
+        // and a quarter at the middle of a corner square, where the
+        // coverages across and along meet. A line shorter than a pixel
+        // has its alpha scaled by its length, since its rim would
+        // otherwise cover a pixel's
         // length whatever its own.
         let short = len.min(16);
         let pick = |t: i64, full: bool, quarter: bool| {
@@ -2322,7 +2333,10 @@ impl<'a> Gl<'a> {
             Soft::at(
                 (col & 0x00ff_ffff) | (al as u32) << 24,
                 mix(zp, zq) as u32,
-                mix(fp, fq) as u32,
+                // Within a few bytes' worth of a byte's range, which a
+                // line shorter than a pixel could otherwise far exceed.
+                (fp + ((fq - fp) * t * 2 + len).div_euclid(2 * len))
+                    .clamp(-1024, 1279),
             )
         };
         let c =
@@ -2892,12 +2906,13 @@ struct Soft {
     at: (i32, i32),
     col: u32,
     z: u32,
-    /// Its fog factor, a byte, 255 for none (#1662).
-    fog: u32,
+    /// Its fog factor in bytes, 255 for none, which past a line's ends
+    /// may lie outside a byte (#1662).
+    fog: i64,
 }
 
 impl Soft {
-    fn at(col: u32, z: u32, fog: u32) -> Self {
+    fn at(col: u32, z: u32, fog: i64) -> Self {
         Soft {
             at: (0, 0),
             col,

@@ -149,18 +149,20 @@ pub fn state(w: &mut [u32; WORDS], slot: &mut [u32; WORDS], p: Pixel) {
 }
 
 /// Fog's words in a second slot (Razboj's #998), its words 6 to 9: the
-/// plane of the factor, a byte at each vertex of the triangle `v` in
+/// plane of the factor, in bytes at each vertex of the triangle `v` in
 /// sixteenths, 255 for no fog, wound as [`triangle`] winds it, on the box
 /// `w`'s words 1 and 2 hold; and the fog on, in its colour `0x..RRGGBB`.
+/// A factor may lie outside a byte, as a smooth line's carried past its
+/// ends does (#1662): Razboj takes each pixel's as nought below nought
+/// and 255 above it, so the plane need only be the right one.
 pub fn fog(
     w: &[u32; WORDS],
     v: [(i32, i32); 3],
-    f: [u32; 3],
+    f: [i64; 3],
     colour: u32,
 ) -> [u32; 4] {
     let [a, b, c] = v;
     let swap = area2(a, b, c) < 0;
-    let f = f.map(|f| (f & 0xff) as i64);
     let (b, c, f) = if swap {
         (c, b, [f[0], f[2], f[1]])
     } else {
