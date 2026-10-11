@@ -124,6 +124,49 @@ impl View {
             .clamp(0, emit::FAR as i128) as u32
     }
 
+    /// The window place and depth of a point kept in exact homogeneous
+    /// clip coordinates (#1661): ratios, so the point's scale never needs
+    /// dividing out, rounded once. `None` for a point at or behind the
+    /// eye.
+    fn place(&self, h: &[i128; 4]) -> Option<((i64, i64), u32)> {
+        let [x, y, z, w] = *h;
+        if w <= 0 {
+            return None;
+        }
+        let round = |n: i128, d: i128| (2 * n + d).div_euclid(2 * d);
+        let near = |v: i128| v.clamp(-(1 << 40), 1 << 40) as i64;
+        let (vx, vy, vw, vh) = self.viewport;
+        let wx =
+            16 * vx as i64 + 8 * vw as i64 + near(round(x * 8 * vw as i128, w));
+        let wy =
+            16 * vy as i64 + 8 * vh as i64 + near(round(y * 8 * vh as i128, w));
+        let (n, f) = (self.depth_range.0 as i128, self.depth_range.1 as i128);
+        let num = (2 * n * w + (f - n) * (z + w)) * emit::FAR as i128;
+        let den = 2 * w * ONE as i128;
+        let zw = round(num, den).clamp(0, emit::FAR as i128) as u32;
+        Some(((wx, wy), zw))
+    }
+
+    /// [`View::distances`] of a point in exact homogeneous clip
+    /// coordinates, for every plane but the user's, which reads the eye
+    /// (#1661). The same planes, in i128.
+    fn distance_of(&self, h: &[i128; 4], plane: usize) -> i128 {
+        let [x, y, z, w] = *h;
+        let (vx, vy, vw, vh) = self.viewport;
+        let (vx16, vy16) = (16 * vx as i128, 16 * vy as i128);
+        let (vw8, vh8) = (8 * vw as i128, 8 * vh as i128);
+        let sh16 = 16 * self.screen_h as i128;
+        let (gmin, gmax) = (GMIN as i128, GMAX as i128);
+        match plane {
+            0 => z + w,
+            1 => w - z,
+            3 => x * vw8 + w * (vx16 + vw8 - gmin),
+            4 => w * (gmax - vx16 - vw8) - x * vw8,
+            5 => y * vh8 + w * (vy16 + vh8 - (sh16 - gmax)),
+            _ => w * ((sh16 - gmin) - vy16 - vh8) - y * vh8,
+        }
+    }
+
     /// A vertex's distance from a clipping plane, scaled, nought or more
     /// inside: near and far, the user's plane, then the guard band's four
     /// edges.
@@ -2364,6 +2407,13 @@ impl<'a> Gl<'a> {
         let view = self.view();
         let mut poly = [Vert::default(); MAXV];
         poly[..3].copy_from_slice(&tri);
+        // Each vertex's clip coordinates kept exactly, in i128, so that a
+        // vertex clipping makes, and one made from it, lands where the
+        // edges say rather than where rounding puts it (#1661).
+        let mut exact = [[0i128; 4]; MAXV];
+        for k in 0..3 {
+            exact[k] = tri[k].clip.map(|c| c as i128);
+        }
         let mut n = 3;
         // A triangle no plane cuts is drawn as it is, from where its
         // vertices were placed as they were worked out (#1624); clipping
@@ -2376,20 +2426,32 @@ impl<'a> Gl<'a> {
                 continue;
             }
             let mut out = [Vert::default(); MAXV];
+            let mut kept = [[0i128; 4]; MAXV];
             let mut m = 0;
             for i in 0..n {
-                let (a, b) = (poly[i], poly[(i + 1) % n]);
-                let (da, db) = (view.distances(&a, p), view.distances(&b, p));
+                let j = (i + 1) % n;
+                let (a, b) = (poly[i], poly[j]);
+                let (da, db) = if p == 2 {
+                    (view.distances(&a, p), view.distances(&b, p))
+                } else {
+                    (
+                        view.distance_of(&exact[i], p),
+                        view.distance_of(&exact[j], p),
+                    )
+                };
                 if da >= 0 {
                     out[m] = a;
+                    kept[m] = exact[i];
                     m += 1;
                 }
                 if (da >= 0) != (db >= 0) {
                     out[m] = between(&a, &b, da, db);
+                    kept[m] = cut(&exact[i], &exact[j], da, db);
                     m += 1;
                 }
             }
             poly = out;
+            exact = kept;
             n = m;
             if n < 3 {
                 return;
@@ -2399,8 +2461,12 @@ impl<'a> Gl<'a> {
         let sh16 = 16 * self.screen.1 as i64;
         let mut win = [(0i64, 0i64); MAXV];
         for (k, v) in poly[..n].iter().enumerate() {
-            let Some(at) = (if placed { Some(v.win) } else { self.window(v) })
-            else {
+            let at = if placed {
+                Some(v.win)
+            } else {
+                view.place(&exact[k]).map(|p| p.0)
+            };
+            let Some(at) = at else {
                 return;
             };
             win[k] = at;
@@ -2444,7 +2510,11 @@ impl<'a> Gl<'a> {
         let mut zw = [0u32; MAXV];
         if self.depth_test {
             for (k, v) in poly[..n].iter().enumerate() {
-                zw[k] = if placed { v.zw } else { self.window_z(v) };
+                zw[k] = if placed {
+                    v.zw
+                } else {
+                    view.place(&exact[k]).map_or(0, |p| p.1)
+                };
             }
         }
         // The texture, when texturing is on and it is complete (#997).
@@ -2595,6 +2665,26 @@ fn size(s: Fx) -> i64 {
 /// distances to it, which have different signs: each coordinate and
 /// each colour channel interpolated in clip space, as the
 /// specification says, rounded to the nearest.
+/// The point where the edge from `a` to `b`, in exact homogeneous clip
+/// coordinates, crosses a plane they lie either side of, at distances
+/// `da` and `db` (#1661): `(da b - db a) / (da - db)`, kept as a
+/// multiple of itself, by a positive factor so that its distances keep
+/// their signs. The distances and the result are shifted down to keep
+/// within i128, which costs only bits far below the window's sixteenth.
+fn cut(a: &[i128; 4], b: &[i128; 4], da: i128, db: i128) -> [i128; 4] {
+    let bits = |v: i128| 128 - v.unsigned_abs().leading_zeros();
+    let shift = |v: i128, s: u32| if s == 0 { v } else { v >> s };
+    let s = bits(da).max(bits(db)).saturating_sub(60);
+    let (da, db) = (shift(da, s), shift(db, s));
+    let mut h: [i128; 4] = core::array::from_fn(|i| da * b[i] - db * a[i]);
+    if da - db < 0 {
+        h = h.map(|v| -v);
+    }
+    let top = h.iter().map(|&v| bits(v)).max().unwrap_or(0);
+    let s = top.saturating_sub(62);
+    h.map(|v| shift(v, s))
+}
+
 fn between(a: &Vert, b: &Vert, da: i128, db: i128) -> Vert {
     let lerp = |x: Fx, y: Fx| {
         let n = (y as i128 - x as i128) * da;
