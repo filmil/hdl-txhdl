@@ -326,3 +326,36 @@ fn the_parameters_read_back_as_set() {
     assert_eq!(g.get_clip_plane(gl::CLIP_PLANE0 + 1), None);
     assert_eq!(g.get_error(), gl::INVALID_ENUM, "one plane");
 }
+
+/// `OES_matrix_get` (#1522): each matrix as the bits of the
+/// single-precision floats its 16.16 elements are, the nearest float
+/// where one has fewer bits than the element.
+#[test]
+fn the_matrices_read_back_as_float_bits() {
+    let mut frame = vec![[0u32; WORDS]; 4];
+    let mut g = context(&mut frame);
+    let m: [Fx; 16] = core::array::from_fn(|k| match k {
+        0 => i32::MAX,
+        1 => i32::MIN,
+        2 => -1,
+        3 => 1,
+        _ => (k as Fx - 8) * ONE / 4 + 3,
+    });
+    let float = |v: Fx| ((v as f64) / ONE as f64) as f32;
+    for (mode, pname) in [
+        (gl::MODELVIEW, name::MODELVIEW_MATRIX_FLOAT_AS_INT_BITS_OES),
+        (
+            gl::PROJECTION,
+            name::PROJECTION_MATRIX_FLOAT_AS_INT_BITS_OES,
+        ),
+        (gl::TEXTURE, name::TEXTURE_MATRIX_FLOAT_AS_INT_BITS_OES),
+    ] {
+        g.matrix_mode(mode);
+        g.load_matrix(&m);
+        let got = ints(&mut g, pname, 16);
+        for k in 0..16 {
+            let want = float(m[k]).to_bits() as i32;
+            assert_eq!(got[k], want, "{pname:04x} element {k}");
+        }
+    }
+}
