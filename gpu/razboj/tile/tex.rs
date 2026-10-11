@@ -63,12 +63,109 @@ pub const LINEAR_MIPMAP_NEAREST: u32 = 3;
 pub const NEAREST_MIPMAP_LINEAR: u32 = 4;
 pub const LINEAR_MIPMAP_LINEAR: u32 = 5;
 
-/// The environments, GL ES 1.1's without `COMBINE`.
+/// The environments, GL ES 1.1's: the five fixed ones, and `COMBINE`
+/// (#1512), whose settings are a [`Combine`] in the second texture
+/// slot's word 14.
 pub const REPLACE: u32 = 0;
 pub const MODULATE: u32 = 1;
 pub const DECAL: u32 = 2;
 pub const BLEND: u32 = 3;
 pub const ADD: u32 = 4;
+pub const COMBINE: u32 = 5;
+
+/// `COMBINE`'s functions, GL's `COMBINE_RGB` in order; `COMBINE_ALPHA`
+/// takes the first six (#1512). Their own numbers, not the
+/// environments': `FN_ADD` is 2 where the environment `ADD` is 4.
+pub const FN_REPLACE: u32 = 0;
+pub const FN_MODULATE: u32 = 1;
+pub const FN_ADD: u32 = 2;
+pub const FN_ADD_SIGNED: u32 = 3;
+pub const FN_INTERPOLATE: u32 = 4;
+pub const FN_SUBTRACT: u32 = 5;
+pub const FN_DOT3_RGB: u32 = 6;
+pub const FN_DOT3_RGBA: u32 = 7;
+
+/// `COMBINE`'s sources and operands (#1512).
+pub const SRC_TEXTURE: u32 = 0;
+pub const SRC_CONSTANT: u32 = 1;
+pub const SRC_PRIMARY_COLOR: u32 = 2;
+pub const SRC_PREVIOUS: u32 = 3;
+pub const OP_SRC_COLOR: u32 = 0;
+pub const OP_ONE_MINUS_SRC_COLOR: u32 = 1;
+pub const OP_SRC_ALPHA: u32 = 2;
+pub const OP_ONE_MINUS_SRC_ALPHA: u32 = 3;
+
+/// `GL_COMBINE`'s settings (#1512): the RGB and alpha functions, each of
+/// the three arguments' source and operand for the two, and the two
+/// scales as their log2, nought to two. An alpha operand is
+/// [`OP_SRC_ALPHA`] or [`OP_ONE_MINUS_SRC_ALPHA`]. `Default` is GL's
+/// initial state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Combine {
+    pub rgb: u32,
+    pub alpha: u32,
+    pub src_rgb: [u32; 3],
+    pub src_alpha: [u32; 3],
+    pub op_rgb: [u32; 3],
+    pub op_alpha: [u32; 3],
+    pub scale_rgb: u32,
+    pub scale_alpha: u32,
+}
+
+impl Default for Combine {
+    fn default() -> Self {
+        Combine {
+            rgb: FN_MODULATE,
+            alpha: FN_MODULATE,
+            src_rgb: [SRC_TEXTURE, SRC_PREVIOUS, SRC_CONSTANT],
+            src_alpha: [SRC_TEXTURE, SRC_PREVIOUS, SRC_CONSTANT],
+            op_rgb: [OP_SRC_COLOR, OP_SRC_COLOR, OP_SRC_ALPHA],
+            op_alpha: [OP_SRC_ALPHA; 3],
+            scale_rgb: 0,
+            scale_alpha: 0,
+        }
+    }
+}
+
+impl Combine {
+    /// The settings as one word (#1512):
+    ///
+    /// ```text
+    ///   [2:0] RGB function    [5:3] alpha function
+    ///   [11:6] RGB sources, two bits each, argument 0 lowest
+    ///   [17:12] alpha sources, the same
+    ///   [23:18] RGB operands, two bits each
+    ///   [26:24] alpha operands, a bit each: one minus or not
+    ///   [28:27] RGB scale's log2   [30:29] alpha scale's log2
+    /// ```
+    pub fn word(&self) -> u32 {
+        let mut w = (self.rgb & 7) | (self.alpha & 7) << 3;
+        for k in 0..3 {
+            w |= (self.src_rgb[k] & 3) << (6 + 2 * k);
+            w |= (self.src_alpha[k] & 3) << (12 + 2 * k);
+            w |= (self.op_rgb[k] & 3) << (18 + 2 * k);
+            w |= (self.op_alpha[k] & 1) << (24 + k);
+        }
+        w | (self.scale_rgb & 3) << 27 | (self.scale_alpha & 3) << 29
+    }
+
+    /// The settings read back from their word.
+    pub fn of(w: u32) -> Combine {
+        let f = |at: u32, bits: u32| (w >> at) & ((1 << bits) - 1);
+        Combine {
+            rgb: f(0, 3),
+            alpha: f(3, 3),
+            src_rgb: core::array::from_fn(|k| f(6 + 2 * k as u32, 2)),
+            src_alpha: core::array::from_fn(|k| f(12 + 2 * k as u32, 2)),
+            op_rgb: core::array::from_fn(|k| f(18 + 2 * k as u32, 2)),
+            op_alpha: core::array::from_fn(|k| {
+                OP_SRC_ALPHA + f(24 + k as u32, 1)
+            }),
+            scale_rgb: f(27, 2),
+            scale_alpha: f(29, 2),
+        }
+    }
+}
 
 /// A texture's descriptor.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -257,5 +354,36 @@ mod tests {
         let p = [u64::MAX - 1, 3, 1 << 40];
         assert_eq!(step_plane(p, 1, 2)[0], 1 + (1u64 << 41));
         assert_eq!(plane_of(&plane_words(p)), p);
+    }
+
+    /// `COMBINE`'s settings (#1512) come back from their word as they
+    /// went in, every field at its ends and between, and its word fits
+    /// 31 bits.
+    #[test]
+    fn combine_settings_round_trip() {
+        let mut seed = 0x9e37_79b9u32;
+        let mut next = |n: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed % n
+        };
+        let mut all = vec![Combine::default()];
+        for _ in 0..2000 {
+            all.push(Combine {
+                rgb: next(8),
+                alpha: next(6),
+                src_rgb: [next(4), next(4), next(4)],
+                src_alpha: [next(4), next(4), next(4)],
+                op_rgb: [next(4), next(4), next(4)],
+                op_alpha: [2 + next(2), 2 + next(2), 2 + next(2)],
+                scale_rgb: next(3),
+                scale_alpha: next(3),
+            });
+        }
+        for c in all {
+            assert_eq!(Combine::of(c.word()), c);
+            assert_eq!(c.word() >> 31, 0);
+        }
     }
 }
