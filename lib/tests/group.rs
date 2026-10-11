@@ -4,9 +4,9 @@
 //! per field. A field's reading end reads that field of the wire as it
 //! stands, and a field's driving end drives that field and leaves the
 //! others, at once, as a wire is driven.
-use txhdl::comp::{signal, DefaultClock, Group};
+use txhdl::comp::{signal, Clock, DefaultClock, Group, In, Out, Unit};
 use txhdl::types::{Bit, Value, U};
-use txhdl::Value;
+use txhdl::{lower, Trace, Value};
 
 #[derive(Value, Clone, Copy, Default, Debug, PartialEq)]
 #[value(ports)]
@@ -83,4 +83,57 @@ fn a_group_splits_through_the_trait_too() {
         ..Pins::default()
     });
     assert_eq!(ins.rst.get(), Bit::One);
+}
+
+/// Two lines under their own names, as a board's pins are.
+#[derive(Value, Clone, Copy, Default, Debug, PartialEq)]
+#[value(bare, ports)]
+pub struct Lines {
+    pub a: Bit,
+    pub b: Bit,
+}
+
+/// A unit taking a bare group and a prefixed one, and driving a bit.
+#[derive(Trace, Default)]
+pub struct Reads {}
+
+#[lower]
+impl Unit for Reads {
+    async fn run(&mut self, (l, p): (In<Lines>, In<Pins>), o: Out<Bit>) {
+        loop {
+            DefaultClock::rising().await;
+            o.set(l.get().a & p.get().rst);
+        }
+    }
+}
+
+/// Two bare groups of one type, whose fields would be the same ports.
+#[derive(Trace, Default)]
+pub struct Twice {}
+
+#[lower]
+impl Unit for Twice {
+    async fn run(&mut self, (x, y): (In<Lines>, In<Lines>), o: Out<Bit>) {
+        loop {
+            DefaultClock::rising().await;
+            o.set(x.get().a & y.get().b);
+        }
+    }
+}
+
+#[test]
+fn a_bare_group_is_its_fields_and_a_group_is_prefixed() {
+    // The words of `#[value(...)]` are read in any order.
+    assert!(is_group::<Lines>());
+    let v = Reads::lowered("reads").verilog();
+    for port in ["input a", "input b", "input p_rst", "input p_irq"] {
+        assert!(v.contains(port), "no `{port}` in:\n{v}");
+    }
+    assert!(v.contains("wire [1:0] l = {a, b};"), "{v}");
+}
+
+#[test]
+#[should_panic(expected = "is a port of `twice` twice")]
+fn two_bare_groups_with_one_field_name_are_refused() {
+    let _ = Twice::lowered("twice");
 }
