@@ -1629,6 +1629,10 @@ impl Lowered {
     /// clock shares it. A child's clock counts, since the parent takes
     /// it as a port to pass on. This is issue 367.
     pub fn checked(self) -> Self {
+        // A port group's field ports take names a port, or another
+        // group's field, may already have: a bare group's fields above
+        // all. Refused here, naming the name (issue 1647).
+        self.refuse_group_clashes();
         // An unregistered channel may not close a loop of wires
         // through the children (issue 1293).
         self.refuse_comb_loops();
@@ -1789,6 +1793,48 @@ impl Lowered {
     /// having declared it.
     fn adds_reset_port(&self) -> bool {
         self.has_reset() && !self.declares_reset()
+    }
+
+    /// The names the module's edge carries for the unit's ports, a port
+    /// group's as its field ports, and refuses any name two of them
+    /// share (issue 1647).
+    fn refuse_group_clashes(&self) {
+        if self.groups.is_empty() {
+            return;
+        }
+        let mut seen: Vec<String> = Vec::new();
+        for (n, k, _, _) in &self.ports {
+            let names: Vec<String> = match (k, self.group(n)) {
+                (Kind::In | Kind::Out, Some(g)) => {
+                    g.fields.iter().map(|(f, _)| f.clone()).collect()
+                }
+                _ => {
+                    Self::strands(k).iter().map(|s| format!("{n}{s}")).collect()
+                }
+            };
+            for x in names {
+                assert!(
+                    !seen.contains(&x),
+                    "`{x}` is a port of `{}` twice: a port group's field \
+                     takes the name of another port or field; rename the \
+                     field, or give the group a port name to prefix it with \
+                     rather than `bare` (issue 1647)",
+                    self.name
+                );
+                seen.push(x);
+            }
+        }
+        // And a group's whole is a wire of the port's name inside the
+        // module, which no port at its edge may share.
+        for g in &self.groups {
+            assert!(
+                !seen.contains(&g.port),
+                "`{}` of `{}` is both a port group's wire and a port at the \
+                 module's edge; rename the field or the port (issue 1647)",
+                g.port,
+                self.name
+            );
+        }
     }
 
     /// The port group a port is, if it is one (issue 1647).

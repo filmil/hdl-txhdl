@@ -435,16 +435,46 @@ fn variant_names(body: &Group) -> Vec<String> {
 /// `Ins` and `Outs` after it, which `split` gives.
 #[proc_macro_derive(Value, attributes(value))]
 pub fn derive_value(input: TokenStream) -> TokenStream {
-    // The marker is an outer attribute, before the item's keyword.
-    let ports = input
-        .to_string()
-        .split(" struct ")
-        .next()
-        .map(|head| head.replace(' ', ""))
-        .unwrap_or_default();
-    // `#[value(ports, bare)]`: the fields are ports under their own names.
-    let bare = ports.contains("#[value(ports,bare)]");
-    let ports = bare || ports.contains("#[value(ports)]");
+    // The marker is an outer attribute, `#[value(...)]`, its words in any
+    // order: `ports`, and `bare` for fields that are ports under their own
+    // names. Read from the tokens, so a doc comment cannot hide it.
+    let (mut ports, mut bare) = (false, false);
+    let toks: Vec<TokenTree> = input.clone().into_iter().collect();
+    for w in toks.windows(2) {
+        let (TokenTree::Punct(h), TokenTree::Group(g)) = (&w[0], &w[1]) else {
+            continue;
+        };
+        if h.as_char() != '#' || g.delimiter() != Delimiter::Bracket {
+            continue;
+        }
+        let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+        let [TokenTree::Ident(name), TokenTree::Group(args)] = inner.as_slice()
+        else {
+            continue;
+        };
+        if name.to_string() != "value" {
+            continue;
+        }
+        for t in args.stream() {
+            match t {
+                TokenTree::Ident(w) if w.to_string() == "ports" => ports = true,
+                TokenTree::Ident(w) if w.to_string() == "bare" => bare = true,
+                TokenTree::Punct(p) if p.as_char() == ',' => {}
+                other => {
+                    return err(
+                        other.span(),
+                        "`#[value(...)]` takes `ports`, and `bare` with it",
+                    )
+                }
+            }
+        }
+    }
+    if bare && !ports {
+        return err(
+            Span::call_site(),
+            "`bare` names a port group's fields; write `#[value(ports, bare)]`",
+        );
+    }
     let item = parse_item(input);
     let Some(body) = &item.body else {
         return err(Span::call_site(), "Value needs a braced struct or enum");
@@ -5544,7 +5574,7 @@ fn split_field(side: &[TokenTree]) -> Option<String> {
     SPLITS.with(|x| {
         x.borrow()
             .iter()
-            .find(|(b, _)| *b == s)
+            .rfind(|(b, _)| *b == s)
             .map(|(_, p)| format!("@group {p} {f}"))
     })
 }
