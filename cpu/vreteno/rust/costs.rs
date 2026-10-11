@@ -33,9 +33,9 @@ const N: u32 = 256;
 
 /// The blocks for the instruction cache. `A` starts at the cache's line
 /// 512, above this program's own code; `CLASH` is 16 KiB on, so on the
-/// same lines as `A`; `APART` is 2 KiB further, on lines `A` does not
-/// use. (16 bytes further, as #1679 first had it, would still share all
-/// but two of a block's 66 lines.)
+/// same lines as `A`; `APART` is 18 KiB on, 2 KiB past `CLASH`, so on
+/// lines `A` does not use. (16 KiB and 16 bytes on, as #1679 first had
+/// it, would still share all but two of a block's 66 lines.)
 const A: usize = map::DDR3 + 0x30_2000;
 const CLASH: usize = A + 0x4000;
 const APART: usize = A + 0x4800;
@@ -43,10 +43,20 @@ const APART: usize = A + 0x4800;
 /// A block: `mcycle` read at the start of its first line, which is
 /// fetched before the read and so not counted; 64 lines of 32-bit
 /// no-ops; and a last line that reads `mcycle` again and returns the
-/// difference. A cold run counts 65 lines not held: the 64 and the last.
+/// difference. Between the reads are 65 lines: three no-ops of the
+/// first, the 64, and the second read itself, which is fetched before
+/// it runs. So a cold run counts 65 lines not held, and a warm one 260
+/// instructions, four a line.
 const NOPS: usize = 256;
-const LINES: u32 = 65;
+const LINES: i32 = 65;
 const BLOCK: usize = 4 + NOPS + 4;
+// The cache is 16 KiB of 16-byte lines: `A` and `CLASH` on the same
+// lines, `APART` on none of `A`'s, and this program's own code, below
+// 8 KiB, on none of the blocks'.
+const _: () = assert!(BLOCK * 4 <= 0x800);
+const _: () = assert!((CLASH - A).is_multiple_of(0x4000));
+const _: () = assert!((APART - A) % 0x4000 >= BLOCK * 4);
+const _: () = assert!((A - map::DDR3) % 0x4000 >= 0x2000);
 /// `csrr t0, mcycle`, `csrr t1, mcycle`, `sub a0, t1, t0`, `ret`, and the
 /// 32-bit no-op, `addi x0, x0, 0`.
 const CSRR_T0: u32 = 0xb000_22f3;
@@ -56,7 +66,7 @@ const RET: u32 = 0x0000_8067;
 const NOP: u32 = 0x0000_0013;
 
 /// Rounds of the two blocks called in turn.
-const ROUNDS: u32 = 8;
+const ROUNDS: i32 = 8;
 
 fn block(at: usize) {
     let code = at as *mut u32;
@@ -78,33 +88,49 @@ fn run(at: usize) -> u32 {
     f()
 }
 
-/// `fence.i`, which empties the instruction cache.
+/// `fence`, which waits for the stores the core has posted, then
+/// `fence.i`, which empties the instruction cache, so that what is
+/// fetched next is what the stores wrote.
 fn fence_i() {
     unsafe { asm!("fence", ".word 0x0000100f") };
 }
 
 /// The `A` block and `other` called in turn, both warm first: the
-/// cycles of a call, on average.
-fn in_turn(other: usize) -> u32 {
+/// cycles of all `2 * ROUNDS` calls.
+fn in_turn(other: usize) -> i32 {
     run(A);
     run(other);
-    let mut sum = 0u32;
+    let mut sum = 0i32;
     for _ in 0..ROUNDS {
-        sum = sum.wrapping_add(run(A)).wrapping_add(run(other));
+        sum += run(A) as i32 + run(other) as i32;
     }
-    sum / (2 * ROUNDS)
+    sum
 }
 
-fn say_line(name: &[u8], cycles: u32) {
+/// `costs icache-<name> <hundredths of a cycle a line>`, for `cycles`
+/// over `calls` runs of a block, signed, since a figure that should be
+/// nothing may come out a little below it.
+fn say_line(name: &[u8], cycles: i32, calls: i32) {
+    let per = cycles * 100 / (calls * LINES);
     Uart::say(b"costs icache-");
     Uart::say(name);
     Uart::put(b' ');
-    Uart::put_decimal(cycles.wrapping_mul(100) / LINES);
+    if per < 0 {
+        Uart::put(b'-');
+    }
+    Uart::put_decimal(per.unsigned_abs());
     Uart::put(b'\n');
 }
 
+/// Whether the block at `at` was written: its `ret` read back.
+fn written(at: usize) -> bool {
+    let last = (at as *const u32).wrapping_add(BLOCK - 2);
+    unsafe { core::ptr::read_volatile(last) == RET }
+}
+
 /// The instruction cache's kinds, with the raw cycles beside them:
-/// `icache cold <c> warm <w> clash <x> apart <y>`.
+/// `icache cold <c> warm <w> clash <x> apart <y>`, where `x` and `y`
+/// are the cycles of all `2 * ROUNDS` calls.
 fn icache() {
     block(A);
     block(CLASH);
@@ -112,33 +138,32 @@ fn icache() {
     // The stores reach the DDR3 and not the instruction cache: a fence
     // waits for them, and `fence.i` empties the cache.
     fence_i();
-    if unsafe { core::ptr::read_volatile((A as *const u32).add(BLOCK - 2)) }
-        != RET
-    {
+    if !written(A) || !written(CLASH) || !written(APART) {
         Uart::say(b"costs icache blocks not written\n");
         return;
     }
     fence_i();
-    let cold = run(A);
-    let warm = run(A);
+    let cold = run(A) as i32;
+    let warm = run(A) as i32;
     let clash = in_turn(CLASH);
     let apart = in_turn(APART);
     Uart::say(b"icache cold ");
-    Uart::put_decimal(cold);
+    Uart::put_decimal(cold as u32);
     Uart::say(b" warm ");
-    Uart::put_decimal(warm);
+    Uart::put_decimal(warm as u32);
     Uart::say(b" clash ");
-    Uart::put_decimal(clash);
+    Uart::put_decimal(clash as u32);
     Uart::say(b" apart ");
-    Uart::put_decimal(apart);
+    Uart::put_decimal(apart as u32);
     Uart::put(b'\n');
     // A line not held, from the cold run and from the clash; a warm
     // line, which is four cycles if running on into the next line costs
     // nothing; and the blocks apart, which should cost nothing more.
-    say_line(b"miss", cold.wrapping_sub(warm));
-    say_line(b"clash", clash.wrapping_sub(warm));
-    say_line(b"warm", warm);
-    say_line(b"apart", apart.wrapping_sub(warm));
+    let calls = 2 * ROUNDS;
+    say_line(b"miss", cold - warm, 1);
+    say_line(b"clash", clash - calls * warm, calls);
+    say_line(b"warm", warm, 1);
+    say_line(b"apart", apart - calls * warm, calls);
 }
 
 fn mcycle() -> u32 {
