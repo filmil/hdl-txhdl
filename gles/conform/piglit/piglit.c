@@ -103,7 +103,8 @@ GLuint piglit_checkerboard_texture(GLuint tex, unsigned level, unsigned w,
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   for (unsigned j = 0; j < h; j++)
     for (unsigned i = 0; i < w; i++) {
-      const float *c = ((i / horiz + j / vert) & 1) ? black : white;
+      /* As piglit's own: black at the first texel (#1688). */
+      const float *c = ((i / horiz + j / vert) & 1) ? white : black;
       for (int k = 0; k < 4; k++)
         texels[(j * w + i) * 4 + k] = (GLubyte)(c[k] * 255 + 0.5f);
     }
