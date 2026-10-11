@@ -15,7 +15,7 @@ use txhdl::comp::{
 };
 use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
-use txhdl_parts::bus::axi::Resp;
+use txhdl_parts::bus::axi::{Addr, BurstKind, Resp, B, R, W};
 use txhdl_parts::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
 use txhdl_parts::bus::axi_pins::AxiHostPins;
 use txhdl_parts::dtm::Tck;
@@ -76,6 +76,8 @@ struct Ran {
     card: SdCard,
     /// The scanout's lines, when the run had one.
     scan: ScanLog,
+    /// What the board top's host met, when the run had one (issue 1634).
+    host: HostLog,
     /// What each burst of the debugger's plan met, in order.
     bursts: Vec<BurstSeen>,
     /// The cycle a reset asked for began, when it did.
@@ -490,6 +492,30 @@ struct Net<'a> {
     /// that reset ends, after the loader says its first line, as
     /// `load --reset` sends an image to the board (issue 1532).
     reload: Option<(&'a [u8], &'a [usize])>,
+    /// The board top's host, driving a write and a read (issue 1634);
+    /// with none, the port offers nothing, as a top that ties it off.
+    host: Option<HostPlan>,
+}
+
+/// A burst written through the board top's host port and read back
+/// (issue 1634): from cycle `at`, `words` written from `addr` in one
+/// burst with identifier `id`, and once that is answered, read back in
+/// one burst with the same identifier.
+struct HostPlan {
+    at: u64,
+    addr: u32,
+    id: u8,
+    words: Vec<u32>,
+}
+
+/// What the board top's host met: the write's answer and the cycle it
+/// came, and every beat read back with its identifier, its answer and
+/// whether it was the last, and the cycle the last came.
+#[derive(Default)]
+struct HostLog {
+    wrote: Option<(u64, u8, Resp)>,
+    read: Vec<(u8, u32, Resp, bool)>,
+    read_at: Option<u64>,
 }
 
 /// A scanout's pixel side on the board's `scan_req` and `scan_words`:
@@ -631,11 +657,23 @@ fn run_all_in<const LO: usize, const HI: usize>(
         until_planned,
         reset_at,
         reload,
+        host,
     } = net;
     // The scanout's two channels to the board, each tapped here so the
     // run sees what was asked for and what came back.
     let (scan_req_tx, scan_req) = chan::<U<32>, DefaultClock>();
     let (scan_words, scan_words_rx) = chan::<U<32>, DefaultClock>();
+    // The board top's host port (issue 1634).
+    let (host_aw_tx, host_aw) = chan::<Addr<32, 2>, DefaultClock>();
+    let (host_ar_tx, host_ar) = chan::<Addr<32, 2>, DefaultClock>();
+    let (host_w_tx, host_w) = chan::<W<32, 4>, DefaultClock>();
+    let (host_b, host_b_rx) = chan::<B<2>, DefaultClock>();
+    let (host_r, host_r_rx) = chan::<R<32, 2>, DefaultClock>();
+    let mut host_log = HostLog::default();
+    // Where the plan is: 0 waiting, 1 address given, 2 beats given,
+    // 3 written, 4 read asked, 5 done.
+    let mut host_step = 0u8;
+    let mut host_beat = 0usize;
     let (pair_req, pair_req_rx) = chan::<U<32>, Pix>();
     let (pair_inp_tx, pair_inp) = chan::<U<32>, Pix>();
     let (col_o, col) = signal::<U<10>, Pix>();
@@ -842,6 +880,9 @@ fn run_all_in<const LO: usize, const HI: usize>(
             bscan_tdi: signal::<Bit, Tck>().1,
             bscan_reset: signal::<Bit, Tck>().1,
             scan_req,
+            host_aw,
+            host_ar,
+            host_w,
             jtag: AxiHostPins {
                 awid,
                 awaddr,
@@ -921,6 +962,8 @@ fn run_all_in<const LO: usize, const HI: usize>(
             bscan_tdo: signal::<Bit, Tck>().0,
             // A scanout runs only when the run asks for one.
             scan_words,
+            host_b,
+            host_r,
         },
     );
     let mut sim = Running::new(join2(
@@ -1245,11 +1288,58 @@ fn run_all_in<const LO: usize, const HI: usize>(
                 hc = if h_last { 0 } else { hc + 1 };
             }
         }
+        if let Some(p) = &host {
+            let addr = |a: u32| Addr::<32, 2> {
+                id: U::<2>::from(p.id),
+                addr: U::<32>::from(a),
+                len: U::<8>::from((p.words.len() - 1) as u8),
+                size: U::<3>::from(2u8),
+                burst: BurstKind::Incr,
+                ..Default::default()
+            };
+            if host_step == 0 && cycle >= p.at && host_aw_tx.ready().to_bool() {
+                host_aw_tx.send(addr(p.addr));
+                host_step = 1;
+            }
+            if host_step >= 1
+                && host_beat < p.words.len()
+                && host_w_tx.ready().to_bool()
+            {
+                host_w_tx.send(W {
+                    data: U::<32>::from(p.words[host_beat]),
+                    strb: U::<4>::from(0xfu8),
+                    last: Bit::from_bool(host_beat + 1 == p.words.len()),
+                });
+                host_beat += 1;
+            }
+            if let Some(b) = host_b_rx.recv_if(true) {
+                host_log.wrote = Some((cycle, b.id.raw() as u8, b.resp));
+                host_step = 3;
+            }
+            if host_step == 3 && host_ar_tx.ready().to_bool() {
+                host_ar_tx.send(addr(p.addr));
+                host_step = 4;
+            }
+            if let Some(r) = host_r_rx.recv_if(true) {
+                let last = r.last.to_bool();
+                host_log.read.push((
+                    r.id.raw() as u8,
+                    r.data.raw() as u32,
+                    r.resp,
+                    last,
+                ));
+                if last {
+                    host_log.read_at = Some(cycle);
+                    host_step = 5;
+                }
+            }
+        }
+        let host_idle = host.is_none() || host_step == 5;
         if until_planned {
             if master.at >= plan.len() {
                 break;
             }
-        } else if scan.is_none() && halt.get().to_bool() {
+        } else if scan.is_none() && halt.get().to_bool() && host_idle {
             halted_at = Some(cycle);
             break;
         }
@@ -1287,6 +1377,7 @@ fn run_all_in<const LO: usize, const HI: usize>(
         phy_page: phy.regs[31],
         card,
         scan: scan_log,
+        host: host_log,
     }
 }
 
@@ -5288,4 +5379,99 @@ fn hart_one_takes_an_external_interrupt() {
     let plan = [Op::Wait(4000), Op::Irq(true)];
     let ran = run_debugged(&c.done(), &[], 100_000, &plan);
     assert!(ran.halted_at.is_some(), "hart 1's handler never claimed 2");
+}
+
+/// The board top's host (issue 1634): a burst of eight words written
+/// into the DDR3 through the port is answered once, with its own
+/// identifier, and a burst read of the same eight gives them back, in
+/// order, with that identifier, the last beat marked last. The core
+/// runs its program meanwhile and says what it always says.
+#[test]
+fn the_board_tops_host_writes_and_reads_the_ddr3() {
+    let words: Vec<u32> = (0..8).map(|i| 0x1634_0000 | (i * 0x111)).collect();
+    let net = Net {
+        host: Some(HostPlan {
+            at: 200,
+            addr: 0x4010_0000,
+            id: 2,
+            words: words.clone(),
+        }),
+        ..Net::default()
+    };
+    let ran = run_all(
+        hello_program::TEXT,
+        hello_program::DATA,
+        b"",
+        &[],
+        200_000,
+        net,
+        &[],
+    );
+    let (wrote_at, id, resp) = ran.host.wrote.expect("the write answered");
+    assert_eq!((id, resp), (2, Resp::Okay), "the write's answer");
+    let read_at = ran.host.read_at.expect("the read's last beat came");
+    assert!(read_at > wrote_at, "read after the write");
+    assert_eq!(ran.host.read.len(), words.len(), "{:x?}", ran.host.read);
+    for (i, &(rid, data, resp, last)) in ran.host.read.iter().enumerate() {
+        assert_eq!(rid, 2, "beat {i}'s identifier");
+        assert_eq!(resp, Resp::Okay, "beat {i}'s answer");
+        assert_eq!(data, words[i], "beat {i}");
+        assert_eq!(last, i + 1 == words.len(), "beat {i}'s last");
+    }
+    eprintln!(
+        "host port: write answered at {wrote_at}, read whole at {read_at}"
+    );
+    assert!(ran.halted_at.is_some(), "the core halted: {}", ran.said);
+}
+
+/// A program that reads the DDR3 word at `0x4010_0000`, which puts its
+/// line in the data cache, says `r`, reads the word again until it is
+/// no longer what it first read, says `c` and halts. With the line kept
+/// and never dropped, it would read the first word for ever.
+fn watch_program() -> Vec<u32> {
+    use vreteno32::isa::{beq, halt, lui, lw, UART_BASE};
+    let mut a = vreteno32::program::Asm::default();
+    a.emit(lui(1, UART_BASE >> 12)); // x1 = the serial port, for say
+    a.emit(lui(10, 0x4010_0000 >> 12)); // x10 = the word
+    a.emit(lw(11, 10, 0)); // x11 = the word, its line now cached
+    say(&mut a, b"r\n");
+    let again = a.label();
+    a.place(again);
+    a.emit(lw(12, 10, 0));
+    a.to(again, |off| beq(12, 11, off));
+    say(&mut a, b"c\n");
+    a.emit(halt());
+    a.words()
+}
+
+/// The board top's host's writes reach the data cache's snoop (issue
+/// 1634): the core holds the line of a DDR3 word, the host writes that
+/// word through the port, and the core's next read of it gives the new
+/// word rather than the line it held.
+#[test]
+fn the_board_tops_host_writes_are_snooped() {
+    let words: Vec<u32> = (0..8).map(|i| 0x5ee0_0000 | i).collect();
+    let net = Net {
+        host: Some(HostPlan {
+            at: 4000,
+            addr: 0x4010_0000,
+            id: 1,
+            words,
+        }),
+        ..Net::default()
+    };
+    let ran = run_all(&watch_program(), &[], b"", &[], 100_000, net, &[]);
+    assert_eq!(ran.said, "r\nc\n", "what the core said");
+    let (wrote_at, _, resp) = ran.host.wrote.expect("the write answered");
+    assert_eq!(resp, Resp::Okay, "the write's answer");
+    // `r` went out before the write; the core queues `c` and halts once
+    // it reads the new word, so its halt is when it saw it.
+    let r_at = ran.said_at[1];
+    let c_at = ran.halted_at.expect("the core halted");
+    assert!(
+        r_at < wrote_at,
+        "the line was cached ({r_at}) before the write ({wrote_at})"
+    );
+    assert!(c_at > wrote_at, "the new word was seen after the write");
+    eprintln!("snoop: cached by {r_at}, written at {wrote_at}, seen by {c_at}");
 }

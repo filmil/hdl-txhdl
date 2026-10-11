@@ -16,6 +16,7 @@ use std::net::TcpListener;
 use std::time::Duration;
 use txhdl::comp::{chan, pad, signal, Clock, DefaultClock, Out, Running, Unit};
 use txhdl::types::{Bit, U};
+use txhdl_parts::bus::axi::{Addr, B, R, W};
 use txhdl_parts::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
 use txhdl_parts::bus::axi_pins::AxiHostPins;
 use txhdl_parts::dtm::Tck;
@@ -331,6 +332,9 @@ fn rig_with(text: Vec<u32>, busy: bool) -> Rig {
             bscan_tdi: tdi,
             bscan_reset: reset,
             scan_req: chan::<U<32>, DefaultClock>().1,
+            host_aw: chan::<Addr<32, 2>, DefaultClock>().1,
+            host_ar: chan::<Addr<32, 2>, DefaultClock>().1,
+            host_w: chan::<W<32, 4>, DefaultClock>().1,
             jtag: AxiHostPins {
                 awid: signal::<U<1>, DefaultClock>().1,
                 awaddr: signal::<U<32>, DefaultClock>().1,
@@ -410,6 +414,8 @@ fn rig_with(text: Vec<u32>, busy: bool) -> Rig {
             bscan_tdo: tdo_o,
             // No scanout runs here: nothing asks for a line.
             scan_words: chan::<U<32>, DefaultClock>().0,
+            host_b: chan::<B<2>, DefaultClock>().0,
+            host_r: chan::<R<32, 2>, DefaultClock>().0,
         },
     ));
     // Out of reset, the serial line idle, and the cable's half period
