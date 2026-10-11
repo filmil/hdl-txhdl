@@ -25,9 +25,13 @@
 //! which without the costs it does not yet model leaves a run well under
 //! the board's time (issue 1554).
 //!
-//! `--flips` says, when the run stops, every base the scanout was given
-//! and the stand-in raster's frame it was written in, so that how long
-//! each buffer stays on the screen can be read off (#1639).
+//! `--flips` says, when the run stops, every base the scanout took and
+//! the stand-in raster's frame it took it in, so that how long each
+//! buffer stays on the screen can be read off (#1639). The scanout takes
+//! the base it was last given as each vertical blanking begins, as the
+//! board's does. `--board-raster`, in the timing mode only, makes the
+//! raster the board's 60 Hz, a frame every 1,668,321 cycles, so that a
+//! count of frames means what it does on the board.
 //!
 //! `--rings` says, when the run stops, every word written to Razboj's
 //! doorbell, the rows its list draws in, and where the scanout showed
@@ -116,6 +120,7 @@ fn main() {
     let mut dcache = false;
     let mut rings = false;
     let mut flips = false;
+    let mut board_raster = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         let mut val =
@@ -133,6 +138,7 @@ fn main() {
             "--dcache" => dcache = true,
             "--rings" => rings = true,
             "--flips" => flips = true,
+            "--board-raster" => board_raster = true,
             "--fastboot-peer" => fastboot = Some(number(&val()) as usize),
             // Stop once the console has said this, and say how far the
             // run got, which times a boot to a line of its log (issue
@@ -175,6 +181,16 @@ fn main() {
             }
         }
         m.model.timing = Some(t);
+    }
+    if board_raster {
+        if !timing {
+            eprintln!("--board-raster counts cycles, and wants --timing");
+            std::process::exit(2);
+        }
+        m.board.0.borrow_mut().raster = (
+            vreteno32::machine::BOARD_RASTER,
+            vreteno32::machine::BOARD_BLANKING,
+        );
     }
     if profiling {
         m.profile = Some(Default::default());
