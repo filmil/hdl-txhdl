@@ -493,6 +493,11 @@ thread_local! {
     /// its emitter run (issue 683).
     static HOISTED: std::cell::RefCell<Vec<(String, usize)>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// Of those wires, the products of extended operands that the
+    /// emitters write at the operands' own widths, signed where an
+    /// operand was sign-extended (issue 1649).
+    static SIGNED_MULS: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
     /// Of those wires, the products under a register's `#[use_dsp]`,
     /// each with the register's word on DSP slices (issue 1343).
     static DSP_WIRES: std::cell::RefCell<Vec<(String, &'static str)>> =
@@ -2242,6 +2247,7 @@ impl Lowered {
     ) {
         HOISTED.with(|h| h.borrow_mut().clear());
         DSP_WIRES.with(|h| h.borrow_mut().clear());
+        SIGNED_MULS.with(|h| h.borrow_mut().clear());
         let mut temps: Vec<(String, usize, Expr)> = Vec::new();
         // A computed value as a wire of its own, named `sl<n>`; the
         // same expression twice is one wire.
@@ -2399,6 +2405,28 @@ impl Lowered {
                         return Expr::Slice(Box::new(a), *lo, *len);
                     }
                     Expr::Slice(Box::new(wire(a, l, t)), *lo, *len)
+                }
+                // A product of extended operands, one at least signed, is a
+                // wire of its own, which the emitters write at the
+                // operands' own widths (issue 1649): written whole, the
+                // extensions hid the operands' widths from Vivado, which
+                // built a 64 by 64 product of four DSP blocks in series
+                // for one of two 32-bit values.
+                Expr::Bin("*", a, c) => {
+                    let p = Expr::Bin("*", b(a, t), b(c, t));
+                    if signed_product(&p, l).is_none() {
+                        return p;
+                    }
+                    let w = wire(p, l, t);
+                    if let Expr::Name(n) = &w {
+                        SIGNED_MULS.with(|h| {
+                            let mut h = h.borrow_mut();
+                            if !h.contains(n) {
+                                h.push(n.clone());
+                            }
+                        });
+                    }
+                    w
                 }
                 Expr::Bin(op, a, c) => Expr::Bin(op, b(a, t), b(c, t)),
                 Expr::Not(a) => Expr::Not(b(a, t)),
@@ -2921,6 +2949,23 @@ impl Lowered {
             .unwrap();
         }
         for (t, w, e) in &temps {
+            // A signed product as Verilog states one: every operand
+            // `$signed`, a zero-extended one with a zero above it, in the
+            // wire's own width, to which Verilog extends each operand by
+            // its sign (issue 1649).
+            let rhs = match signed_product(e, l) {
+                Some((x, y)) if is_signed_mul(t) => {
+                    let op = |(v, s): (&Expr, bool)| {
+                        if s {
+                            format!("$signed({})", vexpr(v, l))
+                        } else {
+                            format!("$signed({{1'b0, {}}})", vexpr(v, l))
+                        }
+                    };
+                    format!("{} * {}", op(x), op(y))
+                }
+                _ => vexpr(e, l),
+            };
             writeln!(
                 out,
                 "  {}wire {}{t} = {};",
@@ -2928,7 +2973,7 @@ impl Lowered {
                     .map(|v| format!("(* use_dsp = \"{v}\" *) "))
                     .unwrap_or_default(),
                 range(*w),
-                vexpr(e, l)
+                rhs
             )
             .unwrap();
         }
@@ -3661,6 +3706,28 @@ impl Lowered {
             }
         };
         for (t, w, e) in &temps {
+            // A signed product: the narrow operands as `signed`, a
+            // zero-extended one with a zero above it, multiplied at
+            // their own widths and resized to the wire's, which only
+            // extends, since the wire is at least as wide (issue 1649).
+            if let Some((x, y)) =
+                signed_product(e, self).filter(|_| is_signed_mul(t))
+            {
+                let op = |(v, s): (&Expr, bool)| {
+                    let n = self.ewidth(v);
+                    if s {
+                        format!("signed({})", hval(v, n, self))
+                    } else {
+                        format!("signed('0' & {})", hval(v, n, self))
+                    }
+                };
+                comb.push(format!(
+                    "  {t} <= unsigned(resize({} * {}, {w}));",
+                    op(x),
+                    op(y)
+                ));
+                continue;
+            }
             comb.push(format!("  {}", assign(t, *w, e)));
         }
         for (n, e) in &wires {
@@ -4122,6 +4189,56 @@ fn chain(
         seq.extend(els);
     }
     seq.push(end.to_string());
+}
+
+/// A product the emitters write at its operands' own widths (issue
+/// 1649): `a * b` where each operand is a sign or zero extension of a
+/// narrower value, at least one of them a sign extension, and the
+/// product is at least as wide as the two operands' signed widths
+/// together, a zero-extended one counting a bit more for its sign, so
+/// that the signed product of the narrow values is the whole product
+/// and no bit of it is cut. Each operand comes back as the narrow value
+/// and whether it is signed.
+fn signed_product<'a>(
+    e: &'a Expr,
+    l: &'a Lowered,
+) -> Option<((&'a Expr, bool), (&'a Expr, bool))> {
+    let Expr::Bin("*", a, c) = e else {
+        return None;
+    };
+    // `mul::<M>` resizes each operand to M first, which for one already
+    // M wide is the operand itself; the extension is under that, or
+    // under a `let` that names it, `let x = a.sext::<64>()`.
+    let bare = |mut x: &'a Expr| loop {
+        match x {
+            Expr::Zext(v, m) | Expr::Cast(v, m) if l.ewidth(v) == *m => x = v,
+            Expr::Name(n) => match l.wires.iter().find(|(w, _)| w == n) {
+                Some((_, v @ (Expr::Sext(..) | Expr::Zext(..)))) => x = v,
+                _ => return x,
+            },
+            _ => return x,
+        }
+    };
+    let narrow = |x: &'a Expr| match bare(x) {
+        Expr::Sext(v, m) if (2..*m).contains(&l.ewidth(v)) => {
+            Some((&**v, true))
+        }
+        Expr::Zext(v, m) if (1..*m).contains(&l.ewidth(v)) => {
+            Some((&**v, false))
+        }
+        _ => None,
+    };
+    let (x, y) = (narrow(a)?, narrow(c)?);
+    if !x.1 && !y.1 {
+        return None;
+    }
+    let width = |(v, s): (&Expr, bool)| l.ewidth(v) + usize::from(!s);
+    (l.ewidth(e) >= width(x) + width(y)).then_some((x, y))
+}
+
+/// Whether the hoisting pass made `t` a signed product's wire.
+fn is_signed_mul(t: &str) -> bool {
+    SIGNED_MULS.with(|h| h.borrow().iter().any(|n| n == t))
 }
 
 fn vexpr(e: &Expr, l: &Lowered) -> String {
