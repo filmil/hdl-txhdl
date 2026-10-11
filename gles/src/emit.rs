@@ -241,10 +241,46 @@ pub fn triangle(
     zs: Option<[u32; 3]>,
     within: Bounds,
 ) -> Option<([u32; WORDS], Option<[u32; WORDS]>)> {
+    let ch = |v: u32| [16, 8, 0].map(|at| ((v >> at) & 0xff) as i64);
+    let shades = shades.map(|s| s.map(ch));
+    let zs = zs.map(|z| z.map(|z| (z & 0xffff) as i64));
+    triangle_wide(colour, (a, b, c), shades, zs, within)
+}
+
+/// [`triangle`] with each vertex's red, green and blue, and its depth, as
+/// numbers that may lie outside a byte and sixteen bits, as a smooth
+/// line's carried past its ends do (#1684): Razboj takes each pixel's
+/// channel as nought below nought and 255 above, and its depth as
+/// nought below nought and `0xffff` above, so the planes need only be the
+/// right ones.
+///
+/// A value may lie at most four times its range past it, a channel's
+/// between -1020 and 1275 and a depth's between -262140 and 327675, and
+/// only as far as a smooth line's corner carries it, which is further
+/// the shorter the line and so the smaller its triangles: a value's
+/// excess times its triangle's size stays near a range's times the
+/// screen's, where [`plane`]'s products fit 64 bits. Debug builds check
+/// the first.
+pub fn triangle_wide(
+    colour: u32,
+    (a, b, c): ((i32, i32), (i32, i32), (i32, i32)),
+    shades: Option<[[i64; 3]; 3]>,
+    zs: Option<[i64; 3]>,
+    within: Bounds,
+) -> Option<([u32; WORDS], Option<[u32; WORDS]>)> {
+    debug_assert!(
+        shades
+            .iter()
+            .flatten()
+            .flatten()
+            .all(|v| (-1020..=1275).contains(v))
+            && zs.iter().flatten().all(|v| (-262140..=327675).contains(v)),
+        "a wide value past four times its range"
+    );
     let swap = area2(a, b, c) < 0;
     let (b, c) = if swap { (c, b) } else { (b, c) };
-    let turn = |s: [u32; 3]| if swap { [s[0], s[2], s[1]] } else { s };
-    let (shades, zs) = (shades.map(turn), zs.map(turn));
+    let (shades, zs) =
+        (shades.map(|s| turn(s, swap)), zs.map(|z| turn(z, swap)));
     if area2(a, b, c) == 0 {
         return None;
     }
@@ -272,23 +308,31 @@ pub fn triangle(
     let first = (x0 as i32 * 16 + 8, y0 as i32 * 16 + 8);
     if let Some(s) = shades {
         w[0] = 3 | ((colour & 0xff_ffff) << 2);
-        for (k, at) in [16u32, 8, 0].iter().enumerate() {
-            let ch = |v: u32| ((v >> at) & 0xff) as i64;
+        for k in 0..3 {
             let (s0, dx, dy) =
-                plane(a, b, c, [ch(s[0]), ch(s[1]), ch(s[2])], first, 16);
+                plane(a, b, c, [s[0][k], s[1][k], s[2][k]], first, 16);
             w[6 + 3 * k] = s0;
             w[7 + 3 * k] = dx;
             w[8 + 3 * k] = dy;
         }
     }
-    let slot = zs.map(|z| {
-        let v = z.map(|z| (z & 0xffff) as i64);
+    let slot = zs.map(|v| {
         let (z0, dx, dy) = plane(a, b, c, v, first, ZFRAC);
         let mut p = [0u32; WORDS];
         (p[0], p[1], p[2]) = (z0, dx, dy);
         p
     });
     Some((w, slot))
+}
+
+/// The vertices' values `s` with the last two swapped when `swap`, as a
+/// triangle's vertices are when its area says the other way.
+fn turn<T: Copy>(s: [T; 3], swap: bool) -> [T; 3] {
+    if swap {
+        [s[0], s[2], s[1]]
+    } else {
+        s
+    }
 }
 
 /// A clear of the whole screen in `colour`, `0xAARRGGBB`.
