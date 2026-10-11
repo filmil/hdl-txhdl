@@ -328,7 +328,7 @@ Each step is a pull request, checked before the next.
 Points and lines are issue 994's, done in the library, so Razboj is unchanged.
 `glPointSizex` and `glLineWidthx` set a size and a width, which a draw rounds to whole pixels between 1 and 64.
 A point is kept when its vertex is inside the clip volume and the user plane.
-Its size is derived as section 3.3 says (#1508): the size over the root of `a + b d + c d^2`, `d` its distance from the eye and `a`, `b` and `c` the distance attenuation `glPointParameterxv` sets, then kept between the least and the most `glPointParameterx` sets, nought and 64 at first; the fade threshold changes nothing without a multisample buffer.
+Its size is derived as section 3.3 says (#1508): the size over the root of `a + b d + c d^2`, `d` its distance from the eye and `a`, `b` and `c` the distance attenuation `glPointParameterxv` sets, then kept between the least and the most `glPointParameterx` or `xv` sets, nought and 64 at first; the fade threshold applies only to multisample rasterization (section 3.3.3), and there is no multisample buffer.
 It becomes the square GL gives a point that is not antialiased, as one of Razboj's rectangles: centred on the pixel the vertex is in for an odd size, and on the pixel corner nearest it for an even one.
 A line segment is clipped against the planes a triangle is.
 It then becomes the parallelogram GL's wide lines describe: the segment moved half the width up and down when it is more across than down, or left and right when not.

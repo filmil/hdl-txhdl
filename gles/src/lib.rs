@@ -771,6 +771,15 @@ impl<'a> Gl<'a> {
     /// distance attenuation's constant, linear and quadratic
     /// coefficients.
     pub fn point_parameterv(&mut self, pname: u32, params: &[Fx]) {
+        if !matches!(
+            pname,
+            gl::POINT_SIZE_MIN
+                | gl::POINT_SIZE_MAX
+                | gl::POINT_FADE_THRESHOLD_SIZE
+                | gl::POINT_DISTANCE_ATTENUATION
+        ) {
+            return self.fail(gl::INVALID_ENUM);
+        }
         let Some(&p) = params.first() else {
             return self.fail(gl::INVALID_VALUE);
         };
@@ -797,8 +806,8 @@ impl<'a> Gl<'a> {
     /// `1 / sqrt(a + b d + c d^2)`, `d` its distance from the eye and `a`,
     /// `b` and `c` the distance attenuation, kept between the least and
     /// the most `glPointParameterx` sets. A sum not above nought puts it
-    /// at the most. The fade threshold changes nothing without a
-    /// multisample buffer, which there is not.
+    /// at the most. The fade threshold applies only to multisample
+    /// rasterization (section 3.3.3), and there is no multisample buffer.
     fn derived_size(&self, v: &Vert) -> Fx {
         let [a, b, c] = self.point_atten.map(|k| k as i128);
         let size = if [a, b, c] == [ONE as i128, 0, 0] {
@@ -2140,7 +2149,8 @@ impl<'a> Gl<'a> {
         let Some((wx, wy)) = self.window(&v) else {
             return;
         };
-        let s = size(self.derived_size(&v));
+        let derived = self.derived_size(&v);
+        let s = size(derived);
         let lo = |c: i64| {
             if s % 2 == 1 {
                 c.div_euclid(16) - (s - 1) / 2
@@ -2161,7 +2171,7 @@ impl<'a> Gl<'a> {
         // A point sprite is not antialiased, whatever GL_POINT_SMOOTH
         // says (OES_point_sprite).
         if self.point_smooth && !self.sprite_on {
-            return self.smooth_point(&v, (wx, 16 * sh - wy));
+            return self.smooth_point(&v, (wx, 16 * sh - wy), derived);
         }
         if let Some(b) = clip(c(x0), c(y0), c(x1), c(y1), self.bounds()) {
             let slot = emit::flat_depth(self.window_z(&v));
@@ -2293,12 +2303,11 @@ impl<'a> Gl<'a> {
     /// pixels a pixel inside its edge are the point's colour and whose
     /// alpha falls to nought across one pixel out to a pixel past it,
     /// which is the coverage GL puts in alpha for an antialiased point,
-    /// taken linear across the rim. The size is the point's own, not
-    /// rounded, kept from 1 to 64 pixels as the smooth range says.
-    fn smooth_point(&mut self, v: &Vert, at: (i64, i64)) {
-        let r = (self.derived_size(v).clamp(ONE, gl::MAX_SIZE as Fx * ONE)
-            as i64)
-            >> 13;
+    /// taken linear across the rim. The size is the point's derived one,
+    /// `size`, not rounded, kept from 1 to 64 pixels as the smooth range
+    /// says.
+    fn smooth_point(&mut self, v: &Vert, at: (i64, i64), size: Fx) {
+        let r = (size.clamp(ONE, gl::MAX_SIZE as Fx * ONE) as i64) >> 13;
         // Eight sides for a point of a pixel or less across, sixteen
         // above; the corners pushed out by the factor, in 16.16, that puts
         // the mean of a side's distance from the centre on the circle.
