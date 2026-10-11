@@ -456,8 +456,9 @@ pub struct Board<const DIV: u32> {
     /// puts the SD card's onto its sixth, so that the fourth is free
     /// for the board top's host (issue 1634). The fetch engine only
     /// reads and the store engine only writes, and an arbiter keeps
-    /// the turns of reads and writes apart, so sharing a port takes no
-    /// turn from either.
+    /// the turns of reads and writes apart, so sharing a port costs
+    /// neither a turn at the arbiter; the memory behind it they share as
+    /// before.
     pub etharb: Arbiter2<32, 32, 4, 1, 2, 0>,
     // end{ethdma}
     // begin{scan}
@@ -535,8 +536,9 @@ pub struct BoardIn {
     /// The scanout's line requests, from the pixel clock's side.
     pub scan_req: Rx<U<32>>,
     /// The board top's host on the arbiter's fourth port (issue 1634):
-    /// a design beside the core that reads and writes memory, its
-    /// registers on the third slot and its interrupt on `irq`. Two bits
+    /// a design beside the core that reads and writes memory, whose
+    /// registers the top hangs on the third slot and whose interrupt it
+    /// drives on `irq`, both of which `Board` already has. Two bits
     /// of identifier, so four bursts in flight. A top with nothing
     /// there offers nothing and takes every answer.
     pub host_aw: Rx<Aw<32, 2>>,
