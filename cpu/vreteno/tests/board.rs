@@ -3467,6 +3467,7 @@ fn floor_plan() -> Vec<Op> {
                 desc: FLOOR_DESC,
                 env: MODULATE,
                 env_colour: 0,
+                combine: 0,
             })),
             tri(0, 1, 2),
             tri(0, 2, 3),

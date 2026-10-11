@@ -155,6 +155,7 @@ fn the_texture_slots_are_razbojs_encoders() {
                 desc: 0,
                 env: 0,
                 env_colour: 0,
+                combine: 0,
             })),
             Op::TexTri {
                 a,

@@ -177,6 +177,7 @@ pub fn encode_tex(i: &Insn) -> Option<[[u32; WORDS]; 2]> {
     for (k, v) in n.iter().enumerate() {
         b[6 + k] = v.raw() as u32;
     }
+    b[14] = i.tcomb.raw() as u32;
     Some([a, b])
 }
 // end{format}
@@ -267,6 +268,7 @@ pub fn decode_tex(i: &mut Insn, a: &[u32; WORDS], b: &[u32; WORDS]) {
     i.tdesc = U::from(a[13]);
     i.tenv = U::from(a[14] & 7);
     i.tenvc = U::from(a[15]);
+    i.tcomb = U::from(b[14]);
 }
 
 /// A list's words read back as its instructions, an entry that tests

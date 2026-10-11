@@ -367,9 +367,12 @@ segments, and one Newton step, within $2^{-23}$; and takes the level of
 detail as a base-2 logarithm whose fraction is a line in each of 32
 segments. It samples under GL's
 two magnification and six minification filters, repeats or clamps, and
-applies the five environments of GL ES~1.1 but \code{COMBINE}, before
-the alpha test. Over a floor in perspective it is within a fiftieth of a
-level of the level of detail in floating point.
+applies the six environments of GL ES~1.1 before the alpha test, the
+last of them \code{COMBINE} (issue~\#1512): its functions, sources,
+operands and scales are one word, word 14 of the second texture slot,
+and each function is worked out exactly and rounded once, within half a
+level of GL's in floating point. The rasteriser does not yet combine.
+Over a floor in perspective it is within a fiftieth of a level of the level of detail in floating point.
 
 In a tile the rasteriser samples as the model does, byte for byte,
 under both magnification filters, all six minification filters and the

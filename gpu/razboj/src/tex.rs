@@ -13,9 +13,12 @@
 use crate::model::div255;
 use crate::raster::{log_rise, log_start, seed_fall, seed_start};
 use razboj_tile::tex::{
-    level_base, side, texel_offset, Desc, ADD, ALPHA, BLEND, DECAL, LINEAR,
-    LINEAR_MIPMAP_NEAREST, LUMINANCE, LUMINANCE_ALPHA, MODULATE, NEAREST,
-    NEAREST_MIPMAP_LINEAR, NEAREST_MIPMAP_NEAREST, REPLACE, RGB,
+    level_base, side, texel_offset, Combine, Desc, ADD, ALPHA, BLEND, DECAL,
+    FN_ADD, FN_ADD_SIGNED, FN_DOT3_RGB, FN_DOT3_RGBA, FN_INTERPOLATE,
+    FN_MODULATE, FN_REPLACE, LINEAR, LINEAR_MIPMAP_NEAREST, LUMINANCE,
+    LUMINANCE_ALPHA, MODULATE, NEAREST, NEAREST_MIPMAP_LINEAR,
+    NEAREST_MIPMAP_NEAREST, OP_SRC_ALPHA, REPLACE, RGB, SRC_CONSTANT,
+    SRC_TEXTURE,
 };
 use txhdl::types::U;
 
@@ -308,6 +311,72 @@ pub fn env(mode: u32, class: u32, cf: u32, ct: u32, cc: u32) -> u32 {
     word([colour[0], colour[1], colour[2], alpha])
 }
 
+/// GL ES 1.1's `COMBINE` environment (#1512), as the [`Combine`] packed in
+/// `w` says: each of three arguments taken from its source, the texel
+/// `ct`, the environment's colour `cc`, or the fragment's colour `cf`,
+/// which is both the primary colour and, on the one unit, the previous
+/// one; under its operand, a channel or the alpha, or one less either;
+/// then the function, the scale and the clamp, for red, green and blue
+/// and for alpha apart. A texel is RGBA as its class gives it, which the
+/// library stores it as. Each function is worked out exactly, in 510ths
+/// of a level, and rounded once to the nearest, so that `MODULATE` is
+/// the other environments' product over 255. `DOT3_RGBA`'s alpha is its
+/// colour's value, scaled by the colour's scale.
+pub fn combine(w: u32, cf: u32, ct: u32, cc: u32) -> u32 {
+    let c = Combine::of(w);
+    let src = |s: u32| {
+        bytes(match s {
+            SRC_TEXTURE => ct,
+            SRC_CONSTANT => cc,
+            _ => cf,
+        })
+    };
+    // Channel `k` of an argument, or its alpha, under its operand.
+    let arg = |s: u32, op: u32, k: usize| -> i64 {
+        let b = src(s);
+        let v = if op >= OP_SRC_ALPHA { b[3] } else { b[k] } as i64;
+        if op & 1 == 1 {
+            255 - v
+        } else {
+            v
+        }
+    };
+    // A function of its arguments, in 510ths of a level.
+    let fun = |func: u32, a: [i64; 3]| match func {
+        FN_REPLACE => 510 * a[0],
+        FN_MODULATE => 2 * a[0] * a[1],
+        FN_ADD => 510 * (a[0] + a[1]),
+        FN_ADD_SIGNED => 510 * (a[0] + a[1]) - 255 * 255,
+        FN_INTERPOLATE => 2 * (a[0] * a[2] + a[1] * (255 - a[2])),
+        _ => 510 * (a[0] - a[1]),
+    };
+    // Scaled, rounded to the nearest and kept to a byte.
+    let out = |n: i64, scale: u32| {
+        ((n << scale) + 255).div_euclid(510).clamp(0, 255) as u32
+    };
+    let rgb_args =
+        |k: usize| [0, 1, 2].map(|j| arg(c.src_rgb[j], c.op_rgb[j], k));
+    let colour: [u32; 3] = if c.rgb == FN_DOT3_RGB || c.rgb == FN_DOT3_RGBA {
+        // 4 ((a0 - 1/2)(b0 - 1/2) + ...), in 510ths.
+        let d: i64 = (0..3)
+            .map(|k| {
+                let a = rgb_args(k);
+                (2 * a[0] - 255) * (2 * a[1] - 255)
+            })
+            .sum();
+        [out(2 * d, c.scale_rgb); 3]
+    } else {
+        core::array::from_fn(|k| out(fun(c.rgb, rgb_args(k)), c.scale_rgb))
+    };
+    let alpha = if c.rgb == FN_DOT3_RGBA {
+        colour[0]
+    } else {
+        let a = [0, 1, 2].map(|j| arg(c.src_alpha[j], c.op_alpha[j], 3));
+        out(fun(c.alpha, a), c.scale_alpha)
+    };
+    word([colour[0], colour[1], colour[2], alpha])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -407,9 +476,13 @@ mod against_gl {
     use crate::model::{render_textured, Textures};
     use crate::op::{assemble, Op, TexMode};
     use razboj_tile::tex::{
-        encode, level_base, side, texel_offset, Desc, ADD, BLEND, DECAL,
-        LINEAR, LINEAR_MIPMAP_LINEAR, LINEAR_MIPMAP_NEAREST, MODULATE, NEAREST,
-        NEAREST_MIPMAP_LINEAR, NEAREST_MIPMAP_NEAREST, REPLACE, RGBA,
+        encode, level_base, side, texel_offset, Combine, Desc, ADD, BLEND,
+        COMBINE, DECAL, FN_ADD, FN_ADD_SIGNED, FN_DOT3_RGB, FN_DOT3_RGBA,
+        FN_INTERPOLATE, FN_MODULATE, FN_REPLACE, FN_SUBTRACT, LINEAR,
+        LINEAR_MIPMAP_LINEAR, LINEAR_MIPMAP_NEAREST, MODULATE, NEAREST,
+        NEAREST_MIPMAP_LINEAR, NEAREST_MIPMAP_NEAREST, OP_ONE_MINUS_SRC_ALPHA,
+        OP_ONE_MINUS_SRC_COLOR, OP_SRC_ALPHA, REPLACE, RGBA, SRC_CONSTANT,
+        SRC_PREVIOUS, SRC_PRIMARY_COLOR, SRC_TEXTURE,
     };
     use std::collections::HashMap;
 
@@ -635,6 +708,109 @@ mod against_gl {
         })
     }
 
+    /// `COMBINE` as GL ES 1.1's tables 3.17 and 3.18 have it (#1512), in
+    /// floating point and in bytes: the fragment `f`, the texel `t` and the
+    /// environment's colour `e`, unrounded.
+    fn gl_combine(
+        c: &Combine,
+        f: [f64; 4],
+        t: [f64; 4],
+        e: [f64; 4],
+    ) -> [f64; 4] {
+        let src = |s: u32| {
+            match s {
+                SRC_TEXTURE => t,
+                SRC_CONSTANT => e,
+                _ => f,
+            }
+            .map(|v| v / 255.0)
+        };
+        let arg = |s: u32, op: u32, k: usize| {
+            let b = src(s);
+            match op {
+                OP_SRC_ALPHA => b[3],
+                OP_ONE_MINUS_SRC_ALPHA => 1.0 - b[3],
+                OP_ONE_MINUS_SRC_COLOR => 1.0 - b[k],
+                _ => b[k],
+            }
+        };
+        let fun = |func: u32, a: [f64; 3]| match func {
+            FN_REPLACE => a[0],
+            FN_MODULATE => a[0] * a[1],
+            FN_ADD => a[0] + a[1],
+            FN_ADD_SIGNED => a[0] + a[1] - 0.5,
+            FN_INTERPOLATE => a[0] * a[2] + a[1] * (1.0 - a[2]),
+            _ => a[0] - a[1],
+        };
+        let out =
+            |v: f64, s: u32| (v * (1u32 << s) as f64).clamp(0.0, 1.0) * 255.0;
+        let ra =
+            |k: usize| [0, 1, 2].map(|j| arg(c.src_rgb[j], c.op_rgb[j], k));
+        let colour: [f64; 3] = if c.rgb == FN_DOT3_RGB || c.rgb == FN_DOT3_RGBA
+        {
+            let d: f64 = (0..3)
+                .map(|k| {
+                    let a = ra(k);
+                    4.0 * (a[0] - 0.5) * (a[1] - 0.5)
+                })
+                .sum();
+            [out(d, c.scale_rgb); 3]
+        } else {
+            std::array::from_fn(|k| out(fun(c.rgb, ra(k)), c.scale_rgb))
+        };
+        let alpha = if c.rgb == FN_DOT3_RGBA {
+            colour[0]
+        } else {
+            let a = [0, 1, 2].map(|j| arg(c.src_alpha[j], c.op_alpha[j], 3));
+            out(fun(c.alpha, a), c.scale_alpha)
+        };
+        [colour[0], colour[1], colour[2], alpha]
+    }
+
+    /// `COMBINE` (#1512) is GL's within half a level, the arithmetic's
+    /// one rounding, over every function, source, operand and scale with
+    /// random colours; and its initial settings, the texel times the
+    /// fragment, are `MODULATE`'s exactly.
+    #[test]
+    fn combine_is_gls() {
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut next = |n: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as u32
+        };
+        let bytes = |w: u32| [0, 8, 16, 24].map(|at| ((w >> at) & 0xff) as f64);
+        let mut worst = 0f64;
+        for round in 0..200_000 {
+            let c = Combine {
+                rgb: round % 8,
+                alpha: (round / 8) % 6,
+                src_rgb: [next(4), next(4), next(4)],
+                src_alpha: [next(4), next(4), next(4)],
+                op_rgb: [next(4), next(4), next(4)],
+                op_alpha: [2 + next(2), 2 + next(2), 2 + next(2)],
+                scale_rgb: next(3),
+                scale_alpha: next(3),
+            };
+            let (f, t, e) = (next(u32::MAX), next(u32::MAX), next(u32::MAX));
+            let got = crate::tex::combine(c.word(), f, t, e);
+            let want = gl_combine(&c, bytes(f), bytes(t), bytes(e));
+            for (k, w) in want.iter().enumerate() {
+                let g = ((got >> (8 * k)) & 0xff) as f64;
+                worst = worst.max((g - w).abs());
+                assert!(
+                    (g - w).abs() <= 0.5 + 1e-9,
+                    "{c:?} f {f:08x} t {t:08x} e {e:08x} channel {k}: {g}, GL {w:.3}"
+                );
+            }
+            let m = crate::tex::env(MODULATE, RGBA, f, t, e);
+            let d = crate::tex::combine(Combine::default().word(), f, t, e);
+            assert_eq!(d, m, "the initial settings are MODULATE's");
+        }
+        println!("COMBINE within {worst:.3} of a level of GL's");
+    }
+
     /// Every filter, every environment and both wraps: each pixel of the
     /// model's picture is GL's within two in every channel at the model's
     /// level of detail, wherever GL's answer does not turn on less than
@@ -647,6 +823,23 @@ mod against_gl {
     fn the_model_samples_as_gl_does() {
         let frag = 0xc080_40ffu32;
         let env_colour = 0xff20_c060u32;
+        // `COMBINE` (#1512) of a kind the five cannot be: the texel and the
+        // environment's colour mixed by one less the fragment's alpha,
+        // doubled; the alpha the texel's less the fragment's, signed.
+        let setting = Combine {
+            rgb: FN_INTERPOLATE,
+            alpha: FN_SUBTRACT,
+            src_rgb: [SRC_TEXTURE, SRC_CONSTANT, SRC_PREVIOUS],
+            src_alpha: [SRC_TEXTURE, SRC_PRIMARY_COLOR, SRC_CONSTANT],
+            op_rgb: [
+                OP_SRC_ALPHA - 2,
+                OP_ONE_MINUS_SRC_COLOR,
+                OP_ONE_MINUS_SRC_ALPHA,
+            ],
+            op_alpha: [OP_SRC_ALPHA, OP_SRC_ALPHA, OP_SRC_ALPHA],
+            scale_rgb: 1,
+            scale_alpha: 0,
+        };
         let filters = [
             (NEAREST, NEAREST),
             (LINEAR, LINEAR),
@@ -657,13 +850,14 @@ mod against_gl {
         ];
         let (mut compared, mut skipped, mut worst_lod) = (0, 0, 0f64);
         for (k, &(min, mag)) in filters.iter().enumerate() {
-            for env in [REPLACE, MODULATE, DECAL, BLEND, ADD] {
+            for env in [REPLACE, MODULATE, DECAL, BLEND, ADD, COMBINE] {
                 let (mem, d) = texture(min, mag, k % 2 == 1);
                 let ops = [
                     Op::Texture(Some(TexMode {
                         desc: TABLE,
                         env,
                         env_colour,
+                        combine: setting.word(),
                     })),
                     tri([0, 1, 2], frag),
                     tri([0, 2, 3], frag),
@@ -734,7 +928,11 @@ mod against_gl {
                             .map(|at| ((frag >> at) & 0xff) as f64);
                         let e = [0, 8, 16, 24]
                             .map(|at| ((env_colour >> at) & 0xff) as f64);
-                        let want = gl_env(env, f, t, e);
+                        let want = if env == COMBINE {
+                            gl_combine(&setting, f, t, e)
+                        } else {
+                            gl_env(env, f, t, e)
+                        };
                         let p = got[y * W + x];
                         for (c, w) in want.iter().enumerate() {
                             let g = ((p >> (8 * c)) & 0xff) as f64;
@@ -773,6 +971,7 @@ mod against_gl {
                 desc: TABLE,
                 env: MODULATE,
                 env_colour: 0,
+                combine: 0,
             })),
             tri([0, 1, 2], 0xffff_ffff),
             tri([0, 2, 3], 0xffc0_c0c0),
