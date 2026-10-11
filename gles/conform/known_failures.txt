@@ -1,10 +1,6 @@
 # The conformance suite's failures on the host (#999), each with the issue
 # that records it. conform_test fails on a failure not listed here, and on
 # one listed here that passes.
-state.POINT_SIZE_ARRAY_OES               #1507
-state.POINT_SIZE_ARRAY_TYPE_OES          #1507
-state.POINT_SIZE_ARRAY_STRIDE_OES        #1507
-state.POINT_SIZE_ARRAY_BUFFER_BINDING_OES #1507
 state.MAX_TEXTURE_UNITS                  #1510
 state.COMBINE_RGB                        #1512
 state.COMBINE_ALPHA                      #1512
@@ -22,6 +18,4 @@ state.OPERAND1_ALPHA                     #1512
 state.OPERAND2_ALPHA                     #1512
 state.RGB_SCALE                          #1512
 state.ALPHA_SCALE                        #1512
-state.POINT_SIZE_ARRAY_POINTER_OES       #1507
 errors.tex_env_scale                     #1512
-state.EXTENSION_OES_point_size_array     #1507

@@ -463,3 +463,30 @@ fn a_point_is_attenuated_and_kept_in_its_range() {
         400
     );
 }
+
+/// `OES_point_size_array` (#1507): a point with a size of its own is
+/// drawn at that size, and one without at the current size, in the same
+/// draw; its own size is attenuated as the current one is.
+#[test]
+fn a_point_takes_its_own_size_from_its_vertex() {
+    let ps = [at(20 * 16, 20 * 16), at(60 * 16, 60 * 16)];
+    let sized = |sizes: [Option<Fx>; 2], atten: [Fx; 3]| {
+        let mut frame = [[0u32; 16]; 8];
+        let mut g = context(&mut frame);
+        g.point_size(3 * ONE);
+        g.point_parameterv(gl::POINT_DISTANCE_ATTENUATION, &atten);
+        g.draw_vertices(gl::POINTS, 2, |k| gles::Vertex {
+            position: ps[k],
+            point_size: sizes[k],
+            ..Default::default()
+        });
+        assert_eq!(g.get_error(), gl::NO_ERROR);
+        picture(&g).iter().filter(|&&p| p == WHITE).count()
+    };
+    assert_eq!(sized([Some(7 * ONE), None], [ONE, 0, 0]), 49 + 9);
+    assert_eq!(sized([Some(5 * ONE), Some(2 * ONE)], [ONE, 0, 0]), 25 + 4);
+    // At 28.3 pixels from the eye, (0, 0, 1/200) gives a sum of 4, so a
+    // size of 8 of its own is 4 there.
+    let first_alone = [Some(8 * ONE), Some(ONE / 4)];
+    assert_eq!(sized(first_alone, [0, 0, ONE / 200]), 16 + 1);
+}

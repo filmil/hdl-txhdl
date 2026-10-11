@@ -90,6 +90,13 @@ int main(void) {
   glPointParameterxv(GL_POINT_DISTANCE_ATTENUATION, atten);
   glPointParameterx(GL_POINT_SIZE_MAX, 6 * ONE);
   glDrawArrays(GL_POINTS, 1, 1);
+  /* A point at the fan's second corner with a size of its own, from a
+     point size array (#1507). */
+  static const GLfixed sizes[3] = {0, 0, 3 * ONE};
+  glEnableClientState(GL_POINT_SIZE_ARRAY_OES);
+  glPointSizePointerOES(GL_FIXED, 0, sizes);
+  glDrawArrays(GL_POINTS, 2, 1);
+  glDisableClientState(GL_POINT_SIZE_ARRAY_OES);
 
   size_t n = gles_frame_len();
   printf("frame %zu\n", n);
