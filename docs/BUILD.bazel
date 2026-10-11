@@ -3078,11 +3078,13 @@ waveform(
         "//a=>a",
         "//b=>b",
         "//h=>h",
+        "//c=>c",
+        "//d=>d",
         "//smul/pss=>ss",
         "//smul/psu=>su",
         "//smul/psmall=>small",
     ],
-    until = 27,
+    until = 31,
 )
 
 waveform(
