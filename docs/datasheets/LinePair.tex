@@ -43,7 +43,18 @@ address on \code{stuck\_at}, so a fetch that hangs says so rather than
 leaving a black screen and a clear \code{starved} (issue 1197).
 \code{worst} is the longest a line took from being asked for to its
 last word, in pixels, and \code{lates} counts the lines not whole when
-their rows began; \code{clear} resets both (issue 1523).
+their rows began (issue 1523).
+\code{lates} counts more than the screen shows, since most lines not
+whole at their row's start then come at the beam's rate and show no
+\code{LATE}. So the pair also counts what the screen shows
+(issue 1524): \code{late\_rows}, the shown rows in which a column
+showed \code{LATE}, and \code{late\_frames}, the frames in which a row
+did. And it measures how close the words came: \code{margin} is the
+least, over the words since the last clear, of the pixel clocks from a
+word's arrival to the last tick it could have come without its column
+showing \code{LATE}. A margin of nought is a word that came at that
+last tick; a negative one is a column shown late.
+\code{clear} resets all five.
 
 The frame's memory is the bytes from \code{LO} up to but not including
 \code{HI}. A line not wholly inside them is not asked for at all: it
@@ -135,6 +146,22 @@ comes, the ticks since it was asked for replace \code{worst} if they
 are more. At the start of each visible row, once armed, a line not
 whole adds one to \code{lates}, which stops at its largest.
 \code{clear} sets both to zero.
+\item A shown row in which any column showed \code{LATE} adds one to
+\code{late\_rows} at the next line's start, and a frame in which any
+row did adds one to \code{late\_frames} at the vertical sync. Both are
+sixteen bits and stop at their largest; \code{clear} sets both to
+zero.
+\item \code{margin} is sixteen bits, two's complement. A word's margin
+is the tick its column of its own row is shown, less the tick it
+arrived, less one. Its row is the oldest owed line's, which may be one
+or two rows on from the row being shown, counted round the frame, as
+a frame's first row is asked for in the last rows' blanking. The pair
+is given neither the row's length in ticks nor the tick of a row's
+first column, so it measures both as the rows go by, and times no
+word until it has. A word is timed only while armed, for a visible
+row at most two rows on, and for a column of the line.
+\code{margin} keeps the least margin since \code{clear}, and reads
+32767, its largest, when no word has been timed since.
 \item Two line starts in a row with lines owed and no word come set
 \code{stuck}, and \code{stuck\_at} is the oldest owed line's address
 then; while \code{stuck} is set it does not change. \code{clear}
@@ -161,7 +188,14 @@ raster:
 \item \code{a\_frame\_with\_its\_words\_on\_time\_has\_no\_late\_line}
 gives the words as fast as the pair takes them, one row ahead and two,
 and from the second frame sees no late line, no starved column and no
-\code{stuck}.
+\code{stuck}, \code{late\_rows} and \code{late\_frames} nought, and a
+margin of nought or more.
+\item \code{the\_margin\_is\_nought\_at\_the\_last\_tick\_a\_word\_may}\allowbreak
+\code{\_come} holds every word back by the margin a run on time
+measured: the margin reads nought and no row shows \code{LATE}. One
+tick more and the margin reads minus one, and rows and frames show
+\code{LATE}. So the first hold-back that shows \code{LATE} is the first
+that makes the margin negative (issue 1524).
 \item \code{the\_blanking\_columns\_read\_nothing\_past\_the\_line}
 runs two lines of 640 words in 800 columns (issue 1194).
 \end{itemize}
@@ -175,8 +209,13 @@ the base \code{0x3000}, the serial port's page: no line is asked for,
 out whole.
 \item \code{a\_stalled\_read\_is\_late\_one\_row\_ahead\_and\_not\_two}
 stalls one line's read for 4000 cycles: one row ahead, four lines are
-late and two rows show \code{LATE}; two rows ahead, one line is late
-and no column starves. Either way every row shows its own line.
+late, two rows show \code{LATE}, the pair counts those two in
+\code{late\_rows}, and the margin is negative; two rows ahead, one
+line is late, no column starves, \code{late\_rows} is nought and the
+margin is nought or more. Either way every row shows its own line.
+\item \code{the\_scanout\_against\_a\_trilinear\_floor} reads the
+pair's own \code{late\_rows} as nought while Razboj draws the
+mipmapped floor and the core and the Ethernet port load the DDR3.
 \item \code{a\_flipped\_frame\_is\_shown\_one\_row\_ahead\_and\_two}
 flips between two bases in the middle of every frame, and one
 row ahead and two every row shows its own line from the frame the pair
