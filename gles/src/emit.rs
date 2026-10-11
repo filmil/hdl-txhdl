@@ -57,7 +57,11 @@ fn plane(
     let nx = db * vy - dc * uy;
     let ny = dc * ux - db * vx;
     let one = 1i64 << frac;
-    let round = |n: i64| (n + area / 2).div_euclid(area);
+    // Half the area, toward nought as `area / 2` is, worked out once and
+    // by shifts: at the core's size optimisation the division by two is
+    // a call to the 64-bit divide (#1624).
+    let half = if area < 0 { -(-area >> 1) } else { area >> 1 };
+    let round = |n: i64| (n + half).div_euclid(area);
     let (px, py) = d(a, first);
     let start = v[0] * one + one / 2 + round((nx * px + ny * py) * one);
     let word = |x: i64| x as i32 as u32;

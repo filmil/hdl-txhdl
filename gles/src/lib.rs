@@ -96,7 +96,7 @@ impl View {
     /// at or behind the eye, which clipping leaves only in a degenerate
     /// case.
     fn window(&self, v: &Vert) -> Option<(i64, i64)> {
-        let [x, y, _, w] = v.clip.map(|c| c as i64);
+        let (x, y, w) = (v.clip[0] as i64, v.clip[1] as i64, v.clip[3] as i64);
         if w <= 0 {
             return None;
         }
@@ -172,7 +172,13 @@ impl View {
     /// inside: near and far, the user's plane, then the guard band's four
     /// edges.
     fn distances(&self, v: &Vert, plane: usize) -> i128 {
-        let [x, y, z, w] = v.clip.map(|c| c as i64);
+        // Read one by one: a map would copy the four through an array.
+        let (x, y, z, w) = (
+            v.clip[0] as i64,
+            v.clip[1] as i64,
+            v.clip[2] as i64,
+            v.clip[3] as i64,
+        );
         let (vx, vy, vw, vh) = self.viewport;
         let (vx16, vy16) = (16 * vx as i64, 16 * vy as i64);
         let (vw8, vh8) = (8 * vw as i64, 8 * vh as i64);
@@ -1975,7 +1981,9 @@ impl<'a> Gl<'a> {
                         gl::TRIANGLE_STRIP => (t, t + 1, t + 2),
                         _ => (0, t + 1, t + 2),
                     };
-                    let t = [a, b, c].map(|k| match key(k) {
+                    // Each vertex made where the triangle holds it, rather
+                    // than through an array's map, which copies them.
+                    let mut get = |k: usize| match key(k) {
                         Some(i) => {
                             let slot = &mut self.vcache[i % VCACHE];
                             if slot.0 != i {
@@ -1984,8 +1992,9 @@ impl<'a> Gl<'a> {
                             slot.1
                         }
                         None => view.placed(vert(k)),
-                    });
-                    self.triangle(t);
+                    };
+                    let t = [get(a), get(b), get(c)];
+                    self.triangle(&t);
                 }
             }
             if self.error == gl::OUT_OF_MEMORY {
@@ -2403,10 +2412,24 @@ impl<'a> Gl<'a> {
 
     /// One triangle through clipping, the window, culling and shading
     /// into the frame.
-    fn triangle(&mut self, tri: [Vert; 3]) {
+    fn triangle(&mut self, tri: &[Vert; 3]) {
+        // A triangle no plane cuts is drawn as it is, from where its
+        // vertices were placed as they were worked out (#1624); clipping
+        // it would keep the same three, in the same order. It needs none
+        // of clipping's arrays, which cost more to fill than to draw it.
+        if tri.iter().all(|v| v.inside) {
+            let win = [tri[0].win, tri[1].win, tri[2].win];
+            let zp = [tri[0].zw, tri[1].zw, tri[2].zw];
+            return self.fan(tri, &win, &zp, &tri[2]);
+        }
+        self.clipped(tri);
+    }
+
+    /// A triangle some plane cuts, clipped and drawn as a fan.
+    fn clipped(&mut self, tri: &[Vert; 3]) {
         let view = self.view();
         let mut poly = [Vert::default(); MAXV];
-        poly[..3].copy_from_slice(&tri);
+        poly[..3].copy_from_slice(tri);
         // Each vertex's clip coordinates kept in i128, far finer than the
         // window's sixteenth, as a point times a positive scale and the
         // scale, so that a vertex clipping makes, and one made from it,
@@ -2417,14 +2440,10 @@ impl<'a> Gl<'a> {
             exact[k] = (tri[k].clip.map(|c| c as i128), 1);
         }
         let mut n = 3;
-        // A triangle no plane cuts is drawn as it is, from where its
-        // vertices were placed as they were worked out (#1624); clipping
-        // it would keep the same three, in the same order.
-        let placed = tri.iter().all(|v| v.inside);
-        let guard = !placed
-            && (3..7).any(|p| tri.iter().any(|v| view.distances(v, p) < 0));
+        let guard =
+            (3..7).any(|p| tri.iter().any(|v| view.distances(v, p) < 0));
         for p in 0..7 {
-            if placed || (p == 2 && !self.plane_on) || (p >= 3 && !guard) {
+            if (p == 2 && !self.plane_on) || (p >= 3 && !guard) {
                 continue;
             }
             let mut out = [Vert::default(); MAXV];
@@ -2474,21 +2493,31 @@ impl<'a> Gl<'a> {
                 return;
             }
         }
-        // The window, in sixteenths: GL's y, and Razboj's.
-        let sh16 = 16 * self.screen.1 as i64;
         let mut win = [(0i64, 0i64); MAXV];
         let mut zp = [0u32; MAXV];
-        for (k, v) in poly[..n].iter().enumerate() {
-            let at = if placed {
-                Some((v.win, v.zw))
-            } else {
-                view.place(&exact[k].0)
-            };
-            let Some((at, z)) = at else {
+        for k in 0..n {
+            let Some((at, z)) = view.place(&exact[k].0) else {
                 return;
             };
             (win[k], zp[k]) = (at, z);
         }
+        self.fan(&poly[..n], &win[..n], &zp[..n], &tri[2]);
+    }
+
+    /// The polygon `poly`, placed in the window at `win` with window
+    /// depths `zp`, drawn as a fan from its first vertex, flat shaded in
+    /// `last`'s colour, the triangle's last vertex, as GL's flat shading
+    /// is.
+    fn fan(
+        &mut self,
+        poly: &[Vert],
+        win: &[(i64, i64)],
+        zp: &[u32],
+        last: &Vert,
+    ) {
+        let n = poly.len();
+        // The window, in sixteenths: GL's y, and Razboj's.
+        let sh16 = 16 * self.screen.1 as i64;
         // Which way it faces, in GL's window, where counter-clockwise
         // has a positive area.
         let area: i64 = (0..n)
@@ -2523,14 +2552,13 @@ impl<'a> Gl<'a> {
                 v.col
             }
         };
-        let flat = colour_word(&face(&tri[2]));
-        // Each vertex's window depth, when the depth test wants it.
-        let zw = if self.depth_test { zp } else { [0u32; MAXV] };
+        let flat = colour_word(&face(last));
         // The texture, when texturing is on and it is complete (#997).
         let texture = self.texturing();
         for k in 1..n - 1 {
             let (a, b, c) = (at(0), at(k), at(k + 1));
-            let z = self.depth_test.then_some([zw[0], zw[k], zw[k + 1]]);
+            // Each vertex's window depth, when the depth test wants it.
+            let z = self.depth_test.then_some([zp[0], zp[k], zp[k + 1]]);
             let s = [face(&poly[0]), face(&poly[k]), face(&poly[k + 1])]
                 .map(|c| colour_word(&c));
             let w = if self.smooth {

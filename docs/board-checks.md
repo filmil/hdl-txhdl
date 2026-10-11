@@ -846,8 +846,8 @@ Its 32 patches are each cut three by three, 564 triangles once the squares that 
 It is smooth shaded, lit from the eye diffusely and specularly, leans 20 degrees towards the eye, and turns about its axis once in 128 frames.
 It prints `demo teapot 1: utah`, then `teapot 564 triangles`, and after 256 frames, two turns, `demo teapot 1 done:` with its rate.
 Its tessellation, view, light and frames do not change, so that its rate measures the system; a finer teapot would be a demo of its own.
-On the machine model with the board's timing, a frame's list takes 34.7 million cycles on one hart, and with both harts two frames take 34.8 million, 5.7 frames a second.
-It took 68.2 million, 2.9 frames a second, before `draw_elements` kept the vertices it had worked out (#1624), and, on main at e0a06763, 50.5 million, 4.0 a second, before a triangle no plane cuts was drawn from its vertices' places.
+On the machine model with the board's timing, a frame's list takes 26.7 million cycles on one hart, and with both harts two frames take 26.8 million, 7.5 frames a second.
+It took 68.2 million, 2.9 frames a second, before `draw_elements` kept the vertices it had worked out (#1624); 50.5 million, 4.0 a second, before a triangle no plane cuts was drawn from its vertices' places; and 35.0 million, 5.7 a second, before such a triangle skipped clipping's arrays and a plane and a square root stopped dividing.
 What is left is mostly each triangle's own setup and its binning, which #1624 says how to take next.
 
 ```sh
