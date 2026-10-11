@@ -23,7 +23,7 @@
 #define SCAN_STATUS_STUCK_MASK 0x2
 #define SCAN_STATUS_STUCK_WIDTH 1
 #define SCAN_STATUS_STUCK_RESET 0x0
-#define SCAN_CLEAR 0x0c /* write only: a write clears the status, the longest line and the count */
+#define SCAN_CLEAR 0x0c /* write only: a write clears the status, the counts and the margin */
 #define SCAN_STUCK_AT 0x10 /* read only: the address of the line that did not come */
 #define SCAN_WORST 0x14 /* read only: the longest a line took to come whole, in pixels */
 #define SCAN_LATES 0x18 /* read only: how many lines had not come whole when their rows began */
