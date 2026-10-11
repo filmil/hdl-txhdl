@@ -2220,17 +2220,16 @@ impl<'a> Gl<'a> {
             let rad = rad * out / 65536;
             (at.0 + rad * c as i64 / 65536, at.1 - rad * s as i64 / 65536)
         };
-        // A point of a pixel across has no inside, only the rim's cone,
-        // whose volume is a third of its base: its alpha is scaled so
-        // the cone covers the disc's area, 3 r squared over the base's
-        // radius squared, three quarters.
+        // A point's brightest pixel can be covered no more than its disc
+        // is large: a point of a pixel covers pi / 4 of one. So the alpha
+        // is scaled by the disc's area in pixels, pi r squared over 256
+        // in sixteenths, while that is under one, which it is only below
+        // a pixel and an eighth across; the rim alone would put the full
+        // alpha at its middle.
         let col = colour_word(&v.col);
-        let col = if ri == 0 {
-            let al = (col >> 24) as i64 * 3 * r * r / (ro * ro);
-            (col & 0x00ff_ffff) | (al as u32) << 24
-        } else {
-            col
-        };
+        let area = (804 * r * r).min(65536);
+        let al = (col >> 24) as i64 * area / 65536;
+        let col = (col & 0x00ff_ffff) | (al as u32) << 24;
         let z = self.window_z(v);
         let (inner, outer) =
             (Soft::at(col, z, v), Soft::at(col & 0x00ff_ffff, z, v));
@@ -2306,7 +2305,7 @@ impl<'a> Gl<'a> {
         let short = len.min(16);
         let pick = |t: i64, full: bool, quarter: bool| {
             let u = t.clamp(0, len);
-            let mix = |x: i64, y: i64| (x * (len - u) + y * u) / len;
+            let mix = |x: i64, y: i64| (x * (len - u) + y * u + len / 2) / len;
             let col = [0, 8, 16, 24].iter().fold(0u32, |w, &k| {
                 let ch = mix((cp >> k & 0xff) as i64, (cq >> k & 0xff) as i64);
                 w | (ch as u32) << k
