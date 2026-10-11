@@ -40,6 +40,13 @@ const FIXED: u32 = 0x140C;
 const VERTEX_ARRAY: u32 = 0x8074;
 const NORMAL_ARRAY: u32 = 0x8075;
 const COLOR_ARRAY: u32 = 0x8076;
+/// `OES_point_size_array`'s (#1507): the array's switch, type, stride,
+/// pointer and buffer.
+const POINT_SIZE_ARRAY: u32 = 0x8B9C;
+const POINT_SIZE_ARRAY_TYPE: u32 = 0x898A;
+const POINT_SIZE_ARRAY_STRIDE: u32 = 0x898B;
+const POINT_SIZE_ARRAY_POINTER: u32 = 0x898C;
+const POINT_SIZE_ARRAY_BUFFER_BINDING: u32 = 0x8B9F;
 const VENDOR: u32 = 0x1F00;
 const RENDERER: u32 = 0x1F01;
 const VERSION: u32 = 0x1F02;
@@ -104,6 +111,8 @@ struct Arrays {
     colour: Array,
     normal: Array,
     texcoord: Array,
+    /// A size a point, in 16.16 (#1507).
+    point_size: Array,
 }
 
 /// The current context: the library's, and its client arrays.
@@ -142,6 +151,10 @@ pub unsafe extern "C" fn gles_make_current(
             colour: Array::OFF,
             normal: Array::OFF,
             texcoord: Array::OFF,
+            point_size: Array {
+                size: 1,
+                ..Array::OFF
+            },
         },
         buffers: Buffers::NONE,
     });
@@ -357,6 +370,7 @@ pub extern "C" fn glIsEnabled(cap: u32) -> u8 {
         COLOR_ARRAY => c.arrays.colour.on as u8,
         NORMAL_ARRAY => c.arrays.normal.on as u8,
         gl::TEXTURE_COORD_ARRAY => c.arrays.texcoord.on as u8,
+        POINT_SIZE_ARRAY => c.arrays.point_size.on as u8,
         _ => c.gl.is_enabled(cap) as u8,
     })
 }
@@ -376,12 +390,13 @@ fn array_state(
     let kind = |x: &Array| x.kind as i64;
     let stride = |x: &Array| x.stride as i64;
     let v = match pname {
-        0x807B | 0x807E | 0x8082 | 0x8089 | 0x84E1 => {
+        0x807B | 0x807E | 0x8082 | 0x8089 | POINT_SIZE_ARRAY_TYPE | 0x84E1 => {
             let t = match pname {
                 0x807B => kind(&a.vertex),
                 0x807E => kind(&a.normal),
                 0x8082 => kind(&a.colour),
                 0x8089 => kind(&a.texcoord),
+                POINT_SIZE_ARRAY_TYPE => kind(&a.point_size),
                 // GL_CLIENT_ACTIVE_TEXTURE: the one unit's.
                 _ => 0x84C0,
             };
@@ -391,6 +406,9 @@ fn array_state(
         NORMAL_ARRAY => a.normal.on as i64,
         COLOR_ARRAY => a.colour.on as i64,
         gl::TEXTURE_COORD_ARRAY => a.texcoord.on as i64,
+        POINT_SIZE_ARRAY => a.point_size.on as i64,
+        POINT_SIZE_ARRAY_STRIDE => stride(&a.point_size),
+        POINT_SIZE_ARRAY_BUFFER_BINDING => a.point_size.buffer as i64,
         0x807A => size(&a.vertex),
         0x807C => stride(&a.vertex),
         0x807F => stride(&a.normal),
@@ -481,6 +499,7 @@ pub unsafe extern "C" fn glGetPointerv(pname: u32, out: *mut *mut c_void) {
         0x808F => a.normal.at,
         0x8090 => a.colour.at,
         0x8092 => a.texcoord.at,
+        POINT_SIZE_ARRAY_POINTER => a.point_size.at,
         _ => return c.gl.record_error(gl::INVALID_ENUM),
     };
     *out = at as *mut c_void;
@@ -873,7 +892,7 @@ pub extern "C" fn glGetString(name: u32) -> *const u8 {
         // is #1507's.
         EXTENSIONS => {
             b"GL_OES_read_format GL_OES_compressed_paletted_texture \
-              GL_OES_point_sprite\0"
+              GL_OES_point_size_array GL_OES_point_sprite\0"
         }
         _ => {
             gles_record_error(gl::INVALID_ENUM);
@@ -890,6 +909,7 @@ fn array(c: &mut Context, which: u32) -> Option<&mut Array> {
         COLOR_ARRAY => Some(&mut c.arrays.colour),
         NORMAL_ARRAY => Some(&mut c.arrays.normal),
         gl::TEXTURE_COORD_ARRAY => Some(&mut c.arrays.texcoord),
+        POINT_SIZE_ARRAY => Some(&mut c.arrays.point_size),
         _ => None,
     }
 }
@@ -1042,11 +1062,15 @@ unsafe fn fetch(c: &Arrays, i: usize) -> Vertex {
         }
         v
     });
+    // A point's size from its array, in 16.16, which Common-Lite gives
+    // in `GL_FIXED` alone (#1507).
+    let point_size = c.point_size.on.then(|| c.point_size.raw(i, 0) as Fx);
     Vertex {
         position,
         colour,
         normal,
         tex,
+        point_size,
     }
 }
 
@@ -1054,7 +1078,13 @@ unsafe fn fetch(c: &Arrays, i: usize) -> Vertex {
 /// object was bound read from that buffer's store (#1488).
 fn resolved(c: &mut Context) -> Arrays {
     let mut a = c.arrays;
-    for x in [&mut a.vertex, &mut a.colour, &mut a.normal, &mut a.texcoord] {
+    for x in [
+        &mut a.vertex,
+        &mut a.colour,
+        &mut a.normal,
+        &mut a.texcoord,
+        &mut a.point_size,
+    ] {
         x.at = c.buffers.resolve(x.buffer, x.at);
     }
     a
@@ -1419,6 +1449,15 @@ pub unsafe extern "C" fn gles_texture_room(
 ) {
     let room = core::slice::from_raw_parts_mut(mem, words);
     with(|g| g.texture_room(room, bus));
+}
+
+#[no_mangle]
+pub extern "C" fn glPointSizePointerOES(
+    kind: u32,
+    stride: i32,
+    at: *const c_void,
+) {
+    pointer(POINT_SIZE_ARRAY, 1, kind, stride, at, &[1], &[FIXED]);
 }
 
 #[no_mangle]
