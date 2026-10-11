@@ -196,3 +196,46 @@ fn a_point_is_fogged_and_a_clear_is_not() {
     g.get_integer(gl::FOG_MODE, &mut v);
     assert_eq!(v[0] as u32, gl::EXP, "a refused mode changes nothing");
 }
+
+/// A smooth line from one unit away at its left end to six at its right,
+/// under linear fog from one to six, is fogged by its own distance along
+/// it (#1662): each pixel along its middle has GL's factor at its centre,
+/// the end pixels, which it covers only in part, included. A smooth
+/// line's corners stand half a pixel in from its ends and half a pixel
+/// past them, and they once took their ends' factors; on a line three
+/// pixels long that put its pixels about a fifteenth of the fog's range
+/// out.
+#[test]
+fn a_smooth_line_is_fogged_along_it() {
+    let s = [ONE, ONE, ONE, ONE];
+    let fc = [0, 0, ONE / 4, ONE];
+    let (sw, fw) = (colour_word(&s), colour_word(&fc));
+    let x0 = fx(0.05);
+    let p = [[-x0, 0, -ONE, ONE], [x0, 0, -6 * ONE, ONE]];
+    let mut frame = vec![[0u32; WORDS]; 64];
+    let mut g = context(&mut frame);
+    g.enable(gl::FOG);
+    g.fog(gl::FOG_MODE, gl::LINEAR as Fx);
+    g.fog(gl::FOG_START, ONE);
+    g.fog(gl::FOG_END, 6 * ONE);
+    g.fog_colour(fc);
+    g.enable(gl::LINE_SMOOTH);
+    g.line_width(4 * ONE);
+    g.draw_arrays(gl::LINES, &p, Some(&[s; 2]), None);
+    assert_eq!(g.get_error(), gl::NO_ERROR);
+    let n = g.frame().len();
+    let fb = drawn(&frame, n);
+    let y = H / 2;
+    for x in 30..34 {
+        // Where the pixel's centre lies along the line, nought at its
+        // left end and one at its right.
+        let ndc = (x as f64 + 0.5) / (W as f64 / 2.0) - 1.0;
+        let u = (ndc + 0.05) / 0.1;
+        let f = factor(gl::LINEAR, 1.0 + 5.0 * u, 1.0, 1.0, 6.0);
+        let got = fb[(y * W + x) as usize];
+        // An end pixel is covered in part, so its alpha is less; its
+        // colour is fogged all the same.
+        let opaque = got | 0xff00_0000;
+        assert!(near(opaque, sw, fw, f, 2.5), "{x},{y}: {got:08x}, f {f}");
+    }
+}

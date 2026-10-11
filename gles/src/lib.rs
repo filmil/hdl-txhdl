@@ -982,8 +982,9 @@ impl<'a> Gl<'a> {
         at: [&Vert; 3],
     ) -> Option<[u32; 4]> {
         let colour = colour_word(&self.fog_colour);
-        self.fog_on
-            .then(|| emit::fog(w, v, at.map(|a| self.fog_factor(a)), colour))
+        self.fog_on.then(|| {
+            emit::fog(w, v, at.map(|a| self.fog_factor(a) as i64), colour)
+        })
     }
 
     /// `glStencilFunc` (#998): the comparison, `GL_NEVER` to `GL_ALWAYS`,
@@ -2241,8 +2242,13 @@ impl<'a> Gl<'a> {
         let al = ((col >> 24) as i64 * area + 32768) / 65536;
         let col = (col & 0x00ff_ffff) | (al as u32) << 24;
         let z = self.window_z(v);
+        let fog = if self.fog_on {
+            self.fog_factor(v) as i64
+        } else {
+            255
+        };
         let (inner, outer) =
-            (Soft::at(col, z, v), Soft::at(col & 0x00ff_ffff, z, v));
+            (Soft::at(col, z, fog), Soft::at(col & 0x00ff_ffff, z, fog));
         let n = 48 / steps;
         let ks = |k: usize| (k % n) * steps;
         if ri > 0 {
@@ -2293,6 +2299,11 @@ impl<'a> Gl<'a> {
             (flat, flat)
         };
         let (zp, zq) = (self.window_z(a) as i64, self.window_z(b) as i64);
+        let (fp, fq) = if self.fog_on {
+            (self.fog_factor(a) as i64, self.fog_factor(b) as i64)
+        } else {
+            (255, 255)
+        };
         // A point `t` along the segment and `s` across it, in sixteenths.
         let pt = |t: i64, s: i64| {
             (p.0 + (t * dx - s * dy) / len, p.1 + (t * dy + s * dx) / len)
@@ -2306,11 +2317,13 @@ impl<'a> Gl<'a> {
         // A corner at `t` along and `s` across: its colour and depth
         // those of the segment at `t`, between the ends' and the ends'
         // own past them, so that the ends' values stand at the ends; its
+        // fog factor the line's at `t`, carried on past the ends as well,
+        // so that the fog plane across an end is the line's (#1662); its
         // alpha the coverage of that colour's, one inside, nought out,
         // and a quarter at the middle of a corner square, where the
-        // coverages across and along meet; and it is fogged as the end it
-        // is nearer. A line shorter than a pixel has its alpha scaled by
-        // its length, since its rim would otherwise cover a pixel's
+        // coverages across and along meet. A line shorter than a pixel
+        // has its alpha scaled by its length, since its rim would
+        // otherwise cover a pixel's
         // length whatever its own.
         let short = len.min(16);
         let pick = |t: i64, full: bool, quarter: bool| {
@@ -2326,11 +2339,13 @@ impl<'a> Gl<'a> {
                 (false, true) => al / 4,
                 (false, false) => 0,
             };
-            let end = if 2 * t < len { a } else { b };
             Soft::at(
                 (col & 0x00ff_ffff) | (al as u32) << 24,
                 mix(zp, zq) as u32,
-                end,
+                // Within a few bytes' worth of a byte's range, which a
+                // line shorter than a pixel could otherwise far exceed.
+                (fp + ((fq - fp) * t * 2 + len).div_euclid(2 * len))
+                    .clamp(-1024, 1279),
             )
         };
         let c =
@@ -2395,7 +2410,10 @@ impl<'a> Gl<'a> {
         };
         let al = s.map(|x| x >> 24);
         let planes = Planes {
-            fog: self.fogged(&w, v, c.map(|x| x.end)),
+            fog: self.fog_on.then(|| {
+                let fog = colour_word(&self.fog_colour);
+                emit::fog(&w, v, c.map(|x| x.fog), fog)
+            }),
             alpha: (al[0] != al[1] || al[1] != al[2])
                 .then(|| emit::alpha_plane(&w, v, s)),
         };
@@ -2932,20 +2950,22 @@ const CIRCLE: [(i32, i32); 48] = [
 /// is in Razboj's sixteenths, its colour with the alpha its coverage
 /// gives, its depth, and the vertex it is fogged as.
 #[derive(Clone, Copy)]
-struct Soft<'v> {
+struct Soft {
     at: (i32, i32),
     col: u32,
     z: u32,
-    end: &'v Vert,
+    /// Its fog factor in bytes, 255 for none, which past a line's ends
+    /// may lie outside a byte (#1662).
+    fog: i64,
 }
 
-impl<'v> Soft<'v> {
-    fn at(col: u32, z: u32, end: &'v Vert) -> Self {
+impl Soft {
+    fn at(col: u32, z: u32, fog: i64) -> Self {
         Soft {
             at: (0, 0),
             col,
             z,
-            end,
+            fog,
         }
     }
 
