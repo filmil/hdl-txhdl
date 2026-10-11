@@ -14,7 +14,7 @@ arbiter that puts the eight onto one link, an exclusive monitor, a router of eig
 and the peripherals behind its eight ports. The hosts are the first
 hart's tracker, \code{host}; Vivado's JTAG-to-AXI master
 on the board's top (issue 241), whose pins arrive under \code{jtag\_}
-and are joined by an \code{AxiPins}, sharing one host through
+and are joined by an \code{AxiPins}, sharing one port through
 \code{jarb} with the bridge of the RISC-V debug transport (issue 154);
 the Ethernet port's two engines, each behind an \code{AxiHost} of its
 own (issue 151), sharing one port through \code{etharb} (issue 1634);
@@ -22,7 +22,7 @@ a host the board's top may hang there, whose channels arrive as the
 unit's ports \code{host\_aw}, \code{host\_ar}, \code{host\_w},
 \code{host\_b} and \code{host\_r} (issue 1634); the video scanout's
 fetch (issue 151); and the SD card
-host's two engines, sharing one host through \code{sdarb} (issue 912);
+host's two engines, sharing one port through \code{sdarb} (issue 912);
 Razboj's rasteriser behind \code{rhost} (issue 985); and the second
 hart's tracker, \code{host1} (issue 1408).
 The arbiter, \code{arb}, is an
@@ -232,13 +232,17 @@ the core's clock by the top, which \code{eth} reads at words 14 and 15
 direction of each engine's host that the engine never uses.
 \item \textbf{The Ethernet engines share a port.} \code{fhost} and
 \code{shost} are \code{AxiHost<32, 32, 4, 1, 2>}: one bit of
-identifier and two bursts in flight each, and \code{fetch},
-\code{store} and \code{snoreads} take one bit too. \code{etharb}, an
-\code{Arbiter2<32, 32, 4, 1, 2, 0>}, puts the two onto the arbiter's
-third port, as \code{sdarb} does the SD card's onto its sixth. The
-fetch engine only reads and the store engine only writes, and an
-arbiter keeps the turns of reads and writes apart, so sharing the
-port takes no turn from either (issue 1634).
+identifier and two bursts in flight each; \code{fetch} and
+\code{store} take one bit too, and so does \code{snoreads}, the
+\code{NoReads} on the store engine's unused read side, while
+\code{fnobeats}, the \code{NoBeats} on the fetch engine's unused write
+side, has no identifier. \code{etharb}, an \code{Arbiter2<32, 32, 4,
+1, 2, 0>}, puts the two onto the arbiter's third port, as \code{sdarb}
+does the SD card's onto its sixth, adding the bit that says which
+engine to the one each brings, so the port carries two bits like
+every other. The fetch engine only reads and the store engine only
+writes, and \code{etharb} takes turns for reads and for writes apart,
+so sharing the port takes no turn from either (issue 1634).
 \item \textbf{The board's top has a host of its own.} The arbiter's
 fourth port is the unit's channel ports \code{host\_aw}, \code{host\_ar}
 and \code{host\_w} in and \code{host\_b} and \code{host\_r} out: an AXI4
@@ -374,8 +378,8 @@ holds its interrupt controller targets.
 \code{\_and\_reads\_the\_ddr3} has the host port write four bursts of
 eight words into the DDR3 under its four identifiers, in flight
 together, and read them back: each write is answered once under its
-own identifier, and every word comes back in order within its burst,
-while the core runs its program. \code{the\_board\_tops\_host}\allowbreak
+own identifier, and every word comes back in order within its burst
+under its burst's identifier, while the core runs its program. \code{the\_board\_tops\_host}\allowbreak
 \code{\_writes\_are\_snooped} has the core hold a DDR3 word's line,
 the host write that word, and the core's next read give the new word
 (issue 1634).
@@ -430,7 +434,7 @@ The arbiter's ports are the first hart on 0, \code{jarb} on 1,
 host on 3, the scanout's fetch on 4, \code{sdarb} on 5, Razboj's
 rasteriser on 6 and the second hart on 7. It takes turns, so with
 every port offering each wins one turn in eight. Three bits of port
-number hold eight ports, and all eight are taken: a ninth host would
+number hold eight ports, and all eight are taken: a ninth port would
 widen the identifier past the arbiter, as far as the DDR3 controller,
 which is why the Ethernet engines share a port rather than take one
 each (issue 1634).
