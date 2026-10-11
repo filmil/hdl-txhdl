@@ -43,7 +43,11 @@ done
   echo "--server=HOST is required, or TXHDL_BOARD_SERVER in the environment" >&2
   exit 2
 }
-watcher="$(rlocation _main/cpu/vreteno/board/remote/serial_bin_/serial_bin)"
+watcher="$(rlocation txhdl/cpu/vreteno/board/remote/serial_bin_/serial_bin)"
+[[ -e "$watcher" ]] || {
+  echo "serial: serial_bin_/serial_bin is not in the runfiles" >&2
+  exit 1
+}
 dir='~/txhdl_hw_server'
 # The last upload is read-only, as the build made it; it goes first.
 ssh -o BatchMode=yes "$server" "mkdir -p $dir && rm -f $dir/serial"
