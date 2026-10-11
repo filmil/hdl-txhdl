@@ -163,9 +163,9 @@ Triangles that big are rare, and the common triangle is never clipped in x or y 
 The near plane is always clipped against, because a vertex behind the eye has a w of zero or less and its divide means nothing.
 The far plane and the enabled user planes are clipped against too.
 A clipped triangle is a polygon of up to ten vertices, three and one more for each of the seven planes, clipped plane by plane with the colours and the depths interpolated linearly in clip space, as the specification says, and then cut into a fan.
-A vertex clipping makes is kept exactly, as homogeneous clip coordinates in 128 bits, and it is placed in the window and given its depth from those (#1661).
+A vertex clipping makes is kept in 128 bits, as homogeneous clip coordinates times a positive scale and the scale, far finer than the window's sixteenth, and it is placed in the window and given its depth from those (#1661); its colours and the rest are interpolated at the true distances' ratio.
 Its clip coordinates rounded to 16.16 would put it off by the rounding over w, which on a near plane close to the eye outgrew the guard band's margin, so that the vertex was clamped to Razboj's edge.
-Every plane is linear in clip coordinates and a cut vertex lies between two others, so a vertex kept exactly never leaves the guard band that its ends were inside.
+Every plane is linear in clip coordinates and a cut vertex lies between two others, so a vertex kept so never leaves the guard band that its ends were inside, but for bits far below a sixteenth.
 
 **The window.**
 GL's window has its origin at the bottom left with y up, and Razboj's has it at the top left with y down, so the library writes `y_razboj = height - y_window`.
@@ -263,7 +263,7 @@ Each step is a pull request, checked before the next.
    Steps 1 and 2 are done together in issue 1159, as the crate `//gles`, with the frame's binning of step 4 through `razboj_tile` (issue 1157).
    It departs from sections 4 to 6 in three places.
    The divide is one 64-bit division a window coordinate, straight to sixteenths and rounded to the nearest, because a reciprocal of w in 2.30 cannot hold 1/w for a w under a quarter.
-   The guard band stands a pixel inside Razboj's range, so that a vertex clipped onto it and rounded stays in range; clipped vertices are placed from exact clip coordinates, so the rounding is the window's sixteenth and no more (#1661).
+   The guard band stands a pixel inside Razboj's range, so that a vertex clipped onto it and rounded stays in range; clipped vertices are placed from clip coordinates kept in 128 bits, so the rounding is the window's sixteenth and no more (#1661).
    A vertex keeps its own colour or the current one until step 3 lights it.
    The pictures are checked pixel for pixel against a second pipeline written with 128-bit integers to the same rules, through Razboj's model, binned and not; the words bit for bit against `op.rs` and `dl.rs`; and the window and the matrices against floating point.
 3. **Lighting.**
