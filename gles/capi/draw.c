@@ -83,6 +83,13 @@ int main(void) {
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
   glVertexPointer(2, GL_FIXED, 0, fan);
   glDrawArrays(GL_TRIANGLE_FAN, 1, 4);
+  /* A point at the fan's first corner, attenuated by its distance and
+     kept to at most six pixels (#1508). */
+  static const GLfixed atten[3] = {ONE, ONE / 2, 0};
+  glPointSizex(8 * ONE);
+  glPointParameterxv(GL_POINT_DISTANCE_ATTENUATION, atten);
+  glPointParameterx(GL_POINT_SIZE_MAX, 6 * ONE);
+  glDrawArrays(GL_POINTS, 1, 1);
 
   size_t n = gles_frame_len();
   printf("frame %zu\n", n);

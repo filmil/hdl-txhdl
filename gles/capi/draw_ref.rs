@@ -83,6 +83,10 @@ fn main() {
     g.alpha_func(gl::GREATER, ONE / 4);
     g.color_mask(true, true, true, false);
     g.draw_arrays(gl::TRIANGLE_FAN, &fan, None, None);
+    g.point_size(8 * ONE);
+    g.point_parameterv(gl::POINT_DISTANCE_ATTENUATION, &[ONE, ONE / 2, 0]);
+    g.point_parameter(gl::POINT_SIZE_MAX, 6 * ONE);
+    g.draw_arrays(gl::POINTS, &fan[..1], None, None);
 
     let words = g.frame();
     println!("frame {}", words.len());
