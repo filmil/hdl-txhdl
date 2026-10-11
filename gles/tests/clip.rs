@@ -140,8 +140,32 @@ fn plane_colour(op: &razboj::op::Insn, x: f64, y: f64) -> [f64; 3] {
 /// wrong place along the edge was out by many levels.
 #[test]
 fn clipped_colours_are_the_corners_at_the_cut() {
+    let (checked, worst) = colours_at_cuts(0x2545_f491_4f6c_dd1d, false);
+    assert!(checked > 4000, "{checked} vertices checked");
+    eprintln!(
+        "{checked} vertices checked, the worst {worst:.3} of a level out"
+    );
+}
+
+/// The same with the user's clip plane on as well, at a slant through
+/// each triangle: its distances are read from the eye, which is not
+/// scaled as a kept point is, so its cuts take the colours by another
+/// path.
+#[test]
+fn colours_at_the_user_planes_cut_are_the_corners() {
+    let (checked, worst) = colours_at_cuts(0x6a09_e667_f3bc_c908, true);
+    assert!(checked > 4000, "{checked} vertices checked");
+    eprintln!(
+        "{checked} vertices checked, the worst {worst:.3} of a level out"
+    );
+}
+
+/// Vertices checked and the worst error, in levels, over 4,000 smooth
+/// triangles at a near plane of a hundredth, the user's clip plane on
+/// through each when `plane` is set.
+fn colours_at_cuts(seed: u64, plane: bool) -> (usize, f64) {
     let near = 0.01;
-    let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+    let mut rng = Rng(seed);
     let mut frame = vec![[0u32; 16]; 8];
     let (mut checked, mut worst) = (0usize, 0.0f64);
     for _ in 0..4000 {
@@ -157,6 +181,19 @@ fn clipped_colours_are_the_corners_at_the_cut() {
             [rng.fx(-6.0, 6.0), rng.fx(-6.0, 6.0), z, ONE]
         };
         let pos = [corner(&mut rng), corner(&mut rng), corner(&mut rng)];
+        if plane {
+            // A plane at a random slant through the triangle's centre,
+            // in the eye, which the identity model-view leaves as it is.
+            let n = [rng.fx(-1.0, 1.0), rng.fx(-1.0, 1.0), rng.fx(-1.0, 1.0)];
+            let d: i64 = (0..3)
+                .map(|i| {
+                    let c: i64 = pos.iter().map(|p| p[i] as i64).sum();
+                    -(n[i] as i64 * c / 3) / ONE as i64
+                })
+                .sum();
+            g.clip_plane(gl::CLIP_PLANE0, &[n[0], n[1], n[2], d as Fx]);
+            g.enable(gl::CLIP_PLANE0);
+        }
         let col: [[Fx; 4]; 3] = core::array::from_fn(|_| {
             [rng.fx(0.0, 1.0), rng.fx(0.0, 1.0), rng.fx(0.0, 1.0), ONE]
         });
@@ -213,6 +250,11 @@ fn clipped_colours_are_the_corners_at_the_cut() {
                         }
                         det(&mk) / d
                     });
+                    // A point behind the eye lands there too; it is not
+                    // the triangle's.
+                    if (0..3).map(|k| lam[k] * clip[k][3]).sum::<f64>() <= 0.0 {
+                        return None;
+                    }
                     Some(core::array::from_fn(|ch| {
                         255.0
                             * (0..3)
@@ -268,8 +310,5 @@ fn clipped_colours_are_the_corners_at_the_cut() {
             }
         }
     }
-    assert!(checked > 4000, "{checked} vertices checked");
-    eprintln!(
-        "{checked} vertices checked, the worst {worst:.3} of a level out"
-    );
+    (checked, worst)
 }
