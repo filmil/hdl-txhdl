@@ -47,20 +47,27 @@ pub fn div(a: Fx, b: Fx) -> Fx {
     sat(div_round((a as i64) << 16, b as i64))
 }
 
-/// The square root of a 64-bit number, rounded down.
+/// The square root of a 64-bit number, rounded down: a bit of the root
+/// at a time, from the top, by shifts and subtractions only, since on
+/// the core a 64-bit division is a call of a few hundred cycles, and
+/// Newton's method took one a step (#1624).
 pub fn isqrt(v: u64) -> u64 {
     if v < 2 {
         return v;
     }
-    // Newton's method from above, which only falls until it settles.
-    let mut x = 1u64 << ((64 - v.leading_zeros()).div_ceil(2));
-    loop {
-        let y = (x + v / x) / 2;
-        if y >= x {
-            return x;
+    let (mut rem, mut root) = (v, 0u64);
+    // The largest power of four not above v.
+    let mut bit = 1u64 << ((63 - v.leading_zeros()) & !1);
+    while bit != 0 {
+        if rem >= root + bit {
+            rem -= root + bit;
+            root = (root >> 1) + bit;
+        } else {
+            root >>= 1;
         }
-        x = y;
+        bit >>= 2;
     }
+    root
 }
 
 /// Thirty bits of fraction, for the sine and cosine.
@@ -240,6 +247,18 @@ mod tests {
             assert!(r * r <= v && (r + 1) * (r + 1) > v, "{v}: {r}");
         }
         assert_eq!(isqrt(u64::MAX), 0xffff_ffff);
+        // Around every square up to 2^20, and around squares spread over
+        // the whole range.
+        let mut roots: Vec<u64> = (0..1 << 20).collect();
+        roots.extend((0..4096u64).map(|k| (k << 20) | (k * 7919 % 1000)));
+        roots.push(0xffff_ffff);
+        for r in roots {
+            assert_eq!(isqrt(r * r), r);
+            if r > 0 {
+                assert_eq!(isqrt(r * r + 1), r);
+                assert_eq!(isqrt(r * r - 1), r - 1);
+            }
+        }
     }
 
     /// Every tenth of a degree, a little off it, within a unit
