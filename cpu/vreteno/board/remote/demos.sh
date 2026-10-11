@@ -12,7 +12,7 @@
 # board's serial port, loads the demo with the serial loader or with
 # fastboot, keeps the console for the demo's seconds with every line
 # stamped in UTC, then stops its own reader on the board server. It
-# writes DIR/<date>-<sha>/: a log per demo, manifest.tsv with each
+# writes DIR/<start>-<sha>/: a log per demo, manifest.tsv with each
 # demo's image, sha256 and stage times, and README.md. The recording
 # is the board server's: its owner cuts <demo>.mp4 from the stage
 # times in manifest.tsv into the same directory on the share.
@@ -75,7 +75,9 @@ done
 
 cd "$ws"
 sha="$(git rev-parse --short=8 HEAD)"
-run="$(date -u +%Y%m%d)-$sha"
+# The run is named by its start in Pacific time, ISO 8601 basic format
+# with the offset, which has no colons: 20261010T1830-0700-94d3c50d.
+run="$(TZ=America/Los_Angeles date +%Y%m%dT%H%M%z)-$sha"
 dir="$out/$run"
 mkdir -p "$dir"
 # Everything the run says goes to its directory as well.
