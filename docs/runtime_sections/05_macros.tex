@@ -179,9 +179,10 @@ there too, since \code{N} is a const parameter the macro cannot see
 (issue 500). Such an array may be a field of a struct of ports:
 \code{port\_fields} reads \code{side.f[k]} as the port
 \code{side\_f\_k}, and \code{side.f[i]} with a loop's variable as a
-name formatted with \code{i}, as it does an array side, and goes on
-reading the chain after the index, so \code{side.lanes[0].valid} is a
-port too. A struct of ports may sit beside an array or a port in one
+name formatted with \code{i}, as it does an array side, and reads
+the path after an index too, fields and indices in any order, so
+\code{side.lanes[0].valid} and \code{wide[0].sub[1]} are ports, up to
+a method call. A struct of ports may sit beside an array or a port in one
 tuple side, a side of its own under its element's name, and an array
 passed to a child may hold a channel of a bundle made whole or a field
 of a split port group, which \code{lower\_structural} reads by
