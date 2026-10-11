@@ -88,6 +88,9 @@ pub enum Kind {
     /// as integers: colours, normals, depths and the alpha reference.
     Unit,
     Boolean,
+    /// Bits that only `glGetIntegerv` gives, as they are, and the other
+    /// two refuse: `OES_matrix_get`'s floats (#1522).
+    Bits,
 }
 
 /// A query's values: up to sixteen, a matrix's.
@@ -113,7 +116,9 @@ impl Got {
     pub fn integers(&self, out: &mut [i32]) {
         for (o, &v) in out.iter_mut().zip(&self.values[..self.len]) {
             *o = match self.kind {
-                Kind::Integer | Kind::Enum | Kind::Boolean => v as i32,
+                Kind::Integer | Kind::Enum | Kind::Boolean | Kind::Bits => {
+                    v as i32
+                }
                 Kind::Fixed => ((v + (ONE as i64 / 2)) >> 16) as i32,
                 // [-1, 1] onto [-(2^31 - 1), 2^31 - 1].
                 Kind::Unit => {
@@ -132,7 +137,7 @@ impl Got {
                 Kind::Integer | Kind::Boolean => {
                     (v << 16).clamp(i32::MIN as i64, i32::MAX as i64) as Fx
                 }
-                Kind::Enum | Kind::Fixed | Kind::Unit => v as Fx,
+                Kind::Enum | Kind::Fixed | Kind::Unit | Kind::Bits => v as Fx,
             };
         }
     }
@@ -164,12 +169,15 @@ impl Gl<'_> {
             Some(Got::of(Unit, &w[..v.len()]))
         };
         // A matrix as the bits of the single-precision floats its 16.16
-        // elements are, each the nearest float, as integers (#1522).
+        // elements are, each the nearest float (#1522): the element
+        // rounded once to a float, then scaled by 2^-16, which is exact
+        // and needs no division.
         let bits = |m: &[Fx; 16]| {
+            const SCALE: f32 = 1.0 / ONE as f32;
             let w: [i64; 16] = core::array::from_fn(|k| {
-                (m[k] as f32 / ONE as f32).to_bits() as i32 as i64
+                (m[k] as f32 * SCALE).to_bits() as i32 as i64
             });
-            Some(Got::of(Integer, &w))
+            Some(Got::of(Bits, &w))
         };
         let b = |v: &[bool]| {
             let w: [i64; 16] =
