@@ -466,3 +466,15 @@ vreteno_c_program(
     linker_script = "conform/board/conform.ld",
     tags = ["manual"],
 )
+
+# Triangles that cross the near plane reach Razboj inside its range,
+# never clamped to its edge (#1661).
+rust_test(
+    name = "clip_test",
+    srcs = ["tests/clip.rs"],
+    edition = "2021",
+    deps = [
+        ":gles",
+        "//gpu/razboj",
+    ],
+)
