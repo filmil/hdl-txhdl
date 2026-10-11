@@ -379,6 +379,8 @@ pub struct Gl<'a> {
     texture_on: bool,
     bound: u32,
     env: u32,
+    /// `GL_COMBINE`'s settings (#1512), GL's initial ones at first.
+    combine: razboj_tile::tex::Combine,
     env_colour: [Fx; 4],
     tex_coords: [Fx; 4],
     store: Option<texture::Store<'a>>,
@@ -478,6 +480,7 @@ impl<'a> Gl<'a> {
             coord_replace: false,
             bound: 0,
             env: razboj_tile::tex::MODULATE,
+            combine: razboj_tile::tex::Combine::default(),
             env_colour: [0; 4],
             tex_coords: [0, 0, 0, ONE],
             store: None,
@@ -1377,7 +1380,10 @@ impl<'a> Gl<'a> {
     }
 
     /// `glTexEnvx` and `glTexEnvxv`: the environment, `GL_REPLACE`,
-    /// `GL_MODULATE`, `GL_DECAL`, `GL_BLEND` or `GL_ADD`, or its colour.
+    /// `GL_MODULATE`, `GL_DECAL`, `GL_BLEND`, `GL_ADD` or `GL_COMBINE`, or its
+    /// colour; or `GL_COMBINE`'s settings (#1512): its two functions, each
+    /// argument's source and operand, and its two scales, one, two or
+    /// four, anything else `GL_INVALID_VALUE`.
     pub fn tex_env(&mut self, target: u32, pname: u32, params: &[Fx]) {
         if (target, pname) == (gl::POINT_SPRITE_OES, gl::COORD_REPLACE_OES) {
             return match params.first() {
@@ -1388,17 +1394,59 @@ impl<'a> Gl<'a> {
         if target != gl::TEXTURE_ENV || params.is_empty() {
             return self.fail(gl::INVALID_ENUM);
         }
-        use razboj_tile::tex;
-        match (pname, params[0] as u32) {
-            (gl::TEXTURE_ENV_MODE, gl::REPLACE) => self.env = tex::REPLACE,
-            (gl::TEXTURE_ENV_MODE, gl::MODULATE) => self.env = tex::MODULATE,
-            (gl::TEXTURE_ENV_MODE, gl::DECAL) => self.env = tex::DECAL,
-            (gl::TEXTURE_ENV_MODE, gl::BLEND) => self.env = tex::BLEND,
-            (gl::TEXTURE_ENV_MODE, gl::ADD) => self.env = tex::ADD,
-            (gl::TEXTURE_ENV_COLOR, _) if params.len() >= 4 => {
-                self.env_colour = [params[0], params[1], params[2], params[3]]
+        let p = params[0];
+        let v = p as u32;
+        let enum_or = |code: Option<u32>| code.ok_or(gl::INVALID_ENUM);
+        let r = match pname {
+            gl::TEXTURE_ENV_MODE => {
+                enum_or(code_of(&ENVS, v)).map(|e| self.env = e)
             }
-            _ => self.fail(gl::INVALID_ENUM),
+            gl::TEXTURE_ENV_COLOR if params.len() >= 4 => {
+                self.env_colour = [params[0], params[1], params[2], params[3]];
+                Ok(())
+            }
+            gl::COMBINE_RGB => {
+                enum_or(code_of(&FUNCTIONS, v)).map(|f| self.combine.rgb = f)
+            }
+            // The alpha's functions are the first six (#1512).
+            gl::COMBINE_ALPHA => enum_or(code_of(&FUNCTIONS[..6], v))
+                .map(|f| self.combine.alpha = f),
+            // A scale of one, two or four (#1512), as its log2.
+            gl::RGB_SCALE | gl::ALPHA_SCALE => {
+                let log = [ONE, 2 * ONE, 4 * ONE].iter().position(|&x| x == p);
+                log.ok_or(gl::INVALID_VALUE).map(|l| {
+                    if pname == gl::RGB_SCALE {
+                        self.combine.scale_rgb = l as u32;
+                    } else {
+                        self.combine.scale_alpha = l as u32;
+                    }
+                })
+            }
+            _ => match combine_arg(pname) {
+                None => Err(gl::INVALID_ENUM),
+                Some((which, k)) => {
+                    let table: &[u32] = match which {
+                        ArgOf::RgbSource | ArgOf::AlphaSource => &SOURCES,
+                        ArgOf::RgbOperand => &OPERANDS,
+                        ArgOf::AlphaOperand => &OPERANDS[2..],
+                    };
+                    enum_or(code_of(table, v)).map(|code| {
+                        let c = &mut self.combine;
+                        match which {
+                            ArgOf::RgbSource => c.src_rgb[k] = code,
+                            ArgOf::AlphaSource => c.src_alpha[k] = code,
+                            ArgOf::RgbOperand => c.op_rgb[k] = code,
+                            ArgOf::AlphaOperand => {
+                                c.op_alpha[k] =
+                                    code + razboj_tile::tex::OP_SRC_ALPHA
+                            }
+                        }
+                    })
+                }
+            },
+        };
+        if let Err(e) = r {
+            self.fail(e);
         }
     }
 
@@ -1503,15 +1551,15 @@ impl<'a> Gl<'a> {
 
     /// `glGetTexEnvxv` (#1511): the environment's mode, as GL's
     /// enumerant, or its colour; or, for `GL_POINT_SPRITE_OES`, whether
-    /// sprites replace the coordinates. How many values it wrote, none with
-    /// the error recorded; `GL_COMBINE`'s state is #1512's.
+    /// sprites replace the coordinates; or `GL_COMBINE`'s settings
+    /// (#1512), each as GL's enumerant, the scales in 16.16. How many
+    /// values it wrote, none with the error recorded.
     pub fn get_tex_env(
         &mut self,
         target: u32,
         pname: u32,
         out: &mut [Fx],
     ) -> usize {
-        use razboj_tile::tex;
         let one = |out: &mut [Fx], v: u32| {
             if let Some(o) = out.first_mut() {
                 *o = v as Fx;
@@ -1522,15 +1570,40 @@ impl<'a> Gl<'a> {
             (gl::POINT_SPRITE_OES, gl::COORD_REPLACE_OES) => {
                 one(out, self.coord_replace as u32)
             }
-            (gl::TEXTURE_ENV, gl::TEXTURE_ENV_MODE) => {
-                let mode = match self.env {
-                    tex::REPLACE => gl::REPLACE,
-                    tex::DECAL => gl::DECAL,
-                    tex::BLEND => gl::BLEND,
-                    tex::ADD => gl::ADD,
-                    _ => gl::MODULATE,
+            (gl::TEXTURE_ENV, gl::TEXTURE_ENV_MODE) => one(
+                out,
+                ENVS.get(self.env as usize).copied().unwrap_or(gl::MODULATE),
+            ),
+            (gl::TEXTURE_ENV, gl::COMBINE_RGB) => {
+                one(out, FUNCTIONS[self.combine.rgb as usize & 7])
+            }
+            (gl::TEXTURE_ENV, gl::COMBINE_ALPHA) => {
+                one(out, FUNCTIONS[self.combine.alpha as usize & 7])
+            }
+            // The scales in 16.16, as GL keeps them, one, two or four.
+            (gl::TEXTURE_ENV, gl::RGB_SCALE) => {
+                if let Some(o) = out.first_mut() {
+                    *o = ONE << self.combine.scale_rgb;
+                }
+                1
+            }
+            (gl::TEXTURE_ENV, gl::ALPHA_SCALE) => {
+                if let Some(o) = out.first_mut() {
+                    *o = ONE << self.combine.scale_alpha;
+                }
+                1
+            }
+            (gl::TEXTURE_ENV, p) if combine_arg(p).is_some() => {
+                let (which, k) =
+                    combine_arg(p).unwrap_or((ArgOf::RgbSource, 0));
+                let c = &self.combine;
+                let v = match which {
+                    ArgOf::RgbSource => SOURCES[c.src_rgb[k] as usize & 3],
+                    ArgOf::AlphaSource => SOURCES[c.src_alpha[k] as usize & 3],
+                    ArgOf::RgbOperand => OPERANDS[c.op_rgb[k] as usize & 3],
+                    ArgOf::AlphaOperand => OPERANDS[c.op_alpha[k] as usize & 3],
                 };
-                one(out, mode)
+                one(out, v)
             }
             (gl::TEXTURE_ENV, gl::TEXTURE_ENV_COLOR) => {
                 let n = out.len().min(4);
@@ -2744,7 +2817,7 @@ impl<'a> Gl<'a> {
         tex: Option<[[u32; WORDS]; 2]>,
         planes: Planes,
     ) {
-        let Some([mut ta, tb]) = tex else {
+        let Some([mut ta, mut tb]) = tex else {
             return self.push_drawn(w, slot, planes);
         };
         let depth = self.depth_test && slot.is_some();
@@ -2754,6 +2827,13 @@ impl<'a> Gl<'a> {
         ta[13] = self.store.as_ref().map_or(0, |s| s.desc_at(self.bound));
         ta[14] = self.env;
         ta[15] = colour_word(&self.env_colour);
+        // `GL_COMBINE`'s settings (#1512), in the second texture slot's
+        // word 14; nought under the other environments.
+        tb[14] = if self.env == razboj_tile::tex::COMBINE {
+            self.combine.word()
+        } else {
+            0
+        };
         if self.frame.len() - self.used < 4 {
             return self.fail(gl::OUT_OF_MEMORY);
         }
@@ -2762,6 +2842,78 @@ impl<'a> Gl<'a> {
             self.used += 1;
         }
         self.deep = true;
+    }
+}
+
+/// GL's environments in Razboj's numbering (#997, #1512): `tex::REPLACE`
+/// to `tex::COMBINE`.
+const ENVS: [u32; 6] = [
+    gl::REPLACE,
+    gl::MODULATE,
+    gl::DECAL,
+    gl::BLEND,
+    gl::ADD,
+    gl::COMBINE,
+];
+
+/// `GL_COMBINE`'s functions in `Combine`'s numbering (#1512),
+/// `tex::FN_REPLACE` to `tex::FN_DOT3_RGBA`; the alpha's are the first six.
+const FUNCTIONS: [u32; 8] = [
+    gl::REPLACE,
+    gl::MODULATE,
+    gl::ADD,
+    gl::ADD_SIGNED,
+    gl::INTERPOLATE,
+    gl::SUBTRACT,
+    gl::DOT3_RGB,
+    gl::DOT3_RGBA,
+];
+
+/// Its sources, `tex::SRC_TEXTURE` to `tex::SRC_PREVIOUS` (#1512).
+const SOURCES: [u32; 4] =
+    [gl::TEXTURE, gl::CONSTANT, gl::PRIMARY_COLOR, gl::PREVIOUS];
+
+/// Its operands, `tex::OP_SRC_COLOR` to `tex::OP_ONE_MINUS_SRC_ALPHA`
+/// (#1512); an alpha's are the last two.
+const OPERANDS: [u32; 4] = [
+    gl::SRC_COLOR,
+    gl::ONE_MINUS_SRC_COLOR,
+    gl::SRC_ALPHA,
+    gl::ONE_MINUS_SRC_ALPHA,
+];
+
+/// Where GL's `v` stands in `table`, which is its code.
+fn code_of(table: &[u32], v: u32) -> Option<u32> {
+    table.iter().position(|&x| x == v).map(|k| k as u32)
+}
+
+/// Which of an argument's settings a name of `GL_COMBINE`'s is (#1512).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ArgOf {
+    RgbSource,
+    AlphaSource,
+    RgbOperand,
+    AlphaOperand,
+}
+
+/// The setting `pname` names and which argument it is of, nought to two,
+/// or `None` for a name that is not one of them.
+fn combine_arg(pname: u32) -> Option<(ArgOf, usize)> {
+    let at = |first: u32| (pname - first) as usize;
+    match pname {
+        gl::SRC0_RGB..=gl::SRC2_RGB => {
+            Some((ArgOf::RgbSource, at(gl::SRC0_RGB)))
+        }
+        gl::SRC0_ALPHA..=gl::SRC2_ALPHA => {
+            Some((ArgOf::AlphaSource, at(gl::SRC0_ALPHA)))
+        }
+        gl::OPERAND0_RGB..=gl::OPERAND2_RGB => {
+            Some((ArgOf::RgbOperand, at(gl::OPERAND0_RGB)))
+        }
+        gl::OPERAND0_ALPHA..=gl::OPERAND2_ALPHA => {
+            Some((ArgOf::AlphaOperand, at(gl::OPERAND0_ALPHA)))
+        }
+        _ => None,
     }
 }
 
