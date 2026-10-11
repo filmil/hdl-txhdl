@@ -2305,12 +2305,11 @@ impl<'a> Gl<'a> {
             (len / 2, len / 2)
         };
         let (si, so) = ((h - 8).max(0), h + 8);
-        // A corner at `t` along and `s` across: its colour and depth
-        // those of the segment at `t`, between the ends' and the ends'
-        // own past them, so that the ends' values stand at the ends; its
-        // fog factor the line's at `t`, carried on past the ends as well,
-        // so that the fog plane across an end is the line's (#1662); its
-        // alpha the coverage of that colour's, one inside, nought out,
+        // A corner at `t` along and `s` across: its colour, depth and fog
+        // factor the line's at `t`, carried on past the ends, as GL takes
+        // a fragment's past them, so that each plane across an end is the
+        // line's (#1662, #1684); its alpha the coverage of the colour's
+        // alpha between the ends', one inside, nought out,
         // and a quarter at the middle of a corner square, where the
         // coverages across and along meet. A line shorter than a pixel
         // has its alpha scaled by its length, since its rim would
@@ -2330,14 +2329,22 @@ impl<'a> Gl<'a> {
                 (false, true) => al / 4,
                 (false, false) => 0,
             };
-            Soft::at(
-                (col & 0x00ff_ffff) | (al as u32) << 24,
-                mix(zp, zq) as u32,
-                // Within a few bytes' worth of a byte's range, which a
-                // line shorter than a pixel could otherwise far exceed.
-                (fp + ((fq - fp) * t * 2 + len).div_euclid(2 * len))
-                    .clamp(-1024, 1279),
-            )
+            // The line's value at `t`, past its ends too, which inside
+            // them is `mix`'s; within a few times its range, which a line
+            // shorter than a pixel could otherwise far exceed.
+            let along = |x: i64, y: i64, lo: i64, hi: i64| {
+                let span = hi - lo;
+                (x + ((y - x) * t * 2 + len).div_euclid(2 * len))
+                    .clamp(lo - 4 * span, hi + 4 * span)
+            };
+            let ch = |c: u32, k: u32| (c >> k & 0xff) as i64;
+            Soft {
+                at: (0, 0),
+                col: (col & 0x00ff_ffff) | (al as u32) << 24,
+                rgb: [16, 8, 0].map(|k| along(ch(cp, k), ch(cq, k), 0, 255)),
+                z: along(zp, zq, 0, 0xffff),
+                fog: along(fp, fq, 0, 255),
+            }
         };
         let c =
             |t: i64, s: i64, full: bool| pick(t, full, false).place(pt(t, s));
@@ -2394,8 +2401,10 @@ impl<'a> Gl<'a> {
         let s = c.map(|x| x.col);
         let v = c.map(|x| x.at);
         let zs = self.depth_test.then(|| c.map(|x| x.z));
+        let rgb = c.map(|x| x.rgb);
+        let corners = (v[0], v[1], v[2]);
         let Some((w, slot)) =
-            emit::triangle(s[0], v[0], v[1], v[2], Some(s), zs, self.bounds())
+            emit::triangle_wide(s[0], corners, Some(rgb), zs, self.bounds())
         else {
             return;
         };
@@ -2904,8 +2913,12 @@ const CIRCLE: [(i32, i32); 48] = [
 #[derive(Clone, Copy)]
 struct Soft {
     at: (i32, i32),
+    /// Its colour, whose alpha is the coverage's.
     col: u32,
-    z: u32,
+    /// Its red, green and blue and its window depth, which past a
+    /// line's ends may lie outside a byte and sixteen bits (#1684).
+    rgb: [i64; 3],
+    z: i64,
     /// Its fog factor in bytes, 255 for none, which past a line's ends
     /// may lie outside a byte (#1662).
     fog: i64,
@@ -2916,7 +2929,8 @@ impl Soft {
         Soft {
             at: (0, 0),
             col,
-            z,
+            rgb: [16, 8, 0].map(|k| (col >> k & 0xff) as i64),
+            z: z as i64,
             fog,
         }
     }
