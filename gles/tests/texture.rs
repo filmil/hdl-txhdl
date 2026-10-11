@@ -123,6 +123,7 @@ fn library(min: u32, mag: u32, env: u32) -> (Vec<[u32; WORDS]>, Vec<u32>) {
             colour: None,
             normal: None,
             tex: Some([fx(st[0]), fx(st[1]), 0, ONE]),
+            point_size: None,
         }
     };
     g.draw_vertices(gl::TRIANGLES, 6, vertex);
@@ -654,6 +655,7 @@ fn a_point_sprite_is_the_texture_across_it() {
             colour: None,
             normal: None,
             tex: None,
+            point_size: None,
         });
         assert_eq!(g.get_error(), gl::NO_ERROR);
         let n = g.frame().len();
@@ -734,6 +736,7 @@ fn the_texture_called_nought_is_a_texture() {
         colour: None,
         normal: None,
         tex: None,
+        point_size: None,
     });
     assert_eq!(g.get_error(), gl::NO_ERROR);
     let n = g.frame().len();

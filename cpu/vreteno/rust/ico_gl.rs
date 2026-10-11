@@ -336,6 +336,7 @@ pub fn frame<'a>(
             colour: None,
             normal: Some(model.normals[k]),
             tex: Some(model.texcoords[k]),
+            point_size: None,
         });
     } else if cfg!(blend) {
         translucent(&mut g, model);
@@ -448,6 +449,7 @@ fn mirror(g: &mut Gl<'_>, model: &Model, ay: i32, ax: i32) {
             colour: None,
             normal: Some([0, ONE, 0]),
             tex: None,
+            point_size: None,
         })
     };
     g.enable(gl::STENCIL_TEST);
@@ -513,6 +515,7 @@ fn stripes(g: &mut Gl<'_>) {
                 colour: Some(c),
                 normal: None,
                 tex: None,
+                point_size: None,
             }
         });
     }
@@ -601,6 +604,7 @@ fn floor(g: &mut Gl<'_>) {
             colour: None,
             normal: Some([0, ONE, 0]),
             tex: Some([s, t, 0, ONE]),
+            point_size: None,
         }
     });
 }

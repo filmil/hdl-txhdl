@@ -75,6 +75,8 @@ struct Vert {
     inside: bool,
     win: (i64, i64),
     zw: u32,
+    /// Its point size, its own or the current one (#1507).
+    size: Fx,
 }
 
 /// What placing a vertex in the window reads of the context, copied out
@@ -239,6 +241,9 @@ pub struct Vertex {
     pub normal: Option<[Fx; 3]>,
     /// Its texture coordinates, or `None` for the current ones (#997).
     pub tex: Option<[Fx; 4]>,
+    /// Its point size, `OES_point_size_array`'s, or `None` for the
+    /// current one (#1507).
+    pub point_size: Option<Fx>,
 }
 
 /// A GL context drawing into a frame of Razboj's instructions.
@@ -811,7 +816,7 @@ impl<'a> Gl<'a> {
     fn derived_size(&self, v: &Vert) -> Fx {
         let [a, b, c] = self.point_atten.map(|k| k as i128);
         let size = if [a, b, c] == [ONE as i128, 0, 0] {
-            self.point_size as i128
+            v.size as i128
         } else {
             // The distance squared, in 32.32, and the distance, in 16.16.
             let e = v.eye.map(|x| x as i128);
@@ -824,7 +829,7 @@ impl<'a> Gl<'a> {
                 // sqrt(sum) in 16.16 is the root of sum times 2^16.
                 let root =
                     fixed::isqrt((sum << 16).min(u64::MAX as i128) as u64);
-                (self.point_size as i128 * ONE as i128) / (root as i128).max(1)
+                (v.size as i128 * ONE as i128) / (root as i128).max(1)
             }
         };
         let (lo, hi) = (self.point_min as i128, self.point_max as i128);
@@ -1898,6 +1903,7 @@ impl<'a> Gl<'a> {
                 colour: colours.map(|c| c[k]),
                 normal: normals.map(|v| v[k]),
                 tex: None,
+                point_size: None,
             },
         );
     }
@@ -1932,6 +1938,7 @@ impl<'a> Gl<'a> {
                 colour: colours.map(|c| c[i]),
                 normal: normals.map(|v| v[i]),
                 tex: None,
+                point_size: None,
             }
         });
     }
@@ -2007,8 +2014,10 @@ impl<'a> Gl<'a> {
         );
         let (lights, scene, two_side) =
             (self.lights, self.scene_ambient, self.two_side);
+        let point_size = self.point_size;
         let vert = |k: usize| {
             let v = vertex(k);
+            let size = v.point_size.unwrap_or(point_size);
             let eye = matrix::mul_vec(&mv, &v.position);
             let clip = matrix::mul_vec(&pj, &eye);
             let col = v.colour.unwrap_or(current);
@@ -2020,6 +2029,7 @@ impl<'a> Gl<'a> {
                     col,
                     back: col,
                     tex,
+                    size,
                     ..Vert::default()
                 };
             }
@@ -2042,6 +2052,7 @@ impl<'a> Gl<'a> {
                 col: front,
                 back,
                 tex,
+                size,
                 ..Vert::default()
             }
         };
