@@ -8,7 +8,7 @@
 # applies: the crate is inline RISC-V assembly from end to end, so it
 # is manual, and a program names it in `deps`.
 load("@rules_rust//rust:defs.bzl", "rust_library")
-load("//cpu/vreteno/rust:defs.bzl", "vreteno_checked")
+load("//cpu/vreteno/rust:defs.bzl", "CORE_ONLY", "vreteno_checked")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -25,7 +25,7 @@ rust_library(
     # checks, as everything the transition builds is (issue 1248).
     rustc_flags = ["-Cpanic=abort"],
     tags = ["manual"],
-    target_compatible_with = ["@platforms//cpu:riscv32"],
+    target_compatible_with = CORE_ONLY,
 )
 
 # The sources by name, for the documents' listings.
