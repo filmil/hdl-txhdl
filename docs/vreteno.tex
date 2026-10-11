@@ -2782,11 +2782,16 @@ now first waits until half its own work, from its last showing to its
 being ready, has passed since either hart showed a frame; the waits
 of the first few frames put the harts half their period apart, a
 frame's time, and from then on neither waits.
-\code{flip\_pacing\_test} runs the program on the machine,
-which says every base the scanout was given and the raster frame it
-came in, and holds each frame to within one raster frame of half its
-pair's time; the program as it was showed one for one raster frame and
-the next for ten. The machine has no contention on
+\code{flip\_pacing\_test} counts as the board does. It runs the
+canonical teapot on the machine in the timing mode with the board's
+60\,Hz raster, a frame every 1{,}668{,}321 cycles, the last 45 of its
+525 rows the blanking, and the scanout taking the base it was last
+given as each blanking begins, as the board's does; the machine's
+\code{--flips} says every base the scanout took and the frame it took
+it in. Each frame must stay on the screen within one blanking of half
+its pair's time. The program as it was shows one frame for one
+blanking and the next for thirty there, as the board showed one and
+thirty-five; now each stays fifteen. The machine has no contention on
 the DDR3 path, and with both harts storing the stores above took 29
 cycles more, so the board's frame will be somewhat longer.
 
