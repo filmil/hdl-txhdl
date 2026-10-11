@@ -9,16 +9,20 @@
 
 \code{Board} is everything that computes on the board, written as a
 unit of units so that \code{\#[lower]} makes its netlist as one module
-holding the rest. It holds two harts, eight hosts, an arbiter that
-puts the hosts onto one link, an exclusive monitor, a router of eight,
+holding the rest. It holds two harts, the hosts on eight ports, an
+arbiter that puts the eight onto one link, an exclusive monitor, a router of eight,
 and the peripherals behind its eight ports. The hosts are the first
 hart's tracker, \code{host}; Vivado's JTAG-to-AXI master
 on the board's top (issue 241), whose pins arrive under \code{jtag\_}
-and are joined by an \code{AxiPins}, sharing one host through
+and are joined by an \code{AxiPins}, sharing one port through
 \code{jarb} with the bridge of the RISC-V debug transport (issue 154);
 the Ethernet port's two engines, each behind an \code{AxiHost} of its
-own (issue 151); the video scanout's fetch (issue 151); and the SD card
-host's two engines, sharing one host through \code{sdarb} (issue 912);
+own (issue 151), sharing one port through \code{etharb} (issue 1634);
+a host the board's top may hang there, whose channels arrive as the
+unit's ports \code{host\_aw}, \code{host\_ar}, \code{host\_w},
+\code{host\_b} and \code{host\_r} (issue 1634); the video scanout's
+fetch (issue 151); and the SD card
+host's two engines, sharing one port through \code{sdarb} (issue 912);
 Razboj's rasteriser behind \code{rhost} (issue 985); and the second
 hart's tracker, \code{host1} (issue 1408).
 The arbiter, \code{arb}, is an
@@ -226,6 +230,28 @@ the core's clock by the top, which \code{eth} reads at words 14 and 15
 (issue 1404). The flagship drives it; the other tops tie it to zero.
 \code{NoBeats} and \code{NoReads} hold the
 direction of each engine's host that the engine never uses.
+\item \textbf{The Ethernet engines share a port.} \code{fhost} and
+\code{shost} are \code{AxiHost<32, 32, 4, 1, 2>}: one bit of
+identifier and two bursts in flight each; \code{fetch} and
+\code{store} take one bit too, and so does \code{snoreads}, the
+\code{NoReads} on the store engine's unused read side, while
+\code{fnobeats}, the \code{NoBeats} on the fetch engine's unused write
+side, has no identifier. \code{etharb}, an \code{Arbiter2<32, 32, 4,
+1, 2, 0>}, puts the two onto the arbiter's third port, as \code{sdarb}
+does the SD card's onto its sixth, adding the bit that says which
+engine to the one each brings, so the port carries two bits like
+every other. The fetch engine only reads and the store engine only
+writes, and \code{etharb} takes turns for reads and for writes apart,
+so sharing the port takes no turn from either (issue 1634).
+\item \textbf{The board's top has a host of its own.} The arbiter's
+fourth port is the unit's channel ports \code{host\_aw}, \code{host\_ar}
+and \code{host\_w} in and \code{host\_b} and \code{host\_r} out: an AXI4
+host with 32-bit addresses and words, four lanes and two bits of
+identifier, so four bursts in flight (issue 1634). It is meant for a
+design beside the core that reads and writes memory, with its
+registers on the slot at \code{0x3200} and its interrupt on
+\code{irq}. Its writes into the DDR3 pass the snoop like any host's.
+A top with nothing there offers nothing and takes every answer.
 \item \textbf{The wire is shared by EtherType.} \code{share}, an
 \code{EthShare<0x88b5>}, sends the remote peripheral's frames to its
 link and every other frame to the Ethernet port, and merges the two
@@ -289,7 +315,9 @@ controller on \code{sys\_clk}, which makes the design's 100~MHz,
 counted on the board's clock and nothing else. The core's reset
 follows the button, \code{ui\_rst} being low and \code{calib}, through
 two flip-flops on the design's clock.
-\item It ties \code{irq} low.
+\item It ties \code{irq} low, and ties off the host port: no address
+or word is offered, and every answer is taken (issue 1634). So do the
+other tops, the flagship's among them.
 \item It puts the flash's select and data on the configuration pins
 FCS\_B, D00 and D01, and holds D02 and D03, the chip's write protect
 and hold, high. The clock, CCLK, is reached through \code{STARTUPE2}
@@ -346,6 +374,15 @@ has both count with \code{amoadd.w} and with \code{lr.w} and
 from \code{wfi}, and \code{hart\_one\_takes\_an}\allowbreak
 \code{\_external\_interrupt}
 holds its interrupt controller targets.
+\code{the\_board\_tops\_host\_writes}\allowbreak
+\code{\_and\_reads\_the\_ddr3} has the host port write four bursts of
+eight words into the DDR3 under its four identifiers, in flight
+together, and read them back: each write is answered once under its
+own identifier, and every word comes back in order within its burst
+under its burst's identifier, while the core runs its program. \code{the\_board\_tops\_host}\allowbreak
+\code{\_writes\_are\_snooped} has the core hold a DDR3 word's line,
+the host write that word, and the core's next read give the new word
+(issue 1634).
 \code{the\_netlist\_holds}\allowbreak
 \code{\_the\_controller} checks that the Verilog
 has the top, the core and the DDR3's pins part as modules,
@@ -392,12 +429,15 @@ the board as well: the identity, write enable refused and the
 bitstream through the window. The program is fixed in the netlist. The board top ties \code{irq} low, so on the
 board the interrupt controller's second source never asks.
 
-The arbiter's ports are the first hart on 0, \code{jarb} on 1, the
-Ethernet port's fetch engine on 2 and its store engine on 3, the
-scanout's fetch on 4, \code{sdarb} on 5, Razboj's rasteriser on 6 and
-the second hart on 7. It takes turns, so with every host offering each
-wins one turn in eight. Three bits of port number hold eight hosts, so
-the eight ports are all taken.
+The arbiter's ports are the first hart on 0, \code{jarb} on 1,
+\code{etharb}, the Ethernet port's two engines, on 2, the board top's
+host on 3, the scanout's fetch on 4, \code{sdarb} on 5, Razboj's
+rasteriser on 6 and the second hart on 7. It takes turns, so with
+every port offering each wins one turn in eight. Three bits of port
+number hold eight ports, and all eight are taken: a ninth port would
+widen the identifier past the arbiter, as far as the DDR3 controller,
+which is why the Ethernet engines share a port rather than take one
+each (issue 1634).
 
 The second hart is not on the debug module, and the debug module
 serves hart 0 alone.
