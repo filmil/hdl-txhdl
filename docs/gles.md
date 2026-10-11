@@ -165,7 +165,7 @@ The far plane and the enabled user planes are clipped against too.
 A clipped triangle is a polygon of up to ten vertices, three and one more for each of the seven planes, clipped plane by plane with the colours and the depths interpolated linearly in clip space, as the specification says, and then cut into a fan.
 A vertex clipping makes is kept in 128 bits, as homogeneous clip coordinates times a positive scale and the scale, far finer than the window's sixteenth, and it is placed in the window and given its depth from those (#1661); its colours and the rest are interpolated at the true distances' ratio.
 Each cut shifts its products down to fit, so the errors of successive cuts add, but a cut's is a part in about 2^60 of the point's size, and seven of them stay far below a sixteenth.
-The two weights of a cut are shifted down each on its own and their products lined up after, since the ends' scales can be 2^60 apart, a corner's being 1, and shifting the weights together would leave the smaller with nothing.
+A cut's two distances, each its end's true one times that end's scale, are shifted down each on its own and their products lined up after, since the ends' scales can be 2^60 apart, a corner's being 1, and shifting the weights together would leave the smaller with nothing.
 Its clip coordinates rounded to 16.16 would put it off by the rounding over w, which on a near plane close to the eye outgrew the guard band's margin, so that the vertex was clamped to Razboj's edge.
 Every plane is linear in clip coordinates and a cut vertex lies between two others, so a vertex kept so never leaves the guard band that its ends were inside, but for bits far below a sixteenth.
 
