@@ -37,7 +37,7 @@ VRETENO_FLAGS = [
     "-Coverflow-checks=no",
     "-Cpanic=abort",
     "-Clinker=rust-lld",
-    "-Clink-arg=-Tcpu/vreteno/rust/vreteno.ld",
+    "-Clink-arg=-T$(execpath :vreteno.ld)",
 ]
 
 # The same, for a program that is loaded into the board's memory and
@@ -48,7 +48,7 @@ VRETENO_RAM_FLAGS = [
     "-Coverflow-checks=no",
     "-Cpanic=abort",
     "-Clinker=rust-lld",
-    "-Clink-arg=-Tcpu/vreteno/rust/vreteno_ram.ld",
+    "-Clink-arg=-T$(execpath :vreteno_ram.ld)",
     # A program loaded into the DDR3 reports its own faults (issue 1413).
     "--cfg=vreteno_ram",
 ]
