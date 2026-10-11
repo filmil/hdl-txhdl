@@ -1120,6 +1120,8 @@ latex_document(
         ":fn_run",
         ":arith_run",
         ":arith_timing",
+        ":smul_run",
+        ":smul_timing",
         ":valif_run",
         ":valif_timing",
         ":range_run",
