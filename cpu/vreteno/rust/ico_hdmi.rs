@@ -248,9 +248,10 @@ static ALIVE: AtomicU32 = AtomicU32::new(0);
 static DRAWN: AtomicU32 = AtomicU32::new(0);
 
 /// The last frame rung, so that each hart rings its own frames in turn
-/// (#1639): a frame is rung once the one before it is.
+/// (#1639): a frame is rung once the one before it is. None at first, so
+/// that hart 1's first frame waits for hart 0 to ring frame 0.
 #[cfg(gl)]
-static RUNG: AtomicU32 = AtomicU32::new(0);
+static RUNG: AtomicU32 = AtomicU32::new(u32::MAX);
 
 /// The video peripheral's count of frames shown when either hart last
 /// had the scanout show a frame (#1639).
@@ -264,7 +265,8 @@ static LAST_SHOW: AtomicU32 = AtomicU32::new(0);
 /// rest; so a hart first waits until half its own work has passed since
 /// either hart showed a frame. Its work is the frames from its last
 /// showing to its being ready again, without the wait, so that a wait
-/// never lengthens the period it is worked out from. The first waits put
+/// never lengthens the period it is worked out from. A hart's first
+/// showing has no work to pace by; the waits of the next few frames put
 /// the harts half a period apart, and from then on each is ready about
 /// when its turn comes and waits for nothing.
 #[cfg(gl)]
@@ -284,9 +286,11 @@ impl Pacer {
     fn show(&mut self, base: u32) {
         let ready = Video::frames();
         let work = self.prev.map_or(0, |p| ready.wrapping_sub(p) & 0xffff);
+        // The last showing is read before the count, so that the count is
+        // never behind it; the 16-bit count's own wrap the mask takes care of.
         let since = || {
-            Video::frames().wrapping_sub(LAST_SHOW.load(Ordering::Acquire))
-                & 0xffff
+            let last = LAST_SHOW.load(Ordering::Acquire);
+            Video::frames().wrapping_sub(last) & 0xffff
         };
         while since() < work / 2 {}
         Scan::base(base);
