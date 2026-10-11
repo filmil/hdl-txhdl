@@ -268,6 +268,13 @@ pub struct Gl<'a> {
     smooth: bool,
     point_size: Fx,
     line_width: Fx,
+    /// `glPointParameterx`'s state (#1508): the range a point's derived
+    /// size is kept in, the fade threshold, and the distance
+    /// attenuation's constant, linear and quadratic coefficients.
+    point_min: Fx,
+    point_max: Fx,
+    point_fade: Fx,
+    point_atten: [Fx; 3],
     colour: [Fx; 4],
     clear_colour: [Fx; 4],
     normal: [Fx; 3],
@@ -405,6 +412,10 @@ impl<'a> Gl<'a> {
             smooth: true,
             point_size: ONE,
             line_width: ONE,
+            point_min: 0,
+            point_max: gl::MAX_SIZE as Fx * ONE,
+            point_fade: ONE,
+            point_atten: [ONE, 0, 0],
             colour: [ONE; 4],
             clear_colour: [0; 4],
             normal: [0, 0, ONE],
@@ -743,6 +754,72 @@ impl<'a> Gl<'a> {
             return self.fail(gl::INVALID_VALUE);
         }
         self.point_size = size;
+    }
+
+    /// `glPointParameterx` (#1508): the least and the most a point's
+    /// derived size may be, or the fade threshold, none of them below
+    /// nought, which is `GL_INVALID_VALUE`. The distance attenuation has
+    /// three values, so it is `glPointParameterxv`'s alone.
+    pub fn point_parameter(&mut self, pname: u32, param: Fx) {
+        if pname == gl::POINT_DISTANCE_ATTENUATION {
+            return self.fail(gl::INVALID_ENUM);
+        }
+        self.point_parameterv(pname, &[param]);
+    }
+
+    /// `glPointParameterxv` (#1508): as [`Gl::point_parameter`], and the
+    /// distance attenuation's constant, linear and quadratic
+    /// coefficients.
+    pub fn point_parameterv(&mut self, pname: u32, params: &[Fx]) {
+        let Some(&p) = params.first() else {
+            return self.fail(gl::INVALID_VALUE);
+        };
+        let at = match pname {
+            gl::POINT_SIZE_MIN => &mut self.point_min,
+            gl::POINT_SIZE_MAX => &mut self.point_max,
+            gl::POINT_FADE_THRESHOLD_SIZE => &mut self.point_fade,
+            gl::POINT_DISTANCE_ATTENUATION => {
+                if params.len() < 3 {
+                    return self.fail(gl::INVALID_VALUE);
+                }
+                self.point_atten = [params[0], params[1], params[2]];
+                return;
+            }
+            _ => return self.fail(gl::INVALID_ENUM),
+        };
+        if p < 0 {
+            return self.fail(gl::INVALID_VALUE);
+        }
+        *at = p;
+    }
+
+    /// A point's derived size (#1508, section 3.3): its size times
+    /// `1 / sqrt(a + b d + c d^2)`, `d` its distance from the eye and `a`,
+    /// `b` and `c` the distance attenuation, kept between the least and
+    /// the most `glPointParameterx` sets. A sum not above nought puts it
+    /// at the most. The fade threshold changes nothing without a
+    /// multisample buffer, which there is not.
+    fn derived_size(&self, v: &Vert) -> Fx {
+        let [a, b, c] = self.point_atten.map(|k| k as i128);
+        let size = if [a, b, c] == [ONE as i128, 0, 0] {
+            self.point_size as i128
+        } else {
+            // The distance squared, in 32.32, and the distance, in 16.16.
+            let e = v.eye.map(|x| x as i128);
+            let d2 = (e[0] * e[0] + e[1] * e[1] + e[2] * e[2]) as u128;
+            let d = fixed::isqrt(d2.min(u64::MAX as u128) as u64) as i128;
+            let sum = a + ((b * d) >> 16) + ((c * d2 as i128) >> 32);
+            if sum <= 0 {
+                self.point_max as i128
+            } else {
+                // sqrt(sum) in 16.16 is the root of sum times 2^16.
+                let root =
+                    fixed::isqrt((sum << 16).min(u64::MAX as i128) as u64);
+                (self.point_size as i128 * ONE as i128) / (root as i128).max(1)
+            }
+        };
+        let (lo, hi) = (self.point_min as i128, self.point_max as i128);
+        size.max(lo).min(hi.max(lo)) as Fx
     }
 
     /// `glLineWidthx`: a line's width in pixels, as a point's size is.
@@ -2063,7 +2140,7 @@ impl<'a> Gl<'a> {
         let Some((wx, wy)) = self.window(&v) else {
             return;
         };
-        let s = size(self.point_size);
+        let s = size(self.derived_size(&v));
         let lo = |c: i64| {
             if s % 2 == 1 {
                 c.div_euclid(16) - (s - 1) / 2
@@ -2219,8 +2296,9 @@ impl<'a> Gl<'a> {
     /// taken linear across the rim. The size is the point's own, not
     /// rounded, kept from 1 to 64 pixels as the smooth range says.
     fn smooth_point(&mut self, v: &Vert, at: (i64, i64)) {
-        let r =
-            (self.point_size.clamp(ONE, gl::MAX_SIZE as Fx * ONE) as i64) >> 13;
+        let r = (self.derived_size(v).clamp(ONE, gl::MAX_SIZE as Fx * ONE)
+            as i64)
+            >> 13;
         // Eight sides for a point of a pixel or less across, sixteen
         // above; the corners pushed out by the factor, in 16.16, that puts
         // the mean of a side's distance from the centre on the circle.
