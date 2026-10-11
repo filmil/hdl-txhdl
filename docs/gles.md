@@ -50,14 +50,14 @@ A later issue means the entry point is accepted from the start but does what tha
 | Fog | `glFogx`, `glFogxv`; `GL_FOG` | From #998, drawn in a tile table, its factor worked out at each vertex |
 | Stencil | `glStencilFunc`, `glStencilOp`, `glStencilMask`, `glClearStencil`; `GL_STENCIL_TEST` | From #998, 8 bits, drawn in a tile table |
 | Textures | `glGenTextures`, `glDeleteTextures`, `glBindTexture`, `glTexImage2D`, `glTexParameteri`, `glTexParameterx`, `glTexEnvi`, `glTexEnvx`, `glTexEnvxv`, `glTexCoordPointer`, `glMultiTexCoord4x`, `glActiveTexture`, `glClientActiveTexture`, `glPixelStorei`; `GL_TEXTURE_2D` and `GL_TEXTURE_COORD_ARRAY` | From #997, one unit, drawn in a tile table; the rasteriser samples under every filter, mipmapped, and every environment but `GL_COMBINE`, as Razboj's model does |
-| Points and lines | `glPointSizex`, `glLineWidthx`, and the point and line modes of the draw calls; `GL_POINT_SPRITE_OES` and `GL_COORD_REPLACE_OES` | Now, from issue 994; point sprites from #998 |
+| Points and lines | `glPointSizex`, `glLineWidthx`, `glPointParameterx` and `xv`, and the point and line modes of the draw calls; `GL_POINT_SPRITE_OES` and `GL_COORD_REPLACE_OES` | Now, from issue 994; point sprites from #998; point parameters from #1508 |
 | Switches | `glEnable`, `glDisable`, `glIsEnabled` for `GL_LIGHTING`, `GL_LIGHT0` to `GL_LIGHT7`, `GL_CULL_FACE`, `GL_NORMALIZE`, `GL_RESCALE_NORMAL`, `GL_COLOR_MATERIAL`, `GL_CLIP_PLANE0`, `GL_DEPTH_TEST`, `GL_BLEND`, `GL_ALPHA_TEST`, `GL_DITHER`, `GL_SCISSOR_TEST`, `GL_FOG`, `GL_STENCIL_TEST`; and the rest as the issues above land | Now, and growing |
 | Queries and errors | `glGetError`, `glGetIntegerv`, `glGetFixedv`, `glGetBooleanv`, `glGetString`, `glGetPointerv`, `glGetLightxv`, `glGetMaterialxv`, `glGetTexParameteriv`, `glGetTexParameterxv`, `glGetTexEnviv`, `glGetTexEnvxv`, `glGetClipPlanex` | Now, the queries from #1484 (section 10), the parameters' from #1511 |
 | Completion | `glFlush`, `glFinish` | Now (section 7) |
 | Reading back | `glReadPixels`, `glPixelStorei(GL_PACK_ALIGNMENT)` | From #999, `GL_RGBA` and `GL_UNSIGNED_BYTE`, the frame so far drawn first |
 | Hints | `glHint` | Accepted and ignored, as the specification allows, from #1490 |
 
-Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit (#1510), which wait for a program that needs them; and two parts of ES 1.1 that #999's conformance suite found missing: the point size array of `OES_point_size_array` (#1507) and `glPointParameterx` (#1508).
+Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit (#1510), which wait for a program that needs them; and a part of ES 1.1 that #999's conformance suite found missing: the point size array of `OES_point_size_array` (#1507).
 An entry point that is left out still exists, so that a program links, and sets `GL_INVALID_ENUM` or `GL_INVALID_OPERATION` as the specification says for an unsupported value.
 
 The limits the library reports are the specification's minimums: a modelview stack of 16, projection and texture stacks of 2, eight lights, one clip plane.
@@ -328,6 +328,7 @@ Each step is a pull request, checked before the next.
 Points and lines are issue 994's, done in the library, so Razboj is unchanged.
 `glPointSizex` and `glLineWidthx` set a size and a width, which a draw rounds to whole pixels between 1 and 64.
 A point is kept when its vertex is inside the clip volume and the user plane.
+Its size is derived as section 3.3 says (#1508): the size over the root of `a + b d + c d^2`, `d` its distance from the eye and `a`, `b` and `c` the distance attenuation `glPointParameterxv` sets, then kept between the least and the most `glPointParameterx` sets, nought and 64 at first; the fade threshold changes nothing without a multisample buffer.
 It becomes the square GL gives a point that is not antialiased, as one of Razboj's rectangles: centred on the pixel the vertex is in for an odd size, and on the pixel corner nearest it for an even one.
 A line segment is clipped against the planes a triangle is.
 It then becomes the parallelogram GL's wide lines describe: the segment moved half the width up and down when it is more across than down, or left and right when not.
@@ -404,12 +405,11 @@ Antialiased points and lines are held to each pixel's coverage, sampled 8 by 8, 
 The largest difference is under 33, on the 8.5 pixel point; the points of 1 and 1.125 pixels, which are scaled, are held within 16, and the point of 1.5 pixels, which is not, within 20; the point of one pixel misses unscaled by at least 34.
 A four-pixel line shaded from red to blue is read at its three inner pixels, each within 8 of the mix a quarter, a half and three quarters along.
 The fourth is four of piglit's ES 1 tests, in `gles/conform/piglit`, ported with their float calls made fixed point for Common-Lite, each change marked.
-Of 203 state checks, 176 pass; of 100 error checks, 99; of 93 rendering checks, 93; and of piglit's four, three. The 29 failures fall under four issues:
+Of 203 state checks, 180 pass; of 100 error checks, 99; of 93 rendering checks, 93; and of piglit's four, four. The 24 failures fall under three issues:
 
 | Issue | Checks | What is missing or wrong |
 |---|---|---|
 | #1507 | 6 | `OES_point_size_array` |
-| #1508 | 5 | `glPointParameterx`, without which piglit's point sprite test draws nothing |
 | #1510 | 1 | A second texture unit |
 | #1512 | 17 | `GL_COMBINE`, its state and its scales |
 
