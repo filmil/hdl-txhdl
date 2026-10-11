@@ -21,6 +21,12 @@ exports_files(["ico_list.rs"])
 package(default_visibility = ["//visibility:public"])
 
 # The machine Vreteno is, for Bazel's toolchain resolution.
+#
+# Every program for the core says it builds only for a riscv32 CPU, so
+# that one named on its own here, which builds it for this machine, is
+# refused as incompatible at once rather than failing on its inline
+# assembly (issue 1691). Build a program through its `_image`, `_bin`
+# or `_elf` target, whose transition puts it on this platform.
 platform(
     name = "vreteno",
     constraint_values = [
@@ -125,6 +131,7 @@ rust_binary(
     rustc_flags = VRETENO_FLAGS,
     # Built through the transition below, not for this machine.
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
 )
 
@@ -152,6 +159,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
 )
 
@@ -177,6 +185,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/regs:vreteno_regs"],
 )
 
@@ -203,6 +212,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/regs:vreteno_regs"],
 )
 
@@ -229,6 +239,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/regs:vreteno_regs"],
 )
 
@@ -254,6 +265,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/regs:vreteno_regs"],
 )
 
@@ -279,6 +291,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -310,6 +323,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -336,6 +350,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -359,6 +374,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -385,6 +401,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -408,6 +425,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -434,6 +452,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -456,6 +475,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
 )
 
@@ -484,6 +504,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -510,6 +531,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -533,6 +555,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
 )
 
@@ -556,6 +579,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
 )
 
@@ -578,6 +602,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
 )
 
@@ -601,6 +626,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
 )
 
@@ -621,6 +647,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
 )
 
@@ -644,6 +671,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
 )
 
@@ -663,6 +691,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//gles:machine",
@@ -692,6 +721,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//gles:machine",
@@ -716,6 +746,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
 )
 
@@ -739,6 +770,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
 )
 
@@ -759,6 +791,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS + ["--cfg=board_run"],
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/regs:vreteno_regs"],
 )
 
@@ -785,6 +818,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/regs:vreteno_regs"],
 )
 
@@ -811,6 +845,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
 )
 
@@ -837,6 +872,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
 )
 
@@ -865,6 +901,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS + ["--cfg=board_run"],
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -893,6 +930,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -920,6 +958,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS + ["--cfg=gl"],
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -952,6 +991,7 @@ rust_binary(
         "--cfg=tex",
     ],
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -986,6 +1026,7 @@ rust_binary(
         "--cfg=mip",
     ],
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -1020,6 +1061,7 @@ rust_binary(
         "--cfg=diag",
     ],
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -1052,6 +1094,7 @@ rust_binary(
         "--cfg=ahead",
     ],
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -1083,6 +1126,7 @@ rust_binary(
         "--cfg=ahead",
     ],
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -1115,6 +1159,7 @@ rust_binary(
         "--cfg=ahead",
     ],
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -1387,6 +1432,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -1411,6 +1457,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
 )
 
@@ -1437,6 +1484,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -1463,6 +1511,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
 )
 
@@ -1507,6 +1556,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
 )
 
@@ -1525,6 +1575,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/regs:vreteno_regs"],
 )
 
@@ -1551,6 +1602,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
 )
 
@@ -1577,6 +1629,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
 )
 
@@ -1634,6 +1687,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/regs:vreteno_regs"],
 )
 
@@ -1650,6 +1704,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS + ["--cfg=board_run"],
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/regs:vreteno_regs"],
 )
 
@@ -1668,6 +1723,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -1689,6 +1745,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -1716,6 +1773,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -1744,6 +1802,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -1769,6 +1828,7 @@ rust_binary(
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
 )
 
@@ -1840,6 +1900,7 @@ _DEMO_ICO = [
         },
         rustc_flags = VRETENO_RAM_FLAGS + cfgs,
         tags = ["manual"],
+        target_compatible_with = ["@platforms//cpu:riscv32"],
         deps = [
             "//cpu/vreteno/rust/hal:vreteno_hal",
             "//cpu/vreteno/rust/regs:vreteno_regs",
@@ -1885,6 +1946,7 @@ rust_binary(
         "--cfg=teapot",
     ],
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         "//cpu/vreteno/rust/hal:vreteno_hal",
         "//cpu/vreteno/rust/regs:vreteno_regs",

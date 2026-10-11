@@ -413,6 +413,7 @@ rust_static_library(
         "-Cpanic=abort",
     ],
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
     deps = [
         ":capi",
         ":egl",

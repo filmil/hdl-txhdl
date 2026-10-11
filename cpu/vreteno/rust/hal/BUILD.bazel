@@ -25,6 +25,7 @@ rust_library(
     # checks, as everything the transition builds is (issue 1248).
     rustc_flags = ["-Cpanic=abort"],
     tags = ["manual"],
+    target_compatible_with = ["@platforms//cpu:riscv32"],
 )
 
 # The sources by name, for the documents' listings.
