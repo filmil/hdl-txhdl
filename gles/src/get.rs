@@ -39,6 +39,11 @@ pub mod name {
     pub const MODELVIEW_MATRIX: u32 = 0x0BA6;
     pub const PROJECTION_MATRIX: u32 = 0x0BA7;
     pub const TEXTURE_MATRIX: u32 = 0x0BA8;
+    /// The three matrices as their elements' single-precision bits,
+    /// `OES_matrix_get`'s, a core addition in ES 1.1 (Table C.2, #1522).
+    pub const MODELVIEW_MATRIX_FLOAT_AS_INT_BITS_OES: u32 = 0x898D;
+    pub const PROJECTION_MATRIX_FLOAT_AS_INT_BITS_OES: u32 = 0x898E;
+    pub const TEXTURE_MATRIX_FLOAT_AS_INT_BITS_OES: u32 = 0x898F;
     pub const ALPHA_TEST_FUNC: u32 = 0x0BC1;
     pub const ALPHA_TEST_REF: u32 = 0x0BC2;
     pub const BLEND_DST: u32 = 0x0BE0;
@@ -158,6 +163,14 @@ impl Gl<'_> {
                 core::array::from_fn(|k| *v.get(k).unwrap_or(&0) as i64);
             Some(Got::of(Unit, &w[..v.len()]))
         };
+        // A matrix as the bits of the single-precision floats its 16.16
+        // elements are, each the nearest float, as integers (#1522).
+        let bits = |m: &[Fx; 16]| {
+            let w: [i64; 16] = core::array::from_fn(|k| {
+                (m[k] as f32 / ONE as f32).to_bits() as i32 as i64
+            });
+            Some(Got::of(Integer, &w))
+        };
         let b = |v: &[bool]| {
             let w: [i64; 16] =
                 core::array::from_fn(|k| *v.get(k).unwrap_or(&false) as i64);
@@ -201,6 +214,13 @@ impl Gl<'_> {
             MODELVIEW_MATRIX => f(&self.mv[self.mv_top]),
             PROJECTION_MATRIX => f(&self.pj[self.pj_top]),
             TEXTURE_MATRIX => f(&self.tx[self.tx_top]),
+            MODELVIEW_MATRIX_FLOAT_AS_INT_BITS_OES => {
+                bits(&self.mv[self.mv_top])
+            }
+            PROJECTION_MATRIX_FLOAT_AS_INT_BITS_OES => {
+                bits(&self.pj[self.pj_top])
+            }
+            TEXTURE_MATRIX_FLOAT_AS_INT_BITS_OES => bits(&self.tx[self.tx_top]),
             ALPHA_TEST_FUNC => e(&[(gl::NEVER + self.alpha.0) as i64]),
             ALPHA_TEST_REF => {
                 let r = self.alpha.1 as i64;
