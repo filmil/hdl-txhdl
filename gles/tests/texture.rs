@@ -284,7 +284,7 @@ fn env(mode: u32, f: [f64; 4], t: [f64; 4], e: [f64; 4]) -> [f64; 4] {
         // doubled, as `library` sets it (#1512).
         (gl::COMBINE, _) => {
             let a2 = f[c] / 255.0;
-            ((t[c] * a2 + e[c] * (1.0 - a2)) * 2.0).min(255.0)
+            ((t[c] * a2 + e[c] * (1.0 - a2)) * 2.0).clamp(0.0, 255.0)
         }
         (_, 3) => m(f[3], t[3]),
         _ => (f[c] + t[c]).min(255.0),
@@ -814,8 +814,15 @@ fn combine_state_reads_back_and_refuses() {
         (gl::SRC0_RGB, gl::TEXTURE as Fx),
         (gl::SRC1_RGB, gl::PREVIOUS as Fx),
         (gl::SRC2_RGB, gl::CONSTANT as Fx),
+        (gl::SRC0_ALPHA, gl::TEXTURE as Fx),
+        (gl::SRC1_ALPHA, gl::PREVIOUS as Fx),
+        (gl::SRC2_ALPHA, gl::CONSTANT as Fx),
+        (gl::OPERAND0_RGB, gl::SRC_COLOR as Fx),
+        (gl::OPERAND1_RGB, gl::SRC_COLOR as Fx),
         (gl::OPERAND2_RGB, gl::SRC_ALPHA as Fx),
         (gl::OPERAND0_ALPHA, gl::SRC_ALPHA as Fx),
+        (gl::OPERAND1_ALPHA, gl::SRC_ALPHA as Fx),
+        (gl::OPERAND2_ALPHA, gl::SRC_ALPHA as Fx),
         (gl::RGB_SCALE, ONE),
         (gl::ALPHA_SCALE, ONE),
     ];
@@ -841,6 +848,7 @@ fn combine_state_reads_back_and_refuses() {
         (gl::RGB_SCALE, 3 * ONE, gl::INVALID_VALUE),
         (gl::ALPHA_SCALE, ONE / 2, gl::INVALID_VALUE),
         (gl::COMBINE_ALPHA, gl::DOT3_RGB as Fx, gl::INVALID_ENUM),
+        (gl::COMBINE_ALPHA, gl::DOT3_RGBA as Fx, gl::INVALID_ENUM),
         (gl::OPERAND0_ALPHA, gl::SRC_COLOR as Fx, gl::INVALID_ENUM),
         (
             gl::SRC0_RGB,

@@ -131,6 +131,8 @@ fn main() {
         gl::DECR,
         gl::INVERT
     );
+    // GL_COMBINE's scales (#1512), as draw.c sets them whole.
+    println!("scales 2 4 fixed {} {}", 2 * ONE, 4 * ONE);
 
     // Buffer objects (#1488): the quad in a new context, scaled by a half,
     // its colours per vertex, as draw.c draws it from its buffers.
