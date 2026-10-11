@@ -393,6 +393,97 @@ static void points(void) {
   }
 }
 
+/* --- Antialiased points and lines (sections 3.3 and 3.4, #1622). ---- */
+
+/* A pixel's coverage by a shape, from 8 by 8 samples inside it. */
+static int (*covering)(double x, double y);
+static double coverage(int x, int y) {
+  int n = 0;
+  for (int j = 0; j < 8; j++)
+    for (int i = 0; i < 8; i++)
+      n += covering(x + (i + 0.5) / 8, y + (j + 0.5) / 8);
+  return n / 64.0;
+}
+
+/* White drawn over black with its coverage in alpha and blended by it,
+ * the colour channels only, since the alpha channel is masked: each is
+ * 255 times the pixel's coverage. */
+static void want_covered(int x, int y, double out[4]) {
+  double c = 255 * coverage(x, y);
+  out[0] = out[1] = out[2] = c, out[3] = 255;
+}
+
+static double disc_x, disc_y, disc_r;
+static int in_disc(double x, double y) {
+  return hypot(x - disc_x, y - disc_y) < disc_r;
+}
+
+static double seg[4], seg_half;
+static int in_band(double x, double y) {
+  double ux = seg[2] - seg[0], uy = seg[3] - seg[1], len = hypot(ux, uy);
+  ux /= len, uy /= len;
+  double t = (x - seg[0]) * ux + (y - seg[1]) * uy;
+  double s = (x - seg[0]) * -uy + (y - seg[1]) * ux;
+  return t >= 0 && t <= len && fabs(s) <= seg_half;
+}
+
+static void blended_white(void) {
+  scene(0x000000ff);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
+  colour(0xffffffff);
+}
+
+/* A smooth point is the disc of its diameter around its centre, its
+ * coverage in alpha. The library takes the coverage linear across a rim
+ * a pixel wide, so a pixel is held to the exact coverage within 40 of
+ * 255, which an aliased square fails at every edge. */
+static void smooth_points(void) {
+  static const double sizes[2] = {3.0, 8.5};
+  char name[64];
+  for (int k = 0; k < 2; k++) {
+    disc_x = 200.3 + 100 * k, disc_y = 150.6, disc_r = sizes[k] / 2;
+    blended_white();
+    glEnable(GL_POINT_SMOOTH);
+    glPointSizex((GLfixed)(sizes[k] * ONE));
+    GLfixed v[2] = {dx((GLfixed)(disc_x * ONE)), dy((GLfixed)(disc_y * ONE))};
+    glVertexPointer(2, GL_FIXED, 0, v);
+    glDrawArrays(GL_POINTS, 0, 1);
+    glPointSizex(ONE);
+    glDisable(GL_POINT_SMOOTH);
+    read_window();
+    covering = in_disc;
+    snprintf(name, sizeof name, "point_smooth_%d", k);
+    report(name, window_is(want_covered, 40));
+  }
+}
+
+/* A smooth line is the rectangle of its width centred on the segment,
+ * its coverage in alpha, held as a smooth point is. */
+static void smooth_lines(void) {
+  static const double widths[2] = {1.0, 3.5};
+  char name[64];
+  for (int k = 0; k < 2; k++) {
+    seg[0] = 120.3, seg[1] = 60.2 + 120 * k, seg[2] = 380.7,
+    seg[3] = 130.9 + 120 * k;
+    seg_half = widths[k] / 2;
+    blended_white();
+    glEnable(GL_LINE_SMOOTH);
+    glLineWidthx((GLfixed)(widths[k] * ONE));
+    GLfixed v[4] = {dx((GLfixed)(seg[0] * ONE)), dy((GLfixed)(seg[1] * ONE)),
+                    dx((GLfixed)(seg[2] * ONE)), dy((GLfixed)(seg[3] * ONE))};
+    glVertexPointer(2, GL_FIXED, 0, v);
+    glDrawArrays(GL_LINES, 0, 2);
+    glLineWidthx(ONE);
+    glDisable(GL_LINE_SMOOTH);
+    read_window();
+    covering = in_band;
+    snprintf(name, sizeof name, "line_smooth_%d", k);
+    report(name, window_is(want_covered, 40));
+  }
+}
+
 /* --- Lines (section 3.4): the rules an algorithm other than the
  * diamond exit must keep. ------------------------------------------- */
 
@@ -992,7 +1083,9 @@ void conform_render(void) {
   triangles();
   shared_edges();
   points();
+  smooth_points();
   lines();
+  smooth_lines();
   depth_tests();
   alpha_tests();
   blending();
