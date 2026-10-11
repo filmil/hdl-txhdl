@@ -13,6 +13,7 @@
 # this machine has (issue 1074).
 load("@rules_rust//rust:defs.bzl", "rust_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//tools:rust_checks.bzl", "rust_checked")
 load("//tools/bootimg:defs.bzl", "boot_image")
 
 package(default_visibility = ["//visibility:public"])
@@ -543,4 +544,16 @@ sh_test(
         "STEPS": "500000000",
     },
     tags = ["manual"],
+)
+
+# The two tests above are manual, as they build the userspace, but
+# Clippy and rustfmt on their sources need only the crates: so `//...`
+# checks them (issue 1629).
+rust_checked(
+    name = "tests_checked",
+    testonly = True,
+    targets = [
+        ":initramfs_test",
+        ":nfs_root_test",
+    ],
 )

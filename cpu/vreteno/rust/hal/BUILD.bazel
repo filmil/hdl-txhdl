@@ -8,6 +8,7 @@
 # applies: the crate is inline RISC-V assembly from end to end, so it
 # is manual, and a program names it in `deps`.
 load("@rules_rust//rust:defs.bzl", "rust_library")
+load("//cpu/vreteno/rust:defs.bzl", "vreteno_checked")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -39,3 +40,12 @@ filegroup(
 # which holds the bases its `map` types by hand to the board's router
 # (issue 709).
 exports_files(["lib.rs"])
+
+# Clippy and rustfmt on the HAL as the core's programs link it: the
+# checks on a program do not reach the libraries it links, and the HAL
+# is built for nothing else (issue 1629).
+vreteno_checked(
+    name = "hal_checked",
+    platform = "//cpu/vreteno/rust:vreteno",
+    targets = [":vreteno_hal"],
+)

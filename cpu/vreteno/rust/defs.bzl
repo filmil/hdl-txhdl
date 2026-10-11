@@ -10,6 +10,8 @@ else in the tree then depends on that source and nothing has to be
 built by hand with a flag.
 """
 
+load("//tools:rust_checks.bzl", "RUST_CHECK_ASPECTS", "rust_check_groups")
+
 # The flags every crate built for the core is compiled with, the
 # programs' own and every library they link alike: the HAL's, which
 # the programs' `VRETENO_FLAGS` repeat. A library that set none was
@@ -67,7 +69,10 @@ def _vreteno_image_impl(ctx):
         mnemonic = "VretenoImage",
         progress_message = "Making a Vreteno image of %s" % elf.short_path,
     )
-    return [DefaultInfo(files = depset([out]))]
+    return [
+        DefaultInfo(files = depset([out])),
+        rust_check_groups(ctx.attr.program),
+    ]
 
 vreteno_image = rule(
     implementation = _vreteno_image_impl,
@@ -78,6 +83,7 @@ vreteno_image = rule(
             doc = "The `rust_binary` to build for the core.",
             executable = True,
             cfg = _vreteno_transition,
+            aspects = RUST_CHECK_ASPECTS,
             mandatory = True,
         ),
         "platform": attr.label(
@@ -111,7 +117,10 @@ def _vreteno_flat_impl(ctx):
         mnemonic = "VretenoFlat",
         progress_message = "Flattening %s for the board" % elf.short_path,
     )
-    return [DefaultInfo(files = depset([out]))]
+    return [
+        DefaultInfo(files = depset([out])),
+        rust_check_groups(ctx.attr.program),
+    ]
 
 vreteno_flat = rule(
     implementation = _vreteno_flat_impl,
@@ -122,6 +131,7 @@ vreteno_flat = rule(
             doc = "The `rust_binary` to build for the core.",
             executable = True,
             cfg = _vreteno_transition,
+            aspects = RUST_CHECK_ASPECTS,
             mandatory = True,
         ),
         "platform": attr.label(
@@ -192,7 +202,10 @@ def _vreteno_elf_impl(ctx):
     elf = ctx.executable.program
     out = ctx.actions.declare_file(ctx.label.name + ".elf")
     ctx.actions.symlink(output = out, target_file = elf)
-    return [DefaultInfo(files = depset([out]))]
+    return [
+        DefaultInfo(files = depset([out])),
+        rust_check_groups(ctx.attr.program),
+    ]
 
 vreteno_elf = rule(
     implementation = _vreteno_elf_impl,
@@ -203,6 +216,7 @@ vreteno_elf = rule(
             doc = "The `rust_binary` to build for the core.",
             executable = True,
             cfg = _vreteno_transition,
+            aspects = RUST_CHECK_ASPECTS,
             mandatory = True,
         ),
         "platform": attr.label(
@@ -220,7 +234,10 @@ def _vreteno_static_impl(ctx):
     ]
     if len(files) != 1:
         fail("expected one static library from %s" % ctx.attr.library[0].label)
-    return [DefaultInfo(files = depset(files))]
+    return [
+        DefaultInfo(files = depset(files)),
+        rust_check_groups(ctx.attr.library),
+    ]
 
 vreteno_static = rule(
     implementation = _vreteno_static_impl,
@@ -231,6 +248,30 @@ vreteno_static = rule(
         "library": attr.label(
             doc = "The `rust_static_library` to build for the core.",
             cfg = _vreteno_transition,
+            aspects = RUST_CHECK_ASPECTS,
+            mandatory = True,
+        ),
+        "platform": attr.label(
+            doc = "The platform the core is.",
+            mandatory = True,
+        ),
+    },
+)
+
+def _vreteno_checked_impl(ctx):
+    return [DefaultInfo(), rust_check_groups(ctx.attr.targets)]
+
+vreteno_checked = rule(
+    implementation = _vreteno_checked_impl,
+    doc = "Clippy and rustfmt on Rust targets built for the core that " +
+          "no `vreteno_*` rule names itself, such as a library the " +
+          "programs link: the checks do not follow a program's deps " +
+          "(issue 1629).",
+    attrs = {
+        "targets": attr.label_list(
+            doc = "The Rust targets to check, as built for the core.",
+            cfg = _vreteno_transition,
+            aspects = RUST_CHECK_ASPECTS,
             mandatory = True,
         ),
         "platform": attr.label(
