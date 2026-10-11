@@ -6,7 +6,7 @@
 set -euo pipefail
 
 ld=$1
-line() { grep -n -F -- "$1" "$ld" | head -1 | cut -d: -f1; }
+line() { grep -n -F -- "$1" "$ld" | head -1 | cut -d: -f1 || true; }
 init=$(line '*(.text.init)')
 first=$(line '*(.text._ZN')
 rest=$(line '*(.text .text.*)')

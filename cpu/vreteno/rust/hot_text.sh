@@ -17,7 +17,7 @@
 # the pattern stops before the hash; any other function's is its name.
 set -euo pipefail
 
-objdump=$1
+objdump=${1:?usage: hot_text OBJDUMP ELF PROFILE...}
 shift
 if [ $# -lt 2 ]; then
   echo "usage: hot_text ELF PROFILE..." >&2
@@ -30,17 +30,26 @@ out=${BUILD_WORKSPACE_DIRECTORY:-.}/cpu/vreteno/rust/hot_text.ld
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
+# A hexadecimal number's value, in any awk.
+hex='function hex(s,   v, i) {
+       s = tolower(s); v = 0
+       for (i = 1; i <= length(s); i++)
+         v = v * 16 + index("0123456789abcdef", substr(s, i, 1)) - 1
+       return v
+     }'
+
 # The functions, by address: address, size and name, from the symbol
 # table's function entries.
 "$objdump" -t "$elf" |
-  awk '$3 == "F" && $4 ~ /^\.text/ {
-         printf "%d %d %s\n", strtonum("0x" $1), strtonum("0x" $5), $NF
+  awk "$hex"'
+       $3 == "F" && $4 ~ /^\.text/ {
+         printf "%d %d %s\n", hex($1), hex($5), $NF
        }' |
   sort -n > "$tmp/syms"
 
 # The instructions each function ran, the most first.
 cat "$@" |
-  awk -v S="$tmp/syms" '
+  awk -v S="$tmp/syms" "$hex"'
     BEGIN {
       n = 0
       while ((getline l < S) > 0) {
@@ -49,7 +58,7 @@ cat "$@" |
       }
     }
     {
-      x = strtonum("0x" $1)
+      x = hex($1)
       lo = 0; hi = n - 1
       while (lo < hi) {
         m = int((lo + hi + 1) / 2)
@@ -67,17 +76,19 @@ if [ "$total" -eq 0 ]; then
 fi
 
 {
-  cat <<'EOF'
-    /* The functions a GL frame spends its instructions in, hottest
-       first, for the core's linker script when
-       //cpu/vreteno/rust:hot_first is set (#1679). Written by
-       //cpu/vreteno/rust:hot_text from a profile of the canonical
-       teapot; a pattern that matches nothing does nothing. */
-EOF
+  printf '    /* The functions a program spends its instructions in, hottest\n'
+  printf '       first, for the core%ss linker script when\n' "'"
+  printf '       //cpu/vreteno/rust:hot_first is set (#1679). Written by\n'
+  printf '       //cpu/vreteno/rust:hot_text from a profile of %s;\n' \
+    "$(basename "$elf")"
+  printf '       a pattern that matches nothing does nothing. */\n'
   awk -v total="$total" '
     {
       sum += $1
       s = $2
+      # What the outliner made is numbered afresh each build, so it is
+      # left where it falls.
+      if (s ~ /^OUTLINED_FUNCTION_/) next
       # A Rust symbol ends in its hash, 17h and sixteen hex digits, then
       # E, and perhaps a suffix LLVM added; the pattern stops before it.
       if (match(s, /17h[0-9a-f]+E(\..*)?$/)) s = substr(s, 1, RSTART + 2) "*"
