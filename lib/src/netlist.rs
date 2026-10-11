@@ -1111,10 +1111,73 @@ pub fn instance(unit: Lowered, name: &str, args: &[(&str, &str)]) -> Instance {
         unit.ports.len(),
         args.len()
     );
+    // A field of a struct literal comes as `side.path`, the side being
+    // which of `run`'s two the literal was passed as (issue 1637). The
+    // fields of one side fill that side's ports, so the places of the
+    // arguments so marked are the places of its ports.
+    let side_of = |by: &str| {
+        by.split_once('.')
+            .map(|(s, p)| (s.to_string(), p.to_string()))
+    };
+    let mut sides: Vec<(String, usize, usize)> = Vec::new();
+    for (i, (by, _)) in args.iter().enumerate() {
+        if let Some((s, _)) = side_of(by) {
+            match sides.iter_mut().find(|(x, _, _)| *x == s) {
+                Some((_, lo, hi)) => {
+                    *lo = (*lo).min(i);
+                    *hi = (*hi).max(i);
+                }
+                None => sides.push((s, i, i)),
+            }
+        }
+    }
     let mut conns: Vec<(String, String)> = Vec::new();
     for ((p, _, _, _), (by, a)) in unit.ports.iter().zip(args) {
         let port = if by.is_empty() {
             p.clone()
+        } else if let Some((s, path)) = side_of(by) {
+            // The child names a field's port `side_path`, or `path` for
+            // a side it does not prefix. Of the side's ports that end in
+            // the path, the one the field is for has the shortest prefix:
+            // every port of the side starts with the side's name, so a
+            // longer prefix is a field nested deeper whose name ends the
+            // same way, `int_rs1_ready` beside `ready`.
+            let (_, lo, hi) = sides
+                .iter()
+                .find(|(x, _, _)| *x == s)
+                .cloned()
+                .unwrap_or_default();
+            // A side whose literal starts or ends with a bundle passed
+            // whole, whose ports come unmarked, spans more places than
+            // the marked ones; a field not found among them is looked
+            // for among all the child's ports, as before.
+            let tail = format!("_{path}");
+            let shortest = |ports: &[(String, Kind, usize, &'static str)]| {
+                let hits: Vec<&String> = ports
+                    .iter()
+                    .map(|(n, _, _, _)| n)
+                    .filter(|n| **n == path || n.ends_with(&tail))
+                    .collect();
+                let least = hits.iter().map(|n| n.len()).min();
+                hits.into_iter()
+                    .filter(|n| Some(n.len()) == least)
+                    .cloned()
+                    .collect::<Vec<String>>()
+            };
+            let mut hits = shortest(&unit.ports[lo..=hi]);
+            if hits.is_empty() {
+                hits = shortest(&unit.ports);
+            }
+            assert!(
+                !hits.is_empty(),
+                "`{name}` has no port for the field `{path}`"
+            );
+            assert!(
+                hits.len() == 1,
+                "`{name}` has more than one port for the field `{path}`: {}",
+                hits.join(", ")
+            );
+            hits.remove(0)
         } else if unit.ports.iter().any(|(n, _, _, _)| n == by) {
             by.to_string()
         } else {

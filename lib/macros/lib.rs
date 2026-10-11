@@ -6147,9 +6147,12 @@ fn lower_structural(
                 ));
             }
             // The names passed, each with the child's port it joins
-            // when the parent named that port, by a struct literal.
+            // when the parent named that port, by a struct literal. A
+            // field's port is `side.path`: which of the child's two sides
+            // the literal was passed as, and the field's path, so that it
+            // joins the one port the child declared for it (issue 1637).
             let mut names: Vec<(String, String)> = Vec::new();
-            for side in &sides {
+            for (si, side) in sides.iter().enumerate() {
                 match side.as_slice() {
                     [TokenTree::Group(g)]
                         if g.delimiter() == Delimiter::Parenthesis =>
@@ -6301,7 +6304,7 @@ fn lower_structural(
                                             )),
                                         };
                                         names.push((
-                                            format!("{f}_{sub}"),
+                                            format!("{si}.{f}_{sub}"),
                                             net.to_string(),
                                         ));
                                     }
@@ -6323,7 +6326,10 @@ fn lower_structural(
                                     ))
                                 }
                             };
-                            names.push((port.to_string(), net.to_string()));
+                            names.push((
+                                format!("{si}.{port}"),
+                                net.to_string(),
+                            ));
                         }
                     }
                     side if link_field(side, &links).is_some() => {
