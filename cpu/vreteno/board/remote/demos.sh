@@ -79,6 +79,9 @@ sha="$(git rev-parse --short=8 HEAD)"
 # with the offset, which has no colons: 20261010T1830-0700-94d3c50d.
 run="$(TZ=America/Los_Angeles date +%Y%m%dT%H%M%z)-$sha"
 dir="$out/$run"
+# A second run in the same minute at the same commit would write over
+# the first: it stops instead.
+if [[ -e "$dir" ]]; then echo "$dir exists; wait a minute" >&2; exit 1; fi
 mkdir -p "$dir"
 # Everything the run says goes to its directory as well.
 exec > >(tee -a "$dir/run.log") 2>&1
