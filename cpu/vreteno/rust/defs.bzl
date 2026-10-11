@@ -265,8 +265,11 @@ vreteno_checked = rule(
     implementation = _vreteno_checked_impl,
     doc = "Clippy and rustfmt on Rust targets built for the core that " +
           "no `vreteno_*` rule names itself, such as a library the " +
-          "programs link: the checks do not follow a program's deps " +
-          "(issue 1629).",
+          "programs link: the checks run on the program a rule names " +
+          "and not on its deps (issue 1629). A library with code only " +
+          "for the core, under its `cfg`, is named in one of these; " +
+          "one whose code is the same on this machine is checked by " +
+          "its own build here.",
     attrs = {
         "targets": attr.label_list(
             doc = "The Rust targets to check, as built for the core.",
