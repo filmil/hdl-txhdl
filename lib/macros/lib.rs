@@ -3305,6 +3305,54 @@ fn side_prefixed(bound: &[(String, Vec<String>)], b: &str) -> bool {
         .any(|(n, fs)| *n == b && fs.first().is_some_and(|m| m == PREFIX))
 }
 
+/// The rest of a port's path from `ts[j]`, up to a method call: each
+/// `.field` as `_field`, each `[k]` as `_k`, and each `[i]` with `i` a
+/// loop's variable as the marks `dyn_names` formats with `i` once
+/// `lowered` runs, in any order, so `lanes[0].sub[1].valid` is read
+/// whole (issue 1636). With it, where the path stopped and the span of
+/// its last part, which the port's name takes.
+fn path_after(
+    ts: &[TokenTree],
+    mut j: usize,
+    mut at: Span,
+) -> (String, usize, Span) {
+    let mut tail = String::new();
+    loop {
+        if let Some(TokenTree::Group(ix)) = ts.get(j) {
+            if ix.delimiter() == Delimiter::Bracket {
+                let it: Vec<TokenTree> = ix.stream().into_iter().collect();
+                let k = match it.as_slice() {
+                    [TokenTree::Literal(k)] => format!("_{k}"),
+                    [TokenTree::Ident(v)] => format!("{DYN}{v}{DYN_END}"),
+                    _ => break,
+                };
+                tail.push_str(&k);
+                at = ix.span();
+                j += 1;
+                continue;
+            }
+        }
+        if !punct_at(ts, j, '.') {
+            break;
+        }
+        let (Some(TokenTree::Ident(g)), next) = (ts.get(j + 1), ts.get(j + 2))
+        else {
+            break;
+        };
+        let call = matches!(next, Some(TokenTree::Group(p))
+            if p.delimiter() == Delimiter::Parenthesis)
+            || punct_at(ts, j + 2, ':');
+        if call {
+            break;
+        }
+        tail.push('_');
+        tail.push_str(&g.to_string());
+        at = g.span();
+        j += 2;
+    }
+    (tail, j, at)
+}
+
 /// `run`'s body with every `side.field` of a side that is a port
 /// struct written as the port `side_field`, or `field` for a side
 /// taken apart, so the lowering reads it as it reads a port named in
@@ -3342,23 +3390,9 @@ fn port_fields(
                     // An element that is a struct of ports: the path
                     // after the index names its port, `ins[0].valid` the
                     // port `ins_0_valid`, up to a method call (#1636).
-                    let mut j = i + 2;
-                    while punct_at(&ts, j, '.') {
-                        let (Some(TokenTree::Ident(g)), next) =
-                            (ts.get(j + 1), ts.get(j + 2))
-                        else {
-                            break;
-                        };
-                        let call = matches!(next, Some(TokenTree::Group(p))
-                            if p.delimiter() == Delimiter::Parenthesis)
-                            || punct_at(&ts, j + 2, ':');
-                        if call {
-                            break;
-                        }
-                        port = format!("{port}_{g}");
-                        field = format!("{field}_{g}");
-                        j += 2;
-                    }
+                    let (tail, j, at) = path_after(&ts, i + 2, g.span());
+                    port = format!("{port}{tail}");
+                    field = format!("{field}{tail}");
                     let ty = BUNDLES.with(|s| {
                         s.borrow()
                             .iter()
@@ -3373,7 +3407,7 @@ fn port_fields(
                             d.push((port.clone(), ty, field.clone()));
                         }
                     });
-                    out.push(TokenTree::Ident(Ident::new(&port, g.span())));
+                    out.push(TokenTree::Ident(Ident::new(&port, at)));
                     i = j;
                     continue;
                 }
@@ -3394,45 +3428,10 @@ fn port_fields(
                 // is the port `bus_pins_awid`: every name of the chain up
                 // to a method call is part of the port's (issue 498). A
                 // port has no fields of its own to read without one.
-                let mut f = f;
-                let mut j = i + 3;
-                loop {
-                    // An array of ports in the struct: `f[k]` is the port
-                    // `f_k`, and `f[i]` with `i` a loop's variable a name
-                    // `dyn_names` formats once `lowered` runs (issue 1636).
-                    if let Some(TokenTree::Group(ix)) = ts.get(j) {
-                        if ix.delimiter() == Delimiter::Bracket {
-                            let it: Vec<TokenTree> =
-                                ix.stream().into_iter().collect();
-                            let k = match it.as_slice() {
-                                [TokenTree::Literal(k)] => format!("_{k}"),
-                                [TokenTree::Ident(v)] => {
-                                    format!("{DYN}{v}{DYN_END}")
-                                }
-                                _ => break,
-                            };
-                            f = format!("{f}{k}");
-                            j += 1;
-                            continue;
-                        }
-                    }
-                    if !punct_at(&ts, j, '.') {
-                        break;
-                    }
-                    let (Some(TokenTree::Ident(g)), next) =
-                        (ts.get(j + 1), ts.get(j + 2))
-                    else {
-                        break;
-                    };
-                    let call = matches!(next, Some(TokenTree::Group(p))
-                        if p.delimiter() == Delimiter::Parenthesis)
-                        || punct_at(&ts, j + 2, ':');
-                    if call {
-                        break;
-                    }
-                    f = format!("{f}_{g}");
-                    j += 2;
-                }
+                // An array of ports in the struct is read the same way:
+                // `f[k]` is the port `f_k` (issue 1636).
+                let (tail, j, at) = path_after(&ts, i + 3, ts[i + 2].span());
+                let f = format!("{f}{tail}");
                 let port = format!("{b}_{f}");
                 let ty = BUNDLES.with(|s| {
                     s.borrow()
@@ -3448,7 +3447,7 @@ fn port_fields(
                         d.push((port.clone(), ty, f.clone()));
                     }
                 });
-                out.push(TokenTree::Ident(Ident::new(&port, ts[i + 2].span())));
+                out.push(TokenTree::Ident(Ident::new(&port, at)));
                 i = j;
                 continue;
             }
@@ -7066,9 +7065,11 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     // name, its ports `n_field` from `Ports` when
                     // `lowered` runs, as `name: S` gives them (issue 1636).
                     let ty = text(t);
-                    let end = ["In<", "Out<", "Tx<", "Rx<", "Pad<"]
-                        .iter()
-                        .any(|e| ty.starts_with(e));
+                    // A port's end, written bare or by its path,
+                    // `comp::In<Bit>`, is not taken for a struct.
+                    let head = ty.split('<').next().unwrap_or("");
+                    let last = head.rsplit("::").next().unwrap_or(head);
+                    let end = ["In", "Out", "Tx", "Rx", "Pad"].contains(&last);
                     if !end && ty != "()" {
                         let n = n.to_string();
                         bound.push((n.clone(), vec!["*".to_string()]));
