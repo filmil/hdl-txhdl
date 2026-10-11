@@ -589,17 +589,20 @@ pub trait Ports {
 
 /// An array of ports is a struct of ports whose fields are its indices:
 /// `ins: [Rx<T>; N]` has the ports `ins_0` to `ins_{N-1}`, and
-/// `ins[i]` in a loop the lowering unrolls is `ins_{i}` (issue 500).
-impl<P: PortEnd, const N: usize> Ports for [P; N] {
+/// `ins[i]` in a loop the lowering unrolls is `ins_{i}` (issue 500). An
+/// element may itself be a struct of ports, its ports `ins_0_f` onward
+/// (issue 1636).
+impl<P: PortField, const N: usize> Ports for [P; N] {
     fn ports() -> Vec<BundlePort> {
-        (0..N).map(|i| bundle_port::<P>(&i.to_string())).collect()
+        (0..N).flat_map(|i| P::ports_of(&i.to_string())).collect()
     }
 }
 
 /// An array of ports is a port field as a struct of ports is, so a
 /// struct of ports may hold one: `ins_0` to `ins_{N-1}` (issues 498 and
-/// 500).
-impl<P: PortEnd, const N: usize> PortField for [P; N] {
+/// 500), or an array of structs of ports, `lanes_0_valid` onward (issue
+/// 1636).
+impl<P: PortField, const N: usize> PortField for [P; N] {
     fn ports_of(name: &str) -> Vec<BundlePort> {
         <Self as Ports>::ports()
             .into_iter()

@@ -1,0 +1,34 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Arrays of Ports in a Struct}
+\label{sec:x-port-arrays}
+
+A unit that works on lanes, such as an entry of an out-of-order core
+watching every lane of the result bus, takes each lane's wires as an
+array, \code{[In<Bit>; N]}, and loops over them with
+\code{for i in 0..N}. A struct of ports may hold such an array as a
+field (issue 1636): \code{Cdb} holds \code{valid} and \code{tag}, three
+lanes each, and \code{Waiter} reads \code{cdb.valid[i]} in a loop as it
+would an array side. The netlist names the ports for the side, the
+field and the lane, \code{cdb\_valid\_0} onward. A struct of ports may
+also sit beside a port or an array in one tuple side, as \code{Cdb}
+sits beside \code{want} here, its ports named for its element.
+
+An array a child takes may hold field paths, not only names:
+\code{Gate} splits its port group \code{p} and hands \code{Both} the
+array \code{[p.a, p.b]}, each element joined to that field's port. A
+channel of a bundle made whole, \code{b.valid} from
+\code{link::<B>()}, is taken the same way. Both netlists are checked
+against the run under nvc and Verilator.
+
+\begin{figure}[htbp]
+\centering
+\input{port_arrays_timing.tex}
+\caption{The three lanes of the bus, \code{valid} and \code{tag} each,
+and the waiter for tag 5: at the edge that sees lane 2 carry it,
+\code{ready} is set and \code{woke} rises, and both stay high.}
+\label{fig:x-port-arrays}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_port\_arrays.rs}. Run with \code{bazel run //lib/examples:ex\_port\_arrays}.},label={lst:x-port-arrays}]{lib/examples/ex_port_arrays.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_port\_arrays} printed when the build ran it: each cycle's \code{woke} and \code{both}, then both netlists.},label={lst:x-port-arrays-out}]{out_port_arrays.txt}

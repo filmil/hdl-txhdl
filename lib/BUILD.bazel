@@ -102,6 +102,15 @@ rust_test(
     deps = [":txhdl"],
 )
 
+# Arrays of ports inside a struct of ports (issue 1636).
+rust_test(
+    name = "port_arrays_test",
+    srcs = ["tests/port_arrays.rs"],
+    edition = "2021",
+    proc_macro_deps = [":txhdl_macros"],
+    deps = [":txhdl"],
+)
+
 # A port group splits into an end per field, read and driven through the
 # whole (issue 1647).
 rust_test(
