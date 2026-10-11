@@ -490,3 +490,35 @@ fn a_point_takes_its_own_size_from_its_vertex() {
     let first_alone = [Some(8 * ONE), Some(ONE / 4)];
     assert_eq!(sized(first_alone, [0, 0, ONE / 200]), 16 + 1);
 }
+
+/// A smooth point is attenuated as a square one is (#1508, #1507): at
+/// 28.3 pixels from the eye under (0, 0, 1/200), its own size of 16 is
+/// 8, and the pixels it covers at least half are about a quarter of the
+/// unattenuated point's.
+#[test]
+fn a_smooth_point_is_attenuated() {
+    let covered = |atten: [Fx; 3]| {
+        let mut frame = [[0u32; 16]; 128];
+        let mut g = context(&mut frame);
+        g.enable(gl::POINT_SMOOTH);
+        g.point_parameterv(gl::POINT_DISTANCE_ATTENUATION, &atten);
+        g.draw_vertices(gl::POINTS, 1, |_| gles::Vertex {
+            position: at(20 * 16, 20 * 16),
+            point_size: Some(16 * ONE),
+            ..Default::default()
+        });
+        assert_eq!(g.get_error(), gl::NO_ERROR);
+        let n = g.frame().len();
+        let ops = razboj::dl::decode_list(&frame[..n]);
+        let fb = vec![0; (S * S) as usize];
+        razboj::model::render_over(&ops, S as usize, S as usize, fb)
+            .iter()
+            .filter(|&&p| p >> 24 >= 128)
+            .count()
+    };
+    let (whole, attenuated) =
+        (covered([ONE, 0, 0]), covered([0, 0, ONE / 200]));
+    // pi 8^2 and pi 4^2, give or take the rim.
+    assert!((180..=220).contains(&whole), "{whole}");
+    assert!((40..=60).contains(&attenuated), "{attenuated}");
+}

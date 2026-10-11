@@ -91,10 +91,12 @@ int main(void) {
   glPointParameterx(GL_POINT_SIZE_MAX, 6 * ONE);
   glDrawArrays(GL_POINTS, 1, 1);
   /* A point at the fan's second corner with a size of its own, from a
-     point size array (#1507). */
-  static const GLfixed sizes[3] = {0, 0, 3 * ONE};
+     point size array (#1507), each size interleaved with a word that is
+     not read, eight bytes apart. */
+  static const GLfixed sizes[3][2] = {
+      {0, 7 * ONE}, {0, 7 * ONE}, {3 * ONE, 7 * ONE}};
   glEnableClientState(GL_POINT_SIZE_ARRAY_OES);
-  glPointSizePointerOES(GL_FIXED, 0, sizes);
+  glPointSizePointerOES(GL_FIXED, sizeof sizes[0], sizes);
   glDrawArrays(GL_POINTS, 2, 1);
   glDisableClientState(GL_POINT_SIZE_ARRAY_OES);
 
