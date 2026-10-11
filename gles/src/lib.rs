@@ -96,7 +96,7 @@ impl View {
     /// at or behind the eye, which clipping leaves only in a degenerate
     /// case.
     fn window(&self, v: &Vert) -> Option<(i64, i64)> {
-        let [x, y, _, w] = v.clip.map(|c| c as i64);
+        let (x, y, w) = (v.clip[0] as i64, v.clip[1] as i64, v.clip[3] as i64);
         if w <= 0 {
             return None;
         }
@@ -172,7 +172,13 @@ impl View {
     /// inside: near and far, the user's plane, then the guard band's four
     /// edges.
     fn distances(&self, v: &Vert, plane: usize) -> i128 {
-        let [x, y, z, w] = v.clip.map(|c| c as i64);
+        // Read one by one: a map would copy the four through an array.
+        let (x, y, z, w) = (
+            v.clip[0] as i64,
+            v.clip[1] as i64,
+            v.clip[2] as i64,
+            v.clip[3] as i64,
+        );
         let (vx, vy, vw, vh) = self.viewport;
         let (vx16, vy16) = (16 * vx as i64, 16 * vy as i64);
         let (vw8, vh8) = (8 * vw as i64, 8 * vh as i64);
