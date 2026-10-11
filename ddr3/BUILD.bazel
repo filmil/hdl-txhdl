@@ -10,6 +10,7 @@ rust_library(
     name = "ddr3",
     srcs = [
         "src/bw.rs",
+        "src/sim.rs",
         "src/lib.rs",
     ],
     crate_name = "ddr3",

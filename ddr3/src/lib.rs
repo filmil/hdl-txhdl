@@ -21,6 +21,11 @@
 //! to join those pins to the package's, give it the board's clock, and
 //! take the design's clock back from it.
 pub mod bw;
+pub mod sim;
+
+// The field below is typed `Words` and not `sim::Words`: derive(Trace)
+// cannot read a path as a field's type (issue 1700).
+use sim::Words;
 
 use txhdl::comp::trace::Kind;
 use txhdl::comp::{
@@ -123,6 +128,16 @@ pub type CtlOut = (
 pub struct Ddr3 {
     /// Whether calibration is done, in the model.
     pub calibrated: Reg<Bit>,
+    /// The model's memory, which a [`sim::WideRead`] may share.
+    pub words: Words,
+}
+
+impl Ddr3 {
+    /// A handle on the model's memory: for a [`sim::WideRead`] to read
+    /// beside it, or a test to read after the run.
+    pub fn memory(&self) -> Words {
+        self.words.clone()
+    }
 }
 
 impl Lower for Ddr3 {
@@ -300,6 +315,7 @@ impl Unit<CtlIn, CtlOut> for Ddr3 {
             1 << AW,
         )
         .wrapping()
+        .sharing(self.words.0.clone())
         .reading_at_address()
         .timed(
             MODEL_READ_LATENCY as u64,
