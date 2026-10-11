@@ -3043,6 +3043,22 @@ waveform(
 )
 
 waveform(
+    name = "smul",
+    example = "//lib/examples:ex_smul",
+    lowered = ("smul", "smul"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//a=>a",
+        "//b=>b",
+        "//h=>h",
+        "//smul/pss=>ss",
+        "//smul/psu=>su",
+        "//smul/psmall=>small",
+    ],
+    until = 27,
+)
+
+waveform(
     name = "valif",
     example = "//lib/examples:ex_valif",
     lowered = ("choose", "choose"),
