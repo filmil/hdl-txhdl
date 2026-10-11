@@ -1105,6 +1105,8 @@ latex_document(
         ":chanwait_timing",
         ":dtm_run",
         ":dtm_timing",
+        ":group_run",
+        ":group_timing",
         ":regs_run",
         ":regs_timing",
         ":wide_run",
@@ -2552,6 +2554,28 @@ waveform(
         "//out/rx_data=>out",
         "//tap/seen=>seen",
         "//tap/passed=>passed",
+    ],
+)
+
+# Port groups (issue 1647): each field of `ctl` and `stat` is a port of
+# the netlist, checked against that field of the trace.
+waveform(
+    name = "group",
+    example = "//lib/examples:ex_group",
+    lowered = [
+        ("panel", "panel"),
+        ("desk", "desk"),
+    ],
+    signals = [
+        "//clocks/clk=>clk",
+        "//ctl/en=>en",
+        "//ctl/clear=>clear",
+        "//ctl/step=>step",
+        "//panel/n=>n",
+        "//stat/count=>count",
+        "//stat/odd=>odd",
+        "//leds/lamp=>lamp",
+        "//leds/beat=>beat",
     ],
 )
 
