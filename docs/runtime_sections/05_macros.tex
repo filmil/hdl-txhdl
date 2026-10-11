@@ -142,6 +142,35 @@ child's in the order the struct declares them, and since the macro
 cannot see them the joins are made when \code{lowered} runs, by
 \code{bundle\_args} and \code{instance\_of} (issue 498). A port name
 that two sides both give is refused.
+
+A port group is the other way to gather wires: one \code{In} or
+\code{Out} of a struct of plain values marked \code{\#[value(ports)]}
+(issue 1647). The macro cannot see whether a port's type is one, so
+for every \code{In} and \code{Out} it writes code that asks
+\code{Value::PORTS} when \code{lowered} runs and, for a group, puts a
+\code{PortGroup} in \code{Lowered::groups}: the port's name, each
+field's port by name and width, \code{port\_field} or, for a type with
+\code{BARE}, the field's own name, and each field's name in the struct,
+where a trace holds it. The port itself stays in \code{ports}, packed,
+so the body lowers as it does for any struct: a field read is a slice
+of it and a whole value set is one drive. The emitters write the
+group's field ports in the module's header in its place, and a wire of
+the port's name inside, gathered from the field ports for an input and
+given out to them for an output; \code{ports\_file} lists each field
+port with its field's trace path, so the testbench drives and checks
+each from that field of the run. A unit of units splits a group,
+\code{let s = p.split();}, and passes \code{s.f} to a child, which
+\code{lower\_structural} joins to the field's port by the name
+\code{PortGroup::port\_of} gives; a split output's field ports are
+driven by the children themselves, so the wire of the whole is only a
+view to read, gathered from the field ports as an input's is, which
+VHDL-2008 allows of an \code{out} port; \code{PortGroup::split} marks
+it so. Two names at the module's edge that clash, a bare group's
+fields above all, are refused by \code{Lowered::checked}. A child whose port is a
+group is joined field by field to the bits of the parent's net, by
+\code{group\_slices}. In the runtime a field's end is a \code{Cellf}
+with a link: it reads and drives its field of the whole's cell at
+once, so a split group is seen exactly as the whole is.
 An array of ports, \code{[Rx<T>; N]}, is such a side: \code{Ports} is
 implemented for arrays, their fields the indices, so its ports are
 \code{ins\_0} to \code{ins\_\{N-1\}} and are found when \code{lowered}

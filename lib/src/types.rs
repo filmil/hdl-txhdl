@@ -780,6 +780,15 @@ pub trait Value: Copy {
     fn layout() -> Vec<(&'static str, usize)> {
         Vec::new()
     }
+    /// Whether the value is a port group (issue 1647): a struct whose
+    /// `In` or `Out` a netlist lowers one port per field rather than as
+    /// one packed port. `#[value(ports)]` beside `#[derive(Value)]` sets
+    /// it; everything else is one port.
+    const PORTS: bool = false;
+    /// Whether a port group's fields are ports under their own names,
+    /// rather than under the port's name and the field's: for pins whose
+    /// names a board already gives them. `#[value(ports, bare)]` sets it.
+    const BARE: bool = false;
 }
 
 /// A struct's fields by name, in the order it declares them, which

@@ -1364,6 +1364,17 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# Port groups, a struct of plain values as one port of a unit, one
+# port per field in the netlist (issue 1647):
+#   bazel run //lib/examples:ex_group
+rust_binary(
+    name = "ex_group",
+    srcs = ["ex_group.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A waveform:  bazel run //lib/examples:ex_trace > counter.vcd
 rust_binary(
     name = "ex_trace",
@@ -1413,6 +1424,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_stage.rs",
         "ex_packet.rs",
         "ex_cheat.rs",
+        "ex_group.rs",
         "ex_alu.rs",
         "ex_ops.rs",
         "ex_if.rs",

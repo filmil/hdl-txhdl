@@ -427,12 +427,65 @@ fn variant_names(body: &Group) -> Vec<String> {
 /// `#[derive(Value)]`: a struct of values is their concatenation, most
 /// significant field first; a fieldless enum is the index of its
 /// variant, as wide as it needs to be.
-#[proc_macro_derive(Value)]
+///
+/// With `#[value(ports)]` the struct is a port group as well (issue
+/// 1647): `Value::PORTS` is true, so a netlist lowers its `In` or `Out`
+/// one port per field, and it implements `Group`, with a struct of each
+/// field's `In` and one of each field's `Out`, named for the struct with
+/// `Ins` and `Outs` after it, which `split` gives.
+#[proc_macro_derive(Value, attributes(value))]
 pub fn derive_value(input: TokenStream) -> TokenStream {
+    // The marker is an outer attribute, `#[value(...)]`, its words in any
+    // order: `ports`, and `bare` for fields that are ports under their own
+    // names. Read from the tokens, so a doc comment cannot hide it.
+    let (mut ports, mut bare) = (false, false);
+    let toks: Vec<TokenTree> = input.clone().into_iter().collect();
+    for w in toks.windows(2) {
+        let (TokenTree::Punct(h), TokenTree::Group(g)) = (&w[0], &w[1]) else {
+            continue;
+        };
+        if h.as_char() != '#' || g.delimiter() != Delimiter::Bracket {
+            continue;
+        }
+        let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+        let [TokenTree::Ident(name), TokenTree::Group(args)] = inner.as_slice()
+        else {
+            continue;
+        };
+        if name.to_string() != "value" {
+            continue;
+        }
+        for t in args.stream() {
+            match t {
+                TokenTree::Ident(w) if w.to_string() == "ports" => ports = true,
+                TokenTree::Ident(w) if w.to_string() == "bare" => bare = true,
+                TokenTree::Punct(p) if p.as_char() == ',' => {}
+                other => {
+                    return err(
+                        other.span(),
+                        "`#[value(...)]` takes `ports`, and `bare` with it",
+                    )
+                }
+            }
+        }
+    }
+    if bare && !ports {
+        return err(
+            Span::call_site(),
+            "`bare` names a port group's fields; write `#[value(ports, bare)]`",
+        );
+    }
     let item = parse_item(input);
     let Some(body) = &item.body else {
         return err(Span::call_site(), "Value needs a braced struct or enum");
     };
+    if ports && (item.kind != "struct" || !item.args.is_empty()) {
+        return err(
+            Span::call_site(),
+            "a port group (`#[value(ports)]`) is a struct with no generic \
+             parameters",
+        );
+    }
     let out = if item.kind == "struct" {
         let names = field_names(body);
         let types = field_types(body);
@@ -507,9 +560,65 @@ pub fn derive_value(input: TokenStream) -> TokenStream {
             })
             .collect::<Vec<_>>()
             .join(", ");
+        // A port group's ends, one per field, and the split that gives
+        // them (issue 1647).
+        let group = if ports {
+            let n = &item.name;
+            let v = &item.vis;
+            let side = |end: &str, doc: &str| {
+                let fs = names
+                    .iter()
+                    .zip(&types)
+                    .map(|(f, t)| {
+                        format!(
+                            "/// The {doc} end of `{f}`.\n\
+                             pub {f}: ::txhdl::comp::{end}<{t}, C>,"
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                format!(
+                    "/// The {doc} end of each field of a `{n}` port, \
+                     which `split` gives.\n\
+                     {v} struct {n}{end}s<C: ::txhdl::comp::Clock> {{\n{fs}\n}}"
+                )
+            };
+            let ins = names
+                .iter()
+                .map(|f| format!("{f}: whole.project(|s: {n}| s.{f}),"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let outs = names
+                .iter()
+                .map(|f| {
+                    format!(
+                        "{f}: whole.project(|s: {n}| s.{f}, \
+                         |s: &mut {n}, x| s.{f} = x),"
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "\n{ins_struct}\n{outs_struct}\n\
+                 impl ::txhdl::comp::Group for {n} {{\n\
+                 type Ins<C: ::txhdl::comp::Clock> = {n}Ins<C>;\n\
+                 type Outs<C: ::txhdl::comp::Clock> = {n}Outs<C>;\n\
+                 fn split_in<C: ::txhdl::comp::Clock>(\
+                 whole: ::txhdl::comp::In<Self, C>) -> {n}Ins<C> {{\n\
+                 {n}Ins {{ {ins} }} }}\n\
+                 fn split_out<C: ::txhdl::comp::Clock>(\
+                 whole: ::txhdl::comp::Out<Self, C>) -> {n}Outs<C> {{\n\
+                 {n}Outs {{ {outs} }} }}\n}}",
+                ins_struct = side("In", "reading"),
+                outs_struct = side("Out", "driving"),
+            )
+        } else {
+            String::new()
+        };
         format!(
             "impl{b} ::txhdl::types::Value for {n}{a} {{\n\
              const WIDTH: usize = {width};\n\
+             {pc}\
              fn vcd(self) -> String {{\n\
              let mut s = String::new(); {parts} s }}\n\
              fn parts(self) -> Vec<::txhdl::types::Part> {{\n\
@@ -519,11 +628,18 @@ pub fn derive_value(input: TokenStream) -> TokenStream {
              #[doc(hidden)]\n\
              #[allow(non_upper_case_globals, dead_code)]\n\
              {v} const {n}: ::txhdl::types::Fields = \
-             ::txhdl::types::Fields(&[{order}], &[{widths}]);",
+             ::txhdl::types::Fields(&[{order}], &[{widths}]);{group}",
             b = item.bounds,
             n = item.name,
             a = item.args,
-            v = item.vis
+            v = item.vis,
+            pc = match (ports, bare) {
+                (true, true) => {
+                    "const PORTS: bool = true;\nconst BARE: bool = true;\n"
+                }
+                (true, false) => "const PORTS: bool = true;\n",
+                _ => "",
+            },
         )
     } else {
         let variants = variant_names(body);
@@ -2423,6 +2539,11 @@ thread_local! {
     /// with the side's type and the field, so a field of its value
     /// finds its layout.
     static BUNDLED: std::cell::RefCell<Vec<(String, String, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    /// The port groups a unit of units splits, `let s = p.split();`, each
+    /// as the name bound and the port, so `s.f` joins the field `f`'s
+    /// port (issue 1647).
+    static SPLITS: std::cell::RefCell<Vec<(String, String)>> =
         const { std::cell::RefCell::new(Vec::new()) };
     /// The names of the ports of the unit being lowered, for the check
     /// below: an expression that names one of them is not a constant.
@@ -5438,6 +5559,26 @@ fn lower_stmts(
     Ok(stmts)
 }
 
+/// `s.f`, a field of a port group split by `let s = p.split();`, as the
+/// name a join resolves, `@group p f` (issue 1647). `None` for anything
+/// else.
+fn split_field(side: &[TokenTree]) -> Option<String> {
+    let [TokenTree::Ident(s), TokenTree::Punct(d), TokenTree::Ident(f)] = side
+    else {
+        return None;
+    };
+    if d.as_char() != '.' {
+        return None;
+    }
+    let s = s.to_string();
+    SPLITS.with(|x| {
+        x.borrow()
+            .iter()
+            .rfind(|(b, _)| *b == s)
+            .map(|(_, p)| format!("@group {p} {f}"))
+    })
+}
+
 /// The net of `h.f`, one channel of a bundle made whole whose side `h`
 /// is one of `links`: `NET_f` (issue 498). `None` for anything else.
 fn link_field(
@@ -5828,6 +5969,29 @@ fn lower_structural(
             ts.get(5),
             ts.get(6),
         ) {
+            // `let s = p.split();`: a port group handed out a field at a
+            // time, `s.f` the field `f`'s port (issue 1647).
+            if eq.as_char() == '='
+                && dot.as_char() == '.'
+                && is_ident(cl, "split")
+                && args.stream().is_empty()
+            {
+                let (a, b) = (a.to_string(), b.to_string());
+                if !ports
+                    .iter()
+                    .any(|(p, k)| *p == a && (k == "In" || k == "Out"))
+                {
+                    return Err(err(
+                        ts[3].span(),
+                        &format!(
+                            "`{a}` is not an `In` or an `Out` port of the \
+                             unit; a port group is split where it is a port"
+                        ),
+                    ));
+                }
+                SPLITS.with(|s| s.borrow_mut().push((b, a)));
+                continue;
+            }
             if eq.as_char() == '='
                 && dot.as_char() == '.'
                 && is_ident(cl, "clone")
@@ -6201,10 +6365,16 @@ fn lower_structural(
                                 ));
                                 continue;
                             }
+                            // A field of a split port group: `s.f`.
+                            if let Some(g) = split_field(&n) {
+                                names.push((String::new(), g));
+                                continue;
+                            }
                             let [TokenTree::Ident(id)] = n.as_slice() else {
                                 return Err(err(
                                     g.span(),
-                                    "a port passed to a child is a name, or \
+                                    "a port passed to a child is a name, a \
+                                     field of a split port group, or \
                                      `tie(v)` for an input held at a constant",
                                 ));
                             };
@@ -6336,6 +6506,12 @@ fn lower_structural(
                         let net = link_field(side, &links).unwrap_or_default();
                         names.push((String::new(), format!("@net {net}")));
                     }
+                    side if split_field(side).is_some() => {
+                        names.push((
+                            String::new(),
+                            split_field(side).unwrap_or_default(),
+                        ));
+                    }
                     side if tied(side).is_some() => {
                         let v = tied(side).unwrap_or_default();
                         let net = format!("{field}_tie{}", ties.len());
@@ -6376,6 +6552,30 @@ fn lower_structural(
                     joined.push(format!(
                         "a.push((\"{port}\".to_string(), \
                          \"{net}\".to_string()));"
+                    ));
+                    continue;
+                }
+                // A field of a split port group joins the field's own port
+                // of the unit, whose name the group's type gives when
+                // `lowered` runs (issue 1647).
+                if let Some(g) = n.strip_prefix("@group ") {
+                    let (p, f) = g.split_once(' ').unwrap_or((g, ""));
+                    let ty = PTYPES.with(|t| {
+                        t.borrow()
+                            .iter()
+                            .find(|(n, _)| n == p)
+                            .map(|(_, t)| t.clone())
+                    });
+                    let Some(ty) = ty else {
+                        return Err(err(
+                            span,
+                            &format!("the type of port `{p}` is not known"),
+                        ));
+                    };
+                    joined.push(format!(
+                        "a.push((\"{port}\".to_string(), \
+                         ::txhdl::netlist::PortGroup::of::<{ty}>(\"{p}\")\
+                         .port_of(\"{f}\")));"
                     ));
                     continue;
                 }
@@ -6588,6 +6788,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     BUNDLES.with(|p| p.borrow_mut().clear());
     BUNDLED.with(|p| p.borrow_mut().clear());
     PNAMES.with(|p| p.borrow_mut().clear());
+    SPLITS.with(|p| p.borrow_mut().clear());
     // The wires the inlining names are numbered from one in each
     // unit, so the same source lowers to the same netlist whatever
     // was lowered before it on this thread.
@@ -6821,6 +7022,9 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         .map(|(n, _, _)| n.clone())
         .collect();
     let mut ports: Vec<String> = Vec::new();
+    // The ports that may be port groups, by name and type: whether a type
+    // is one is the type's to say, when `lowered` runs (issue 1647).
+    let mut groups: Vec<(String, String)> = Vec::new();
     // The ports by name and kind, for a unit of units' joins.
     let mut pkinds: Vec<(String, String)> = Vec::new();
     // The ports by name and clock, for a loop that waits on a channel.
@@ -6870,6 +7074,12 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
              <{inner} as ::txhdl::types::Value>::WIDTH, \
              <{clock} as ::txhdl::comp::Clock>::NAME));"
         ));
+        // A port group is held whole under the port's name, and written
+        // one port per field at the module's edge (issue 1647). Whether
+        // the type is one is known only when `lowered` runs.
+        if kind == "In" || kind == "Out" {
+            groups.push((pname.clone(), inner.to_string()));
+        }
         pkinds.push((pname.clone(), kind.to_string()));
         pclocks.push((pname.clone(), clock.clone()));
         if kind == "Tx" || kind == "Rx" {
@@ -7161,6 +7371,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          unregistered: vec![{unreg}],\n\
          instances: __ins,\n\
          foreign: None,\n\
+         groups: {{ #[allow(unused_mut)] let mut g = Vec::new(); {groups} g }},\n\
          }}\n\
          .with_inlined(::txhdl::netlist::inlined_end())\n\
          // A field the struct renamed is referred to here under the\n\
@@ -7181,6 +7392,19 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          fn lowered_as(name: &str) -> ::txhdl::netlist::Lowered {{\n\
          Self::lowered(name) }}\n}}",
         ports = ports.join(" "),
+        groups = groups
+            .iter()
+            .map(|(p, t)| {
+                // A group a unit of units split is read from its fields.
+                let split = SPLITS.with(|s| s.borrow().iter().any(|(_, x)| x == p));
+                format!(
+                    "if <{t} as ::txhdl::types::Value>::PORTS {{ \
+                     g.push(::txhdl::netlist::PortGroup::of::<{t}>(\"{p}\"){}); }}",
+                    if split { ".split()" } else { "" }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
         unreg = unreg
             .iter()
             .map(|u| format!("\"{u}\".to_string()"))

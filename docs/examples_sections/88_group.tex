@@ -1,0 +1,46 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Port Groups}
+\label{sec:x-group}
+
+A unit with many wires to the outside, a board with its pins, used to
+list each one as a port of its own: \code{rst: In<Bit>},
+\code{irq: In<Bit>} and so on, the wrapper repeated on every line, and
+the clock domain written again on each wire of the domain. A port
+group puts them in one struct of plain values (issue 1647). With
+\code{\#[value(ports)]} beside \code{\#[derive(Value)]}, the struct is
+one port of the unit, \code{In<Ctl>} or \code{Out<Stat>}, and its clock
+domain is written once, as \code{In<Ctl, C>}. A struct without the
+marker is still one packed port, as a request that travels whole
+should be.
+
+The netlist gives a group one port per field, named for the port and
+the field, \code{ctl\_en} for the field \code{en} of the port
+\code{ctl}. With \code{\#[value(ports, bare)]} the fields keep their
+own names, for pins whose names a board already gives them, such as
+\code{lamp} and \code{beat} here. Inside the module the whole is a
+wire under the port's name, joined to the field ports at the module's
+edge, so a unit of one loop reads and drives the whole as it would any
+value: \code{Panel} reads \code{ctl.get()} and sets \code{stat} whole.
+
+A unit of units hands each child its own field. \code{split()} gives
+an end per field, a struct of \code{In} or \code{Out} named for the
+group with \code{Ins} or \code{Outs} after it, and \code{Desk} passes
+\code{k.en} to one lamp and \code{k.clear} to the other, each driving
+its own field of \code{leds}. In simulation the end of a field reads or
+drives that field of the whole wire at once, so splitting a group
+changes nothing about when a value is seen. Both netlists are checked
+against the run under nvc and Verilator, each field port against that
+field of the trace.
+
+\begin{figure}[htbp]
+\centering
+\input{group_timing.tex}
+\caption{The two groups field by field: \code{en}, \code{clear} and
+\code{step} of \code{ctl}, the panel's count \code{n}, the fields of
+\code{stat}, and the lamps a cycle behind \code{en} and \code{clear}.}
+\label{fig:x-group}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_group.rs}. Run with \code{bazel run //lib/examples:ex\_group}.},label={lst:x-group}]{lib/examples/ex_group.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_group} printed when the build ran it: each cycle's count and lamps, then both netlists, each group a port per field.},label={lst:x-group-out}]{out_group.txt}
