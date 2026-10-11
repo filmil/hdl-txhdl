@@ -181,6 +181,7 @@ fn colours_at_cuts(seed: u64, plane: bool) -> (usize, f64) {
             [rng.fx(-6.0, 6.0), rng.fx(-6.0, 6.0), z, ONE]
         };
         let pos = [corner(&mut rng), corner(&mut rng), corner(&mut rng)];
+        let mut eq = [0.0f64; 4];
         if plane {
             // A plane at a random slant through the triangle's centre,
             // in the eye, which the identity model-view leaves as it is.
@@ -193,6 +194,7 @@ fn colours_at_cuts(seed: u64, plane: bool) -> (usize, f64) {
                 .sum();
             g.clip_plane(gl::CLIP_PLANE0, &[n[0], n[1], n[2], d as Fx]);
             g.enable(gl::CLIP_PLANE0);
+            eq = [n[0], n[1], n[2], d as Fx].map(|v| v as f64 / ONE as f64);
         }
         let col: [[Fx; 4]; 3] = core::array::from_fn(|_| {
             [rng.fx(0.0, 1.0), rng.fx(0.0, 1.0), rng.fx(0.0, 1.0), ONE]
@@ -225,8 +227,9 @@ fn colours_at_cuts(seed: u64, plane: bool) -> (usize, f64) {
             ] {
                 // The original triangle's colour at a window point, from
                 // the clip-space barycentrics of the point of it that lands
-                // there; `None` where they cannot be told.
-                let colour_at = |x: f64, y: f64| -> Option<[f64; 3]> {
+                // there, and that point's distance from the user's plane;
+                // `None` where they cannot be told.
+                let colour_at = |x: f64, y: f64| -> Option<([f64; 3], f64)> {
                     let nx = (x / 16.0 - 320.0) / 320.0;
                     let ny = ((480.0 * 16.0 - y) / 16.0 - 240.0) / 240.0;
                     let m: [[f64; 3]; 3] = [
@@ -255,12 +258,21 @@ fn colours_at_cuts(seed: u64, plane: bool) -> (usize, f64) {
                     if (0..3).map(|k| lam[k] * clip[k][3]).sum::<f64>() <= 0.0 {
                         return None;
                     }
-                    Some(core::array::from_fn(|ch| {
+                    let side: f64 = (0..3)
+                        .map(|k| {
+                            lam[k]
+                                * (0..4)
+                                    .map(|c| eq[c] * f(pos[k][c]))
+                                    .sum::<f64>()
+                        })
+                        .sum();
+                    let colour = core::array::from_fn(|ch| {
                         255.0
                             * (0..3)
                                 .map(|k| lam[k] * f(col[k][ch]))
                                 .sum::<f64>()
-                    }))
+                    });
+                    Some((colour, side))
                 };
                 // The vertex's true place is within half a sixteenth of
                 // where it was rounded to, so its colour is held to the
@@ -268,6 +280,7 @@ fn colours_at_cuts(seed: u64, plane: bool) -> (usize, f64) {
                 // a level and a half for the colours' own rounding.
                 let mut lo = [f64::MAX; 3];
                 let mut hi = [f64::MIN; 3];
+                let mut side = f64::MIN;
                 for (ox, oy) in [
                     (-0.5, -0.5),
                     (0.5, -0.5),
@@ -275,9 +288,10 @@ fn colours_at_cuts(seed: u64, plane: bool) -> (usize, f64) {
                     (0.5, 0.5),
                     (0.0, 0.0),
                 ] {
-                    let Some(c) = colour_at(vx + ox, vy + oy) else {
+                    let Some((c, d)) = colour_at(vx + ox, vy + oy) else {
                         continue;
                     };
+                    side = side.max(d);
                     for ch in 0..3 {
                         lo[ch] = lo[ch].min(c[ch]);
                         hi[ch] = hi[ch].max(c[ch]);
@@ -286,6 +300,18 @@ fn colours_at_cuts(seed: u64, plane: bool) -> (usize, f64) {
                 if lo[0] == f64::MAX {
                     continue;
                 }
+                // Nothing is drawn past the user's plane: the distance is
+                // projectively linear over the square, so some corner of
+                // it is on the kept side if the true place is. The plane
+                // reads the eye, which a near plane's cut rounds to 16.16,
+                // so a cut on it may be off it by half a unit in each.
+                let tol = eq[..3].iter().map(|v| v.abs()).sum::<f64>()
+                    / (1u64 << 17) as f64
+                    + 1e-9;
+                assert!(
+                    side >= -tol,
+                    "a vertex at ({vx}, {vy}) is {side} past the user's plane"
+                );
                 let got = plane_colour(&op, vx, vy);
                 for ch in 0..3 {
                     let (l, u) =
