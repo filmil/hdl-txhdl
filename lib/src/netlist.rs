@@ -1111,10 +1111,93 @@ pub fn instance(unit: Lowered, name: &str, args: &[(&str, &str)]) -> Instance {
         unit.ports.len(),
         args.len()
     );
+    // A field of a struct literal comes as `side.path`, the side being
+    // which of `run`'s two the literal was passed as (issue 1637). The
+    // child names a field's port `S_path`, `S` its side's name, or
+    // `path` for a side it does not prefix. The side's name is the one
+    // prefix under which every field passed for that side is a port,
+    // so each field then joins exactly `S_path`, and a field the child
+    // has no port for leaves no such prefix and is refused rather than
+    // joined to a port whose name merely ends the same way.
+    let side_of = |by: &str| {
+        by.split_once('.')
+            .map(|(s, p)| (s.to_string(), p.to_string()))
+    };
+    let joined = |pre: &str, path: &str| {
+        if pre.is_empty() {
+            path.to_string()
+        } else {
+            format!("{pre}_{path}")
+        }
+    };
+    let is_port = |n: &str| unit.ports.iter().any(|(p, _, _, _)| p == n);
+    let mut sides: Vec<(String, Vec<(usize, String)>)> = Vec::new();
+    for (i, (by, _)) in args.iter().enumerate() {
+        if let Some((s, path)) = side_of(by) {
+            match sides.iter_mut().find(|(x, _)| *x == s) {
+                Some((_, fs)) => fs.push((i, path)),
+                None => sides.push((s, vec![(i, path)])),
+            }
+        }
+    }
+    let mut names: Vec<(String, String)> = Vec::new();
+    for (s, fields) in &sides {
+        let (_, first) = &fields[0];
+        let tail = format!("_{first}");
+        let mut pres: Vec<String> = unit
+            .ports
+            .iter()
+            .filter_map(|(n, _, _, _)| {
+                if n == first {
+                    Some(String::new())
+                } else {
+                    n.strip_suffix(&tail).map(str::to_string)
+                }
+            })
+            .filter(|pre| fields.iter().all(|(_, f)| is_port(&joined(pre, f))))
+            .collect();
+        // Two prefixes would both do only for a side of fields whose
+        // names repeat on the other side; the places the fields were
+        // passed at are the side's ports, which tells them apart.
+        if pres.len() > 1 {
+            let lo = fields.iter().map(|(i, _)| *i).min().unwrap_or(0);
+            let hi = fields.iter().map(|(i, _)| *i).max().unwrap_or(0);
+            let inside = |pre: &String| {
+                fields.iter().all(|(_, f)| {
+                    let n = joined(pre, f);
+                    unit.ports[lo..=hi].iter().any(|(p, _, _, _)| *p == n)
+                })
+            };
+            pres.retain(inside);
+        }
+        let list = fields
+            .iter()
+            .map(|(_, f)| f.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        assert!(
+            !pres.is_empty(),
+            "`{name}` has no side whose ports are the fields {list}"
+        );
+        assert!(
+            pres.len() == 1,
+            "`{name}` has more than one side whose ports are the fields \
+             {list}: {}",
+            pres.join(", ")
+        );
+        names.push((s.clone(), pres.remove(0)));
+    }
     let mut conns: Vec<(String, String)> = Vec::new();
     for ((p, _, _, _), (by, a)) in unit.ports.iter().zip(args) {
         let port = if by.is_empty() {
             p.clone()
+        } else if let Some((s, path)) = side_of(by) {
+            let pre = names
+                .iter()
+                .find(|(x, _)| *x == s)
+                .map(|(_, p)| p.as_str())
+                .unwrap_or_default();
+            joined(pre, &path)
         } else if unit.ports.iter().any(|(n, _, _, _)| n == by) {
             by.to_string()
         } else {
@@ -4568,6 +4651,54 @@ mod tests {
             instances: Vec::new(),
             foreign: None,
         }
+    }
+
+    /// A child of three ports, one input and two outputs, one of them
+    /// nested: what `instance` joins a struct literal's fields to.
+    fn glue(outs: &[&str]) -> Lowered {
+        let mut g = three_regs();
+        g.name = "glue".to_string();
+        g.ports = std::iter::once("inp_go")
+            .chain(outs.iter().copied())
+            .map(|n| (n.to_string(), Kind::In, 1, "clk"))
+            .collect();
+        g
+    }
+
+    /// A field joins `side_path` whatever order the literal names it
+    /// in, and a field the child has no port for is refused rather
+    /// than joined to a port whose name only ends the same way (issue
+    /// 1637): `ready` is not `out_int_rs1_ready`.
+    #[test]
+    fn a_field_joins_its_own_port_or_is_refused() {
+        let unit = glue(&["out_int_rs1_ready", "out_ready"]);
+        let i = instance(
+            unit,
+            "glue",
+            &[("", "go"), ("1.ready", "r"), ("1.int_rs1_ready", "q")],
+        );
+        assert_eq!(
+            i.conns,
+            [
+                ("inp_go", "go"),
+                ("out_ready", "r"),
+                ("out_int_rs1_ready", "q")
+            ]
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+        );
+        let wrong = std::panic::catch_unwind(|| {
+            let unit = glue(&["out_int_rs1_ready", "out_ok"]);
+            instance(
+                unit,
+                "glue",
+                &[("", "go"), ("1.int_rs1_ready", "q"), ("1.ready", "r")],
+            )
+        });
+        let msg = wrong.err().and_then(|e| e.downcast::<String>().ok());
+        assert_eq!(
+            msg.as_deref().map(String::as_str),
+            Some("`glue` has no side whose ports are the fields int_rs1_ready, ready")
+        );
     }
 
     /// A memory's first words, and a register's first value, are given

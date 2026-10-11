@@ -92,6 +92,16 @@ exports_files([
     "macros/lib.rs",
 ])
 
+# A field of a struct literal passed to a child joins the port of its
+# own side and path, not every port whose name ends in it (issue 1637).
+rust_test(
+    name = "field_ports_test",
+    srcs = ["tests/field_ports.rs"],
+    edition = "2021",
+    proc_macro_deps = [":txhdl_macros"],
+    deps = [":txhdl"],
+)
+
 # A struct literal lowers in the struct's declared order, whatever order
 # it names its fields in (issue 1541).
 rust_test(
