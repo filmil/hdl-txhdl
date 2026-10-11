@@ -31,6 +31,10 @@ platform(
 # maps, which runs on it as it is. Optimising for size is not a
 # preference: the instruction memory is 4 KiB, and a debug assertion
 # pulls in `core`'s panic formatting, which does not fit.
+# The linker script is named by its label, so that a module depending on
+# this one finds it under its own external root (issue 1651); a target
+# using these flags lists the script in its `compile_data`, which
+# `$(execpath)` needs.
 VRETENO_FLAGS = [
     "-Copt-level=z",
     "-Cdebug-assertions=no",
