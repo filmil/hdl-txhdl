@@ -330,6 +330,9 @@ With `GL_POINT_SMOOTH` or `GL_LINE_SMOOTH` on (#1513), a point or a line is draw
 A point is the disc of its diameter, as a polygon of eight sides, or sixteen above a pixel across, whose corners sit so that each side's mean distance from the centre is the radius; a line is the rectangle of its width centred on the segment.
 Each has a rim a pixel wide, half inside its edge and half out, across which the fragment's alpha falls from the colour's to nought: the coverage GL puts in alpha, taken linear across the rim, and near the product of the two at a line's corners, where each corner is a square of four triangles about a middle with a quarter of the alpha.
 The rim's triangles carry an alpha plane, Razboj's smooth alpha (#1520), whatever the shading, so that alpha falls across them even when the colour is flat.
+A line's colour and depth at each corner are the segment's own at that point, so the ends' values stand at the ends and the rim past an end keeps that end's.
+At the smallest sizes the inside is gone: a line one pixel wide is all rim across its width, and a point one pixel across is all rim, a cone, whose alpha is scaled by three quarters so that it covers the disc's area.
+A line shorter than a pixel has its alpha scaled by its length, since its rim spans a pixel along it whatever its own length.
 Blending is the program's, as GL leaves it.
 A point sprite is not antialiased, as `OES_point_sprite` says.
 `//gles:prims_test` checks that through Razboj's model at 120 slopes and four widths, with every pixel within half the width of the line.
@@ -390,9 +393,11 @@ On the host they draw through Razboj's model as EGL's machine, and `//gles:confo
 The first group is the state tables of the specification's section 6.2: every state variable's initial value, through the query its table names and through the others with section 6.1.2's conversions, and every implementation-dependent value against its minimum.
 The second is the errors: for each command, the error section 2.5 and the command's own section give a bad argument, each recorded once, and that the command changes nothing.
 The third is the rendering: scenes read back with `glReadPixels` and held, pixel for pixel, to a reference in double precision that follows the specification's rules for points, polygons, lines by the four rules section 3.4.1 sets an algorithm other than the diamond exit, the viewport, smooth shading, every per-fragment test and operation, fog, the texture environments and lighting, and the depth and the stencil kept across a read in the middle of a frame, skipping only a pixel whose centre lies on an edge, which GL leaves to the implementation.
-Antialiased points and lines are held to each pixel's coverage, sampled 8 by 8, within 40 of 255, since the rim is linear where the coverage is not; the largest difference measured is 30.
+Antialiased points and lines are held to each pixel's coverage, sampled 8 by 8, within 40 of 255, since the rim is linear where the coverage is not: points of 1, 3 and 8.5 pixels, and lines of widths 1 and 3.5 slanting, 2 level, and 1 shorter than a pixel.
+The largest difference is under 33, on the 8.5 pixel point; the point of one pixel is held within 20, which it misses unscaled by at least 34.
+A four-pixel line shaded from red to blue is read at its three inner pixels, each within 8 of the mix a quarter, a half and three quarters along.
 The fourth is four of piglit's ES 1 tests, in `gles/conform/piglit`, ported with their float calls made fixed point for Common-Lite, each change marked.
-Of 203 state checks, 173 pass; of 100 error checks, 99; of 87 rendering checks, 87; and of piglit's four, two. The 33 failures fall under five issues:
+Of 203 state checks, 173 pass; of 100 error checks, 99; of 91 rendering checks, 91; and of piglit's four, two. The 33 failures fall under five issues:
 
 | Issue | Checks | What is missing or wrong |
 |---|---|---|
