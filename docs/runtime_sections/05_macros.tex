@@ -161,9 +161,12 @@ port with its field's trace path, so the testbench drives and checks
 each from that field of the run. A unit of units splits a group,
 \code{let s = p.split();}, and passes \code{s.f} to a child, which
 \code{lower\_structural} joins to the field's port by the name
-\code{PortGroup::port\_of} gives; a split output is driven by the
-children, so its wire is gathered from the field ports as an input's
-is, and \code{PortGroup::split} marks it so. A child whose port is a
+\code{PortGroup::port\_of} gives; a split output's field ports are
+driven by the children themselves, so the wire of the whole is only a
+view to read, gathered from the field ports as an input's is, which
+VHDL-2008 allows of an \code{out} port; \code{PortGroup::split} marks
+it so. Two names at the module's edge that clash, a bare group's
+fields above all, are refused by \code{Lowered::checked}. A child whose port is a
 group is joined field by field to the bits of the parent's net, by
 \code{group\_slices}. In the runtime a field's end is a \code{Cellf}
 with a link: it reads and drives its field of the whole's cell at
