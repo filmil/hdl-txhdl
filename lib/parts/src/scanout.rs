@@ -1371,6 +1371,34 @@ mod tests {
     /// `delay` clocks after the line is asked for, as fast as the pair
     /// takes them, and the counts cleared once the first frame is over.
     fn timed_run(ahead: bool, delay: usize, frames: usize) -> Seen {
+        let clear = [525 * 800 + 1000];
+        timed_run_with(ahead, delay, frames, &clear, |_| {}, |_, _| {})
+    }
+
+    /// The flagship's pair, as `timed_run` runs it.
+    type FlagPair = LinePair<
+        { vga::HV },
+        10,
+        { vga::VV },
+        525,
+        4096,
+        0x4000_0000,
+        0x8000_0000,
+        DefaultClock,
+    >;
+
+    /// `timed_run`, with `clear` high on the cycles in `clears`, the
+    /// pair handed to `setup` before the run, so that a test can start a
+    /// register where it likes, and `probe` given each cycle's number
+    /// and what the pair says after it.
+    fn timed_run_with(
+        ahead: bool,
+        delay: usize,
+        frames: usize,
+        clears: &[usize],
+        setup: impl FnOnce(&mut FlagPair),
+        mut probe: impl FnMut(usize, &Seen),
+    ) -> Seen {
         type R = Raster<
             { vga::HV },
             { vga::HFP },
@@ -1382,18 +1410,9 @@ mod tests {
             { vga::VBP },
             10,
         >;
-        type P = LinePair<
-            { vga::HV },
-            10,
-            { vga::VV },
-            525,
-            4096,
-            0x4000_0000,
-            0x8000_0000,
-            DefaultClock,
-        >;
         let mut raster = R::default();
-        let mut pair = P::default();
+        let mut pair = FlagPair::default();
+        setup(&mut pair);
         let (col_o, col) = signal::<U<10>, DefaultClock>();
         let (vis_o, vis) = signal::<Bit, DefaultClock>();
         let (line_o, line) = signal::<Bit, DefaultClock>();
@@ -1439,9 +1458,17 @@ mod tests {
         let frame_len = 525 * 800;
         let mut owed = 0usize;
         let mut asked = std::collections::VecDeque::new();
+        let seen = || Seen {
+            lates: lates.get().raw() as u32,
+            late_rows: late_rows.get().raw() as u32,
+            late_frames: late_frames.get().raw() as u32,
+            margin: margin.get().raw() as u16 as i16,
+            starved: starved.get().to_bool(),
+            stuck: stuck.get().to_bool(),
+            worst: worst.get().raw() as u32,
+        };
         for c in 0..frames * frame_len {
-            // The bits are cleared once the first frame is over.
-            clear_o.set(Bit::from_bool(c == frame_len + 1000));
+            clear_o.set(Bit::from_bool(clears.contains(&c)));
             if req_rx.recv_if(true).is_some() {
                 asked.push_back(c + delay);
             }
@@ -1454,16 +1481,9 @@ mod tests {
                 owed -= 1;
             }
             sim.cycle();
+            probe(c, &seen());
         }
-        Seen {
-            lates: lates.get().raw() as u32,
-            late_rows: late_rows.get().raw() as u32,
-            late_frames: late_frames.get().raw() as u32,
-            margin: margin.get().raw() as u16 as i16,
-            starved: starved.get().to_bool(),
-            stuck: stuck.get().to_bool(),
-            worst: worst.get().raw() as u32,
-        }
+        seen()
     }
 
     /// The flagship's frame, its words given as fast as the pair takes
@@ -1506,6 +1526,140 @@ mod tests {
         assert_eq!(past.margin, -1, "held back {}", m + 1);
         assert!(past.late_rows > 0, "held back {}: no row LATE", m + 1);
         assert!(past.late_frames > 0, "held back {}: no frame LATE", m + 1);
+    }
+
+    /// A clear sets the margin back to its largest and keeps what the
+    /// pair measured of the raster (issue 1666): cleared in the blanking
+    /// of the second frame, where no shown row's word is timed, the
+    /// margin reads 32767; the words for the next frame's first row,
+    /// which come in the last row's blanking, before any column of that
+    /// row is shown, are timed at once, which only a kept lead allows.
+    #[test]
+    fn a_clear_resets_the_margin_and_keeps_the_rasters_timing() {
+        let frame_len = 525 * 800;
+        let at = frame_len + 500 * 800;
+        let (mut after, mut before_row0) = (None, None);
+        timed_run_with(
+            false,
+            0,
+            3,
+            &[frame_len + 1000, at],
+            |_| {},
+            |c, s| {
+                if c == at + 2 {
+                    after = Some((s.margin, s.late_rows, s.lates, s.worst));
+                }
+                if c == 2 * frame_len - 1 {
+                    before_row0 = Some(s.margin);
+                }
+            },
+        );
+        assert_eq!(after, Some((32767, 0, 0, 0)), "just after the clear");
+        let m = before_row0.expect("the frame's last cycle");
+        assert!(
+            (0..32767).contains(&m),
+            "the next frame's first row's words were not timed: {m}"
+        );
+    }
+
+    /// The late counts stop at their largest rather than wrap (issue
+    /// 1666): started one short of it, with every word held back past the
+    /// margin so that rows and frames show `LATE`, both read 65535 at
+    /// the end and never less than they started.
+    #[test]
+    fn the_late_counts_stop_at_their_largest() {
+        let m = timed_run(false, 0, 2).margin;
+        assert!(m > 0, "on time, the margin is {m}");
+        let start = U::<16>::from(0xfffeu32);
+        let mut least = (u32::MAX, u32::MAX);
+        let end = timed_run_with(
+            false,
+            m as usize + 50,
+            3,
+            &[],
+            |p| {
+                p.late_row_count = Reg::new(start);
+                p.late_frame_count = Reg::new(start);
+            },
+            |_, s| {
+                least = (least.0.min(s.late_rows), least.1.min(s.late_frames));
+            },
+        );
+        assert_eq!((end.late_rows, end.late_frames), (0xffff, 0xffff));
+        assert_eq!(least, (0xfffe, 0xfffe), "a count went down");
+    }
+
+    /// A write to `clear` drives `clear` for one cycle, for the pair, and
+    /// the words read back are what the pair then sends (issue 1666): the
+    /// counts nought and the margin its largest, 32767, where they were a
+    /// count and a negative margin before.
+    #[test]
+    fn a_write_to_clear_clears_once_and_reads_the_cleared_values() {
+        use crate::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
+        let mut ctl = ScanCtl::default();
+        let (aw_tx, aw) = chan::<LiteAw<32>, DefaultClock>();
+        let (ar_tx, ar) = chan::<LiteAr<32>, DefaultClock>();
+        let (w_tx, w) = chan::<LiteW<32, 4>, DefaultClock>();
+        let (b, b_rx) = chan::<LiteB, DefaultClock>();
+        let (r, r_rx) = chan::<LiteR<32>, DefaultClock>();
+        let (tap_tx, tap_rx) = chan::<ScanState, DefaultClock>();
+        let (base_o, _base) = signal::<U<32>, DefaultClock>();
+        let (mode_o, _mode) = signal::<Bit, DefaultClock>();
+        let (clear_o, clear) = signal::<Bit, DefaultClock>();
+        let (two_o, _two) = signal::<Bit, DefaultClock>();
+        let mut sim = Running::new(ctl.run(
+            LitePort { aw, ar, w, b, r },
+            (tap_rx, base_o, mode_o, clear_o, two_o),
+        ));
+        let at = |word: u32| U::<32>::from(4 * word);
+        let state = |rows: u32, frames: u32, margin: i16| ScanState {
+            late_rows: U::<16>::from(rows),
+            late_frames: U::<16>::from(frames),
+            margin: U::<16>::from(margin as u16 as u32),
+            ..ScanState::default()
+        };
+        let read = |sim: &mut Running<_>, word: u32| -> u32 {
+            ar_tx.send(LiteAr::<32> {
+                addr: at(word),
+                prot: U::<3>::from(0u8),
+            });
+            for _ in 0..20 {
+                sim.cycle();
+                if let Some(a) = r_rx.recv_if(true) {
+                    return a.data.raw() as u32;
+                }
+            }
+            panic!("no answer to a read");
+        };
+        let words =
+            |sim: &mut Running<_>| [7, 8, 9].map(|word| read(&mut *sim, word));
+        tap_tx.send(state(12, 3, -5));
+        for _ in 0..4 {
+            sim.cycle();
+        }
+        assert_eq!(words(&mut sim), [12, 3, -5i32 as u32], "before");
+        aw_tx.send(LiteAw::<32> {
+            addr: at(3),
+            prot: U::<3>::from(0u8),
+        });
+        w_tx.send(LiteW {
+            data: U::<32>::from(1u32),
+            strb: U::<4>::from(0xfu8),
+        });
+        let mut highs = 0;
+        let mut answered = false;
+        for _ in 0..30 {
+            sim.cycle();
+            highs += usize::from(clear.get().to_bool());
+            answered |= b_rx.recv_if(true).is_some();
+        }
+        assert!(answered, "no answer to the write");
+        assert_eq!(highs, 1, "cycles clear was high");
+        tap_tx.send(state(0, 0, 32767));
+        for _ in 0..4 {
+            sim.cycle();
+        }
+        assert_eq!(words(&mut sim), [0, 0, 32767], "after");
     }
 
     /// A host's read of the counts and the margin is a value the pair
