@@ -3,7 +3,8 @@
 \datasheet{ScanCtl}{The scanout's registers: the frame's base, the bits
 that show the scanout and ask two rows ahead, and the underflow and
 stuck bits, read and cleared, with the address of a line that did not
-come, the longest line and the count of late lines.}
+come, the longest line, the counts of late lines, rows and frames, and
+the least margin.}
 
 \dsfacts{\code{lib/parts/src/scanout.rs}}%
 {\code{txhdl\_parts::scanout::ScanCtl}}%
@@ -18,15 +19,18 @@ lines are asked for one row ahead or two (issue 1523), and whether a
 column was ever shown before its word arrived, and whether a line
 asked for never came, with that line's address (issue 1197). It also
 reads back the longest a line took to come whole, in pixels, and how
-many lines had not come whole when their rows began (issue 1523).
+many lines had not come whole when their rows began (issue 1523), and
+how many shown rows and frames showed \code{LATE}, with the least
+margin, in pixel clocks, by which a word beat its column (issue 1524).
 Its four outputs are registers, for \code{LinePair} and
 \code{VidMux} to read.
 
 What it reads comes back from \code{LinePair} over a channel, as one
 \code{ScanState}, rather than on wires: the underflow bit, the stuck
-bit, the address, the longest line and the count of late lines.
+bit, the address, the longest line, the count of late lines, the
+counts of late rows and late frames, and the margin.
 \code{ScanTap}, which this sheet covers too, puts them on it: it reads
-\code{LinePair}'s five wires after \code{LinePair} has driven them and
+\code{LinePair}'s eight wires after \code{LinePair} has driven them and
 sends them whenever the channel has room. \code{ScanCtl} drives
 \code{clear}, which \code{LinePair} reads, so it runs before
 \code{LinePair}, and a wire back would be read a step stale in the run
@@ -35,10 +39,10 @@ step whichever unit ran first.
 
 \subsection*{Register map}
 
-The unit decodes the word from address bits 4 to 2. In
+The unit decodes the word from address bits 5 to 2. In
 \code{ScanVideo} it sits above \code{1 << SCAN\_BIT}, \code{0x80}, of
 the video slot, so on the board its words are at \code{0x3280} to
-\code{0x3298}, the HAL's \code{map::SCAN}.
+\code{0x32a4}, the HAL's \code{map::SCAN}.
 
 \dsregs{ScanCtl}
 
@@ -46,8 +50,13 @@ the video slot, so on the board its words are at \code{0x3280} to
 one and keep the other: the HAL's \code{show} and \code{two\_ahead}
 each read \code{ctrl} and write it back with their own bit changed.
 A write to \code{clear} of any value clears the underflow and stuck
-bits, the longest line and the count of late lines; the word itself is
-not kept. \code{stuck\_at} is the first line that did not come since
+bits, the longest line, the three counts and the margin, which then
+reads 32767 until a word is timed; the word itself is not kept.
+\code{margin} reads sign-extended from its sixteen bits, so a host
+reads a word that came late as a negative number.
+The values a read returns are one \code{ScanState} the pair sent, so
+the counts and the margin read in one word each are whole values even
+while they change every cycle. \code{stuck\_at} is the first line that did not come since
 the stuck bit was last clear, and a clear leaves it until another line
 does not come.
 
@@ -67,8 +76,9 @@ the show bit is set (issue 1178).
 at the vertical sync, so the ahead bit counts from the next frame.
 \item The underflow bit is \code{seen}, the stuck bit
 \code{seen\_stuck}, the address \code{seen\_at}, the longest line
-\code{seen\_worst} and the count \code{seen\_lates}, the last values
-the channel brought. They can read the old values for a few cycles
+\code{seen\_worst}, the count \code{seen\_lates}, the late rows and
+frames \code{seen\_late\_rows} and \code{seen\_late\_frames}, and the
+margin \code{seen\_margin}, the last values the channel brought. They can read the old values for a few cycles
 after a clear, the values already in the channel, the same in the run
 and the netlist.
 \item Reads and writes are answered the cycle they are taken.
@@ -87,6 +97,11 @@ memory stalls for a line, and clear again after a write to
 \code{ctrl\_reads\_back\_as\_written} writes \code{ctrl} with each
 combination of its two bits, reads each back, and sees \code{mode}
 and \code{two} follow them.
+\item \code{//lib/parts:parts\_test}'s
+\code{a\_read\_of\_a\_changing\_value\_is\_one\_the\_pair\_sent} sends
+counts that change every cycle and a margin either side of nought,
+makes 300 reads of words 7 to 9 in turn, and sees each read be a value
+sent, the margin sign-extended.
 \item \code{//cpu/vreteno:board\_test}'s
 \code{a\_line\_that\_never\_comes\_is\_stuck} points the scanout's
 \code{LinePair} at memory that never answers and sees its stuck bit
@@ -98,8 +113,10 @@ set with that line's address.
 \code{ScanVideo}. On the board, \code{cpu/vreteno/rust/scanprobe.rs}
 uses it through the HAL's \code{Scan}, and says \code{scan stuck} with
 the address when the bit is set. \code{cpu/vreteno/rust/ico\_hdmi.rs}
-prints the longest line and the late lines each time it reports, then
-clears them, and built with \code{ahead} it sets the ahead bit.
+prints the longest line, the late lines, the late rows and frames and
+the margin each time it reports, through the HAL's \code{Scan::timing}
+and \code{Scan::late}, then clears them, and built with \code{ahead}
+it sets the ahead bit.
 
 \subsection*{Limits}
 

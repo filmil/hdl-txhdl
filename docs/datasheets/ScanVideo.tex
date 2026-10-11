@@ -32,8 +32,9 @@ which picks the scanout's picture at \code{VidMux}, is also
 scanout is shown (issue 1178). \code{ScanCtl}'s ahead bit is
 \code{LinePair}'s \code{two} (issue 1523).
 \item \code{ScanTap} puts \code{LinePair}'s underflow and stuck bits,
-the stuck line's address, the longest line and the count of late
-lines on a channel back to \code{ScanCtl}.
+the stuck line's address, the longest line, the count of late lines,
+the counts of rows and frames that showed \code{LATE}, and the least
+margin on a channel back to \code{ScanCtl} (issue 1524).
 \item \code{VidMux} puts \code{Hdmi}'s pixel or the scanout's, a
 \code{0x00RRGGBB} word, on the pins, with \code{Hdmi}'s syncs either
 way.

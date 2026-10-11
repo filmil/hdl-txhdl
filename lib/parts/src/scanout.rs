@@ -773,7 +773,7 @@ regmap! { scan (scan_read, scan_we), 4: [
         (under, 0, 1, ro, 0, "a column was shown before its word arrived"),
         (stuck, 1, 1, ro, 0, "a line asked for got no word for two line times"),
     ]),
-    (3, clear, wo, "a write clears the status, the longest line and the count"),
+    (3, clear, wo, "a write clears the status, the counts and the margin"),
     (4, stuck_at, ro, "the address of the line that did not come"),
     (5, worst, ro, "the longest a line took to come whole, in pixels"),
     (6, lates, ro, "how many lines had not come whole when their rows began"),
