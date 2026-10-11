@@ -388,3 +388,57 @@ fn a_smooth_line_shorter_than_a_pixel_has_its_middle_colour() {
     let red = (fb[row * S as usize + 40] >> 16 & 0xff) as f64;
     assert!((red - 127.5).abs() <= 2.5, "red {red}");
 }
+
+/// `glPointParameterx` (#1508): the state reads back as set, from GL's
+/// starting values; a size below nought and the attenuation through the
+/// one-value call are refused; and a point's size is its size over the
+/// root of the attenuation at its distance from the eye, then kept in the
+/// range set.
+#[test]
+fn a_point_is_attenuated_and_kept_in_its_range() {
+    let mut frame = [[0u32; 16]; 8];
+    let mut g = context(&mut frame);
+    let fx = |g: &mut Gl, pname: u32, n: usize| {
+        let mut v = [0 as Fx; 3];
+        g.get_fixed(pname, &mut v[..n]);
+        v[..n].to_vec()
+    };
+    let most = gl::MAX_SIZE as Fx * ONE;
+    assert_eq!(fx(&mut g, gl::POINT_SIZE_MIN, 1), [0]);
+    assert_eq!(fx(&mut g, gl::POINT_SIZE_MAX, 1), [most]);
+    assert_eq!(fx(&mut g, gl::POINT_FADE_THRESHOLD_SIZE, 1), [ONE]);
+    assert_eq!(fx(&mut g, gl::POINT_DISTANCE_ATTENUATION, 3), [ONE, 0, 0]);
+    g.point_parameter(gl::POINT_SIZE_MIN, -1);
+    assert_eq!(g.get_error(), gl::INVALID_VALUE);
+    g.point_parameter(gl::POINT_DISTANCE_ATTENUATION, ONE);
+    assert_eq!(g.get_error(), gl::INVALID_ENUM);
+    g.point_parameter(gles::get::name::POINT_SIZE, ONE);
+    assert_eq!(g.get_error(), gl::INVALID_ENUM);
+    g.point_parameter(gl::POINT_FADE_THRESHOLD_SIZE, 2 * ONE);
+    assert_eq!(fx(&mut g, gl::POINT_FADE_THRESHOLD_SIZE, 1), [2 * ONE]);
+    assert_eq!(g.get_error(), gl::NO_ERROR);
+
+    // A point 32 pixels right and up of the eye, 45.25 from it: under
+    // attenuation (0, 0, 1/1024) the sum is 2, so a size of 16 becomes
+    // 16 over the root of 2, 11.3, drawn 11 pixels square; then kept to
+    // at most 4, and at least 20.
+    let drawn = |set: &dyn Fn(&mut Gl)| {
+        let mut frame = [[0u32; 16]; 8];
+        let mut g = context(&mut frame);
+        g.point_size(16 * ONE);
+        g.point_parameterv(gl::POINT_DISTANCE_ATTENUATION, &[0, 0, ONE / 1024]);
+        set(&mut g);
+        g.draw_arrays(gl::POINTS, &[at(32 * 16, 32 * 16)], None, None);
+        assert_eq!(g.get_error(), gl::NO_ERROR);
+        picture(&g).iter().filter(|&&p| p == WHITE).count()
+    };
+    assert_eq!(drawn(&|_| {}), 11 * 11, "attenuated");
+    assert_eq!(
+        drawn(&|g| g.point_parameter(gl::POINT_SIZE_MAX, 4 * ONE)),
+        16
+    );
+    assert_eq!(
+        drawn(&|g| g.point_parameter(gl::POINT_SIZE_MIN, 20 * ONE)),
+        400
+    );
+}
