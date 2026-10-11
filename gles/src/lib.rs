@@ -2460,10 +2460,8 @@ impl<'a> Gl<'a> {
                     // distances, wa / sa and wb / sb, for the colours and
                     // the rest that are carried as they were; the user's
                     // plane has them already.
-                    let (ta, tb) = truth.unwrap_or_else(|| {
-                        let (wa, wb) = fit(wa, wb, 60);
-                        fit(wa * sb, wb * sa, 60)
-                    });
+                    let (ta, tb) =
+                        truth.unwrap_or_else(|| along(wa, wb, sa, sb));
                     out[m] = between(&a, &b, ta, tb);
                     kept[m] = cut((ha, sa), (hb, sb), wa, wb);
                     m += 1;
@@ -2688,6 +2686,27 @@ fn fit(a: i128, b: i128, bits: u32) -> (i128, i128) {
     }
 }
 
+/// `wa` and `wb` each shifted down until it fits in 60 bits, and how much
+/// further a product with each is shifted to put the two on one scale.
+/// Shifting them together instead would leave the smaller with few bits
+/// or none when the ends' scales are far apart, as a corner's 1 and a
+/// cut's are; a product of one with a kept coordinate or scale, which is
+/// at most 63 bits, is at most 123.
+fn apart(wa: i128, wb: i128) -> (i128, i128, u32, u32) {
+    let size = |v: i128| 128 - v.unsigned_abs().leading_zeros();
+    let (ea, eb) = (size(wa).saturating_sub(60), size(wb).saturating_sub(60));
+    let e = ea.max(eb);
+    (wa >> ea, wb >> eb, (e - ea).min(127), (e - eb).min(127))
+}
+
+/// The true distances' ratio, as `between` takes it, from distances `wa`
+/// and `wb` that are each the true one times its end's scale, `sa` and
+/// `sb`: `wa sb` and `wb sa`, which are both the true ones times `sa sb`.
+fn along(wa: i128, wb: i128, sa: i128, sb: i128) -> (i128, i128) {
+    let (wa, wb, da, db) = apart(wa, wb);
+    fit((wa * sb) >> da, (wb * sa) >> db, 60)
+}
+
 /// The point where the edge from `a` to `b`, each a point in homogeneous
 /// clip coordinates times a positive scale and that scale, crosses a
 /// plane they lie either side of (#1661). `wa` and `wb` are their
@@ -2705,9 +2724,10 @@ fn cut(
     wa: i128,
     wb: i128,
 ) -> ([i128; 4], i128) {
-    let (wa, wb) = fit(wa, wb, 60);
-    let mut h: [i128; 4] = core::array::from_fn(|i| wa * hb[i] - wb * ha[i]);
-    let mut s = wa * sb - wb * sa;
+    let (wa, wb, da, db) = apart(wa, wb);
+    let mix = |x: i128, y: i128| ((wa * x) >> da) - ((wb * y) >> db);
+    let mut h: [i128; 4] = core::array::from_fn(|i| mix(hb[i], ha[i]));
+    let mut s = mix(sb, sa);
     if s < 0 {
         h = h.map(|v| -v);
         s = -s;
@@ -2924,5 +2944,135 @@ impl Planes {
     /// Whether the entry carries neither.
     fn is_none(&self) -> bool {
         self.fog.is_none() && self.alpha.is_none()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{along, cut};
+
+    /// A corner three units from a plane and a kept point of scale 2^40
+    /// past it: the cut is where the edge meets the plane, and the
+    /// colours are taken at the same place along it, whichever end comes
+    /// first. Shifting the two weights down together left the corner's 3
+    /// as 0, and the cut on the corner.
+    #[test]
+    fn a_cut_between_scales_far_apart_is_on_the_plane() {
+        on_the_plane(false);
+        on_the_plane(true);
+    }
+
+    fn on_the_plane(swap: bool) {
+        let a = [-(1i128 << 20) + 3, 7 << 18, 5 << 18, 1 << 20];
+        let b = [-(3i128 << 20), 11 << 18, 2 << 20, 1 << 20];
+        let sb = (1i128 << 40) + 1;
+        let hb = b.map(|v| v * sb);
+        // The plane x + w = 0, as distance_of reads plane 3.
+        let (wa, wb) = (a[0] + a[3], hb[0] + hb[3]);
+        let (da, db) = (wa as f64, (wb / sb) as f64);
+        let t = da / (da - db);
+        let ((h, s), (ta, tb)) = if swap {
+            (cut((hb, sb), (a, 1), wb, wa), along(wb, wa, sb, 1))
+        } else {
+            (cut((a, 1), (hb, sb), wa, wb), along(wa, wb, 1, sb))
+        };
+        let got = ta as f64 / (ta - tb) as f64;
+        let want = if swap { 1.0 - t } else { t };
+        assert!((got - want).abs() < 1e-12, "along is {got}, wants {want}");
+        for i in 0..4 {
+            let want = a[i] as f64 + t * (b[i] - a[i]) as f64;
+            let got = h[i] as f64 / s as f64;
+            assert!(
+                (got - want).abs() < 1e-3,
+                "coordinate {i} is {got}, wants {want}"
+            );
+        }
+    }
+
+    /// Triangles clipped plane after plane as `triangle` clips them, so
+    /// that later cuts have cut points at one end or both: every kept
+    /// point fits in 62 bits, coordinates and scale, so that `cut`'s
+    /// products fit in i128, and every cut is where its edge, between the
+    /// two kept points it was made from, meets the plane, to a part in
+    /// 2^30 of the larger end's size.
+    #[test]
+    fn cuts_of_cuts_stay_in_62_bits_and_on_their_planes() {
+        let mut seed = 0x243f_6a88_85a3_08d3u64;
+        let mut rnd = |lo: i128, hi: i128| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            lo + ((seed >> 11) as i128).rem_euclid(hi - lo)
+        };
+        // Near, far and four slanted planes, as distance_of's are: small
+        // coefficients on x, y and z, and a larger one on w.
+        let planes: [[i128; 4]; 6] = [
+            [0, 0, 1, 1],
+            [0, 0, -1, 1],
+            [5120, 0, 0, 16384 * 21],
+            [-5120, 0, 0, 16384 * 21],
+            [0, 3840, 0, 16384 * 30],
+            [0, -3840, 0, 16384 * 30],
+        ];
+        let size = |v: i128| 128 - v.unsigned_abs().leading_zeros();
+        let (mut cuts, mut chained) = (0, 0);
+        for _ in 0..4000 {
+            let mut poly: Vec<([i128; 4], i128)> = (0..3)
+                .map(|_| {
+                    let c = 1i128 << rnd(8, 31);
+                    let p = [rnd(-c, c), rnd(-c, c), rnd(-c, c), rnd(-c, c)];
+                    (p, 1)
+                })
+                .collect();
+            for q in planes {
+                let d =
+                    |p: &[i128; 4]| (0..4).map(|i| q[i] * p[i]).sum::<i128>();
+                let mut next = vec![];
+                for i in 0..poly.len() {
+                    let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+                    let (wa, wb) = (d(&a.0), d(&b.0));
+                    if wa >= 0 {
+                        next.push(a);
+                    }
+                    if (wa >= 0) != (wb >= 0) {
+                        let (h, s) = cut(a, b, wa, wb);
+                        assert!(
+                            h.iter().all(|&v| size(v) <= 62) && size(s) <= 62,
+                            "{h:?} over {s}"
+                        );
+                        let fa = a.0.map(|v| v as f64 / a.1 as f64);
+                        let fb = b.0.map(|v| v as f64 / b.1 as f64);
+                        let (da, db) =
+                            (wa as f64 / a.1 as f64, wb as f64 / b.1 as f64);
+                        let t = da / (da - db);
+                        // A kept point rounds to integers over a scale of
+                        // at least 31 bits, which costs at most a part in
+                        // 2^31 of the larger end's size (#1674).
+                        let m = fa
+                            .iter()
+                            .chain(&fb)
+                            .fold(0f64, |m, v| m.max(v.abs()));
+                        let tol = 1e-6 + m / (1u64 << 30) as f64;
+                        for k in 0..4 {
+                            let want = fa[k] + t * (fb[k] - fa[k]);
+                            let got = h[k] as f64 / s as f64;
+                            assert!(
+                                (got - want).abs() < tol,
+                                "coordinate {k} is {got}, wants {want}"
+                            );
+                        }
+                        cuts += 1;
+                        chained += (a.1 > 1 || b.1 > 1) as usize;
+                        next.push((h, s));
+                    }
+                }
+                poly = next;
+                if poly.len() < 3 {
+                    break;
+                }
+            }
+        }
+        assert!(
+            cuts > 4000 && chained > 1000,
+            "{cuts} cuts, {chained} of cuts"
+        );
     }
 }
