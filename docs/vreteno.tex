@@ -2757,9 +2757,10 @@ was, and went up one blanking after it: the frames were shown in
 pairs, one of each pair for a blanking and the other for the rest,
 and the teapot's viewer saw every other frame (issue~\#1639). A hart
 now first waits until half its own work, from its last showing to its
-being ready, has passed since either hart showed a frame; the first
-waits put the harts half a frame apart, and from then on neither
-waits. \code{flip\_pacing\_test} runs the program on the machine,
+being ready, has passed since either hart showed a frame; the waits
+of the first few frames put the harts half their period apart, a
+frame's time, and from then on neither waits.
+\code{flip\_pacing\_test} runs the program on the machine,
 which says every base the scanout was given and the raster frame it
 came in, and holds each frame to within one raster frame of half its
 pair's time; the program as it was showed one for one raster frame and
