@@ -440,9 +440,9 @@ static void blended_white(void) {
  * a pixel wide, so a pixel is held to the exact coverage within 40 of
  * 255, which an aliased square fails at every edge. */
 static void smooth_points(void) {
-  static const double sizes[2] = {3.0, 8.5};
+  static const double sizes[3] = {3.0, 8.5, 1.0};
   char name[64];
-  for (int k = 0; k < 2; k++) {
+  for (int k = 0; k < 3; k++) {
     disc_x = 200.3 + 100 * k, disc_y = 150.6, disc_r = sizes[k] / 2;
     blended_white();
     glEnable(GL_POINT_SMOOTH);
@@ -455,22 +455,30 @@ static void smooth_points(void) {
     read_window();
     covering = in_disc;
     snprintf(name, sizeof name, "point_smooth_%d", k);
-    report(name, window_is(want_covered, 40));
+    /* The point of a pixel, all rim, is held within 20: its alpha is
+     * scaled to the disc's area, and unscaled it is at least 34 off. */
+    report(name, window_is(want_covered, k == 2 ? 20 : 40));
   }
 }
 
 /* A smooth line is the rectangle of its width centred on the segment,
- * its coverage in alpha, held as a smooth point is. */
+ * its coverage in alpha, held as a smooth point is: two slanting, one
+ * level, and one shorter than a pixel. */
 static void smooth_lines(void) {
-  static const double widths[2] = {1.0, 3.5};
+  static const double lines[4][5] = {
+      {120.3, 60.2, 380.7, 130.9, 1.0},
+      {120.3, 180.2, 380.7, 250.9, 3.5},
+      {100.4, 300.5, 300.4, 300.5, 2.0},
+      {400.2, 300.3, 400.8, 300.6, 1.0},
+  };
   char name[64];
-  for (int k = 0; k < 2; k++) {
-    seg[0] = 120.3, seg[1] = 60.2 + 120 * k, seg[2] = 380.7,
-    seg[3] = 130.9 + 120 * k;
-    seg_half = widths[k] / 2;
+  for (int k = 0; k < 4; k++) {
+    seg[0] = lines[k][0], seg[1] = lines[k][1], seg[2] = lines[k][2],
+    seg[3] = lines[k][3];
+    seg_half = lines[k][4] / 2;
     blended_white();
     glEnable(GL_LINE_SMOOTH);
-    glLineWidthx((GLfixed)(widths[k] * ONE));
+    glLineWidthx((GLfixed)(lines[k][4] * ONE));
     GLfixed v[4] = {dx((GLfixed)(seg[0] * ONE)), dy((GLfixed)(seg[1] * ONE)),
                     dx((GLfixed)(seg[2] * ONE)), dy((GLfixed)(seg[3] * ONE))};
     glVertexPointer(2, GL_FIXED, 0, v);
@@ -482,6 +490,37 @@ static void smooth_lines(void) {
     snprintf(name, sizeof name, "line_smooth_%d", k);
     report(name, window_is(want_covered, 40));
   }
+}
+
+/* A smooth line's colour is the segment's own at each point, the
+ * ends' colours standing at the ends: a line four pixels long, red
+ * at one end and blue at the other, is read at the three pixels wholly
+ * inside it, each the mix a quarter, a half and three quarters along. */
+static void smooth_line_colour(void) {
+  blended_white();
+  glEnable(GL_LINE_SMOOTH);
+  glLineWidthx(3 * ONE);
+  GLfixed v[4] = {dx((GLfixed)(200.5 * ONE)), dy((GLfixed)(400.5 * ONE)),
+                  dx((GLfixed)(204.5 * ONE)), dy((GLfixed)(400.5 * ONE))};
+  GLubyte c[8] = {255, 0, 0, 255, 0, 0, 255, 255};
+  glVertexPointer(2, GL_FIXED, 0, v);
+  glColorPointer(4, GL_UNSIGNED_BYTE, 0, c);
+  glEnableClientState(GL_COLOR_ARRAY);
+  glDrawArrays(GL_LINES, 0, 2);
+  glDisableClientState(GL_COLOR_ARRAY);
+  glLineWidthx(ONE);
+  glDisable(GL_LINE_SMOOTH);
+  read_window();
+  int ok = 1;
+  for (int x = 201; x <= 203 && ok; x++) {
+    double t = (x - 200) / 4.0;
+    ok = near(at(x, 400, 0), 255 * (1 - t), 8) && near(at(x, 400, 1), 0, 8) &&
+         near(at(x, 400, 2), 255 * t, 8);
+    if (!ok)
+      first_x = x, first_y = 400, first_got = at(x, 400, 0),
+      first_want = (int)lround(255 * (1 - t));
+  }
+  report("line_smooth_colour", ok);
 }
 
 /* --- Lines (section 3.4): the rules an algorithm other than the
@@ -1086,6 +1125,7 @@ void conform_render(void) {
   smooth_points();
   lines();
   smooth_lines();
+  smooth_line_colour();
   depth_tests();
   alpha_tests();
   blending();
