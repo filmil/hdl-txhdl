@@ -69,10 +69,9 @@ fn an_array_in_a_struct_of_ports_is_read_in_a_loop() {
     for port in ["input inp_flags_f_0", "input inp_flags_f_1"] {
         assert!(v.contains(port), "no `{port}` in:\n{v}");
     }
-    assert!(
-        v.contains("inp_flags_f_0") && v.contains("inp_flags_f_1"),
-        "{v}"
-    );
+    // The loop unrolled, each lane folded into the last.
+    assert!(v.contains("| inp_flags_f_0)"), "{v}");
+    assert!(v.contains("| inp_flags_f_1)"), "{v}");
 }
 
 /// A tuple side holding a struct of ports beside an array of ports.
@@ -175,4 +174,56 @@ fn a_path_goes_on_after_an_index() {
         assert!(v.contains(port), "no `{port}` in:\n{v}");
     }
     assert!(v.contains("assign o = bus_lanes_1_valid;"), "{v}");
+}
+
+/// A lane that holds an array of its own.
+#[derive(Ports)]
+pub struct Wide {
+    pub sub: [In<Bit>; 2],
+}
+
+/// A side that is an array of structs of ports, read through the path
+/// after the index, by a constant and in a loop, and an index nested in
+/// the path.
+#[derive(Trace, Default)]
+pub struct Direct {}
+
+// The lowering unrolls a loop over ports by its index, which Clippy would
+// have an iterator.
+#[allow(clippy::needless_range_loop)]
+#[lower]
+impl Unit for Direct {
+    async fn run(
+        &mut self,
+        (lanes, wide): ([Lane; 2], [Wide; 2]),
+        (first, all, deep): (Out<Bit>, Out<Bit>, Out<Bit>),
+    ) {
+        loop {
+            DefaultClock::rising().await;
+            first.set(lanes[1].valid.get());
+            let mut every = Bit::One;
+            for i in 0..2 {
+                every = every & lanes[i].valid.get();
+            }
+            all.set(every);
+            deep.set(wide[0].sub[1].get());
+        }
+    }
+}
+
+#[test]
+fn a_side_of_structs_is_read_through_its_paths() {
+    let v = Direct::lowered("direct").verilog();
+    for port in [
+        "input lanes_0_valid",
+        "input lanes_1_valid",
+        "input wide_0_sub_1",
+        "input wide_1_sub_0",
+    ] {
+        assert!(v.contains(port), "no `{port}` in:\n{v}");
+    }
+    assert!(v.contains("assign first = lanes_1_valid;"), "{v}");
+    assert!(v.contains("& lanes_0_valid)"), "{v}");
+    assert!(v.contains("& lanes_1_valid)"), "{v}");
+    assert!(v.contains("assign deep = wide_0_sub_1;"), "{v}");
 }
