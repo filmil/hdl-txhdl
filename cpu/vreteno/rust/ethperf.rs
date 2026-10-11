@@ -92,7 +92,7 @@ fn byte(i: u32, seq: u32) -> u32 {
 /// read back at its last word since stores are posted.
 fn fill(slot: u32, len: u32, seq: u32) {
     let at = (TXBUF + slot * SLOT_BYTES) as *mut u32;
-    let words = (len + 3) / 4;
+    let words = len.div_ceil(4);
     let mut k = 0u32;
     while k < words {
         let mut w = 0u32;
@@ -112,7 +112,7 @@ fn fill(slot: u32, len: u32, seq: u32) {
 static mut FRAME: [u32; 379] = [0; 379];
 
 fn make(len: u32) {
-    let words = (len + 3) / 4;
+    let words = len.div_ceil(4);
     let mut k = 0u32;
     while k < words {
         let mut w = 0u32;
@@ -129,7 +129,7 @@ fn make(len: u32) {
 /// The made frame into a transmit slot, word by word.
 fn copy_in(slot: u32, len: u32) {
     let at = (TXBUF + slot * SLOT_BYTES) as *mut u32;
-    let words = (len + 3) / 4;
+    let words = len.div_ceil(4);
     let from = core::ptr::addr_of!(FRAME) as *const u32;
     let mut k = 0usize;
     while k < words as usize {
@@ -143,7 +143,7 @@ fn copy_in(slot: u32, len: u32) {
 fn copy_out(slot: u32, len: u32) {
     let from = (RXBUF + slot * SLOT_BYTES) as *const u32;
     let to = COPY_TO as *mut u32;
-    let words = (len + 3) / 4;
+    let words = len.div_ceil(4);
     let mut k = 0usize;
     while k < words as usize {
         unsafe { write_volatile(to.add(k), read_volatile(from.add(k))) };
@@ -217,7 +217,7 @@ fn receive(len: u32, copy: bool) {
     Uart::say(b"rx waiting ");
     Uart::put_decimal(len);
     Uart::put(b'\n');
-    let mut seen = [0u32; (FRAMES as usize + 31) / 32];
+    let mut seen = [0u32; (FRAMES as usize).div_ceil(32)];
     let (mut got, mut fresh, mut other) = (0u32, 0u32, 0u32);
     let mut work = 0u32;
     let wait = Timer::ticks();

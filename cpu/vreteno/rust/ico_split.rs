@@ -111,7 +111,7 @@ extern "C" fn builder(_hart: u32, arg: u32) -> ! {
     let mut local = [[0u32; WORDS]; ico_gl::MOST];
     let mut f = step - 1;
     while f < FRAMES {
-        let s = (f / step & 1) as usize;
+        let s = ((f / step) & 1) as usize;
         while FULL[s].load(Ordering::Acquire) != 0 {}
         // A whole frame stays in this hart's own memory.
         let n = if whole {
@@ -158,7 +158,7 @@ fn two(
             binned(&local, n, f);
             continue;
         }
-        let s = (f / step & 1) as usize;
+        let s = ((f / step) & 1) as usize;
         let n = loop {
             let n = FULL[s].load(Ordering::Acquire);
             if n != 0 {

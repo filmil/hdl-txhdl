@@ -330,10 +330,11 @@ extern "C" fn odd_frames(_hart: u32, _arg: u32) -> ! {
     ALIVE.store(1, Ordering::Release);
     let solid = Solid::new();
     let model = ico_gl::Model::new(&solid);
+    // A reference either way, so the call below is one call.
     #[cfg(not(teapot))]
-    let mut list = [[0u32; WORDS]; ico_gl::MOST];
+    let list = &mut [[0u32; WORDS]; ico_gl::MOST];
     #[cfg(teapot)]
-    let mut list = lists(1);
+    let list = lists(1);
     let mut last = CORNER;
     let mut pacer = Pacer::new();
     let mut f = 1u32;
@@ -346,7 +347,7 @@ extern "C" fn odd_frames(_hart: u32, _arg: u32) -> ! {
         // harts drew into the second, and the first, with the logo and
         // nothing else, was shown every other frame (#1551).
         let (n, filled) =
-            ico_gl::frame(&model, ay, ax, 0, last, true, tex, &mut list);
+            ico_gl::frame(&model, ay, ax, 0, last, true, tex, list);
         last = filled;
         while DRAWN.load(Ordering::Acquire) < f - 1 {}
         let sh = ico_list::H as u32;
@@ -683,10 +684,11 @@ fn main() -> ! {
     let mut last = [CORNER, CORNER];
     #[cfg(not(gl))]
     let mut list = [[0u32; WORDS]; MOST];
+    // Through GL a reference either way, as in `odd_frames`.
     #[cfg(all(gl, not(teapot)))]
-    let mut list = [[0u32; WORDS]; ico_gl::MOST];
+    let list = &mut [[0u32; WORDS]; ico_gl::MOST];
     #[cfg(teapot)]
-    let mut list = lists(0);
+    let list = lists(0);
     #[cfg(gl)]
     let model = ico_gl::Model::new(&solid);
     let (mut ay, mut ax) = (0i32, 0i32);
@@ -745,16 +747,8 @@ fn main() -> ! {
             // The first frame uploads the texture, and every frame after
             // it finds it where it is (#1433).
             let tex = texture(frames == 0);
-            let (n, filled) = ico_gl::frame(
-                &model,
-                ay,
-                ax,
-                dy,
-                last[which],
-                true,
-                tex,
-                &mut list,
-            );
+            let (n, filled) =
+                ico_gl::frame(&model, ay, ax, dy, last[which], true, tex, list);
             last[which] = filled;
             let sh = (ico_list::H + dy) as u32;
             // The frame before last took this half of the room; with

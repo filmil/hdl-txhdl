@@ -45,17 +45,12 @@ fn main() -> ! {
     // list's pointer, since indexing a slice would bring core's panic
     // path, which the boot memory has no room for.
     let entry = board.list().as_mut_ptr() as *mut u32;
-    let words = [
-        1 | (COLOUR << 2),
-        10 | (SECOND << 16),
-        13 | ((SECOND + 2) << 16),
-    ];
-    for k in 0..16 {
-        let w = match k {
-            0..=2 => words[k],
-            15 => 0xff,
-            _ => 0,
-        };
+    let mut words = [0u32; 16];
+    words[0] = 1 | (COLOUR << 2);
+    words[1] = 10 | (SECOND << 16);
+    words[2] = 13 | ((SECOND + 2) << 16);
+    words[15] = 0xff;
+    for (k, &w) in words.iter().enumerate() {
         unsafe { write_volatile(entry.add(k), w) };
     }
     board.draw(1);

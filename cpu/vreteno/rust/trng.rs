@@ -212,8 +212,10 @@ fn send_run(win: &[u32], at: &mut [u32]) {
     Uart::put(b'\n');
     // The longest stretch of windows joined by placed pairs.
     let (mut best, mut best_len, mut start) = (0, 1, 0);
+    // Past the last window counts as a break, as a pair not placed
+    // does: `at` and `win` are as long as each other.
     for i in 1..=win.len() {
-        if i == win.len() || at[i] == 0 {
+        if at.get(i).copied().unwrap_or(0) == 0 {
             if i - start > best_len {
                 best = start;
                 best_len = i - start;

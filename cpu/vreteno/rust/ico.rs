@@ -323,6 +323,11 @@ extern "C" fn main() -> ! {
 
 /// The entry point, at address zero, which is where the core's
 /// program counter starts.
+///
+/// # Safety
+///
+/// Only the core's reset enters it, with nothing set up; no code calls
+/// it.
 #[no_mangle]
 #[link_section = ".text.init"]
 pub unsafe extern "C" fn _start() -> ! {
