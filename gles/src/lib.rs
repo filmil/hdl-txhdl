@@ -2988,4 +2988,91 @@ mod tests {
             );
         }
     }
+
+    /// Triangles clipped plane after plane as `triangle` clips them, so
+    /// that later cuts have cut points at one end or both: every kept
+    /// point fits in 62 bits, coordinates and scale, so that `cut`'s
+    /// products fit in i128, and every cut is where its edge, between the
+    /// two kept points it was made from, meets the plane, to a part in
+    /// 2^30 of the larger end's size.
+    #[test]
+    fn cuts_of_cuts_stay_in_62_bits_and_on_their_planes() {
+        let mut seed = 0x243f_6a88_85a3_08d3u64;
+        let mut rnd = |lo: i128, hi: i128| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            lo + ((seed >> 11) as i128).rem_euclid(hi - lo)
+        };
+        // Near, far and four slanted planes, as distance_of's are: small
+        // coefficients on x, y and z, and a larger one on w.
+        let planes: [[i128; 4]; 6] = [
+            [0, 0, 1, 1],
+            [0, 0, -1, 1],
+            [5120, 0, 0, 16384 * 21],
+            [-5120, 0, 0, 16384 * 21],
+            [0, 3840, 0, 16384 * 30],
+            [0, -3840, 0, 16384 * 30],
+        ];
+        let size = |v: i128| 128 - v.unsigned_abs().leading_zeros();
+        let (mut cuts, mut chained) = (0, 0);
+        for _ in 0..4000 {
+            let mut poly: Vec<([i128; 4], i128)> = (0..3)
+                .map(|_| {
+                    let c = 1i128 << rnd(8, 31);
+                    let p = [rnd(-c, c), rnd(-c, c), rnd(-c, c), rnd(-c, c)];
+                    (p, 1)
+                })
+                .collect();
+            for q in planes {
+                let d =
+                    |p: &[i128; 4]| (0..4).map(|i| q[i] * p[i]).sum::<i128>();
+                let mut next = vec![];
+                for i in 0..poly.len() {
+                    let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+                    let (wa, wb) = (d(&a.0), d(&b.0));
+                    if wa >= 0 {
+                        next.push(a);
+                    }
+                    if (wa >= 0) != (wb >= 0) {
+                        let (h, s) = cut(a, b, wa, wb);
+                        assert!(
+                            h.iter().all(|&v| size(v) <= 62) && size(s) <= 62,
+                            "{h:?} over {s}"
+                        );
+                        let fa = a.0.map(|v| v as f64 / a.1 as f64);
+                        let fb = b.0.map(|v| v as f64 / b.1 as f64);
+                        let (da, db) =
+                            (wa as f64 / a.1 as f64, wb as f64 / b.1 as f64);
+                        let t = da / (da - db);
+                        // A kept point rounds to integers over a scale of
+                        // at least 31 bits, which costs at most a part in
+                        // 2^31 of the larger end's size (#1674).
+                        let m = fa
+                            .iter()
+                            .chain(&fb)
+                            .fold(0f64, |m, v| m.max(v.abs()));
+                        let tol = 1e-6 + m / (1u64 << 30) as f64;
+                        for k in 0..4 {
+                            let want = fa[k] + t * (fb[k] - fa[k]);
+                            let got = h[k] as f64 / s as f64;
+                            assert!(
+                                (got - want).abs() < tol,
+                                "coordinate {k} is {got}, wants {want}"
+                            );
+                        }
+                        cuts += 1;
+                        chained += (a.1 > 1 || b.1 > 1) as usize;
+                        next.push((h, s));
+                    }
+                }
+                poly = next;
+                if poly.len() < 3 {
+                    break;
+                }
+            }
+        }
+        assert!(
+            cuts > 4000 && chained > 1000,
+            "{cuts} cuts, {chained} of cuts"
+        );
+    }
 }
