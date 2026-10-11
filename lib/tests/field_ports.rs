@@ -78,12 +78,53 @@ impl Unit for Top {
     }
 }
 
+/// The same, its literals naming the fields in another order.
+#[derive(Trace, Default)]
+pub struct Reordered {
+    pub glue: Glue,
+}
+
+#[lower]
+impl Unit for Reordered {
+    async fn run(
+        &mut self,
+        (go, back): (In<Bit>, In<Bit>),
+        (ready, rs1, retired): (Out<Bit>, Out<Bit>, Out<Bit>),
+    ) {
+        self.glue
+            .run(
+                GlueIn {
+                    retire: RetireIn { valid: back },
+                    go,
+                },
+                GlueOut {
+                    retire: RetireOut { valid: retired },
+                    ready,
+                    int: EntryOut { rs1_ready: rs1 },
+                },
+            )
+            .await;
+    }
+}
+
 /// Each of the child's ports is joined to the parent's port the literal
 /// gave its field, though `ready` ends `out_int_rs1_ready` and
-/// `retire_valid` ends both `inp_retire_valid` and `out_retire_valid`.
+/// `retire_valid` ends both `inp_retire_valid` and `out_retire_valid`;
+/// and the same from a parent whose literals name them in another order.
 #[test]
 fn a_field_joins_the_port_of_its_own_side_and_path() {
-    let v = Top::lowered("top").verilog();
+    for v in [
+        Top::lowered("top").verilog(),
+        Reordered::lowered("top").verilog(),
+    ] {
+        joins_by_name(&v);
+    }
+}
+
+/// The checks of one parent's netlist: each port joined, by name, to
+/// the parent's port its field was given; the order the joins are
+/// written in follows the literal's and means nothing in Verilog.
+fn joins_by_name(v: &str) {
     for join in [
         ".inp_go(",
         ".inp_retire_valid(",
