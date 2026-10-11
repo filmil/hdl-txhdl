@@ -946,19 +946,22 @@ sh_test(
     ],
 )
 
-# The GL icosahedron on two harts shows each frame for about as long as
-# the next (#1639): the program runs on the machine, which says every
-# base the scanout was given and the raster frame it came in.
+# The canonical teapot on two harts shows each frame for about as long
+# as the next, counted in the board's blankings (#1639): the program
+# runs on the machine with the board's timing and 60 Hz raster, the
+# scanout taking its base at each blanking, and the machine says every
+# base it took and when. Large: about fifty seconds of the machine.
 sh_test(
     name = "flip_pacing_test",
+    size = "large",
     srcs = ["flip_pacing_test.sh"],
     args = [
         "$(rootpath :machine)",
-        "$(rootpath //cpu/vreteno/rust:ico_gl_hdmi_bin)",
+        "$(rootpath //cpu/vreteno/rust:demo_teapot_1_utah_bin)",
     ],
     data = [
         ":machine",
-        "//cpu/vreteno/rust:ico_gl_hdmi_bin",
+        "//cpu/vreteno/rust:demo_teapot_1_utah_bin",
     ],
 )
 
