@@ -42,7 +42,7 @@ The tool refuses to run across 07:05 to 07:15 UTC, when the board is switched of
 
 ## What a run leaves
 
-A run's directory, `<start>-<sha>`, is named by its start in Pacific time, in ISO 8601's basic format with the offset (`<YYYYMMDD>T<HHMM><offset>`), then the short sha of the commit it runs, which follows the last hyphen: for example `20261010T1830-0700-94d3c50d`.
+A run's directory, `<start>-<sha>`, is named by its start in Pacific time, in ISO 8601's basic format with the offset (`<YYYYMMDD>T<HHMM><offset>`), then the short sha of HEAD, which follows the last hyphen; a tree with changes is refused, so the sha names what ran: for example `20261010T1830-0700-94d3c50d`.
 The basic format has no colons, so the name is safe on every filesystem.
 The times inside the directory are UTC, so an evening run's stage times fall on the next day's date.
 The directory holds:

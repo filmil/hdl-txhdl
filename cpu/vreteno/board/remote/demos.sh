@@ -74,6 +74,11 @@ for edge in $((day + 7*3600 + 300)) $((day + 31*3600 + 300)); do
 done
 
 cd "$ws"
+# The run is named by the commit at HEAD, so the tree must be that commit.
+if [[ -z "$dry" ]] && ! git diff --quiet HEAD; then
+  echo "the tree has changes; a run is named by its commit, so commit first" >&2
+  exit 1
+fi
 sha="$(git rev-parse --short=8 HEAD)"
 # The run is named by its start in Pacific time, ISO 8601 basic format
 # with the offset, which has no colons: 20261010T1830-0700-94d3c50d.
@@ -83,7 +88,10 @@ dir="$out/$run"
 # the first: it stops instead. A bare mkdir is the check, so two runs
 # started together cannot both pass it.
 mkdir -p "$out"
-if ! mkdir "$dir" 2>/dev/null; then echo "$dir exists; wait a minute" >&2; exit 1; fi
+if ! mkdir "$dir"; then
+  echo "cannot make $dir: a run this minute at this commit, or see above" >&2
+  exit 1
+fi
 # Everything the run says goes to its directory as well.
 exec > >(tee -a "$dir/run.log") 2>&1
 echo "demos at $sha into $dir"
