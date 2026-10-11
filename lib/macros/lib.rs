@@ -3333,12 +3333,32 @@ fn port_fields(
                     [TokenTree::Ident(v)] => Some(format!("{DYN}{v}{DYN_END}")),
                     _ => None,
                 };
-                if let Some(field) = field {
-                    let port = if field.starts_with(DYN) {
+                if let Some(mut field) = field {
+                    let mut port = if field.starts_with(DYN) {
                         format!("{b}{field}")
                     } else {
                         format!("{b}_{field}")
                     };
+                    // An element that is a struct of ports: the path
+                    // after the index names its port, `ins[0].valid` the
+                    // port `ins_0_valid`, up to a method call (#1636).
+                    let mut j = i + 2;
+                    while punct_at(&ts, j, '.') {
+                        let (Some(TokenTree::Ident(g)), next) =
+                            (ts.get(j + 1), ts.get(j + 2))
+                        else {
+                            break;
+                        };
+                        let call = matches!(next, Some(TokenTree::Group(p))
+                            if p.delimiter() == Delimiter::Parenthesis)
+                            || punct_at(&ts, j + 2, ':');
+                        if call {
+                            break;
+                        }
+                        port = format!("{port}_{g}");
+                        field = format!("{field}_{g}");
+                        j += 2;
+                    }
                     let ty = BUNDLES.with(|s| {
                         s.borrow()
                             .iter()
@@ -3354,7 +3374,7 @@ fn port_fields(
                         }
                     });
                     out.push(TokenTree::Ident(Ident::new(&port, g.span())));
-                    i += 2;
+                    i = j;
                     continue;
                 }
             }
@@ -3376,7 +3396,29 @@ fn port_fields(
                 // port has no fields of its own to read without one.
                 let mut f = f;
                 let mut j = i + 3;
-                while punct_at(&ts, j, '.') {
+                loop {
+                    // An array of ports in the struct: `f[k]` is the port
+                    // `f_k`, and `f[i]` with `i` a loop's variable a name
+                    // `dyn_names` formats once `lowered` runs (issue 1636).
+                    if let Some(TokenTree::Group(ix)) = ts.get(j) {
+                        if ix.delimiter() == Delimiter::Bracket {
+                            let it: Vec<TokenTree> =
+                                ix.stream().into_iter().collect();
+                            let k = match it.as_slice() {
+                                [TokenTree::Literal(k)] => format!("_{k}"),
+                                [TokenTree::Ident(v)] => {
+                                    format!("{DYN}{v}{DYN_END}")
+                                }
+                                _ => break,
+                            };
+                            f = format!("{f}{k}");
+                            j += 1;
+                            continue;
+                        }
+                    }
+                    if !punct_at(&ts, j, '.') {
+                        break;
+                    }
                     let (Some(TokenTree::Ident(g)), next) =
                         (ts.get(j + 1), ts.get(j + 2))
                     else {
@@ -6328,13 +6370,32 @@ fn lower_structural(
                             if let [TokenTree::Group(a)] = n.as_slice() {
                                 if a.delimiter() == Delimiter::Bracket {
                                     for m in split_commas(a) {
+                                        // A field path as a scalar takes
+                                        // one: a channel of a bundle made
+                                        // whole, `b.valid`, or a field of
+                                        // a split group (issue 1636).
+                                        if let Some(net) =
+                                            link_field(&m, &links)
+                                        {
+                                            names.push((
+                                                String::new(),
+                                                format!("@net {net}"),
+                                            ));
+                                            continue;
+                                        }
+                                        if let Some(g) = split_field(&m) {
+                                            names.push((String::new(), g));
+                                            continue;
+                                        }
                                         let [TokenTree::Ident(id)] =
                                             m.as_slice()
                                         else {
                                             return Err(err(
                                                 a.span(),
                                                 "an array passed to a child \
-                                                 is of names, `[a, b, c]`",
+                                                 is of names, a channel of a \
+                                                 bundle made whole, `b.f`, or \
+                                                 a field of a split group",
                                             ));
                                         };
                                         names.push((
@@ -7000,7 +7061,24 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                             continue;
                         }
                     }
-                    pairs.push((n.to_string(), text(t), n.span()));
+                    // A struct of ports among the others, beside an array
+                    // or a port: a side of its own under the element's
+                    // name, its ports `n_field` from `Ports` when
+                    // `lowered` runs, as `name: S` gives them (issue 1636).
+                    let ty = text(t);
+                    let end = ["In<", "Out<", "Tx<", "Rx<", "Pad<"]
+                        .iter()
+                        .any(|e| ty.starts_with(e));
+                    if !end && ty != "()" {
+                        let n = n.to_string();
+                        bound.push((n.clone(), vec!["*".to_string()]));
+                        BUNDLES.with(|b| {
+                            b.borrow_mut().push((n.clone(), ty.clone()))
+                        });
+                        pairs.push((n, format!("@ports {ty}"), t[0].span()));
+                        continue;
+                    }
+                    pairs.push((n.to_string(), ty, n.span()));
                 }
             }
             _ => {
