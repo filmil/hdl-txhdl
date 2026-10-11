@@ -246,8 +246,8 @@ fn dist(s: &State, v: &V, plane: usize) -> i128 {
 /// the kept point `wa b - wb a` over `wa sb - wb sa`, by the same shifts.
 fn cross(a: &V, b: &V, wa: i128, wb: i128, truth: Option<(i128, i128)>) -> V {
     let (ta, tb) = truth.unwrap_or_else(|| {
-        let (wa, wb) = fit(wa, wb, 60);
-        fit(wa * b.scale, wb * a.scale, 60)
+        let (wa, wb, da, db) = apart(wa, wb);
+        fit((wa * b.scale) >> da, (wb * a.scale) >> db, 60)
     });
     let mix = |p: &[i128; 4], q: &[i128; 4]| {
         std::array::from_fn(|i| {
@@ -276,6 +276,14 @@ fn fit(a: i128, b: i128, bits: u32) -> (i128, i128) {
     }
 }
 
+/// The weights shifted apart, as the library's `apart`.
+fn apart(wa: i128, wb: i128) -> (i128, i128, u32, u32) {
+    let size = |v: i128| 128 - v.unsigned_abs().leading_zeros();
+    let (ea, eb) = (size(wa).saturating_sub(60), size(wb).saturating_sub(60));
+    let e = ea.max(eb);
+    (wa >> ea, wb >> eb, (e - ea).min(127), (e - eb).min(127))
+}
+
 /// The kept crossing, as the library's `cut`.
 fn cut(
     ha: &[i128; 4],
@@ -285,9 +293,10 @@ fn cut(
     wa: i128,
     wb: i128,
 ) -> ([i128; 4], i128) {
-    let (wa, wb) = fit(wa, wb, 60);
-    let mut h: [i128; 4] = std::array::from_fn(|i| wa * hb[i] - wb * ha[i]);
-    let mut s = wa * sb - wb * sa;
+    let (wa, wb, da, db) = apart(wa, wb);
+    let mix = |x: i128, y: i128| ((wa * x) >> da) - ((wb * y) >> db);
+    let mut h: [i128; 4] = std::array::from_fn(|i| mix(hb[i], ha[i]));
+    let mut s = mix(sb, sa);
     if s < 0 {
         h = h.map(|v| -v);
         s = -s;

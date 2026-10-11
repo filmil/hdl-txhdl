@@ -2461,8 +2461,8 @@ impl<'a> Gl<'a> {
                     // the rest that are carried as they were; the user's
                     // plane has them already.
                     let (ta, tb) = truth.unwrap_or_else(|| {
-                        let (wa, wb) = fit(wa, wb, 60);
-                        fit(wa * sb, wb * sa, 60)
+                        let (wa, wb, da, db) = apart(wa, wb);
+                        fit((wa * sb) >> da, (wb * sa) >> db, 60)
                     });
                     out[m] = between(&a, &b, ta, tb);
                     kept[m] = cut((ha, sa), (hb, sb), wa, wb);
@@ -2688,6 +2688,19 @@ fn fit(a: i128, b: i128, bits: u32) -> (i128, i128) {
     }
 }
 
+/// `wa` and `wb` each shifted down until it fits in 60 bits, and how much
+/// further a product with each is shifted to put the two on one scale.
+/// Shifting them together instead would leave the smaller with few bits
+/// or none when the ends' scales are far apart, as a corner's 1 and a
+/// cut's are; a product of one with a kept coordinate or scale, which is
+/// at most 63 bits, is at most 123.
+fn apart(wa: i128, wb: i128) -> (i128, i128, u32, u32) {
+    let size = |v: i128| 128 - v.unsigned_abs().leading_zeros();
+    let (ea, eb) = (size(wa).saturating_sub(60), size(wb).saturating_sub(60));
+    let e = ea.max(eb);
+    (wa >> ea, wb >> eb, (e - ea).min(127), (e - eb).min(127))
+}
+
 /// The point where the edge from `a` to `b`, each a point in homogeneous
 /// clip coordinates times a positive scale and that scale, crosses a
 /// plane they lie either side of (#1661). `wa` and `wb` are their
@@ -2705,9 +2718,10 @@ fn cut(
     wa: i128,
     wb: i128,
 ) -> ([i128; 4], i128) {
-    let (wa, wb) = fit(wa, wb, 60);
-    let mut h: [i128; 4] = core::array::from_fn(|i| wa * hb[i] - wb * ha[i]);
-    let mut s = wa * sb - wb * sa;
+    let (wa, wb, da, db) = apart(wa, wb);
+    let mix = |x: i128, y: i128| ((wa * x) >> da) - ((wb * y) >> db);
+    let mut h: [i128; 4] = core::array::from_fn(|i| mix(hb[i], ha[i]));
+    let mut s = mix(sb, sa);
     if s < 0 {
         h = h.map(|v| -v);
         s = -s;
@@ -2924,5 +2938,35 @@ impl Planes {
     /// Whether the entry carries neither.
     fn is_none(&self) -> bool {
         self.fog.is_none() && self.alpha.is_none()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cut;
+
+    /// A corner three units from a plane and a kept point of scale 2^40
+    /// past it: the cut is where the edge meets the plane. Shifting the
+    /// two weights down together left the corner's 3 as 0, and the cut
+    /// on the corner.
+    #[test]
+    fn a_cut_between_scales_far_apart_is_on_the_plane() {
+        let a = [-(1i128 << 20) + 3, 7 << 18, 5 << 18, 1 << 20];
+        let b = [-(3i128 << 20), 11 << 18, 2 << 20, 1 << 20];
+        let sb = (1i128 << 40) + 1;
+        let hb = b.map(|v| v * sb);
+        // The plane x + w = 0, as distance_of reads plane 3.
+        let (wa, wb) = (a[0] + a[3], hb[0] + hb[3]);
+        let (h, s) = cut((a, 1), (hb, sb), wa, wb);
+        let (da, db) = (wa as f64, (wb / sb) as f64);
+        let t = da / (da - db);
+        for i in 0..4 {
+            let want = a[i] as f64 + t * (b[i] - a[i]) as f64;
+            let got = h[i] as f64 / s as f64;
+            assert!(
+                (got - want).abs() < 1e-3,
+                "coordinate {i} is {got}, wants {want}"
+            );
+        }
     }
 }
