@@ -518,12 +518,13 @@ impl Unit for Ddr3Per {
 /// The peripheral on a link, driven from client code, and its netlist.
 #[cfg(test)]
 mod tests {
+    use super::sim::WideRead;
     use super::{Ddr3Per, MODEL_WARMUP};
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
-    use txhdl::comp::{join2, pad, signal, DefaultClock, Running, Unit};
+    use txhdl::comp::{chan, join2, pad, signal, DefaultClock, Running, Unit};
     use txhdl::types::{Bit, U};
-    use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
+    use txhdl_parts::bus::axi::{axi, Ar, AxiHost, Link, Rd, Resp, Wr, R};
 
     /// Words written across the memory and read back, the first ones
     /// issued while the controller is still calibrating, and a burst
@@ -608,6 +609,102 @@ mod tests {
             "calibrated at {calibrated_at:?}"
         );
         assert_eq!(*seen.borrow(), vec![1, 2, 3], "the words read back");
+    }
+
+    /// Words written through the 32-bit port and read back through the
+    /// wide one, which shares the model's memory: a burst of two beats
+    /// from an address inside the first, each beat eight words with the
+    /// lowest address in bits 31:0, one beat a step (issue 1696).
+    #[test]
+    fn a_wide_read_streams_what_was_written() {
+        let Link {
+            host,
+            host_in,
+            host_out,
+            per_in,
+            per_out,
+            ..
+        } = axi::<32, 32, 4, 5, 32>();
+        let (aw, ar, w, _, _) = per_in;
+        let (_, _, b, r) = per_out;
+        let bits = || signal::<Bit, DefaultClock>().0;
+        let mut h = AxiHost::<32, 32, 4, 5, 32>::default();
+        let mut mem = Ddr3Per::default();
+        let mut wide = WideRead::<5>::on(mem.ctl.memory());
+        let (wide_ar, wide_ar_rx) = chan::<Ar<32, 5>, DefaultClock>();
+        let (wide_r_tx, wide_r) = chan::<R<256, 5, 2>, DefaultClock>();
+        let now = Rc::new(Cell::new(0u32));
+        let got = Rc::new(RefCell::new(Vec::new()));
+        let (at, into) = (now.clone(), got.clone());
+        let words: Vec<U<32>> =
+            (0..16u32).map(|k| U::from(0x1000_0000 + k)).collect();
+        let burst = words.clone();
+        let client = async move {
+            let a = host.write(Wr::at(0x4000_1000u32), &burst).await;
+            assert_eq!(a.done().await.resp, Resp::Okay);
+            wide_ar
+                .put(|| Ar {
+                    id: U::new(3),
+                    addr: U::new(0x4000_1004),
+                    len: U::new(1),
+                    ..Default::default()
+                })
+                .await;
+        };
+        let sink = async move {
+            loop {
+                let beat = wide_r.wait().await;
+                into.borrow_mut().push((at.get(), beat));
+            }
+        };
+        let mut sim = Running::new(join2(
+            h.run(host_in, host_out),
+            join2(
+                mem.run(
+                    (signal::<Bit, DefaultClock>().1, aw, ar, w, b, r),
+                    (
+                        signal::<Bit, DefaultClock>().1,
+                        signal::<Bit, DefaultClock>().1,
+                        bits(),
+                        bits(),
+                        bits(),
+                        bits(),
+                        bits(),
+                        bits(),
+                        bits(),
+                        bits(),
+                        bits(),
+                        bits(),
+                        bits(),
+                        signal::<U<15>, DefaultClock>().0,
+                        signal::<U<3>, DefaultClock>().0,
+                        signal::<U<4>, DefaultClock>().0,
+                        bits(),
+                        pad::<U<32>, DefaultClock>(),
+                        pad::<U<4>, DefaultClock>(),
+                        pad::<U<4>, DefaultClock>(),
+                    ),
+                ),
+                join2(client, join2(wide.run(wide_ar_rx, wide_r_tx), sink)),
+            ),
+        ));
+        for c in 0..2000u32 {
+            now.set(c);
+            sim.cycle();
+        }
+        let got = got.borrow();
+        assert_eq!(got.len(), 2, "two beats");
+        assert_eq!(got[1].0, got[0].0 + 1, "one beat a step");
+        for (k, (_, beat)) in got.iter().enumerate() {
+            let mut limbs = [0u128; 2];
+            for j in 0..8 {
+                limbs[j / 4] |= words[8 * k + j].raw() << (32 * (j % 4));
+            }
+            assert_eq!(beat.data.limbs(), limbs, "beat {k}");
+            assert_eq!(beat.id.raw(), 3);
+            assert_eq!(beat.resp, Resp::Okay);
+            assert_eq!(beat.last.to_bool(), k == 1);
+        }
     }
 
     /// The netlist holds the controller as an instance of the wrapper,
