@@ -7,7 +7,7 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_static_library", "rust_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//cpu/vreteno/cpp:defs.bzl", "vreteno_c_program")
-load("//cpu/vreteno/rust:defs.bzl", "vreteno_checked", "vreteno_static")
+load("//cpu/vreteno/rust:defs.bzl", "CORE_ONLY", "vreteno_checked", "vreteno_static")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -413,6 +413,7 @@ rust_static_library(
         "-Cpanic=abort",
     ],
     tags = ["manual"],
+    target_compatible_with = CORE_ONLY,
     deps = [
         ":capi",
         ":egl",

@@ -12,6 +12,17 @@ built by hand with a flag.
 
 load("//tools:rust_checks.bzl", "RUST_CHECK_ASPECTS", "rust_check_groups")
 
+# What a target built only for the core is compatible with: the
+# constraints of the core's platform, `//cpu/vreteno/rust:vreteno`. A
+# program or library for the core says so, so that one named on its
+# own, which builds it for the machine running the build, is refused
+# as incompatible rather than failing on its inline assembly (issue
+# 1691); the vreteno_* rules' transition builds it on the platform.
+CORE_ONLY = [
+    "@platforms//cpu:riscv32",
+    "@platforms//os:none",
+]
+
 # The flags every crate built for the core is compiled with, the
 # programs' own and every library they link alike: the HAL's, which
 # the programs' `VRETENO_FLAGS` repeat. A library that set none was
