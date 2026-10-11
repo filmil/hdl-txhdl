@@ -440,9 +440,9 @@ static void blended_white(void) {
  * a pixel wide, so a pixel is held to the exact coverage within 40 of
  * 255, which an aliased square fails at every edge. */
 static void smooth_points(void) {
-  static const double sizes[3] = {3.0, 8.5, 1.0};
+  static const double sizes[4] = {3.0, 8.5, 1.0, 1.5};
   char name[64];
-  for (int k = 0; k < 3; k++) {
+  for (int k = 0; k < 4; k++) {
     disc_x = 200.3 + 100 * k, disc_y = 150.6, disc_r = sizes[k] / 2;
     blended_white();
     glEnable(GL_POINT_SMOOTH);
@@ -455,9 +455,10 @@ static void smooth_points(void) {
     read_window();
     covering = in_disc;
     snprintf(name, sizeof name, "point_smooth_%d", k);
-    /* The point of a pixel, all rim, is held within 20: its alpha is
-     * scaled to the disc's area, and unscaled it is at least 34 off. */
-    report(name, window_is(want_covered, k == 2 ? 20 : 40));
+    /* The points of one pixel and of one and a half, whose alpha is
+     * scaled by the disc's area while that is under a pixel, are held
+     * within 16; unscaled, the point of one pixel is at least 34 off. */
+    report(name, window_is(want_covered, k >= 2 ? 16 : 40));
   }
 }
 
@@ -514,11 +515,13 @@ static void smooth_line_colour(void) {
   int ok = 1;
   for (int x = 201; x <= 203 && ok; x++) {
     double t = (x - 200) / 4.0;
-    ok = near(at(x, 400, 0), 255 * (1 - t), 8) && near(at(x, 400, 1), 0, 8) &&
-         near(at(x, 400, 2), 255 * t, 8);
-    if (!ok)
-      first_x = x, first_y = 400, first_got = at(x, 400, 0),
-      first_want = (int)lround(255 * (1 - t));
+    double want[3] = {255 * (1 - t), 0, 255 * t};
+    for (int c = 0; c < 3 && ok; c++)
+      if (!near(at(x, 400, c), want[c], 8)) {
+        ok = 0;
+        first_x = x, first_y = 400, first_got = at(x, 400, c);
+        first_want = (int)lround(want[c]);
+      }
   }
   report("line_smooth_colour", ok);
 }
