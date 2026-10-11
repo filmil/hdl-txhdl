@@ -151,13 +151,15 @@ pub enum Op {
 }
 
 /// How entries are textured (issue 997): the byte address of the texture's
-/// descriptor, the environment, `razboj_tile::tex::REPLACE` to `ADD`, and
-/// the environment's colour, `0xAARRGGBB`.
+/// descriptor, the environment, `razboj_tile::tex::REPLACE` to `COMBINE`,
+/// the environment's colour, `0xAARRGGBB`, and under `COMBINE` its
+/// settings as `razboj_tile::tex::Combine::word` packs them (#1512).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TexMode {
     pub desc: u32,
     pub env: u32,
     pub env_colour: u32,
+    pub combine: u32,
 }
 
 /// How an entry blends (issue 993): GL ES 1.1's `glBlendFunc`, the
@@ -424,6 +426,9 @@ pub struct Insn {
     pub tdesc: U<32>,
     pub tenv: U<3>,
     pub tenvc: U<32>,
+    /// `COMBINE`'s settings (#1512), in the second texture slot's word
+    /// 14, which the other environments leave nought.
+    pub tcomb: U<32>,
     pub lodk: U<8>,
     pub nux: U<32>,
     pub nuxd: U<32>,
@@ -932,6 +937,7 @@ pub fn assemble(ops: &[Op], sw: usize, sh: usize) -> Vec<Insn> {
                         insn.tdesc = U::from(t.desc);
                         insn.tenv = U::from(t.env);
                         insn.tenvc = U::from(t.env_colour);
+                        insn.tcomb = U::from(t.combine);
                     }
                     out.push(insn);
                 }

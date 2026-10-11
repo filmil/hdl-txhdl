@@ -99,6 +99,7 @@ fn main() {
             desc: DESC,
             env: BLEND,
             env_colour: 0xff20_80c0,
+            combine: 0,
         })),
         tri(0, 1, 2),
         tri(0, 2, 3),

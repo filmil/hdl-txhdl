@@ -1490,6 +1490,7 @@ mod tests {
                     desc: DESC,
                     env: round % 5,
                     env_colour: next(),
+                    combine: 0,
                 })),
             ];
             let fogged = round % 4 == 3;
@@ -1634,6 +1635,7 @@ mod tests {
                     desc: DESC,
                     env: 0,
                     env_colour: 0,
+                    combine: 0,
                 })),
             ];
             for (a, b, c) in
