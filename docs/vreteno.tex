@@ -2716,11 +2716,12 @@ own, as the SD card's share the sixth, and the fourth is the board
 top's. The reason against nesting does not apply here either: the
 fetch engine only reads and the store engine only writes, and the
 arbiter keeps the turns of reads and writes apart, so the two never
-contend for one. Each engine has one bit of identifier and two bursts
+contend for a turn there; past it they share the memory as before. Each engine has one bit of identifier and two bursts
 in flight rather than four. The board top's host has the port whole,
-two bits of identifier, and leaves the unit as ports beside the third
-slot's, its registers on that slot and its interrupt on \code{irq}; a
-top with nothing there ties it off. Its writes into the DDR3 pass the
+two bits of identifier, and leaves the unit as ports, as the third
+slot does: a design beside the core puts its registers on that slot and
+drives its interrupt on \code{irq}, and its reads and writes go
+through the port. A top with nothing there ties it off. Its writes into the DDR3 pass the
 snoop, which tells each hart of the lines another host wrote.
 \code{the\_board\_tops\_host\_writes\_and\_reads\_the\_ddr3} writes a
 burst through the port and reads it back, and
