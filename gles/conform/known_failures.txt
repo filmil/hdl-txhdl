@@ -2,20 +2,3 @@
 # that records it. conform_test fails on a failure not listed here, and on
 # one listed here that passes.
 state.MAX_TEXTURE_UNITS                  #1510
-state.COMBINE_RGB                        #1512
-state.COMBINE_ALPHA                      #1512
-state.SRC0_RGB                           #1512
-state.SRC1_RGB                           #1512
-state.SRC2_RGB                           #1512
-state.SRC0_ALPHA                         #1512
-state.SRC1_ALPHA                         #1512
-state.SRC2_ALPHA                         #1512
-state.OPERAND0_RGB                       #1512
-state.OPERAND1_RGB                       #1512
-state.OPERAND2_RGB                       #1512
-state.OPERAND0_ALPHA                     #1512
-state.OPERAND1_ALPHA                     #1512
-state.OPERAND2_ALPHA                     #1512
-state.RGB_SCALE                          #1512
-state.ALPHA_SCALE                        #1512
-errors.tex_env_scale                     #1512
