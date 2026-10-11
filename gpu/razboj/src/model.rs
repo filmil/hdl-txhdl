@@ -300,7 +300,12 @@ pub fn render_textured(
                     let ct = crate::tex::sample(d, u, v, l, t.mem);
                     let mode = op.tenv.raw() as u32;
                     let cc = op.tenvc.raw() as u32;
-                    src = crate::tex::env(mode, d.class, src, ct, cc);
+                    src = if mode == razboj_tile::tex::COMBINE {
+                        let w = op.tcomb.raw() as u32;
+                        crate::tex::combine(w, src, ct, cc)
+                    } else {
+                        crate::tex::env(mode, d.class, src, ct, cc)
+                    };
                 }
                 if fogged {
                     let (i, j) = (x - x0, y - y0);
