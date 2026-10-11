@@ -9,6 +9,7 @@
 # watched the same way, by a script run there over ssh.
 load("@rules_go//go:def.bzl", "go_binary", "go_test")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("@rules_vivado//build/vivado:rules.bzl", "vivado_extract")
 
 package(default_visibility = ["//visibility:public"])
@@ -119,4 +120,32 @@ sh_binary(
         "@bazel_tools//tools/bash/runfiles",
     ],
     tags = ["manual"],
+)
+
+# The scripts find their files by the repository's apparent name, so
+# that they run from a module that depends on TxHDL as well (issue
+# 1677): each file they look up resolves so, and none is looked up as
+# `_main/...`. hw_server's bundle is left out, since it comes out of
+# the Vivado installation; its script looks it up the same way.
+sh_test(
+    name = "runfiles_test",
+    size = "small",
+    srcs = ["runfiles_test.sh"],
+    args = [
+        "txhdl/docs/demos.tsv",
+        "txhdl/cpu/vreteno/board/remote/load",
+        "txhdl/cpu/vreteno/board/remote/hw_server_remote.sh",
+        "txhdl/cpu/vreteno/board/remote/load_bin_/load_bin",
+        "txhdl/cpu/vreteno/board/remote/serial_bin_/serial_bin",
+    ],
+    data = [
+        "demos.sh",
+        "hw_server.sh",
+        "hw_server_remote.sh",
+        "load.sh",
+        "serial.sh",
+        ":demos",
+        ":serial",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
 )
