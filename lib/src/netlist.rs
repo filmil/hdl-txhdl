@@ -3711,8 +3711,9 @@ impl Lowered {
         for (t, w, e) in &temps {
             // A signed product: the narrow operands as `signed`, a
             // zero-extended one with a zero above it, multiplied at
-            // their own widths and resized to the wire's, which only
-            // extends, since the wire is at least as wide (issue 1649).
+            // their own widths and resized to the wire's, which drops
+            // at most the zero's bit, equal to the sign, since the wire
+            // is at least as wide as the narrow values (issue 1649).
             if let Some((x, y)) =
                 signed_product(e, self).filter(|_| is_signed_mul(t))
             {
@@ -3721,7 +3722,7 @@ impl Lowered {
                     if s {
                         format!("signed({})", hval(v, n, self))
                     } else {
-                        format!("signed('0' & {})", hval(v, n, self))
+                        format!("signed('0' & ({}))", hval(v, n, self))
                     }
                 };
                 comb.push(format!(
@@ -4197,11 +4198,13 @@ fn chain(
 /// A product the emitters write at its operands' own widths (issue
 /// 1649): `a * b` where each operand is a sign or zero extension of a
 /// narrower value, at least one of them a sign extension, and the
-/// product is at least as wide as the two operands' signed widths
-/// together, a zero-extended one counting a bit more for its sign, so
-/// that the signed product of the narrow values is the whole product
-/// and no bit of it is cut. Each operand comes back as the narrow value
-/// and whether it is signed.
+/// product is at least as wide as the two narrow values together. A
+/// product of an N-bit and an M-bit value, either signed and the other
+/// signed or not, fits in N + M signed bits, so at that width or more
+/// it is the whole product: VHDL's resize of a signed value, which
+/// keeps the sign bit, then drops only bits equal to it, and Verilog
+/// extends both operands to the width by their signs. Each operand
+/// comes back as the narrow value and whether it is signed.
 fn signed_product<'a>(
     e: &'a Expr,
     l: &'a Lowered,
@@ -4235,8 +4238,7 @@ fn signed_product<'a>(
     if !x.1 && !y.1 {
         return None;
     }
-    let width = |(v, s): (&Expr, bool)| l.ewidth(v) + usize::from(!s);
-    (l.ewidth(e) >= width(x) + width(y)).then_some((x, y))
+    (l.ewidth(e) >= l.ewidth(x.0) + l.ewidth(y.0)).then_some((x, y))
 }
 
 /// Whether the hoisting pass made `t` a signed product's wire.
