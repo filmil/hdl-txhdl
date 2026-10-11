@@ -2223,12 +2223,12 @@ impl<'a> Gl<'a> {
         // A point's brightest pixel can be covered no more than its disc
         // is large: a point of a pixel covers pi / 4 of one. So the alpha
         // is scaled by the disc's area in pixels, pi r squared over 256
-        // in sixteenths, while that is under one, which it is only below
-        // a pixel and an eighth across; the rim alone would put the full
-        // alpha at its middle.
+        // in sixteenths, rounded, while that is under one, which it is up
+        // to a pixel and an eighth across; the rim alone would put the
+        // full alpha at its middle.
         let col = colour_word(&v.col);
         let area = (804 * r * r).min(65536);
-        let al = (col >> 24) as i64 * area / 65536;
+        let al = ((col >> 24) as i64 * area + 32768) / 65536;
         let col = (col & 0x00ff_ffff) | (al as u32) << 24;
         let z = self.window_z(v);
         let (inner, outer) =
