@@ -7,7 +7,10 @@
 # standard library by checksum as it fetches everything else, and
 # nothing is installed on the machine. The linker is `rust-lld`, which
 # comes with the toolchain, so there is no cross binutils either.
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load(":defs.bzl", "vreteno_elf", "vreteno_fastboot", "vreteno_flat", "vreteno_image")
 load("//tools:opt_test.bzl", "opt_test")
 
@@ -44,6 +47,63 @@ VRETENO_FLAGS = [
     "-Clink-arg=-T$(execpath :vreteno.ld)",
 ]
 
+# The linker script of a program loaded into the board's memory:
+# `vreteno_ram.ld`, or with `--//cpu/vreteno/rust:hot_first` the same
+# with the functions a GL frame spends its instructions in laid out
+# first, hottest first, so that they collide less in the core's
+# direct-mapped instruction cache (#1679). Off by default: what it is
+# worth on the board waits on the board's miss penalty, which #1679
+# asks for. `hot_text.ld` is the list, which `:hot_text` writes from a
+# profile; a target using the flags below lists this in its
+# `compile_data`.
+bool_flag(
+    name = "hot_first",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "hot_first_on",
+    flag_values = {":hot_first": "True"},
+)
+
+genrule(
+    name = "vreteno_ram_hot",
+    srcs = [
+        "vreteno_ram.ld",
+        "hot_text.ld",
+    ],
+    outs = ["vreteno_ram_hot.ld"],
+    cmd = "sed '/\\*(\\.text\\.init)/r $(location hot_text.ld)' " +
+          "$(location vreteno_ram.ld) > $@",
+)
+
+alias(
+    name = "vreteno_ram_ld",
+    actual = select({
+        ":hot_first_on": ":vreteno_ram_hot",
+        "//conditions:default": "vreteno_ram.ld",
+    }),
+)
+
+# Writes `hot_text.ld` from a program and the machine's profile of it:
+#   bazel run //cpu/vreteno/rust:hot_text -- ELF PROFILE...
+sh_binary(
+    name = "hot_text",
+    srcs = ["hot_text.sh"],
+    args = ["$(rootpath @riscv_none_elf_gcc//:objdump)"],
+    data = ["@riscv_none_elf_gcc//:objdump"],
+)
+
+# The hot script keeps the start first, where the loader enters a
+# program, and puts every pattern of the list after it and before the
+# rest of the text.
+sh_test(
+    name = "hot_first_test",
+    srcs = ["hot_first_test.sh"],
+    args = ["$(rootpath :vreteno_ram_hot)"],
+    data = [":vreteno_ram_hot"],
+)
+
 # The same, for a program that is loaded into the board's memory and
 # runs there rather than living in the netlist.
 VRETENO_RAM_FLAGS = [
@@ -52,7 +112,7 @@ VRETENO_RAM_FLAGS = [
     "-Coverflow-checks=no",
     "-Cpanic=abort",
     "-Clinker=rust-lld",
-    "-Clink-arg=-T$(execpath :vreteno_ram.ld)",
+    "-Clink-arg=-T$(execpath :vreteno_ram_ld)",
     # A program loaded into the DDR3 reports its own faults (issue 1413).
     "--cfg=vreteno_ram",
 ]
@@ -272,7 +332,7 @@ rust_library(
 rust_binary(
     name = "phydelay_ram",
     srcs = ["phydelay.rs"],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
@@ -321,7 +381,7 @@ rust_library(
 rust_binary(
     name = "phyregs_ram",
     srcs = ["phyregs.rs"],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
@@ -370,7 +430,7 @@ rust_library(
 rust_binary(
     name = "sdprobe_ram",
     srcs = ["sdprobe.rs"],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
@@ -446,7 +506,7 @@ rust_library(
 rust_binary(
     name = "flashid_ram",
     srcs = ["flashid.rs"],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
@@ -492,7 +552,7 @@ rust_library(
 rust_binary(
     name = "steps_ram",
     srcs = ["steps.rs"],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
@@ -537,7 +597,7 @@ rust_library(
 rust_binary(
     name = "ddr3bw_ram",
     srcs = ["ddr3bw.rs"],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
@@ -580,7 +640,7 @@ rust_library(
 rust_binary(
     name = "cpi_ram",
     srcs = ["cpi.rs"],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
@@ -627,7 +687,7 @@ rust_library(
 rust_binary(
     name = "eglboard_ram",
     srcs = ["eglboard.rs"],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     crate_root = "eglboard.rs",
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
@@ -675,7 +735,7 @@ rust_library(
 rust_binary(
     name = "ddr3ram_ram",
     srcs = ["ddr3ram.rs"],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
@@ -747,7 +807,7 @@ rust_library(
 rust_binary(
     name = "gdbprobe",
     srcs = ["gdbprobe.rs"],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
@@ -773,7 +833,7 @@ vreteno_flat(
 rust_binary(
     name = "hello_ram",
     srcs = ["hello.rs"],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
@@ -801,7 +861,7 @@ vreteno_fastboot(
 rust_binary(
     name = "trng_ram",
     srcs = ["trng.rs"],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS + ["--cfg=board_run"],
     tags = ["manual"],
@@ -828,7 +888,7 @@ rust_binary(
         "ico_hdmi.rs",
         "ico_list.rs",
     ],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     crate_root = "ico_hdmi.rs",
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
@@ -855,7 +915,7 @@ rust_binary(
         "ico_hdmi.rs",
         "ico_list.rs",
     ],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     crate_root = "ico_hdmi.rs",
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS + ["--cfg=gl"],
@@ -884,7 +944,7 @@ rust_binary(
         "ico_hdmi.rs",
         "ico_list.rs",
     ],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     crate_root = "ico_hdmi.rs",
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS + [
@@ -917,7 +977,7 @@ rust_binary(
         "ico_hdmi.rs",
         "ico_list.rs",
     ],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     crate_root = "ico_hdmi.rs",
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS + [
@@ -952,7 +1012,7 @@ rust_binary(
         "ico_hdmi.rs",
         "ico_list.rs",
     ],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     crate_root = "ico_hdmi.rs",
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS + [
@@ -984,7 +1044,7 @@ rust_binary(
         "ico_hdmi.rs",
         "ico_list.rs",
     ],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     crate_root = "ico_hdmi.rs",
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS + [
@@ -1014,7 +1074,7 @@ rust_binary(
         "ico_hdmi.rs",
         "ico_list.rs",
     ],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     crate_root = "ico_hdmi.rs",
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS + [
@@ -1045,7 +1105,7 @@ rust_binary(
         "ico_hdmi.rs",
         "ico_list.rs",
     ],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     crate_root = "ico_hdmi.rs",
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS + [
@@ -1323,7 +1383,7 @@ rust_binary(
 rust_binary(
     name = "scanprobe_ram",
     srcs = ["scanprobe.rs"],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
@@ -1347,7 +1407,7 @@ vreteno_flat(
 rust_binary(
     name = "fbtime_ram",
     srcs = ["fbtime.rs"],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
@@ -1372,7 +1432,7 @@ rust_binary(
         "razprobe.rs",
         "razprobe_list.rs",
     ],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     crate_root = "razprobe.rs",
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
@@ -1398,7 +1458,7 @@ rust_binary(
         "shadeprobe.rs",
         "shadeprobe_list.rs",
     ],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     crate_root = "shadeprobe.rs",
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
@@ -1443,7 +1503,7 @@ rust_test(
 rust_binary(
     name = "remote_ram",
     srcs = ["remote.rs"],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
@@ -1570,7 +1630,7 @@ filegroup(
 rust_binary(
     name = "ethrx_ram",
     srcs = ["ethrx.rs"],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
@@ -1586,7 +1646,7 @@ vreteno_flat(
 rust_binary(
     name = "ethtx_ram",
     srcs = ["ethtx.rs"],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS + ["--cfg=board_run"],
     tags = ["manual"],
@@ -1604,7 +1664,7 @@ vreteno_flat(
 rust_binary(
     name = "ethperf_ram",
     srcs = ["ethperf.rs"],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
@@ -1625,7 +1685,7 @@ vreteno_flat(
 rust_binary(
     name = "ethirq_ram",
     srcs = ["ethirq.rs"],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
     tags = ["manual"],
@@ -1651,7 +1711,7 @@ rust_binary(
         "ico_gl.rs",
         "ico_list.rs",
     ],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     crate_root = "ico_cost.rs",
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
@@ -1679,7 +1739,7 @@ rust_binary(
         "ico_list.rs",
         "ico_split.rs",
     ],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     crate_root = "ico_split.rs",
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
@@ -1704,7 +1764,7 @@ vreteno_flat(
 rust_binary(
     name = "costs_ram",
     srcs = ["costs.rs"],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     crate_root = "costs.rs",
     edition = "2021",
     rustc_flags = VRETENO_RAM_FLAGS,
@@ -1771,7 +1831,7 @@ _DEMO_ICO = [
             "ico_hdmi.rs",
             "ico_list.rs",
         ],
-        compile_data = ["vreteno_ram.ld"],
+        compile_data = [":vreteno_ram_ld"],
         crate_root = "ico_hdmi.rs",
         edition = "2021",
         rustc_env = {
@@ -1812,7 +1872,7 @@ rust_binary(
         "ico_list.rs",
         "teapot.rs",
     ],
-    compile_data = ["vreteno_ram.ld"],
+    compile_data = [":vreteno_ram_ld"],
     crate_root = "ico_hdmi.rs",
     edition = "2021",
     rustc_env = {
