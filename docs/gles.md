@@ -49,7 +49,7 @@ A later issue means the entry point is accepted from the start but does what tha
 | Blending and masks | `glBlendFunc`, `glAlphaFuncx`, `glColorMask`, `glLogicOp`; `GL_COLOR_LOGIC_OP` | Now, from #993, drawn in a tile table; the logic operations from #998 |
 | Fog | `glFogx`, `glFogxv`; `GL_FOG` | From #998, drawn in a tile table, its factor worked out at each vertex |
 | Stencil | `glStencilFunc`, `glStencilOp`, `glStencilMask`, `glClearStencil`; `GL_STENCIL_TEST` | From #998, 8 bits, drawn in a tile table |
-| Textures | `glGenTextures`, `glDeleteTextures`, `glBindTexture`, `glTexImage2D`, `glTexParameteri`, `glTexParameterx`, `glTexEnvi`, `glTexEnvx`, `glTexEnvxv`, `glTexCoordPointer`, `glMultiTexCoord4x`, `glActiveTexture`, `glClientActiveTexture`, `glPixelStorei`; `GL_TEXTURE_2D` and `GL_TEXTURE_COORD_ARRAY` | From #997, one unit, drawn in a tile table; the rasteriser samples under every filter, mipmapped, and every environment but `GL_COMBINE`, as Razboj's model does |
+| Textures | `glGenTextures`, `glDeleteTextures`, `glBindTexture`, `glTexImage2D`, `glTexParameteri`, `glTexParameterx`, `glTexEnvi`, `glTexEnvx`, `glTexEnvxv`, `glTexCoordPointer`, `glMultiTexCoord4x`, `glActiveTexture`, `glClientActiveTexture`, `glPixelStorei`; `GL_TEXTURE_2D` and `GL_TEXTURE_COORD_ARRAY` | From #997, one unit, drawn in a tile table; the rasteriser samples under every filter, mipmapped, and every environment but `GL_COMBINE`, as Razboj's model does; `GL_COMBINE` from #1512, which the model draws and the rasteriser does not yet |
 | Points and lines | `glPointSizex`, `glLineWidthx`, `glPointParameterx` and `xv`, `glPointSizePointerOES`, and the point and line modes of the draw calls; `GL_POINT_SPRITE_OES` and `GL_COORD_REPLACE_OES` | Now, from issue 994; point sprites from #998; point parameters from #1508; the point size array from #1507 |
 | Switches | `glEnable`, `glDisable`, `glIsEnabled` for `GL_LIGHTING`, `GL_LIGHT0` to `GL_LIGHT7`, `GL_CULL_FACE`, `GL_NORMALIZE`, `GL_RESCALE_NORMAL`, `GL_COLOR_MATERIAL`, `GL_CLIP_PLANE0`, `GL_DEPTH_TEST`, `GL_BLEND`, `GL_ALPHA_TEST`, `GL_DITHER`, `GL_SCISSOR_TEST`, `GL_FOG`, `GL_STENCIL_TEST`; and the rest as the issues above land | Now, and growing |
 | Queries and errors | `glGetError`, `glGetIntegerv`, `glGetFixedv`, `glGetBooleanv`, `glGetString`, `glGetPointerv`, `glGetLightxv`, `glGetMaterialxv`, `glGetTexParameteriv`, `glGetTexParameterxv`, `glGetTexEnviv`, `glGetTexEnvxv`, `glGetClipPlanex` | Now, the queries from #1484 (section 10), the parameters' from #1511 |
@@ -405,12 +405,11 @@ Antialiased points and lines are held to each pixel's coverage, sampled 8 by 8, 
 The largest difference is under 33, on the 8.5 pixel point; the points of 1 and 1.125 pixels, which are scaled, are held within 16, and the point of 1.5 pixels, which is not, within 20; the point of one pixel misses unscaled by at least 34.
 A four-pixel line shaded from red to blue is read at its three inner pixels, each within 8 of the mix a quarter, a half and three quarters along.
 The fourth is four of piglit's ES 1 tests, in `gles/conform/piglit`, ported with their float calls made fixed point for Common-Lite, each change marked.
-Of 203 state checks, 186 pass; of 100 error checks, 99; of 93 rendering checks, 93; and of piglit's four, four. The 18 failures fall under two issues:
+Of 203 state checks, 202 pass; of 100 error checks, 100; of 93 rendering checks, 93; and of piglit's four, four. The one failure falls under one issue:
 
 | Issue | Checks | What is missing or wrong |
 |---|---|---|
 | #1510 | 1 | A second texture unit |
-| #1512 | 17 | `GL_COMBINE`, its state and its scales |
 
 On the board the same programs run on the core against Razboj, built as `//gles:conform_board` and sent by fastboot (`docs/board-checks.md`), and the suite runs to its count in about five minutes.
 hil's run of 2026-10-10 (main 2499d950 on flagship 7d9fbdd6) gave 344 of 390, the host's failures and two more: `render.read_keeps_depth` and `render.read_keeps_stencil`, whose fix the board's machine undid by laying its tile table over the frame GL kept (#1596).
@@ -440,11 +439,12 @@ The library looks every index up when it uploads and stores the texels as `glTex
 A level's indices are packed with no padding, two 4-bit indices a byte with the first in the high bits, and the next level starts on a byte.
 `the_paletted_formats_upload_as_gl_says` uploads each of the ten formats with four levels and holds every texel to GL's conversion of its entry.
 A textured triangle carries two slots after its pixel's: the byte address of the texture's descriptor, its environment and colour, `s/w`, `t/w` and `1/w` as planes across the window in 64 bits, and the numerators Razboj takes the level of detail from.
+Under `GL_COMBINE` (#1512) the second slot also carries the combiner's settings, its two functions, each argument's source and operand and its two scales, in one word, which `glTexEnv` sets and `glGetTexEnv` reads back as GL's enumerants; the rasteriser does not combine yet, so on the board such a triangle is drawn wrongly until #1512's third step teaches it.
 The emitter works them out as Razboj's assembler does, bit for bit, which `//gles:model_test` holds it to.
 Texture coordinates go through the texture matrix, and points and lines are drawn untextured for now.
 A textured frame is binned into a tile table as one that tests depth is; each entry names its descriptor by address, so Razboj needs nothing else to find it.
-`//gles:texture_test` draws a floor in perspective under each of six pairs of filters and the five environments, through Razboj's model, and holds it pixel by pixel to a reference that runs GL's pipeline in f64.
-Each of 77,760 pixels is within 3 a channel of what GL gives within the sixteenth of a pixel a snapped vertex moves, at a level of detail within 0.010 of GL's.
+`//gles:texture_test` draws a floor in perspective under each of six pairs of filters and the six environments, the sixth a `GL_COMBINE` the five cannot express, through Razboj's model, and holds it pixel by pixel to a reference that runs GL's pipeline in f64.
+Each of 96,984 pixels is within 3 a channel of what GL gives within the sixteenth of a pixel a snapped vertex moves, at a level of detail within 0.012 of GL's.
 `//gles:egl_test` uploads a texture through the C entry points into the machine's room and draws it through EGL.
 
 The scissor is issue 1490's, done in the library: while `GL_SCISSOR_TEST` is on, every entry's box, and a clear, is clipped to the window and the scissor's box, turned over from GL's rows, which count up from the window's bottom; a scissored clear is a rectangle of the box, and an empty box draws nothing.
