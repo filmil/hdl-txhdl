@@ -404,7 +404,7 @@ Antialiased points and lines are held to each pixel's coverage, sampled 8 by 8, 
 The largest difference is under 33, on the 8.5 pixel point; the points of 1 and 1.125 pixels, which are scaled, are held within 16, and the point of 1.5 pixels, which is not, within 20; the point of one pixel misses unscaled by at least 34.
 A four-pixel line shaded from red to blue is read at its three inner pixels, each within 8 of the mix a quarter, a half and three quarters along.
 The fourth is four of piglit's ES 1 tests, in `gles/conform/piglit`, ported with their float calls made fixed point for Common-Lite, each change marked.
-Of 203 state checks, 173 pass; of 100 error checks, 99; of 93 rendering checks, 93; and of piglit's four, two. The 33 failures fall under five issues:
+Of 203 state checks, 176 pass; of 100 error checks, 99; of 93 rendering checks, 93; and of piglit's four, three. The 29 failures fall under four issues:
 
 | Issue | Checks | What is missing or wrong |
 |---|---|---|
@@ -412,7 +412,6 @@ Of 203 state checks, 173 pass; of 100 error checks, 99; of 93 rendering checks, 
 | #1508 | 5 | `glPointParameterx`, without which piglit's point sprite test draws nothing |
 | #1510 | 1 | A second texture unit |
 | #1512 | 17 | `GL_COMBINE`, its state and its scales |
-| #1522 | 4 | `OES_matrix_get`'s queries, a core addition |
 
 On the board the same programs run on the core against Razboj, built as `//gles:conform_board` and sent by fastboot (`docs/board-checks.md`), and the suite runs to its count in about five minutes.
 hil's run of 2026-10-10 (main 2499d950 on flagship 7d9fbdd6) gave 344 of 390, the host's failures and two more: `render.read_keeps_depth` and `render.read_keeps_stencil`, whose fix the board's machine undid by laying its tile table over the frame GL kept (#1596).
@@ -421,6 +420,7 @@ With that fixed the board and the host should agree check for check, and every f
 The queries are issue 1484's.
 `glGetIntegerv`, `glGetFixedv` and `glGetBooleanv` answer every name the library keeps state for: the viewport and the depth range, the matrix mode, the three matrices and their stacks' depths, the current colour, normal and texture coordinates, the clears, the depth, blend, alpha test and colour mask settings, the faces and the shading, the point size and the line width, the bound texture, the unpack alignment, the light model, and every switch `glIsEnabled` knows.
 The multisampling state is kept with no multisample buffer, where it changes nothing drawn (#1509): `GL_MULTISAMPLE` on at first, the three sample switches off, `glSampleCoveragex`'s value and invert, and no sample buffers and no samples.
+`glGetIntegerv` also gives the three matrices as the bits of the single-precision floats their elements are, `OES_matrix_get`'s queries, a core addition in ES 1.1 (Table C.2, #1522): each 16.16 element is the nearest float.
 They also give the limits: the stacks, 8 lights, 1 clip plane, textures to 1024, 1 texture unit, 4 bits under the pixel, 8 bits a channel, 16 of depth and 8 of stencil, and sizes from 1 to 64.
 Each finds its values once, in the kind GL keeps them in, and each call converts them as GL ES 1.1's section 6.1.2 says.
 A boolean is one or nought; a fixed value asked for as an integer is rounded; a colour, a normal, a depth range, the depth's clear value and the alpha reference asked for as integers map minus one to one onto the integers' whole range; an integer asked for as fixed is that many ones; and anything not nought is true.
