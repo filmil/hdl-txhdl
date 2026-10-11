@@ -483,16 +483,16 @@ impl<'a> Gl<'a> {
     /// `glGetFixedv` (#1484), the same in 16.16.
     pub fn get_fixed(&mut self, pname: u32, out: &mut [Fx]) {
         match self.get(pname) {
-            Some(g) => g.fixed(out),
-            None => self.fail(gl::INVALID_ENUM),
+            Some(g) if g.kind != get::Kind::Bits => g.fixed(out),
+            _ => self.fail(gl::INVALID_ENUM),
         }
     }
 
     /// `glGetBooleanv` (#1484), the same as booleans.
     pub fn get_boolean(&mut self, pname: u32, out: &mut [bool]) {
         match self.get(pname) {
-            Some(g) => g.booleans(out),
-            None => self.fail(gl::INVALID_ENUM),
+            Some(g) if g.kind != get::Kind::Bits => g.booleans(out),
+            _ => self.fail(gl::INVALID_ENUM),
         }
     }
 

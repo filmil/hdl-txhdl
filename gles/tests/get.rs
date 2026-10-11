@@ -326,3 +326,64 @@ fn the_parameters_read_back_as_set() {
     assert_eq!(g.get_clip_plane(gl::CLIP_PLANE0 + 1), None);
     assert_eq!(g.get_error(), gl::INVALID_ENUM, "one plane");
 }
+
+/// `OES_matrix_get` (#1522): each matrix as the bits of the
+/// single-precision floats its 16.16 elements are, the nearest float
+/// where one has fewer bits than the element, a tie to the even one;
+/// the identity at first; and `glGetFixedv` and `glGetBooleanv` refuse
+/// the three names, writing nothing.
+#[test]
+fn the_matrices_read_back_as_float_bits() {
+    let mut frame = vec![[0u32; WORDS]; 4];
+    let mut g = context(&mut frame);
+    let names = [
+        (gl::MODELVIEW, name::MODELVIEW_MATRIX_FLOAT_AS_INT_BITS_OES),
+        (
+            gl::PROJECTION,
+            name::PROJECTION_MATRIX_FLOAT_AS_INT_BITS_OES,
+        ),
+        (gl::TEXTURE, name::TEXTURE_MATRIX_FLOAT_AS_INT_BITS_OES),
+    ];
+    let one = 1.0f32.to_bits() as i32;
+    for (_, pname) in names {
+        let got = ints(&mut g, pname, 16);
+        for (k, &v) in got.iter().enumerate() {
+            let want = if k % 5 == 0 { one } else { 0 };
+            assert_eq!(v, want, "{pname:04x} at first, element {k}");
+        }
+    }
+    // Between 256 and 512 a float's step is 2^-15, two of 16.16's, so
+    // 256 + 2^-16 lies half way and goes down to the even 256, and
+    // 256 + 3 2^-16 goes up to 256 + 2^-14.
+    let m: [Fx; 16] = core::array::from_fn(|k| match k {
+        0 => i32::MAX,
+        1 => i32::MIN,
+        2 => -1,
+        3 => 1,
+        4 => 0,
+        5 => 0x0100_0001,
+        6 => 0x0100_0003,
+        7 => -0x0100_0003,
+        _ => (k as Fx - 8) * ONE / 4 + 3,
+    });
+    let float = |v: Fx| ((v as f64) / ONE as f64) as f32;
+    for (mode, pname) in names {
+        g.matrix_mode(mode);
+        g.load_matrix(&m);
+        let got = ints(&mut g, pname, 16);
+        for k in 0..16 {
+            let want = float(m[k]).to_bits() as i32;
+            assert_eq!(got[k], want, "{pname:04x} element {k}");
+        }
+        assert_eq!(f32::from_bits(got[5] as u32), 256.0, "a tie to even");
+        assert_eq!(f32::from_bits(got[6] as u32), 256.0 + 1.0 / 16384.0);
+        let mut x = [7 as Fx; 16];
+        g.get_fixed(pname, &mut x);
+        assert_eq!(g.get_error(), gl::INVALID_ENUM, "{pname:04x} as fixed");
+        assert_eq!(x, [7; 16], "nothing written");
+        let mut b = [true; 16];
+        g.get_boolean(pname, &mut b);
+        assert_eq!(g.get_error(), gl::INVALID_ENUM, "{pname:04x} as booleans");
+        assert_eq!(b, [true; 16], "nothing written");
+    }
+}

@@ -39,6 +39,11 @@ pub mod name {
     pub const MODELVIEW_MATRIX: u32 = 0x0BA6;
     pub const PROJECTION_MATRIX: u32 = 0x0BA7;
     pub const TEXTURE_MATRIX: u32 = 0x0BA8;
+    /// The three matrices as their elements' single-precision bits,
+    /// `OES_matrix_get`'s, a core addition in ES 1.1 (Table C.2, #1522).
+    pub const MODELVIEW_MATRIX_FLOAT_AS_INT_BITS_OES: u32 = 0x898D;
+    pub const PROJECTION_MATRIX_FLOAT_AS_INT_BITS_OES: u32 = 0x898E;
+    pub const TEXTURE_MATRIX_FLOAT_AS_INT_BITS_OES: u32 = 0x898F;
     pub const ALPHA_TEST_FUNC: u32 = 0x0BC1;
     pub const ALPHA_TEST_REF: u32 = 0x0BC2;
     pub const BLEND_DST: u32 = 0x0BE0;
@@ -83,6 +88,9 @@ pub enum Kind {
     /// as integers: colours, normals, depths and the alpha reference.
     Unit,
     Boolean,
+    /// Bits that only `glGetIntegerv` gives, as they are, and the other
+    /// two refuse: `OES_matrix_get`'s floats (#1522).
+    Bits,
 }
 
 /// A query's values: up to sixteen, a matrix's.
@@ -108,7 +116,9 @@ impl Got {
     pub fn integers(&self, out: &mut [i32]) {
         for (o, &v) in out.iter_mut().zip(&self.values[..self.len]) {
             *o = match self.kind {
-                Kind::Integer | Kind::Enum | Kind::Boolean => v as i32,
+                Kind::Integer | Kind::Enum | Kind::Boolean | Kind::Bits => {
+                    v as i32
+                }
                 Kind::Fixed => ((v + (ONE as i64 / 2)) >> 16) as i32,
                 // [-1, 1] onto [-(2^31 - 1), 2^31 - 1].
                 Kind::Unit => {
@@ -127,7 +137,7 @@ impl Got {
                 Kind::Integer | Kind::Boolean => {
                     (v << 16).clamp(i32::MIN as i64, i32::MAX as i64) as Fx
                 }
-                Kind::Enum | Kind::Fixed | Kind::Unit => v as Fx,
+                Kind::Enum | Kind::Fixed | Kind::Unit | Kind::Bits => v as Fx,
             };
         }
     }
@@ -157,6 +167,17 @@ impl Gl<'_> {
             let w: [i64; 16] =
                 core::array::from_fn(|k| *v.get(k).unwrap_or(&0) as i64);
             Some(Got::of(Unit, &w[..v.len()]))
+        };
+        // A matrix as the bits of the single-precision floats its 16.16
+        // elements are, each the nearest float (#1522): the element
+        // rounded once to a float, then scaled by 2^-16, which is exact
+        // and needs no division.
+        let bits = |m: &[Fx; 16]| {
+            const SCALE: f32 = 1.0 / ONE as f32;
+            let w: [i64; 16] = core::array::from_fn(|k| {
+                (m[k] as f32 * SCALE).to_bits() as i32 as i64
+            });
+            Some(Got::of(Bits, &w))
         };
         let b = |v: &[bool]| {
             let w: [i64; 16] =
@@ -201,6 +222,13 @@ impl Gl<'_> {
             MODELVIEW_MATRIX => f(&self.mv[self.mv_top]),
             PROJECTION_MATRIX => f(&self.pj[self.pj_top]),
             TEXTURE_MATRIX => f(&self.tx[self.tx_top]),
+            MODELVIEW_MATRIX_FLOAT_AS_INT_BITS_OES => {
+                bits(&self.mv[self.mv_top])
+            }
+            PROJECTION_MATRIX_FLOAT_AS_INT_BITS_OES => {
+                bits(&self.pj[self.pj_top])
+            }
+            TEXTURE_MATRIX_FLOAT_AS_INT_BITS_OES => bits(&self.tx[self.tx_top]),
             ALPHA_TEST_FUNC => e(&[(gl::NEVER + self.alpha.0) as i64]),
             ALPHA_TEST_REF => {
                 let r = self.alpha.1 as i64;
