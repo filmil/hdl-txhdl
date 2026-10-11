@@ -5,6 +5,7 @@
 # here, and a concept with no example is a concept nobody has checked.
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test", "rustfmt_test")
 load("//lib:foreign.bzl", "verilog_unit", "vhdl_unit")
+load("//tools/vivado:defs.bzl", "vivado_place_and_route2", "vivado_synthesis2")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -893,6 +894,53 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# Products of extended operands at their own widths (issue 1649):  bazel run //lib/examples:ex_smul
+rust_binary(
+    name = "ex_smul",
+    srcs = ["ex_smul.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
+# ex_smul's products through Vivado out of context, at the core's ten
+# nanosecond clock (issue 1649): how many DSP blocks each takes, and
+# whether the paths into the products' registers meet the clock. Manual,
+# as every Vivado target is.
+#
+#   bazel build //lib/examples:smul_pnr
+filegroup(
+    name = "smul_xdc",
+    srcs = ["smul.xdc"],
+)
+
+vivado_synthesis2(
+    name = "smul_synth",
+    srcs = ["//docs:smul.v"],
+    part = "xc7a200tfbg484-2",
+    synth_design_options = "-mode out_of_context",
+    tags = ["manual"],
+    top = "smul",
+    xdcs = [":smul_xdc"],
+)
+
+vivado_place_and_route2(
+    name = "smul_pnr",
+    post_route_design = [
+        'puts "TXHDL-PROBE dsp"',
+        'puts [report_utilization -cells [get_cells -hier -filter {REF_NAME =~ DSP48E1}] -return_string]',
+        'puts "TXHDL-PROBE cells"',
+        'foreach c [get_cells -hier -filter {REF_NAME =~ DSP48E1}] { puts "DSP $c" }',
+        'puts "TXHDL-PROBE regs"',
+        'puts [report_timing -max_paths 3 -return_string]',
+        'puts "TXHDL-PROBE end"',
+    ],
+    placeholder_bitstream = True,
+    synthesis = ":smul_synth",
+    tags = ["manual"],
+    xdcs = [":smul_xdc"],
+)
+
 # An `if` and a `match` that yield a value (issue 496):  bazel run //lib/examples:ex_valif
 rust_binary(
     name = "ex_valif",
@@ -1501,6 +1549,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_fn.rs",
         "ex_litfn.rs",
         "ex_arith.rs",
+        "ex_smul.rs",
         "ex_valif.rs",
         "ex_range.rs",
         "ex_cast.rs",

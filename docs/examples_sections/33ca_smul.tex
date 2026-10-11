@@ -1,0 +1,34 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Products at Their Operands' Widths}
+\label{sec:x-smul}
+
+A product of extended operands, \code{a.sext::<64>().mul::<64>(b.sext::<64>())}
+for two 32-bit values, is a 32 by 32 signed product, and the netlist
+says so: \code{\$signed(a) * \$signed(b)} in Verilog and
+\code{signed(a) * signed(b)} in VHDL, resized to the product's width.
+Written as the product of the extended words, a 64 by 64 product,
+it hid the operands' widths from Vivado, which built it of four DSP
+blocks in series (issue 1649). A zero-extended operand beside a signed
+one is signed with a zero above it, so it stays positive. A product
+narrower than its operands' signed widths together is written as
+before: its signed product would have to be cut, and VHDL's
+\code{resize} of a signed value keeps the sign bit rather than cutting.
+
+The unit registers three products: two signed words, a signed word and
+an unsigned half, and a signed byte and an unsigned byte into sixteen
+bits, the last of the narrow kind. The run asserts each against the
+same arithmetic on Rust's integers, for operands chosen at the ends of
+their ranges, and the netlist is checked against the run under both
+simulators.
+
+\begin{figure}[htbp]
+\centering
+\input{smul_timing.tex}
+\caption{Two signed words, an unsigned half, and the products
+registered from them.}
+\label{fig:x-smul}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_smul.rs}. Run with \code{bazel run //lib/examples:ex\_smul}.},label={lst:x-smul}]{lib/examples/ex_smul.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_smul} printed when the build ran it: each case and its three products, then the lowering.},label={lst:x-smul-out}]{out_smul.txt}

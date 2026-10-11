@@ -1122,6 +1122,8 @@ latex_document(
         ":fn_run",
         ":arith_run",
         ":arith_timing",
+        ":smul_run",
+        ":smul_timing",
         ":valif_run",
         ":valif_timing",
         ":range_run",
@@ -3065,6 +3067,22 @@ waveform(
         "//arith/sum=>sum",
     ],
     until = 33,
+)
+
+waveform(
+    name = "smul",
+    example = "//lib/examples:ex_smul",
+    lowered = ("smul", "smul"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//a=>a",
+        "//b=>b",
+        "//h=>h",
+        "//smul/pss=>ss",
+        "//smul/psu=>su",
+        "//smul/psmall=>small",
+    ],
+    until = 27,
 )
 
 waveform(

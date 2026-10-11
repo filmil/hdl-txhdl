@@ -121,6 +121,16 @@ rust_test(
     deps = [":txhdl"],
 )
 
+# A product of extended operands at the operands' own widths, signed
+# where they are (issue 1649).
+rust_test(
+    name = "signed_mul_test",
+    srcs = ["tests/signed_mul.rs"],
+    edition = "2021",
+    proc_macro_deps = [":txhdl_macros"],
+    deps = [":txhdl"],
+)
+
 # A struct literal lowers in the struct's declared order, whatever order
 # it names its fields in (issue 1541).
 rust_test(
