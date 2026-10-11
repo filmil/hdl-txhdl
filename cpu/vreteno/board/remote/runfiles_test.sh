@@ -4,8 +4,8 @@
 # apparent name, `txhdl/...`, which the runfiles' repository mapping
 # turns into `_main` in TxHDL's own build and into `txhdl+` in a module
 # that depends on it (issue 1677). Each argument is a file a script
-# looks up; each must resolve. And no script may look one up as
-# `_main/...`, which only TxHDL's own build has.
+# looks up; each must resolve. And none of the package's five scripts
+# may name a file under `_main/`, which only TxHDL's own build has.
 set -euo pipefail
 # --- begin runfiles.bash initialization v3 ---
 f=bazel_tools/tools/bash/runfiles/runfiles.bash
@@ -26,10 +26,13 @@ for path in "$@"; do
     fail=1
   fi
 done
-for s in demos hw_server load serial; do
-  script="$(rlocation "txhdl/cpu/vreteno/board/remote/$s.sh")"
-  if grep -n 'rlocation _main/' "$script"; then
-    echo "FAIL: $s.sh looks a file up under _main" >&2
+for s in demos hw_server hw_server_remote load serial; do
+  script="$(rlocation "txhdl/cpu/vreteno/board/remote/$s.sh" || true)"
+  if [[ -z "$script" || ! -e "$script" ]]; then
+    echo "FAIL: $s.sh is not in the runfiles" >&2
+    fail=1
+  elif grep -n '_main/' "$script"; then
+    echo "FAIL: $s.sh names a file under _main" >&2
     fail=1
   fi
 done

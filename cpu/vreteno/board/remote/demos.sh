@@ -52,7 +52,15 @@ done
 [[ -n "$server" ]] || { echo "--server=HOST or TXHDL_BOARD_SERVER" >&2; exit 2; }
 ws="${BUILD_WORKSPACE_DIRECTORY:?run this with bazel run}"
 list="$(rlocation txhdl/docs/demos.tsv)"
+[[ -e "$list" ]] || {
+  echo "demos: docs/demos.tsv is not in the runfiles" >&2
+  exit 1
+}
 load="$(rlocation txhdl/cpu/vreteno/board/remote/load)"
+[[ -e "$load" ]] || {
+  echo "demos: load is not in the runfiles" >&2
+  exit 1
+}
 port=/dev/ttyUSB0
 fbdir='~/txhdl_fastboot'
 lock=/data/cache/vivado-install/vivado.lock

@@ -42,7 +42,15 @@ done
 }
 
 bin="$(rlocation txhdl/cpu/vreteno/board/remote/bin/hw_server)"
+[[ -e "$bin" ]] || {
+  echo "hw_server: bin/hw_server is not in the runfiles" >&2
+  exit 1
+}
 remote_sh="$(rlocation txhdl/cpu/vreteno/board/remote/hw_server_remote.sh)"
+[[ -e "$remote_sh" ]] || {
+  echo "hw_server: hw_server_remote.sh is not in the runfiles" >&2
+  exit 1
+}
 bundle="$(cd "$(dirname "$bin")/.." && pwd)"
 dir='~/txhdl_hw_server'
 
