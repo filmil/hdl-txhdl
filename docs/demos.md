@@ -42,11 +42,13 @@ The tool refuses to run across 07:05 to 07:15 UTC, when the board is switched of
 
 ## What a run leaves
 
-A run's directory is named `<date>-<main's short sha>`, for example `20261010-0b1200b1`, and holds:
+A run's directory is named by its start in Pacific time, in ISO 8601's basic format with the offset, then main's short sha: `<YYYYMMDD>T<HHMM><offset>-<sha>`, for example `20261010T1830-0700-94d3c50d`.
+The basic format has no colons, so the name is safe on every filesystem.
+The directory holds:
 
 * `<demo>.log`, each demo's console with its UTC stamps;
 * `manifest.tsv`, each demo's target, image sha256, start and end in UTC, and the console's last line;
 * `README.md`, with main's commit, the flagship's sha256 and the date.
 
 The board server records the screen throughout.
-Its owner cuts `<demo>.mp4` from each demo's start to its end in `manifest.tsv`, and puts the clips, the logs and the manifest in `TxHDL/demos/<date>-<sha>/` on the shared drive.
+Its owner cuts `<demo>.mp4` from each demo's start to its end in `manifest.tsv`, and puts the clips, the logs and the manifest in `TxHDL/demos/<start>-<sha>/` on the shared drive.
