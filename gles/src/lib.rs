@@ -2081,7 +2081,17 @@ impl<'a> Gl<'a> {
             let rad = rad * out / 65536;
             (at.0 + rad * c as i64 / 65536, at.1 - rad * s as i64 / 65536)
         };
+        // A point of a pixel across has no inside, only the rim's cone,
+        // whose volume is a third of its base: its alpha is scaled so
+        // the cone covers the disc's area, 3 r squared over the base's
+        // radius squared, three quarters.
         let col = colour_word(&v.col);
+        let col = if ri == 0 {
+            let al = (col >> 24) as i64 * 3 * r * r / (ro * ro);
+            (col & 0x00ff_ffff) | (al as u32) << 24
+        } else {
+            col
+        };
         let z = self.window_z(v);
         let (inner, outer) =
             (Soft::at(col, z, v), Soft::at(col & 0x00ff_ffff, z, v));
@@ -2134,12 +2144,7 @@ impl<'a> Gl<'a> {
         } else {
             (flat, flat)
         };
-        let (zp, zq) = (self.window_z(a), self.window_z(b));
-        let (sp, sq) = (Soft::at(cp, zp, a), Soft::at(cq, zq, b));
-        let (fp, fq) = (
-            Soft::at(cp & 0x00ff_ffff, zp, a),
-            Soft::at(cq & 0x00ff_ffff, zq, b),
-        );
+        let (zp, zq) = (self.window_z(a) as i64, self.window_z(b) as i64);
         // A point `t` along the segment and `s` across it, in sixteenths.
         let pt = |t: i64, s: i64| {
             (p.0 + (t * dx - s * dy) / len, p.1 + (t * dy + s * dx) / len)
@@ -2150,22 +2155,35 @@ impl<'a> Gl<'a> {
             (len / 2, len / 2)
         };
         let (si, so) = ((h - 8).max(0), h + 8);
-        // A corner at `t` along and `s` across, an end's colour and depth
-        // by the end it is nearer, its alpha the coverage `cov` of the
-        // end's alpha: one inside, nought out, and a quarter at the middle
-        // of a corner square, where the coverages across and along meet.
-        let mid = |e: u32| (e & 0x00ff_ffff) | (((e >> 24) / 4) << 24);
-        let (mp, mq) = (Soft::at(mid(cp), zp, a), Soft::at(mid(cq), zq, b));
+        // A corner at `t` along and `s` across: its colour and depth
+        // those of the segment at `t`, between the ends' and the ends'
+        // own past them, so that the ends' values stand at the ends; its
+        // alpha the coverage of that colour's, one inside, nought out,
+        // and a quarter at the middle of a corner square, where the
+        // coverages across and along meet; and it is fogged as the end it
+        // is nearer. A line shorter than a pixel has its alpha scaled by
+        // its length, since its rim would otherwise cover a pixel's
+        // length whatever its own.
+        let short = len.min(16);
         let pick = |t: i64, full: bool, quarter: bool| {
-            let near_p = 2 * t < len;
-            match (near_p, full, quarter) {
-                (true, true, _) => sp,
-                (false, true, _) => sq,
-                (true, false, true) => mp,
-                (false, false, true) => mq,
-                (true, false, false) => fp,
-                (false, false, false) => fq,
-            }
+            let u = t.clamp(0, len);
+            let mix = |x: i64, y: i64| (x * (len - u) + y * u) / len;
+            let col = [0, 8, 16, 24].iter().fold(0u32, |w, &k| {
+                let ch = mix((cp >> k & 0xff) as i64, (cq >> k & 0xff) as i64);
+                w | (ch as u32) << k
+            });
+            let al = (col >> 24) as i64 * short / 16;
+            let al = match (full, quarter) {
+                (true, _) => al,
+                (false, true) => al / 4,
+                (false, false) => 0,
+            };
+            let end = if 2 * t < len { a } else { b };
+            Soft::at(
+                (col & 0x00ff_ffff) | (al as u32) << 24,
+                mix(zp, zq) as u32,
+                end,
+            )
         };
         let c =
             |t: i64, s: i64, full: bool| pick(t, full, false).place(pt(t, s));
