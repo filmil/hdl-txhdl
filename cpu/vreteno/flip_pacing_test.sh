@@ -17,6 +17,7 @@ set -eu
 machine="$1"
 image="$2"
 out=$(mktemp)
+trap 'rm -f "$out"' EXIT
 "$machine" --image "$PWD/$image" --at 0x40000000 --steps 60000000 \
   --flips >"$out" 2>&1 || true
 grep -E '^ico|^flip' "$out"
