@@ -17,13 +17,13 @@ if [[ "$c" != "$rust" ]]; then
   exit 1
 fi
 # A clear of the colour and the depth with its depth plane's slot, the
-# quad's two triangles, the fan's two, and the point's rectangle (#1508),
-# each testing depth and blending with its slot: ten slots. An empty frame on both sides is not a pass.
+# quad's two triangles, the fan's two, and two points' rectangles (#1508,
+# #1507), each testing depth and blending with its slot: twelve slots. An empty frame on both sides is not a pass.
 # The first line, taken without a pipe: under pipefail, `echo | head`
 # fails when head closes the pipe before echo is done (#1516).
 first="${c%%$'\n'*}"
-if [[ "$first" != "frame 10" ]]; then
-  echo "the scene drew $first, not ten slots" >&2
+if [[ "$first" != "frame 12" ]]; then
+  echo "the scene drew $first, not twelve slots" >&2
   exit 1
 fi
 echo "$first"

@@ -83,6 +83,7 @@ fn both(n: usize, idx: &[u16]) -> (Vec<[u32; 16]>, Vec<[u32; 16]>) {
             colour: Some(col[i]),
             normal: Some(nor[i]),
             tex: None,
+            point_size: None,
         }
     });
     let one_by_one = g.frame().to_vec();

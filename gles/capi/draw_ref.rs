@@ -87,6 +87,11 @@ fn main() {
     g.point_parameterv(gl::POINT_DISTANCE_ATTENUATION, &[ONE, ONE / 2, 0]);
     g.point_parameter(gl::POINT_SIZE_MAX, 6 * ONE);
     g.draw_arrays(gl::POINTS, &fan[..1], None, None);
+    g.draw_vertices(gl::POINTS, 1, |_| gles::Vertex {
+        position: fan[1],
+        point_size: Some(3 * ONE),
+        ..Default::default()
+    });
 
     let words = g.frame();
     println!("frame {}", words.len());
