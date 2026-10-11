@@ -150,7 +150,53 @@ pub fn set_reset(on: bool) {
 // ---------------------------------------------------------------------
 // Wires and their ends
 
-struct Cellf<T: Copy>(Cell<T>);
+/// A wire's value. A wire made by `signal()` holds its own; the end of
+/// a field split from a port group's end (issue 1647) holds none and
+/// reads and drives that field of the whole through its link, at once,
+/// so a field's end is the whole's wire seen through a field.
+struct Cellf<T: Copy> {
+    v: Cell<T>,
+    link: Option<FieldLink<T>>,
+}
+
+/// How the end of a split field reads and drives its field of the whole.
+struct FieldLink<T> {
+    get: Box<dyn Fn() -> T>,
+    set: Box<dyn Fn(T)>,
+}
+
+impl<T: Copy> Cellf<T> {
+    fn new(v: T) -> Self {
+        Cellf {
+            v: Cell::new(v),
+            link: None,
+        }
+    }
+    fn linked(get: impl Fn() -> T + 'static, set: impl Fn(T) + 'static) -> Self
+    where
+        T: Default,
+    {
+        Cellf {
+            v: Cell::new(T::default()),
+            link: Some(FieldLink {
+                get: Box::new(get),
+                set: Box::new(set),
+            }),
+        }
+    }
+    fn get(&self) -> T {
+        match &self.link {
+            Some(l) => (l.get)(),
+            None => self.v.get(),
+        }
+    }
+    fn set(&self, v: T) {
+        match &self.link {
+            Some(l) => (l.set)(v),
+            None => self.v.set(v),
+        }
+    }
+}
 
 /// One wire, in a clock domain. Never held by a unit; split into ends.
 pub struct Signal<T: Copy + Default, C: Clock = DefaultClock>(
@@ -335,7 +381,7 @@ impl<T: Copy, C: Clock> Out<T, C> {
     /// Drive the wire. Combinational: what is driven this step is
     /// what the reading end sees this step.
     pub fn set(&self, v: impl Into<T>) {
-        self.0 .0.set(v.into())
+        self.0.set(v.into())
     }
 }
 impl<T: Copy, C: Clock> In<T, C> {
@@ -343,9 +389,87 @@ impl<T: Copy, C: Clock> In<T, C> {
     /// which process ran first, so a design that needs one puts a
     /// register in the way.
     pub fn get(&self) -> T {
-        self.0 .0.get()
+        self.0.get()
     }
 }
+/// A port group (issue 1647): a struct of plain values that a unit takes
+/// or gives as one port, `In<S, C>` or `Out<S, C>`, all in the clock
+/// domain `C`, which a netlist lowers one port per field under the
+/// field's own name. `#[derive(Value)]` with `#[value(ports)]` writes it,
+/// with a struct of each field's end for each side, so that a unit of
+/// units can hand each child the field it wants.
+pub trait Group: crate::types::Value + Default + 'static {
+    /// One `In<F, C>` per field `F`, under the field's name.
+    type Ins<C: Clock>;
+    /// One `Out<F, C>` per field `F`, under the field's name.
+    type Outs<C: Clock>;
+    /// The reading end of each field of `whole`.
+    fn split_in<C: Clock>(whole: In<Self, C>) -> Self::Ins<C>;
+    /// The driving end of each field of `whole`.
+    fn split_out<C: Clock>(whole: Out<Self, C>) -> Self::Outs<C>;
+}
+
+impl<S: Group, C: Clock> In<S, C> {
+    /// The reading end of each field, to hand to the units that read
+    /// them: each reads its field of this wire as it stands.
+    pub fn split(self) -> S::Ins<C> {
+        S::split_in(self)
+    }
+}
+
+impl<S: Group, C: Clock> Out<S, C> {
+    /// The driving end of each field, to hand to the units that drive
+    /// them: each drives its field of this wire and leaves the others.
+    pub fn split(self) -> S::Outs<C> {
+        S::split_out(self)
+    }
+}
+
+impl<S: Copy + 'static, C: Clock> In<S, C> {
+    /// The end of one field of this wire, through `get`, which
+    /// `#[derive(Value)]` writes for a port group.
+    #[doc(hidden)]
+    pub fn project<F: Copy + Default + 'static>(
+        &self,
+        get: fn(S) -> F,
+    ) -> In<F, C> {
+        let whole = self.0.clone();
+        In(
+            Rc::new(Cellf::linked(
+                move || get(whole.get()),
+                |_| unreachable!("the reading end of a field is never driven"),
+            )),
+            PhantomData,
+        )
+    }
+}
+
+impl<S: Copy + 'static, C: Clock> Out<S, C> {
+    /// The driving end of one field of this wire, through `get` and
+    /// `put`, which `#[derive(Value)]` writes for a port group: a drive
+    /// replaces that field of the whole and leaves the others as they
+    /// stand.
+    #[doc(hidden)]
+    pub fn project<F: Copy + Default + 'static>(
+        &self,
+        get: fn(S) -> F,
+        put: fn(&mut S, F),
+    ) -> Out<F, C> {
+        let (r, w) = (self.0.clone(), self.0.clone());
+        Out(
+            Rc::new(Cellf::linked(
+                move || get(r.get()),
+                move |v| {
+                    let mut s = w.get();
+                    put(&mut s, v);
+                    w.set(s)
+                },
+            )),
+            PhantomData,
+        )
+    }
+}
+
 impl<T: Transaction, C: Clock> Tx<T, C> {
     /// Offer a transaction: `valid` high and `data` this step, into
     /// the channel at the end of it. The sender asks `ready` first;
@@ -488,7 +612,7 @@ impl<T: Copy + Default, C: Clock> Member for Signal<T, C> {
     type Driver = Out<T, C>;
     type Reader = In<T, C>;
     fn new() -> Self {
-        Signal(Rc::new(Cellf(Cell::new(T::default()))), PhantomData)
+        Signal(Rc::new(Cellf::new(T::default())), PhantomData)
     }
     fn split(self) -> (Out<T, C>, In<T, C>) {
         (Out(self.0.clone(), PhantomData), In(self.0, PhantomData))
@@ -709,18 +833,18 @@ impl<T: Copy, C: Clock> Clone for Wire<T, C> {
 
 impl<T: Copy + Default, C: Clock> Default for Wire<T, C> {
     fn default() -> Self {
-        Wire(Rc::new(Cellf(Cell::new(T::default()))), PhantomData)
+        Wire(Rc::new(Cellf::new(T::default())), PhantomData)
     }
 }
 
 impl<T: Copy, C: Clock> Wire<T, C> {
     /// Drive it, combinationally, as an output port is driven.
     pub fn set(&self, v: impl Into<T>) {
-        self.0 .0.set(v.into())
+        self.0.set(v.into())
     }
     /// Read it as it stands this step.
     pub fn get(&self) -> T {
-        self.0 .0.get()
+        self.0.get()
     }
 }
 
@@ -1987,20 +2111,20 @@ pub mod trace {
         fn trace(&self, scope: &Scope) {
             let c = self.0.clone();
             let cell = Rc::as_ptr(&self.0) as usize;
-            let f = Box::new(move || c.0.get().vcd());
+            let f = Box::new(move || c.get().vcd());
             probe_named(scope, T::WIDTH, Kind::In, cell, f, T::names());
             let c = self.0.clone();
-            parts(scope, Kind::In, cell, move || c.0.get());
+            parts(scope, Kind::In, cell, move || c.get());
         }
     }
     impl<T: Value + 'static, C: Clock> Traceable for Out<T, C> {
         fn trace(&self, scope: &Scope) {
             let c = self.0.clone();
             let cell = Rc::as_ptr(&self.0) as usize;
-            let f = Box::new(move || c.0.get().vcd());
+            let f = Box::new(move || c.get().vcd());
             probe_named(scope, T::WIDTH, Kind::Out, cell, f, T::names());
             let c = self.0.clone();
-            parts(scope, Kind::Out, cell, move || c.0.get());
+            parts(scope, Kind::Out, cell, move || c.get());
         }
     }
     /// A pad traces as nothing, since the simulation carries nothing on
@@ -2013,10 +2137,10 @@ pub mod trace {
         fn trace(&self, scope: &Scope) {
             let c = self.0.clone();
             let cell = Rc::as_ptr(&self.0) as usize;
-            let f = Box::new(move || c.0.get().vcd());
+            let f = Box::new(move || c.get().vcd());
             probe_named(scope, T::WIDTH, Kind::Out, cell, f, T::names());
             let c = self.0.clone();
-            parts(scope, Kind::Out, cell, move || c.0.get());
+            parts(scope, Kind::Out, cell, move || c.get());
         }
     }
     /// A channel is two signals: the transaction and its valid bit.

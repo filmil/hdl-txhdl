@@ -102,6 +102,16 @@ rust_test(
     deps = [":txhdl"],
 )
 
+# A port group splits into an end per field, read and driven through the
+# whole (issue 1647).
+rust_test(
+    name = "group_test",
+    srcs = ["tests/group.rs"],
+    edition = "2021",
+    proc_macro_deps = [":txhdl_macros"],
+    deps = [":txhdl"],
+)
+
 # A struct literal lowers in the struct's declared order, whatever order
 # it names its fields in (issue 1541).
 rust_test(

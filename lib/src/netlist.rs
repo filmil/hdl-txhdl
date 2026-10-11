@@ -134,6 +134,40 @@ fn scope_of(path: &str) -> &str {
 fn ident(path: &str) -> String {
     path.replace('.', "_")
 }
+/// Each field of a child's port group with the bits of `net` it takes,
+/// written with a target's slice syntax: `[hi:lo]` or `(hi downto lo)`,
+/// one index for a one-bit field, and the net alone for a group of one
+/// bit (issue 1647). The net is a name, a wire or a port of the parent,
+/// since neither Verilog nor VHDL slices an expression in a port map.
+fn group_slices(
+    g: &PortGroup,
+    net: &str,
+    open: &str,
+    sep: &str,
+    close: &str,
+) -> Vec<(String, String)> {
+    assert!(
+        net.chars().all(|c| c.is_alphanumeric() || c == '_'),
+        "port group `{}` is joined to `{net}`, which is not a name; join a \
+         port group to a wire or a port (issue 1647)",
+        g.port
+    );
+    let total: usize = g.fields.iter().map(|(_, w)| w).sum();
+    g.spans()
+        .into_iter()
+        .map(|(f, w, hi)| {
+            let s = if total == 1 {
+                net.to_string()
+            } else if w == 1 {
+                format!("{net}{open}{hi}{close}")
+            } else {
+                format!("{net}{open}{hi}{sep}{}{close}", hi + 1 - w)
+            };
+            (f.to_string(), s)
+        })
+        .collect()
+}
+
 fn range(w: usize) -> String {
     if w > 1 {
         format!("[{}:0] ", w - 1)
@@ -990,6 +1024,85 @@ pub struct Lowered {
     /// module's name, with the parameters given, and emits no body for
     /// it. See [`foreign`].
     pub foreign: Option<Foreign>,
+    /// The ports that are port groups (issue 1647): each a struct the
+    /// unit holds whole under the port's name, written one port per
+    /// field at the module's edge, with the whole inside as a wire.
+    pub groups: Vec<PortGroup>,
+}
+
+/// A port group's fields as a netlist writes them (issue 1647): the
+/// port the unit reads or drives whole, and each field's port, by name
+/// and width, the first field highest, as `#[derive(Value)]` lays the
+/// struct out.
+#[derive(Clone, Debug)]
+pub struct PortGroup {
+    /// The port the unit holds whole, which is a wire inside it.
+    pub port: String,
+    /// Each field's port, by name and width.
+    pub fields: Vec<(String, usize)>,
+    /// Each field's own name in the struct, which is where a trace holds
+    /// it, under the port's.
+    pub parts: Vec<&'static str>,
+    /// Whether a unit of units split the group, so that its children
+    /// drive its field ports and the whole is read from them.
+    pub split: bool,
+}
+
+impl PortGroup {
+    /// The group a port of type `V` is: each field's port named for the
+    /// port and the field, `port_field`, or the field alone when `V` is a
+    /// bare group, `#[value(ports, bare)]`.
+    pub fn of<V: Value>(port: &str) -> Self {
+        let bare = V::BARE;
+        PortGroup {
+            port: port.to_string(),
+            fields: V::layout()
+                .into_iter()
+                .map(|(f, w)| {
+                    let n = if bare {
+                        f.to_string()
+                    } else {
+                        format!("{port}_{f}")
+                    };
+                    (n, w)
+                })
+                .collect(),
+            parts: V::layout().into_iter().map(|(f, _)| f).collect(),
+            split: false,
+        }
+    }
+
+    /// The port of the field `part`, by the field's name in the struct.
+    pub fn port_of(&self, part: &str) -> String {
+        match self.parts.iter().position(|p| *p == part) {
+            Some(i) => self.fields[i].0.clone(),
+            None => panic!(
+                "`{part}` is not a field of the port group `{}` (issue 1647)",
+                self.port
+            ),
+        }
+    }
+
+    /// Marks the group as split by a unit of units: its children drive
+    /// or read the field ports themselves, so the whole is gathered from
+    /// them rather than driven out to them (issue 1647).
+    pub fn split(mut self) -> Self {
+        self.split = true;
+        self
+    }
+
+    /// Each field's port, its width, and the highest bit of the whole it
+    /// is, the first field highest.
+    pub fn spans(&self) -> Vec<(&str, usize, usize)> {
+        let mut hi: usize = self.fields.iter().map(|(_, w)| w).sum();
+        self.fields
+            .iter()
+            .map(|(n, w)| {
+                hi -= w;
+                (n.as_str(), *w, hi + w - 1)
+            })
+            .collect()
+    }
 }
 
 /// A module the netlist instantiates and does not write: a controller
@@ -1060,6 +1173,7 @@ pub fn foreign(
         nets: Vec::new(),
         unregistered: Vec::new(),
         instances: Vec::new(),
+        groups: Vec::new(),
         foreign: Some(Foreign {
             module: module.to_string(),
             params: params.iter().map(|(n, v)| (n.to_string(), *v)).collect(),
@@ -1675,6 +1789,49 @@ impl Lowered {
     /// having declared it.
     fn adds_reset_port(&self) -> bool {
         self.has_reset() && !self.declares_reset()
+    }
+
+    /// The port group a port is, if it is one (issue 1647).
+    pub fn group(&self, port: &str) -> Option<&PortGroup> {
+        self.groups.iter().find(|g| g.port == port)
+    }
+
+    /// A port group's whole, inside a Verilog module: a wire under the
+    /// port's name that the unit reads or drives as it would the port,
+    /// joined to the field ports at the module's edge (issue 1647).
+    fn verilog_groups(&self) -> String {
+        let mut out = String::new();
+        for g in &self.groups {
+            let Some((_, k, w, _)) = self.ports.iter().find(|p| p.0 == g.port)
+            else {
+                continue;
+            };
+            let p = &g.port;
+            if *k == Kind::In || g.split {
+                let fs: Vec<&str> =
+                    g.fields.iter().map(|(f, _)| f.as_str()).collect();
+                writeln!(
+                    out,
+                    "  wire {}{p} = {{{}}};",
+                    range(*w),
+                    fs.join(", ")
+                )
+                .unwrap();
+            } else {
+                writeln!(out, "  wire {}{p};", range(*w)).unwrap();
+                for (f, fw, hi) in g.spans() {
+                    let bits = if *w == 1 {
+                        p.to_string()
+                    } else if fw == 1 {
+                        format!("{p}[{hi}]")
+                    } else {
+                        format!("{p}[{hi}:{}]", hi + 1 - fw)
+                    };
+                    writeln!(out, "  assign {f} = {bits};").unwrap();
+                }
+            }
+        }
+        out
     }
 
     /// The registers a process drives, which are the ones its clocked
@@ -2482,6 +2639,23 @@ impl Lowered {
             // the fourth field when there is one, and a memory's depth
             // is the fourth field of its own line (issue 131).
             let s = format!("{}{}", self.scope_col(n), Self::clock_col(c));
+            // A port group is one port per field, each found in the
+            // trace as that field of the whole (issue 1647).
+            if let (Kind::In | Kind::Out, Some(g)) = (k, self.group(n)) {
+                let dir = if *k == Kind::In { "in" } else { "out" };
+                let base = self
+                    .aliases
+                    .iter()
+                    .find(|(p, _)| p == n)
+                    .map_or(n.as_str(), |(_, s)| s.as_str());
+                for ((f, fw), part) in g.fields.iter().zip(&g.parts) {
+                    out.push_str(&format!(
+                        "{f} {dir} {fw} {base}.{part}{}\n",
+                        Self::clock_col(c)
+                    ));
+                }
+                continue;
+            }
             match k {
                 Kind::Out => out.push_str(&format!("{n} out {w}{s}\n")),
                 Kind::In => out.push_str(&format!("{n} in {w}{s}\n")),
@@ -2567,6 +2741,14 @@ impl Lowered {
             plist.push(format!("input {}", crate::comp::RESET_NAME));
         }
         for (n, k, w, _) in &self.ports {
+            // A port group is one port per field at the edge (issue 1647).
+            if let (Kind::In | Kind::Out, Some(g)) = (k, self.group(n)) {
+                let dir = if *k == Kind::In { "input" } else { "output" };
+                for (f, fw) in &g.fields {
+                    plist.push(format!("{dir} {}{f}", range(*fw)));
+                }
+                continue;
+            }
             match k {
                 Kind::Out => plist.push(format!("output {}{n}", range(*w))),
                 Kind::In => plist.push(format!("input {}{n}", range(*w))),
@@ -2585,6 +2767,7 @@ impl Lowered {
         writeln!(out, "`timescale 1ns/1ps").unwrap();
         out.push_str(&self.renamed_lets("//"));
         writeln!(out, "module {name}(\n  {}\n);", plist.join(",\n  ")).unwrap();
+        out.push_str(&self.verilog_groups());
         for (n, k, w, d) in &self.fields {
             match k {
                 // What the runtime's register starts at: what the unit's
@@ -2729,6 +2912,14 @@ impl Lowered {
                 conns.push(format!(".{r}({r})"));
             }
             for (a, b) in self.joins(inst) {
+                // A child's port group takes its fields from their bits of
+                // the whole here (issue 1647).
+                if let Some(g) = inst.unit.group(&a) {
+                    for (f, s) in group_slices(g, &b, "[", ":", "]") {
+                        conns.push(format!(".{f}({s})"));
+                    }
+                    continue;
+                }
                 conns.push(format!(".{a}({b})"));
             }
             // A foreign child is its module, with its parameters.
@@ -2994,6 +3185,14 @@ impl Lowered {
             plist.push(format!("{} : in std_logic", crate::comp::RESET_NAME));
         }
         for (n, k, w, _) in &self.ports {
+            // A port group is one port per field at the edge (issue 1647).
+            if let (Kind::In | Kind::Out, Some(g)) = (k, self.group(n)) {
+                let dir = if *k == Kind::In { "in" } else { "out" };
+                for (f, fw) in &g.fields {
+                    plist.push(format!("{f} : {dir} {}", ty(*fw)));
+                }
+                continue;
+            }
             match k {
                 Kind::Out => plist.push(format!("{n} : out {}", ty(*w))),
                 Kind::In => plist.push(format!("{n} : in {}", ty(*w))),
@@ -3219,7 +3418,34 @@ impl Lowered {
             )
             .unwrap();
         }
+        // A port group's whole, a signal under the port's name (issue
+        // 1647).
+        for g in &self.groups {
+            if let Some((_, _, w, _)) =
+                self.ports.iter().find(|p| p.0 == g.port)
+            {
+                writeln!(out, "  signal {} : {};", g.port, ty(*w)).unwrap();
+            }
+        }
         writeln!(out, "begin").unwrap();
+        // And the whole joined to the field ports: gathered from them for
+        // an input, given out to them for an output.
+        for g in &self.groups {
+            let Some((_, k, _, _)) = self.ports.iter().find(|p| p.0 == g.port)
+            else {
+                continue;
+            };
+            let p = &g.port;
+            if *k == Kind::In || g.split {
+                let fs: Vec<&str> =
+                    g.fields.iter().map(|(f, _)| f.as_str()).collect();
+                writeln!(out, "  {p} <= {};", fs.join(" & ")).unwrap();
+            } else {
+                for (f, s) in group_slices(g, p, "(", " downto ", ")") {
+                    writeln!(out, "  {f} <= {s};").unwrap();
+                }
+            }
+        }
         for (n, k, w, c) in &self.nets {
             if matches!(k, Kind::Tx | Kind::Rx) {
                 // A one-bit channel's nets are `std_logic`, as the
@@ -3327,6 +3553,12 @@ impl Lowered {
                 continue;
             }
             for (a, b) in self.joins(inst) {
+                if let Some(g) = inst.unit.group(&a) {
+                    for (f, s) in group_slices(g, &b, "(", " downto ", ")") {
+                        conns.push(format!("{f} => {s}"));
+                    }
+                    continue;
+                }
                 conns.push(format!("{a} => {b}"));
             }
             writeln!(
@@ -4650,6 +4882,7 @@ mod tests {
             unregistered: Vec::new(),
             instances: Vec::new(),
             foreign: None,
+            groups: Vec::new(),
         }
     }
 
