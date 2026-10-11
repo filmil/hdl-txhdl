@@ -248,3 +248,94 @@ fn the_scissor_keeps_drawing_within_its_box() {
     let none = draw(Some((10, 5, 0, 8)));
     assert!(none.iter().all(|&p| p == 0), "an empty box: none");
 }
+
+/// What a list draws whose entries may take a second slot, as a smooth
+/// line's do, with the depth test where they ask for it.
+fn listed(frame: &[[u32; 16]]) -> Vec<u32> {
+    let ops = razboj::dl::decode_list(frame);
+    razboj::model::render_over(
+        &ops,
+        S as usize,
+        S as usize,
+        vec![0; (S * S) as usize],
+    )
+}
+
+/// A smooth line three and a quarter pixels long on GL's row 64, from
+/// 30.375 pixels to 33.625, `width` wide, its ends' colours and depths
+/// as given: its corners at `t` sixteenths along, the four pixels it
+/// covers, 30 to 33, at 2, 18, 34 and 50 of its 52.
+fn short_smooth_line(g: &mut Gl, ends: ([Fx; 4], [Fx; 4]), zs: (Fx, Fx)) {
+    let y = 64 * 16 + 8;
+    let (p, q) = (at(486, y), at(538, y));
+    let p = [p[0], p[1], zs.0, ONE];
+    let q = [q[0], q[1], zs.1, ONE];
+    g.enable(gl::LINE_SMOOTH);
+    g.line_width(4 * ONE);
+    g.draw_arrays(gl::LINES, &[p, q], Some(&[ends.0, ends.1]), None);
+    assert_eq!(g.get_error(), gl::NO_ERROR);
+}
+
+/// A smooth line's colour runs on past its ends as GL's does, so that
+/// the pixels it covers at its ends have the line's colour at their
+/// centres (#1684): black to white, each of its four pixels within two
+/// and a half levels of GL's. Its corners past the ends once took the
+/// ends' colours, and the near end pixel was 14 levels out.
+#[test]
+fn a_smooth_lines_colour_is_its_own_at_the_ends() {
+    let mut frame = [[0u32; 16]; 64];
+    let mut g = context(&mut frame);
+    let (black, white) = ([0, 0, 0, ONE], [ONE, ONE, ONE, ONE]);
+    short_smooth_line(&mut g, (black, white), (0, 0));
+    let n = g.frame().len();
+    let fb = listed(&frame[..n]);
+    let row = (S - 1 - 64) as usize;
+    for (x, t) in [(30usize, 2.0), (31, 18.0), (32, 34.0), (33, 50.0)] {
+        let want = 255.0 * t / 52.0;
+        let got = (fb[row * S as usize + x] >> 16 & 0xff) as f64;
+        assert!((got - want).abs() <= 2.5, "{x}: red {got}, wants {want:.1}");
+    }
+}
+
+/// The same for its depth (#1684): a red square at one depth, drawn over
+/// a line from depth 0.1 to 0.6 under `GL_LESS`, stays behind the line's
+/// near end pixel, where the line is at 0.119, and shows in front of its
+/// far end pixel, where it is at 0.581. With the ends' depths past the
+/// ends, those pixels were at 0.148 and 0.552, and both went the other way.
+#[test]
+fn a_smooth_lines_depth_is_its_own_at_the_ends() {
+    let row = (S - 1 - 64) as usize;
+    for (x, square, line_in_front) in
+        [(30usize, 0.135, true), (33, 0.567, false)]
+    {
+        let mut frame = [[0u32; 16]; 64];
+        let mut g = context(&mut frame);
+        g.enable(gl::DEPTH_TEST);
+        let white = [ONE, ONE, ONE, ONE];
+        // Window depth (1 - z) / 2 under this projection.
+        let z = |d: f64| ((1.0 - 2.0 * d) * ONE as f64).round() as Fx;
+        short_smooth_line(&mut g, (white, white), (z(0.1), z(0.6)));
+        let zq = z(square);
+        let sq = |x: i64, y: i64| [(x << 16) as Fx, (y << 16) as Fx, zq, ONE];
+        let red = [ONE, 0, 0, ONE];
+        g.draw_arrays(
+            gl::TRIANGLES,
+            &[
+                sq(20, 54),
+                sq(44, 54),
+                sq(44, 74),
+                sq(20, 54),
+                sq(44, 74),
+                sq(20, 74),
+            ],
+            Some(&[red; 6]),
+            None,
+        );
+        assert_eq!(g.get_error(), gl::NO_ERROR);
+        let n = g.frame().len();
+        let fb = listed(&frame[..n]);
+        let px = fb[row * S as usize + x];
+        let shows_line = px & 0xff == 0xff;
+        assert_eq!(shows_line, line_in_front, "{x}: {px:08x}");
+    }
+}
