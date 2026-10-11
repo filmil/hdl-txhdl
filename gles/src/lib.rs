@@ -2460,10 +2460,8 @@ impl<'a> Gl<'a> {
                     // distances, wa / sa and wb / sb, for the colours and
                     // the rest that are carried as they were; the user's
                     // plane has them already.
-                    let (ta, tb) = truth.unwrap_or_else(|| {
-                        let (wa, wb, da, db) = apart(wa, wb);
-                        fit((wa * sb) >> da, (wb * sa) >> db, 60)
-                    });
+                    let (ta, tb) =
+                        truth.unwrap_or_else(|| along(wa, wb, sa, sb));
                     out[m] = between(&a, &b, ta, tb);
                     kept[m] = cut((ha, sa), (hb, sb), wa, wb);
                     m += 1;
@@ -2699,6 +2697,14 @@ fn apart(wa: i128, wb: i128) -> (i128, i128, u32, u32) {
     let (ea, eb) = (size(wa).saturating_sub(60), size(wb).saturating_sub(60));
     let e = ea.max(eb);
     (wa >> ea, wb >> eb, (e - ea).min(127), (e - eb).min(127))
+}
+
+/// The true distances' ratio, as `between` takes it, from distances `wa`
+/// and `wb` that are each the true one times its end's scale, `sa` and
+/// `sb`: `wa sb` and `wb sa`, which are both the true ones times `sa sb`.
+fn along(wa: i128, wb: i128, sa: i128, sb: i128) -> (i128, i128) {
+    let (wa, wb, da, db) = apart(wa, wb);
+    fit((wa * sb) >> da, (wb * sa) >> db, 60)
 }
 
 /// The point where the edge from `a` to `b`, each a point in homogeneous
@@ -2943,23 +2949,36 @@ impl Planes {
 
 #[cfg(test)]
 mod tests {
-    use super::cut;
+    use super::{along, cut};
 
     /// A corner three units from a plane and a kept point of scale 2^40
-    /// past it: the cut is where the edge meets the plane. Shifting the
-    /// two weights down together left the corner's 3 as 0, and the cut
-    /// on the corner.
+    /// past it: the cut is where the edge meets the plane, and the
+    /// colours are taken at the same place along it, whichever end comes
+    /// first. Shifting the two weights down together left the corner's 3
+    /// as 0, and the cut on the corner.
     #[test]
     fn a_cut_between_scales_far_apart_is_on_the_plane() {
+        on_the_plane(false);
+        on_the_plane(true);
+    }
+
+    fn on_the_plane(swap: bool) {
         let a = [-(1i128 << 20) + 3, 7 << 18, 5 << 18, 1 << 20];
         let b = [-(3i128 << 20), 11 << 18, 2 << 20, 1 << 20];
         let sb = (1i128 << 40) + 1;
         let hb = b.map(|v| v * sb);
         // The plane x + w = 0, as distance_of reads plane 3.
         let (wa, wb) = (a[0] + a[3], hb[0] + hb[3]);
-        let (h, s) = cut((a, 1), (hb, sb), wa, wb);
         let (da, db) = (wa as f64, (wb / sb) as f64);
         let t = da / (da - db);
+        let ((h, s), (ta, tb)) = if swap {
+            (cut((hb, sb), (a, 1), wb, wa), along(wb, wa, sb, 1))
+        } else {
+            (cut((a, 1), (hb, sb), wa, wb), along(wa, wb, 1, sb))
+        };
+        let got = ta as f64 / (ta - tb) as f64;
+        let want = if swap { 1.0 - t } else { t };
+        assert!((got - want).abs() < 1e-12, "along is {got}, wants {want}");
         for i in 0..4 {
             let want = a[i] as f64 + t * (b[i] - a[i]) as f64;
             let got = h[i] as f64 / s as f64;
