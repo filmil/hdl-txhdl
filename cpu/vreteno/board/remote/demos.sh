@@ -80,9 +80,10 @@ sha="$(git rev-parse --short=8 HEAD)"
 run="$(TZ=America/Los_Angeles date +%Y%m%dT%H%M%z)-$sha"
 dir="$out/$run"
 # A second run in the same minute at the same commit would write over
-# the first: it stops instead.
-if [[ -e "$dir" ]]; then echo "$dir exists; wait a minute" >&2; exit 1; fi
-mkdir -p "$dir"
+# the first: it stops instead. A bare mkdir is the check, so two runs
+# started together cannot both pass it.
+mkdir -p "$out"
+if ! mkdir "$dir" 2>/dev/null; then echo "$dir exists; wait a minute" >&2; exit 1; fi
 # Everything the run says goes to its directory as well.
 exec > >(tee -a "$dir/run.log") 2>&1
 echo "demos at $sha into $dir"
