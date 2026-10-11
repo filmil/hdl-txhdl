@@ -248,8 +248,15 @@ pub fn triangle(
 /// line's carried past its ends do (#1684): Razboj takes each pixel's
 /// channel as nought below nought and 255 above, and its depth as
 /// nought below nought and `0xffff` above, so the planes need only be the
-/// right ones. Within a few times their range, so that the planes'
-/// products stay within 64 bits.
+/// right ones.
+///
+/// A value may lie at most four times its range past it, a channel's
+/// between -1020 and 1275 and a depth's between -262140 and 327675, and
+/// only as far as a smooth line's corner carries it, which is further
+/// the shorter the line and so the smaller its triangles: a value's
+/// excess times its triangle's size stays near a range's times the
+/// screen's, where [`plane`]'s products fit 64 bits. Debug builds check
+/// the first.
 pub fn triangle_wide(
     colour: u32,
     (a, b, c): ((i32, i32), (i32, i32), (i32, i32)),
@@ -257,6 +264,15 @@ pub fn triangle_wide(
     zs: Option<[i64; 3]>,
     within: Bounds,
 ) -> Option<([u32; WORDS], Option<[u32; WORDS]>)> {
+    debug_assert!(
+        shades
+            .iter()
+            .flatten()
+            .flatten()
+            .all(|v| (-1020..=1275).contains(v))
+            && zs.iter().flatten().all(|v| (-262140..=327675).contains(v)),
+        "a wide value past four times its range"
+    );
     let swap = area2(a, b, c) < 0;
     let (b, c) = if swap { (c, b) } else { (b, c) };
     let (shades, zs) =
