@@ -130,6 +130,10 @@ fn a_bare_group_is_its_fields_and_a_group_is_prefixed() {
         assert!(v.contains(port), "no `{port}` in:\n{v}");
     }
     assert!(v.contains("wire [1:0] l = {a, b};"), "{v}");
+    // `p_rst` is a field of a group named for its port, not the reset,
+    // which the module still has once (issue 1715).
+    let top = v.split("endmodule").next().unwrap();
+    assert_eq!(top.matches("input rst,").count(), 1, "{top}");
 }
 
 #[test]
@@ -212,7 +216,8 @@ impl Unit for PairTop {
 #[test]
 fn groups_in_a_side_taken_apart_and_a_reset_among_them() {
     let v = PairTop::lowered("pair").verilog();
-    let top = v.split("endmodule").next().unwrap();
+    let at = v.find("module pair(").expect("the parent's module");
+    let top = v[at..].split("endmodule").next().unwrap();
     assert_eq!(top.matches("input rst,").count(), 1, "one reset:\n{top}");
     let h = PairTop::vhdl("pair");
     let at = h.find("entity pair is").expect("the parent's entity");
@@ -229,4 +234,59 @@ fn groups_in_a_side_taken_apart_and_a_reset_among_them() {
     ] {
         assert!(v.contains(port), "no `{port}` in:\n{v}");
     }
+}
+
+/// A reset a unit asks for, as a group named for its port.
+#[derive(Value, Clone, Copy, Default, Debug, PartialEq)]
+#[value(ports)]
+pub struct Ask {
+    pub rst: Bit,
+}
+
+/// The same, bare, so that its field would be `rst` at the edge.
+#[derive(Value, Clone, Copy, Default, Debug, PartialEq)]
+#[value(ports, bare)]
+pub struct AskBare {
+    pub rst: Bit,
+}
+
+/// Passes a line on as a reset request.
+#[derive(Trace, Default)]
+pub struct Asks {}
+
+#[lower]
+impl Unit for Asks {
+    async fn run(&mut self, i: In<Bit>, o: Out<Ask>) {
+        loop {
+            DefaultClock::rising().await;
+            o.set(Ask { rst: i.get() });
+        }
+    }
+}
+
+/// The same, with the bare group.
+#[derive(Trace, Default)]
+pub struct AsksBare {}
+
+#[lower]
+impl Unit for AsksBare {
+    async fn run(&mut self, i: In<Bit>, o: Out<AskBare>) {
+        loop {
+            DefaultClock::rising().await;
+            o.set(AskBare { rst: i.get() });
+        }
+    }
+}
+
+#[test]
+fn an_output_group_named_for_its_port_may_hold_rst() {
+    let v = Asks::lowered("asks").verilog();
+    assert!(v.contains("output o_rst"), "{v}");
+    assert_eq!(v.matches("input rst,").count(), 1, "{v}");
+}
+
+#[test]
+#[should_panic(expected = "that is not one bit in")]
+fn a_bare_output_group_holding_rst_is_refused() {
+    let _ = AsksBare::lowered("asks_bare").verilog();
 }
