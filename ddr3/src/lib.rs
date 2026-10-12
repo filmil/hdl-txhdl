@@ -23,10 +23,6 @@
 pub mod bw;
 pub mod sim;
 
-// The field below is typed `Words` and not `sim::Words`: derive(Trace)
-// cannot read a path as a field's type (issue 1700).
-use sim::Words;
-
 use txhdl::comp::trace::Kind;
 use txhdl::comp::{
     join2, signal, Clock, DefaultClock, In, Out, Pad, Reg, Rx, Tx, Unit,
@@ -129,13 +125,13 @@ pub struct Ddr3 {
     /// Whether calibration is done, in the model.
     pub calibrated: Reg<Bit>,
     /// The model's memory, which a [`sim::WideRead`] may share.
-    pub words: Words,
+    pub words: sim::Words,
 }
 
 impl Ddr3 {
     /// A handle on the model's memory: for a [`sim::WideRead`] to read
     /// beside it, or a test to read after the run.
-    pub fn memory(&self) -> Words {
+    pub fn memory(&self) -> sim::Words {
         self.words.clone()
     }
 }
