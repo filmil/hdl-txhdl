@@ -1257,7 +1257,8 @@ fn comb_sum(func: U<3>, a: U<16>, pq: U<32>) -> U<24> {
 
 /// A channel's part of `DOT3`'s sum (#1512): (2 a0 - 255)(2 a1 - 255),
 /// which is 4 a0 a1 - 510 (a0 + a1) + 65025, from the arguments `a` and
-/// the products `pq`, the first of which is a0 a1 under `DOT3`.
+/// the products `pq`, the first of which is a0 a1 under `DOT3`. The sum of
+/// the three channels' parts, doubled, is `DOT3` in 510ths of a level.
 #[lower]
 fn dot_term(a: U<16>, pq: U<32>) -> U<24> {
     let x0 = a.slice::<8, 8>().resize::<24>();
@@ -3743,17 +3744,21 @@ mod tests {
         }
     }
 
-    /// The divide by 255 without a divider is exact below 65280, which is
+    /// The scale, the rounding and the clamp are the model's for every
+    /// function's value, which is within 2^19 of nought, at every scale:
+    /// the divide by 255 without a divider is exact below 65280, which is
     /// all `comb_out` asks of it.
     #[test]
     fn combines_rounding_is_exact() {
-        for n in -(1i32 << 21)..(1 << 21) {
-            let want = ((n + 255).div_euclid(510)).clamp(0, 255) as u8;
-            let got = comb_out(
-                U::<24>::from((n as u32) & 0xff_ffff),
-                U::<2>::from(0u8),
-            );
-            assert_eq!(got.raw() as u8, want, "{n}");
+        for s in 0..4u32 {
+            for n in -(1i32 << 19)..(1 << 19) {
+                let want = ((n << s) + 255).div_euclid(510).clamp(0, 255) as u8;
+                let got = comb_out(
+                    U::<24>::from((n as u32) & 0xff_ffff),
+                    U::<2>::from(s as u8),
+                );
+                assert_eq!(got.raw() as u8, want, "{n} scaled by {s}");
+            }
         }
     }
 

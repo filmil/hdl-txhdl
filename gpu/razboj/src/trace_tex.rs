@@ -106,11 +106,12 @@ fn main() {
         tri(0, 1, 2),
         // The other half under GL_COMBINE (#1512): the texel and the
         // constant mixed by the fragment, doubled, and for alpha the
-        // constant less the texel.
+        // constant less the texel, below nought where the texel's alpha
+        // is above the constant's, so that the netlist clamps.
         Op::Texture(Some(TexMode {
             desc: DESC,
             env: COMBINE,
-            env_colour: 0xff20_80c0,
+            env_colour: 0x8020_80c0,
             combine: Combine {
                 rgb: FN_INTERPOLATE,
                 alpha: FN_SUBTRACT,
