@@ -551,6 +551,18 @@ pub mod sim {
             self
         }
 
+        /// The same memory, its words held in `mem` rather than in a map
+        /// of its own, so that something else reading or writing `mem`
+        /// sees what this memory does, as a second port on one memory
+        /// does (issue 1696).
+        pub fn sharing(
+            mut self,
+            mem: Rc<RefCell<HashMap<u128, U<D>>>>,
+        ) -> Self {
+            self.mem = mem;
+            self
+        }
+
         /// The memory's `i`th word.
         pub fn word(&self, i: u128) -> U<D> {
             self.mem.borrow().get(&i).copied().unwrap_or_default()

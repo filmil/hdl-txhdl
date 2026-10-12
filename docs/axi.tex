@@ -222,7 +222,11 @@ Bit widths appear as explicit generic parameters across the library.
 Parameter \code{A} defines address width, \code{D} defines data width, and
 \code{S} defines the byte-strobe width (\(D/8\)). Parameter \code{I}
 specifies identifier width, yielding \(2^I\) available identifiers via
-\code{NIDS}. Computing strobe width directly as \code{U<\{D / 8\}>} requires
+\code{NIDS}. Parameter \code{L}, on the write and read beats only, is
+the number of 128-bit limbs the data takes: one, the default, for data
+up to 128 bits wide, and two for 256, the width of the DDR3
+controller's native interface. The trackers, the router and the pins
+parts take beats of one limb (issue 1696). Computing strobe width directly as \code{U<\{D / 8\}>} requires
 nightly Rust compiler features. The library relies on explicit parameters
 to maintain compatibility with stable compilers, following the conventions
 established by \code{Fifo} and \code{Station}.

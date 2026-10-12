@@ -160,9 +160,10 @@ pub const Ar: txhdl::types::Fields = Addr;
 #[derive(
     TransactionDerive, ValueDerive, Clone, Copy, Default, Debug, PartialEq,
 )]
-pub struct W<const D: usize, const S: usize> {
-    /// The word written.
-    pub data: U<D>,
+pub struct W<const D: usize, const S: usize, const L: usize = 1> {
+    /// The word written, in `L` limbs of 128 bits: one up to 128 bits
+    /// wide, two for 256 (issue 1696).
+    pub data: U<D, L>,
     /// Which of its bytes are meant, a bit per lane. A byte whose
     /// bit is low is not written, which is how a store narrower than
     /// the bus leaves the rest of the word alone.
@@ -190,12 +191,12 @@ pub struct B<const I: usize> {
 #[derive(
     TransactionDerive, ValueDerive, Clone, Copy, Default, Debug, PartialEq,
 )]
-pub struct R<const D: usize, const I: usize> {
+pub struct R<const D: usize, const I: usize, const L: usize = 1> {
     /// The burst this belongs to. Beats of different bursts may be
     /// interleaved, and this is what sorts them out again.
     pub id: U<I>,
-    /// The word read.
-    pub data: U<D>,
+    /// The word read, in `L` limbs, as a write's is.
+    pub data: U<D, L>,
     /// How this beat went. A burst may fail part way through.
     pub resp: Resp,
     /// The last beat of this burst.
