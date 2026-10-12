@@ -1009,6 +1009,243 @@ mod against_gl {
         assert!(want.iter().filter(|&&p| p != 0).count() > W * H / 3);
     }
 
+    /// Unit 1's texture (#1510): sixteen by sixteen with all its levels,
+    /// at its own descriptor and base, a pattern unlike unit 0's.
+    const TABLE1: u32 = 0x9000;
+    const BASE1: u32 = 0x40000;
+    fn second_texture(mem: &mut HashMap<u32, u32>) {
+        let d = Desc {
+            base: BASE1,
+            log_w: 4,
+            log_h: 4,
+            levels: 5,
+            min: LINEAR_MIPMAP_LINEAR,
+            mag: LINEAR,
+            class: RGBA,
+            ..Desc::default()
+        };
+        for l in 0..5 {
+            for j in 0..side(4, l) {
+                for i in 0..side(4, l) {
+                    let c = (if (i ^ j) & 1 == 1 { 0xe0 } else { 0x30 }) >> l;
+                    let texel = ((0x40 + 8 * i) << 24)
+                        | (c << 16)
+                        | ((i * 16) << 8)
+                        | (j * 16);
+                    let at = level_base(&d, l) + texel_offset(&d, l, i, j);
+                    mem.insert(at, texel);
+                }
+            }
+        }
+        for (k, w) in encode(&d).iter().enumerate() {
+            mem.insert(TABLE1 + 4 * k as u32, *w);
+        }
+    }
+
+    /// The quad's triangle `k`, shaded from a colour at each corner, with
+    /// unit 1's coordinates beside unit 0's: the floor's turned a quarter
+    /// and stretched, so that unit 1 samples its texture differently.
+    fn two_unit_tri(k: [usize; 3]) -> Op {
+        let corner = [0xc080_40ff, 0x80c0_ff40, 0xff40_80c0, 0x40ff_c080];
+        match tri(k, 0) {
+            Op::TexTri {
+                a, b, c, z, uvq, ..
+            } => Op::TexTri {
+                a,
+                b,
+                c,
+                colours: k.map(|n| corner[n]),
+                shaded: true,
+                z,
+                uvq,
+                uvq1: Some(uvq.map(|(u, v, q)| (v / 2, u * 3 / 2, q))),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    /// A second unit (#1510) applies its environment to unit 0's result,
+    /// its `PREVIOUS`, with the fragment's own colour as `PRIMARY_COLOR`:
+    /// under each environment and `COMBINE` on unit 1, after `MODULATE` or
+    /// `COMBINE` on unit 0, every pixel of a shaded quad drawn with two
+    /// units is unit 1's environment of the picture unit 0 draws alone and
+    /// the texel unit 1's texture gives alone, to the bit, with the
+    /// pixel's shaded colour as `PRIMARY_COLOR`. The list carries unit 1 in
+    /// two slots more, which come back through the format and the
+    /// binning; a second unit without unit 0, or a triangle without unit
+    /// 1's coordinates, draws untextured or on unit 0 alone.
+    #[test]
+    fn the_second_unit_takes_the_firsts_result() {
+        use crate::model::render;
+        let (mut mem, _) = texture(LINEAR_MIPMAP_LINEAR, LINEAR, false);
+        second_texture(&mut mem);
+        let read = |a: u32| *mem.get(&a).unwrap_or(&0);
+        let t = Textures { mem: &read };
+        let draw = |l: &[crate::op::Insn]| {
+            render_textured(l, W, H, vec![0; W * H], Some(&t))
+        };
+        // Unit 1's COMBINE: the texel and the previous colour mixed by the
+        // primary's alpha, and for alpha the previous plus the texel's.
+        let setting = Combine {
+            rgb: FN_INTERPOLATE,
+            alpha: FN_ADD,
+            src_rgb: [SRC_TEXTURE, SRC_PREVIOUS, SRC_PRIMARY_COLOR],
+            src_alpha: [SRC_PREVIOUS, SRC_TEXTURE, SRC_CONSTANT],
+            op_rgb: [OP_SRC_ALPHA - 2, OP_SRC_ALPHA - 2, OP_SRC_ALPHA],
+            ..Combine::default()
+        };
+        // Unit 0's COMBINE, where the previous colour is the primary one:
+        // the texel by the previous colour, and the primary's alpha.
+        let setting0 = Combine {
+            rgb: FN_MODULATE,
+            alpha: FN_REPLACE,
+            src_rgb: [SRC_TEXTURE, SRC_PREVIOUS, SRC_CONSTANT],
+            src_alpha: [SRC_PRIMARY_COLOR, SRC_TEXTURE, SRC_CONSTANT],
+            ..Combine::default()
+        };
+        let modulate = TexMode {
+            desc: TABLE,
+            env: MODULATE,
+            env_colour: 0xff20_c060,
+            combine: 0,
+        };
+        let combined = TexMode {
+            env: COMBINE,
+            combine: setting0.word(),
+            ..modulate
+        };
+        let quad = [two_unit_tri([0, 1, 2]), two_unit_tri([0, 2, 3])];
+        let alone = |m: TexMode, unit1: bool| {
+            let tris = quad.map(|q| match q {
+                Op::TexTri {
+                    a,
+                    b,
+                    c,
+                    colours,
+                    shaded,
+                    z,
+                    uvq,
+                    uvq1,
+                } => Op::TexTri {
+                    a,
+                    b,
+                    c,
+                    colours,
+                    shaded,
+                    z,
+                    uvq: if unit1 { uvq1.unwrap() } else { uvq },
+                    uvq1: None,
+                },
+                _ => unreachable!(),
+            });
+            let mut ops = vec![Op::Texture(Some(m))];
+            ops.extend(tris);
+            assemble(&ops, W, H)
+        };
+        // Each pixel's shaded colour, untextured: its primary colour.
+        let bare = render(&alone(modulate, false), W, H);
+        let mut differs = 0;
+        for unit0 in [modulate, combined] {
+            let first = draw(&alone(unit0, false));
+            // The primary colour is not the previous one here, so COMBINE's
+            // sources are told apart.
+            let apart =
+                (0..W * H).filter(|&k| bare[k] != 0 && first[k] != bare[k]);
+            assert!(apart.count() > W * H / 4);
+            for env in [REPLACE, MODULATE, DECAL, BLEND, ADD, COMBINE] {
+                let unit1 = TexMode {
+                    desc: TABLE1,
+                    env,
+                    env_colour: 0x8040_a0e0,
+                    combine: setting.word(),
+                };
+                let mut ops =
+                    vec![Op::Texture(Some(unit0)), Op::Texture1(Some(unit1))];
+                ops.extend(quad);
+                let two = assemble(&ops, W, H);
+                assert!(two
+                    .iter()
+                    .all(|i| i.tex.to_bool() && i.tex1.to_bool()));
+                let got = draw(&two);
+                let texel = draw(&alone(
+                    TexMode {
+                        env: REPLACE,
+                        ..unit1
+                    },
+                    true,
+                ));
+                for at in 0..W * H {
+                    if bare[at] == 0 {
+                        assert_eq!(got[at], 0, "outside the quad at {at}");
+                        continue;
+                    }
+                    let (p, tx, cc) = (first[at], texel[at], unit1.env_colour);
+                    let want = if env == COMBINE {
+                        super::combine_with(setting.word(), bare[at], p, tx, cc)
+                    } else {
+                        super::env(env, RGBA, p, tx, cc)
+                    };
+                    assert_eq!(
+                        got[at], want,
+                        "env {} {env} at {at}",
+                        unit0.env
+                    );
+                    differs += (got[at] != p) as usize;
+                }
+                // Through the format, with unit 1's two slots, and binned.
+                let words: Vec<[u32; 16]> = crate::dl::image(&two)
+                    .chunks(16)
+                    .map(|c| c.try_into().unwrap())
+                    .collect();
+                assert_eq!(words.len(), 2 * 6, "each entry six slots");
+                assert_eq!(draw(&crate::dl::decode_list(&words)), got);
+                let tiled = crate::tiles::tiled(&two, W, H);
+                assert_eq!(draw(&tiled.entries), got, "binned into tiles");
+            }
+        }
+        assert!(differs > W * H, "unit 1 changed {differs} pixels");
+        // No unit 0, or no coordinates for unit 1: unit 0 alone, or none.
+        let (unit0, first) = (modulate, draw(&alone(modulate, false)));
+        let unit1 = TexMode {
+            desc: TABLE1,
+            ..unit0
+        };
+        let mut ops = vec![Op::Texture1(Some(unit1))];
+        ops.extend(quad);
+        assert!(assemble(&ops, W, H).iter().all(|i| !i.tex.to_bool()));
+        let mut ops = vec![Op::Texture(Some(unit0)), Op::Texture1(Some(unit1))];
+        ops.extend(quad.map(tri_of));
+        let one = assemble(&ops, W, H);
+        assert!(one.iter().all(|i| i.tex.to_bool() && !i.tex1.to_bool()));
+        assert_eq!(draw(&one), first);
+    }
+
+    /// The same triangle without unit 1's coordinates.
+    fn tri_of(q: Op) -> Op {
+        match q {
+            Op::TexTri {
+                a,
+                b,
+                c,
+                colours,
+                shaded,
+                z,
+                uvq,
+                ..
+            } => Op::TexTri {
+                a,
+                b,
+                c,
+                colours,
+                shaded,
+                z,
+                uvq,
+                uvq1: None,
+            },
+            other => other,
+        }
+    }
+
     /// Whether a point is inside triangle `k` by more than `margin` pixels.
     fn inside(k: [usize; 3], at: (f64, f64), margin: f64) -> bool {
         let p = k.map(|n| CORNERS[n].0);
