@@ -1538,6 +1538,7 @@ mod tests {
                     shaded: k % 2 == 1,
                     z: [r & 0xffff, s & 0xffff, (r ^ s) >> 16],
                     uvq,
+                    uvq1: None,
                 });
             }
             ops.push(Op::Rect {
@@ -1651,6 +1652,7 @@ mod tests {
                     shaded: false,
                     z: [0; 3],
                     uvq: [at(a), at(b), at(c)],
+                    uvq1: None,
                 });
             }
             let list = assemble(&ops, W, H);

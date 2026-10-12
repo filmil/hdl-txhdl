@@ -24,7 +24,8 @@
 //!   word 9  g0      word 10 gdx     word 11 gdy
 //!   word 12 b0      word 13 bdx     word 14 bdy
 //!   word 15  [7:0] alpha  [8] depth  [11:9] the comparison  [12] write
-//!            [13] the pixel's state
+//!            [13] the pixel's state  [14] textured  [15] a second
+//!            texture unit
 //! ```
 //!
 //! Words 6 to 14 are a shaded triangle's three planes, each the
@@ -75,7 +76,7 @@
 //! count has to be at or past that.
 use txhdl::types::{Bit, U};
 
-use crate::op::{Insn, Kind};
+use crate::op::{Insn, Kind, TexUnit};
 
 // begin{format}
 /// Words an instruction takes, a power of two.
@@ -110,7 +111,8 @@ pub fn encode(i: &Insn) -> [u32; WORDS] {
         | (lo(i.zfunc.raw()) << 9)
         | ((i.zwrite.to_bool() as u32) << 12)
         | ((i.state.to_bool() as u32) << 13)
-        | ((i.tex.to_bool() as u32) << 14);
+        | ((i.tex.to_bool() as u32) << 14)
+        | (((i.tex.to_bool() && i.tex1.to_bool()) as u32) << 15);
     w
 }
 
@@ -158,9 +160,17 @@ pub fn encode_ext(i: &Insn) -> Option<[u32; WORDS]> {
 /// `q` is one, and its texture, as `razboj_tile::tex` lays them out.
 /// `None` for an entry that is not textured.
 pub fn encode_tex(i: &Insn) -> Option<[[u32; WORDS]; 2]> {
-    if !i.tex.to_bool() {
-        return None;
-    }
+    i.tex.to_bool().then(|| unit_slots(&i.unit0()))
+}
+
+/// The two slots more of an entry with a second texture unit (#1510),
+/// after unit 0's, laid out as theirs. `None` for an entry without one.
+pub fn encode_tex1(i: &Insn) -> Option<[[u32; WORDS]; 2]> {
+    (i.tex.to_bool() && i.tex1.to_bool()).then(|| unit_slots(&i.unit1))
+}
+
+/// A texture unit's two slots.
+fn unit_slots(i: &TexUnit) -> [[u32; WORDS]; 2] {
     use razboj_tile::tex::plane_words;
     let p = |a: U<64>, b: U<64>, c: U<64>| {
         plane_words([a.raw() as u64, b.raw() as u64, c.raw() as u64])
@@ -178,7 +188,7 @@ pub fn encode_tex(i: &Insn) -> Option<[[u32; WORDS]; 2]> {
         b[6 + k] = v.raw() as u32;
     }
     b[14] = i.tcomb.raw() as u32;
-    Some([a, b])
+    [a, b]
 }
 // end{format}
 
@@ -221,6 +231,7 @@ pub fn decode(w: &[u32]) -> Insn {
         zwrite: Bit::from((w[15] >> 12) & 1 == 1),
         state: Bit::from((w[15] >> 13) & 1 == 1),
         tex: Bit::from((w[15] >> 14) & 1 == 1),
+        tex1: Bit::from((w[15] >> 15) & 1 == 1),
         ..Insn::default()
     }
 }
@@ -256,7 +267,20 @@ pub fn decode_ext(i: &mut Insn, e: &[u32]) {
 
 /// A textured entry's two slots read back into it (issue 997).
 pub fn decode_tex(i: &mut Insn, a: &[u32; WORDS], b: &[u32; WORDS]) {
+    let u = decode_unit(a, b);
+    (i.tdesc, i.tenv, i.tenvc, i.tcomb) = (u.tdesc, u.tenv, u.tenvc, u.tcomb);
+    i.lodk = u.lodk;
+    (i.nux, i.nuxd, i.nvx, i.nvxd) = (u.nux, u.nuxd, u.nvx, u.nvxd);
+    (i.nuy, i.nuyd, i.nvy, i.nvyd) = (u.nuy, u.nuyd, u.nvy, u.nvyd);
+    (i.u0, i.udx, i.udy) = (u.u0, u.udx, u.udy);
+    (i.v0, i.vdx, i.vdy) = (u.v0, u.vdx, u.vdy);
+    (i.q0, i.qdx, i.qdy) = (u.q0, u.qdx, u.qdy);
+}
+
+/// A texture unit's two slots read back (#1510).
+pub fn decode_unit(a: &[u32; WORDS], b: &[u32; WORDS]) -> TexUnit {
     use razboj_tile::tex::plane_of;
+    let mut i = TexUnit::default();
     let w = |p: [u64; 3]| p.map(U::<64>::from);
     [i.u0, i.udx, i.udy] = w(plane_of(&a[0..6]));
     [i.v0, i.vdx, i.vdy] = w(plane_of(&a[6..12]));
@@ -269,6 +293,7 @@ pub fn decode_tex(i: &mut Insn, a: &[u32; WORDS], b: &[u32; WORDS]) {
     i.tenv = U::from(a[14] & 7);
     i.tenvc = U::from(a[15]);
     i.tcomb = U::from(b[14]);
+    i
 }
 
 /// A list's words read back as its instructions, an entry that tests
@@ -284,6 +309,10 @@ pub fn decode_list(words: &[[u32; WORDS]]) -> Vec<Insn> {
         }
         if i.tex.to_bool() {
             decode_tex(&mut i, &words[k + 1], &words[k + 2]);
+            k += 2;
+        }
+        if i.tex.to_bool() && i.tex1.to_bool() {
+            i.unit1 = decode_unit(&words[k + 1], &words[k + 2]);
             k += 2;
         }
         out.push(i);
@@ -302,6 +331,9 @@ pub fn image(list: &[Insn]) -> Vec<u32> {
             out.extend_from_slice(&e);
         }
         for t in encode_tex(ins).iter().flatten() {
+            out.extend_from_slice(t);
+        }
+        for t in encode_tex1(ins).iter().flatten() {
             out.extend_from_slice(t);
         }
     }

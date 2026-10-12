@@ -192,9 +192,18 @@ pub fn is_textured(e: &[u32; WORDS]) -> bool {
     e[15] & tex::TEXTURED != 0
 }
 
-/// The slots an entry takes: its own, its second, and its texture's two.
+/// Whether a textured entry has a second texture unit (#1510), which gives
+/// it two slots more after unit 0's two; see [`tex::TWO_UNITS`].
+pub fn has_two_units(e: &[u32; WORDS]) -> bool {
+    is_textured(e) && e[15] & tex::TWO_UNITS != 0
+}
+
+/// The slots an entry takes: its own, its second, its texture's two, and
+/// its second unit's two.
 pub fn slots_of(e: &[u32; WORDS]) -> usize {
-    1 + has_ext(e) as usize + 2 * is_textured(e) as usize
+    1 + has_ext(e) as usize
+        + 2 * is_textured(e) as usize
+        + 2 * has_two_units(e) as usize
 }
 
 /// The bit of a tile's record, in its second word, that says the tile
@@ -374,6 +383,16 @@ pub fn bin(
                     for slot in tex::step_slots(a, b, cx0 - x0, cy0 - y0) {
                         entries[at[k] as usize] = slot;
                         at[k] += 1;
+                    }
+                    // A second unit's two slots (#1510), stepped as unit
+                    // 0's are.
+                    if has_two_units(e) {
+                        let (a, b) = (&list[s + 4], &list[s + 5]);
+                        let (dx, dy) = (cx0 - x0, cy0 - y0);
+                        for slot in tex::step_slots(a, b, dx, dy) {
+                            entries[at[k] as usize] = slot;
+                            at[k] += 1;
+                        }
                     }
                 }
             }

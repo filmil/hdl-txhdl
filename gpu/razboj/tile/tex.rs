@@ -46,6 +46,11 @@ pub const MAX_LEVELS: usize = 11;
 /// its second slot and the two texture slots after that.
 pub const TEXTURED: u32 = 1 << 14;
 
+/// The bit of a textured entry's word 15 that says it has a second texture
+/// unit (#1510), which gives it two slots more after unit 0's two, laid
+/// out as theirs are.
+pub const TWO_UNITS: u32 = 1 << 15;
+
 /// How the texels' channels are read, from the internal format GL was
 /// given: the environments treat each differently.
 pub const RGBA: u32 = 0;

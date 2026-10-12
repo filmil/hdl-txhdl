@@ -165,6 +165,7 @@ fn the_texture_slots_are_razbojs_encoders() {
                 shaded: false,
                 z: [0; 3],
                 uvq,
+                uvq1: None,
             },
         ];
         let theirs = assemble(&ops, W as usize, H as usize)

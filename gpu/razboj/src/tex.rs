@@ -563,6 +563,7 @@ mod against_gl {
             shaded: false,
             z: [0; 3],
             uvq,
+            uvq1: None,
         }
     }
 

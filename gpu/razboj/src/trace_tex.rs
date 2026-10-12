@@ -92,6 +92,7 @@ fn main() {
         shaded: false,
         z: [0; 3],
         uvq: [uvq(a), uvq(b), uvq(c)],
+        uvq1: None,
     };
     let ops = [
         Op::Clear {
