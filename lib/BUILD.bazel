@@ -131,6 +131,16 @@ rust_test(
     deps = [":txhdl"],
 )
 
+# A field typed by a path, `m::X`, derives as one typed by a name
+# (issue 1700).
+rust_test(
+    name = "path_field_test",
+    srcs = ["tests/path_field.rs"],
+    edition = "2021",
+    proc_macro_deps = [":txhdl_macros"],
+    deps = [":txhdl"],
+)
+
 # A struct literal lowers in the struct's declared order, whatever order
 # it names its fields in (issue 1541).
 rust_test(
