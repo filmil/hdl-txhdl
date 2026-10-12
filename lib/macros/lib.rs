@@ -7066,10 +7066,13 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     // `lowered` runs, as `name: S` gives them (issue 1636).
                     let ty = text(t);
                     // A port's end, written bare or by its path,
-                    // `comp::In<Bit>`, is not taken for a struct.
-                    let head = ty.split('<').next().unwrap_or("");
-                    let last = head.rsplit("::").next().unwrap_or(head);
-                    let end = ["In", "Out", "Tx", "Rx", "Pad"].contains(&last);
+                    // `comp::In<Bit>`, is not taken for a struct. An end
+                    // always has its value's type; a struct of ports that
+                    // happens to be called `Tx`, `uart::Tx`, has none.
+                    let end = ty.split_once('<').is_some_and(|(head, _)| {
+                        let last = head.rsplit("::").next().unwrap_or(head);
+                        ["In", "Out", "Tx", "Rx", "Pad"].contains(&last)
+                    });
                     if !end && ty != "()" {
                         let n = n.to_string();
                         bound.push((n.clone(), vec!["*".to_string()]));
@@ -7123,6 +7126,18 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             ));
             continue;
         }
+        // An end written by its path, `comp::In<Bit>`, is the same end.
+        let ty = match ty.split_once('<') {
+            Some((head, rest)) if head.contains("::") => {
+                let last = head.rsplit("::").next().unwrap_or(head);
+                if ["In", "Out", "Tx", "Rx", "Pad"].contains(&last) {
+                    format!("{last}<{rest}")
+                } else {
+                    ty
+                }
+            }
+            _ => ty,
+        };
         let (kind, inner) = if let Some(x) = ty.strip_prefix("Out<") {
             ("Out", x)
         } else if let Some(x) = ty.strip_prefix("In<") {
