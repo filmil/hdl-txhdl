@@ -5625,6 +5625,17 @@ fn split_field(side: &[TokenTree]) -> Option<String> {
     })
 }
 
+/// Whether the field `@group p f` is a field of an input group, `p`
+/// being an `In` port of the unit, which several children may read
+/// (issue 1722).
+fn group_field_is_input(g: &str, ports: &[(String, String)]) -> bool {
+    let p = g
+        .strip_prefix("@group ")
+        .and_then(|g| g.split_once(' '))
+        .map_or("", |(p, _)| p);
+    ports.iter().any(|(q, k)| q == p && k == "In")
+}
+
 /// The net of `h.f`, one channel of a bundle made whole whose side `h`
 /// is one of `links`: `NET_f` (issue 498). `None` for anything else.
 fn link_field(
@@ -5994,6 +6005,37 @@ fn lower_structural(
             arr_ends.push((x.to_string(), p.to_string()));
             continue;
         }
+        // `let b = s.f;` or `let b = s.f.clone();`: a name for the field
+        // `f` of a split port group, read wherever `s.f` would be (issue
+        // 1722). An output's field has one driver, so it is named and
+        // not cloned.
+        if let (true, Some(TokenTree::Ident(b)), Some(TokenTree::Punct(eq))) =
+            (is_ident(&ts[0], "let"), ts.get(1), ts.get(2))
+        {
+            let rest = ts.get(3..).unwrap_or(&[]);
+            let (field, cloned) = match rest {
+                [_, _, _] => (split_field(rest), false),
+                [_, _, _, TokenTree::Punct(d), c, TokenTree::Group(g)]
+                    if d.as_char() == '.'
+                        && is_ident(c, "clone")
+                        && g.stream().is_empty() =>
+                {
+                    (split_field(&rest[..3]), true)
+                }
+                _ => (None, false),
+            };
+            if let (true, Some(g)) = (eq.as_char() == '=', field) {
+                if cloned && !group_field_is_input(&g, ports) {
+                    return Err(err(
+                        ts[3].span(),
+                        "a field of an output group has one driver: name \
+                         it, `let b = s.f;`, and do not clone it",
+                    ));
+                }
+                aliases.push((b.to_string(), g));
+                continue;
+            }
+        }
         // `let b = a.clone();`: a wire read in two places, which is
         // how a design fans an input out to several children. A clone
         // is another name for the same net; a channel has one receiver
@@ -6049,6 +6091,18 @@ fn lower_structural(
                     .find(|(x, _)| *x == a)
                     .map(|(_, t)| t.clone())
                     .unwrap_or(a);
+                // Another name for a field of a split group (issue 1722).
+                if a.starts_with("@group ") {
+                    if !group_field_is_input(&a, ports) {
+                        return Err(err(
+                            ts[3].span(),
+                            "a field of an output group has one driver: \
+                             name it, `let b = s.f;`, and do not clone it",
+                        ));
+                    }
+                    aliases.push((b, a));
+                    continue;
+                }
                 let wire_end = ends.iter().any(|(e, _, ch)| *e == a && !*ch);
                 let in_port = ports.iter().any(|(p, k)| *p == a && k == "In");
                 if !wire_end && !in_port {
@@ -6597,6 +6651,14 @@ fn lower_structural(
             }
             let mut joined: Vec<String> = Vec::new();
             for (port, n) in names {
+                // A name given to a field of a split group is the field,
+                // `@group p f`, which the join below resolves (issue
+                // 1722).
+                let n = aliases
+                    .iter()
+                    .find(|(x, _)| *x == n)
+                    .map(|(_, t)| t.clone())
+                    .unwrap_or(n);
                 if let Some(net) = n.strip_prefix("@net ") {
                     joined.push(format!(
                         "a.push((\"{port}\".to_string(), \
