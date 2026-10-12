@@ -1783,9 +1783,27 @@ impl Lowered {
                 );
             }
         }
-        self.ports
-            .iter()
-            .any(|(n, k, _, _)| n == r && *k == Kind::In)
+        // A port group's field of that name is the same port at the
+        // module's edge, `rst` of a bare group (issue 1715).
+        let mut in_group = false;
+        for (n, k, _, _) in &self.ports {
+            let Some(g) = self.group(n) else { continue };
+            if g.fields.iter().any(|(f, _)| f == r) {
+                assert!(
+                    *k == Kind::In,
+                    "unit `{}` has a port group `{n}` with a field `{r}` \
+                     that is not an In: the netlist keeps that name for the \
+                     reset. Name it for what it is, such as `{r}_req`.",
+                    self.name
+                );
+                in_group = true;
+            }
+        }
+        in_group
+            || self
+                .ports
+                .iter()
+                .any(|(n, k, _, _)| n == r && *k == Kind::In)
     }
 
     /// Whether the module has a reset at all.
