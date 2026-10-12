@@ -7067,8 +7067,10 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     let ty = text(t);
                     // A port's end, written bare or by its path,
                     // `comp::In<Bit>`, is not taken for a struct. An end
-                    // always has its value's type; a struct of ports that
-                    // happens to be called `Tx`, `uart::Tx`, has none.
+                    // always has its value's type, so a struct of ports
+                    // called `Tx` with no type arguments, `uart::Tx`, is a
+                    // struct. One with type arguments, `uart::Tx<T>`, reads
+                    // as an end: the macro sees names, not types.
                     let end = ty.split_once('<').is_some_and(|(head, _)| {
                         let last = head.rsplit("::").next().unwrap_or(head);
                         ["In", "Out", "Tx", "Rx", "Pad"].contains(&last)
