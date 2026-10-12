@@ -26,7 +26,9 @@
 //! is `D / 8`.
 use crate::bus::axi::{Ar, Aw, BurstKind, Resp, B, R, W};
 use std::marker::PhantomData;
-use txhdl::comp::{chan, mux, Clock, DefaultClock, Link, Reg, Rx, Tx, Unit};
+use txhdl::comp::{
+    chan, mux, Clock, DefaultClock, Driver, Receiver, Reg, Rx, Side, Tx, Unit,
+};
 use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
@@ -107,62 +109,47 @@ pub type LitePer<const A: usize, const D: usize, const S: usize> = (
     Tx<LiteR<D>>,
 );
 
-/// What a peripheral holds on an AXI-Lite link, as one port rather
-/// than five: `run(&mut self, bus: LitePort<32, 32, 4>, ..)` and
-/// `bus.ar` in the body. Each field is one channel, its beat one of
-/// the structs above, and the netlist names each port for the side and
-/// the field, `bus_aw_valid`, `bus_r_data` and so on, as AXI's own
-/// signals are named with a prefix. The fields are in [`LitePer`]'s
+/// An AXI-Lite link's five channels as one port, written once for both
+/// sides (issue 1650): [`LitePort`] is the peripheral's side and
+/// [`LiteHostPort`] the host's. `run(&mut self, bus: LitePort<32, 32,
+/// 4>, ..)` and `bus.ar` in the body. Each field is one channel, its beat
+/// one of the structs above, and the netlist names each port for the
+/// side and the field, `bus_aw_valid`, `bus_r_data` and so on, as AXI's
+/// own signals are named with a prefix. The fields are in [`LitePer`]'s
 /// order. Any unit in any crate may take it, since `#[derive(Ports)]`
-/// is all `#[lower]` needs of it (issue 483).
+/// is all `#[lower]` needs of it (issue 483), and the derive also makes
+/// the two sides at once: `let (host, per) = link::<LitePort<32, 32,
+/// 4>>()` (issue 498).
 #[derive(PortsDerive)]
-pub struct LitePort<const A: usize, const D: usize, const S: usize> {
-    /// Write addresses, in.
-    pub aw: Rx<LiteAw<A>>,
-    /// Read addresses, in.
-    pub ar: Rx<LiteAr<A>>,
-    /// Write data, in.
-    pub w: Rx<LiteW<D, S>>,
-    /// Write responses, out.
-    pub b: Tx<LiteB>,
-    /// Read data, out.
-    pub r: Tx<LiteR<D>>,
+pub struct LiteBus<Si: Side, const A: usize, const D: usize, const S: usize> {
+    /// Write addresses, from the host.
+    pub aw: Si::Send<LiteAw<A>>,
+    /// Read addresses, from the host.
+    pub ar: Si::Send<LiteAr<A>>,
+    /// Write data, from the host.
+    pub w: Si::Send<LiteW<D, S>>,
+    /// Write responses, to the host.
+    pub b: Si::Recv<LiteB>,
+    /// Read data, to the host.
+    pub r: Si::Recv<LiteR<D>>,
 }
+
+/// What a peripheral holds on an AXI-Lite link, as one port rather
+/// than five: [`LiteBus`] on the receiving side, which takes the
+/// addresses and the data and sends the responses.
+pub type LitePort<const A: usize, const D: usize, const S: usize> =
+    LiteBus<Receiver, A, D, S>;
+
+/// What a host holds on an AXI-Lite link, as one port: [`LitePort`]'s
+/// five channels by the same names, each end turned round.
+pub type LiteHostPort<const A: usize, const D: usize, const S: usize> =
+    LiteBus<Driver, A, D, S>;
 
 impl<const A: usize, const D: usize, const S: usize> From<LitePer<A, D, S>>
     for LitePort<A, D, S>
 {
     fn from((aw, ar, w, b, r): LitePer<A, D, S>) -> Self {
         LitePort { aw, ar, w, b, r }
-    }
-}
-
-/// What a host holds on an AXI-Lite link, as one port: [`LitePort`]'s
-/// five channels by the same names, each end turned round. `link` makes
-/// the two at once: `let (host, per) = link::<LitePort<32, 32, 4>>()`
-/// (issue 498).
-#[derive(PortsDerive)]
-pub struct LiteHostPort<const A: usize, const D: usize, const S: usize> {
-    /// Write addresses, out.
-    pub aw: Tx<LiteAw<A>>,
-    /// Read addresses, out.
-    pub ar: Tx<LiteAr<A>>,
-    /// Write data, out.
-    pub w: Tx<LiteW<D, S>>,
-    /// Write responses, in.
-    pub b: Rx<LiteB>,
-    /// Read data, in.
-    pub r: Rx<LiteR<D>>,
-}
-
-impl<const A: usize, const D: usize, const S: usize> Link
-    for LitePort<A, D, S>
-{
-    type Host = LiteHostPort<A, D, S>;
-    fn link() -> (Self::Host, Self) {
-        let LiteLink { host, per } = axi_lite::<A, D, S>();
-        let (aw, ar, w, b, r) = host;
-        (LiteHostPort { aw, ar, w, b, r }, per.into())
     }
 }
 
