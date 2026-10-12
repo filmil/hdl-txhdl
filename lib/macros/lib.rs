@@ -171,19 +171,18 @@ fn without_default(p: &[TokenTree]) -> &[TokenTree] {
     p
 }
 
-/// Whether the `:` at `toks[i]` begins a path's `::`, which its spacing
-/// says: the first `:` of `m::X` is joined to the next. A field's own
-/// `:` stands alone, so a type written from the root, `a: ::m::X`, is
-/// not taken for a path and its field dropped (issue 1700).
+/// Whether the `:` at `toks[i]` begins a path's `::`, by the colons in a
+/// row from it: two are a path, `m::X`; one is a field's own `:`, and
+/// three are a field's `:` and then a type written from the root,
+/// `a: ::m::X`, whose field is not to be dropped (issue 1714). Spacing
+/// is not read, so `a:::m::X` is the same field.
 fn path_colon(toks: &[TokenTree], i: usize) -> bool {
-    matches!(
-        toks.get(i),
-        Some(TokenTree::Punct(p))
-            if p.as_char() == ':' && p.spacing() == Spacing::Joint
-    ) && matches!(
-        toks.get(i + 1),
-        Some(TokenTree::Punct(q)) if q.as_char() == ':'
-    )
+    toks.get(i..)
+        .unwrap_or_default()
+        .iter()
+        .take_while(|t| matches!(t, TokenTree::Punct(p) if p.as_char() == ':'))
+        .count()
+        == 2
 }
 
 /// The field names of a braced struct body, in order.
