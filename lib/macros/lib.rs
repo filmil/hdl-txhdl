@@ -394,10 +394,15 @@ fn field_types(body: &Group) -> Vec<String> {
                             }
                             _ => {}
                         }
-                        ty.push(toks[j].to_string());
+                        ty.push(toks[j].clone());
                         j += 1;
                     }
-                    types.push(ty.join(" "));
+                    // Written as a stream, which keeps a joint `::`
+                    // together where joining strings with spaces would
+                    // write `m : : X` (issue 1700).
+                    types.push(
+                        ty.into_iter().collect::<TokenStream>().to_string(),
+                    );
                     i = j;
                     continue;
                 }
