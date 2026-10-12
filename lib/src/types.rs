@@ -782,8 +782,10 @@ pub trait Value: Copy {
     }
     /// The bits a chain of fields names, `["h", "lo"]` for `v.h.lo`, as
     /// the lowest bit and the width, or `None` if the value has no such
-    /// field (issue 1648). One field is found in [`Value::layout`];
-    /// `#[derive(Value)]` goes further, into each field's own type.
+    /// field (issue 1648). This default finds one field in
+    /// [`Value::layout`] and is `None` for a longer chain;
+    /// `#[derive(Value)]` goes further, into each field's own type, so a
+    /// hand-written `Value` whose fields are structs writes its own.
     fn field_bits(path: &[&str]) -> Option<(usize, usize)> {
         let [name] = path else {
             return None;

@@ -2877,7 +2877,7 @@ fn field_of(base: &str, f: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod field_tests {
-    use super::{field_of, FIELDS, PTYPES};
+    use super::{field_of, typed_field, FIELDS, PTYPES};
 
     const P: &str = "NlE::Name(\"p_data\".to_string())";
 
@@ -2902,6 +2902,22 @@ mod field_tests {
         );
         let bit = field_of(&lo, "b0").unwrap();
         assert!(bit.ends_with("&[\"h\", \"lo\", \"b0\"])"), "{bit}");
+    }
+
+    /// A helper's parameter of a known type, `b: Beat`, goes on the same
+    /// way: `b.h.lo` is a path from `b` through `Beat`.
+    #[test]
+    fn a_field_of_a_typed_parameters_field_is_a_path() {
+        port_p();
+        let b = "NlE::Name(\"b\".to_string())";
+        let h = typed_field("Beat", b, "h");
+        let lo = field_of(&h, "lo").unwrap();
+        assert_eq!(
+            lo,
+            format!(
+                "::txhdl::netlist::field_path::<Beat>({b}, &[\"h\", \"lo\"])"
+            )
+        );
     }
 
     /// A field of a computed value is still refused.
