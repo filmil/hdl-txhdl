@@ -371,12 +371,12 @@ applies the six environments of GL ES~1.1 before the alpha test, the
 last of them \code{COMBINE} (issue~\#1512): its functions, sources,
 operands and scales are one word, word 14 of the second texture slot,
 and each function is worked out exactly and rounded once, within half a
-level of GL's in floating point. The rasteriser does not yet combine.
+level of GL's in floating point.
 Over a floor in perspective it is within a fiftieth of a level of the level of detail in floating point.
 
 In a tile the rasteriser samples as the model does, byte for byte,
 under both magnification filters, all six minification filters and the
-five environments. It reads the two slots and the descriptor's sides,
+six environments, \code{COMBINE} among them. It reads the two slots and the descriptor's sides,
 levels, filters, wrap modes, class and the address of each level with
 the entry, and steps the three planes and the four numerators with the
 walk. A textured pixel then takes a turn for each step of the model's
@@ -397,7 +397,15 @@ burst of sixteen beats and keeps its own word as it passes. Every line
 is forgotten when a list starts, since a program may change its
 textures between lists. Each level's sums are shifted back, two levels
 are blended by the level of detail's fraction, and the environment
-takes two turns more, its products and then their divide; the colour
+takes two turns more, its products and then their divide. Under
+\code{COMBINE} three more follow, from the settings slot B's word 14
+holds: each channel's three arguments and its two products, made in
+logic; its function in 510ths of a level, with \code{DOT3}'s sum of the
+three channels; and the scale, the rounding and the clamp, the divide by
+510 a halving and a divide by 255 without a divider. The unit test
+\code{the\_rasterisers\_combine\_is\_the\_models} holds these stages to
+the model's \code{tex::combine} over 200,000 random settings and colours.
+Then the colour
 goes on to the depth test and the blend as an untextured pixel's does.
 A textured pixel at the nearest texel of one level takes 18 cycles more
 than an untextured one when its texel is cached, and 37 when it
@@ -413,8 +421,8 @@ flat list has no texturing, as it has no depth, and draws a textured
 entry untextured. Scenes under every filter, every class of texel,
 every environment and both wrap modes, magnified and minified, are
 drawn in tiles as the model draws them, byte for byte, and
-\code{//docs:razboj\_tex} replays the netlist's trilinear filtering and
-\code{BLEND} under both simulators.
+\code{//docs:razboj\_tex} replays the netlist's trilinear filtering,
+\code{BLEND} and \code{COMBINE} under both simulators.
 
 The nvc replays of the tiles, depth, blending and textures take 67
 to 88 seconds each on a quiet host. A loaded host, which this shared

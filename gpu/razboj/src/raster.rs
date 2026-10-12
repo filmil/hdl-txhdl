@@ -460,6 +460,27 @@ pub struct Raster<
     pub mbl: Reg<U<51>>,
     pub mdc: Reg<U<51>>,
     pub tcol: Reg<U<32>>,
+    /// `GL_COMBINE`'s settings (#1512), from slot B's word 14; and its
+    /// turns, red, green, blue and alpha: each channel's first two
+    /// arguments, its two products, made in logic as the environment's
+    /// are, and its function in 510ths of a level.
+    pub tcomb: Reg<U<32>>,
+    pub car: Reg<U<16>>,
+    pub cag: Reg<U<16>>,
+    pub cab: Reg<U<16>>,
+    pub caa: Reg<U<16>>,
+    #[use_dsp("no")]
+    pub cpr: Reg<U<32>>,
+    #[use_dsp("no")]
+    pub cpg: Reg<U<32>>,
+    #[use_dsp("no")]
+    pub cpb: Reg<U<32>>,
+    #[use_dsp("no")]
+    pub cpa: Reg<U<32>>,
+    pub cnr: Reg<U<24>>,
+    pub cng: Reg<U<24>>,
+    pub cnb: Reg<U<24>>,
+    pub cna: Reg<U<24>>,
     /// The level of detail (issue 997), as `tex::lod` has it: the
     /// largest numerator's magnitude, its leading zeros and its top 32
     /// bits from its leading one; the lines' products for its `log2`
@@ -1166,6 +1187,110 @@ fn tex_env(
     let some = mux(replace, ta, mux(decal, fa, m.slice::<24, 8>()));
     mux(colour_only, fa, some).concat::<24, 32>(rgb)
 }
+
+/// One of `GL_COMBINE`'s arguments for one channel (#1512), as
+/// `tex::combine` takes it: from the source `s`, the texel, the
+/// environment's colour or else the fragment, whose channels are `tk`,
+/// `ck` and `fk` and whose alphas are `ta`, `ca` and `fa`; the alpha
+/// under an operand's high bit, and one less it under its low bit.
+#[allow(clippy::too_many_arguments)]
+#[lower]
+fn comb_arg(
+    s: U<2>,
+    op: U<2>,
+    fk: U<8>,
+    tk: U<8>,
+    ck: U<8>,
+    fa: U<8>,
+    ta: U<8>,
+    ca: U<8>,
+) -> U<8> {
+    let tex = Bit::from(s == 0);
+    let con = Bit::from(s == 1);
+    let ak = mux(tex, tk, mux(con, ck, fk));
+    let aa = mux(tex, ta, mux(con, ca, fa));
+    let v = mux(op.bit(1), aa, ak);
+    mux(op.bit(0), U::<8>::from(255u8) - v, v)
+}
+
+/// A channel's two products under `GL_COMBINE`'s function `func`
+/// (#1512), sixteen bits each, the first high: the first argument by
+/// the second, or by the third under `INTERPOLATE`; and the second by
+/// one less the third.
+#[lower]
+fn comb_products(func: U<3>, a0: U<8>, a1: U<8>, a2: U<8>) -> U<32> {
+    let by = mux(Bit::from(func == 4), a2, a1);
+    let p = a0.resize::<16>().mul::<16>(by.resize::<16>());
+    let n2 = U::<8>::from(255u8) - a2;
+    let q = a1.resize::<16>().mul::<16>(n2.resize::<16>());
+    p.concat::<16, 32>(q)
+}
+
+/// A channel's function in 510ths of a level (#1512), from its first
+/// two arguments `a` and its two products `pq`, as `tex::combine` works
+/// it out, in two's complement; a function past `SUBTRACT` is
+/// `SUBTRACT`, as the model's is.
+#[lower]
+fn comb_sum(func: U<3>, a: U<16>, pq: U<32>) -> U<24> {
+    let x0 = a.slice::<8, 8>().resize::<24>();
+    let x1 = a.slice::<0, 8>().resize::<24>();
+    let p = pq.slice::<16, 16>().resize::<24>();
+    let q = pq.slice::<0, 16>().resize::<24>();
+    let r0 = (x0 << 9usize) - (x0 << 1usize);
+    let r1 = (x1 << 9usize) - (x1 << 1usize);
+    let add = r0 + r1;
+    let signed = add - U::<24>::from(65025u32);
+    let lerp = (p + q) << 1usize;
+    let sub = r0 - r1;
+    let hi = mux(
+        Bit::from(func == 3),
+        signed,
+        mux(Bit::from(func == 4), lerp, sub),
+    );
+    let lo = mux(
+        Bit::from(func == 0),
+        r0,
+        mux(Bit::from(func == 1), p << 1usize, add),
+    );
+    mux(func.bit(2) | Bit::from(func == 3), hi, lo)
+}
+
+/// A channel's part of `DOT3`'s sum (#1512): (2 a0 - 255)(2 a1 - 255),
+/// which is 4 a0 a1 - 510 (a0 + a1) + 65025, from the arguments `a` and
+/// the products `pq`, the first of which is a0 a1 under `DOT3`. The sum of
+/// the three channels' parts, doubled, is `DOT3` in 510ths of a level.
+#[lower]
+fn dot_term(a: U<16>, pq: U<32>) -> U<24> {
+    let x0 = a.slice::<8, 8>().resize::<24>();
+    let x1 = a.slice::<0, 8>().resize::<24>();
+    let p = pq.slice::<16, 16>().resize::<24>();
+    let s = x0 + x1;
+    (p << 2usize) - ((s << 9usize) - (s << 1usize)) + U::<24>::from(65025u32)
+}
+
+/// A function's 510ths of a level scaled by `2^scale`, rounded to the
+/// nearest level and kept to a byte (#1512), as `tex::combine` has it:
+/// below nought is nought, and a half over 255 levels is 255; between,
+/// the halving and then the divide by 255 without a divider, exact for
+/// every value there.
+#[lower]
+fn comb_out(n: U<24>, scale: U<2>) -> U<8> {
+    let m = mux(
+        scale.bit(1),
+        mux(scale.bit(0), n << 3usize, n << 2usize),
+        mux(scale.bit(0), n << 1usize, n),
+    );
+    let y = m + U::<24>::from(255u32);
+    let z = y.slice::<1, 22>();
+    let big = z >= U::<22>::from(65280u32);
+    let w = z.slice::<0, 16>().resize::<17>();
+    let r = (w + (w >> 8usize) + U::<17>::from(1u8)) >> 8usize;
+    mux(
+        y.bit(23),
+        U::<8>::from(0u8),
+        mux(big, U::<8>::from(255u8), r.slice::<0, 8>()),
+    )
+}
 /// Whether a read's beat is taken this cycle: one is offered, the
 /// release has room for its identifier, and no write response is
 /// ahead of it.
@@ -1867,8 +1992,8 @@ impl<
                                   }
                                   // A textured entry's two slots more
                                   // (issue 997). In a tile, slot A's
-                                  // sixteen words, slot B's first six and
-                                  // the first two of the descriptor slot A
+                                  // sixteen words, slot B's first fifteen and
+                                  // the twelve of the descriptor slot A
                                   // names; a flat list passes them over and
                                   // draws the entry untextured. A plane's
                                   // low word lands first and is held for
@@ -1959,7 +2084,7 @@ impl<
                                               + ((self.insn.get() + 3)
                                                   .resize::<A>()
                                                   << SHIFT),
-                                          len: U::<8>::from(13u8),
+                                          len: U::<8>::from(14u8),
                                           size: U::<3>::from(2u8),
                                           burst: BurstKind::Incr,
                                           lock: Bit::Zero,
@@ -1969,7 +2094,7 @@ impl<
                                           region: U::<4>::from(0u8),
                                       });
                                       self.word.set(U::<5>::from(0u8));
-                                      for _ in 0..14 {
+                                      for _ in 0..15 {
                                           until(DefaultClock::rising, || {
                                               landing(
                                                   rdata.peek().is_some(),
@@ -2024,6 +2149,10 @@ impl<
                                           }
                                           if sbt == 13 {
                                               self.tnvyd.set(sb);
+                                          }
+                                          // GL_COMBINE's settings (#1512).
+                                          if sbt == 14 {
+                                              self.tcomb.set(sb);
                                           }
                                       }
                                       // The descriptor's twelve words: the
@@ -2685,6 +2814,162 @@ impl<
                                             f2, t2, em, el, ed, ad, how,
                                         );
                                         self.tcol.set(te0);
+                                        DefaultClock::rising().await;
+                                    }
+                                    // GL_COMBINE (#1512), in place of the
+                                    // environment: each channel's three
+                                    // arguments and its two products; then
+                                    // its function in 510ths of a level,
+                                    // and DOT3's sum of all three; then
+                                    // scaled, rounded and kept to a byte.
+                                    // A combined pixel takes these three
+                                    // cycles more.
+                                    if (self.tex_on.get()
+                                        & self.hit.get()
+                                        & Bit::from(self.tenv.get() == 5))
+                                    .to_bool()
+                                    {
+                                        let cw = self.tcomb.get();
+                                        let cf = self.rgb.get();
+                                        let ct = self.mtx.get();
+                                        let cc = self.tenvc.get();
+                                        let fa = cf.slice::<24, 8>();
+                                        let ta = ct.slice::<24, 8>();
+                                        let ka = cc.slice::<24, 8>();
+                                        let fnc = cw.slice::<0, 3>();
+                                        let fna = cw.slice::<3, 3>();
+                                        // Red, green and blue: sources at
+                                        // 6, operands at 18.
+                                        let fr = cf.slice::<16, 8>();
+                                        let tr = ct.slice::<16, 8>();
+                                        let kr = cc.slice::<16, 8>();
+                                        let r0 = comb_arg(
+                                            cw.slice::<6, 2>(),
+                                            cw.slice::<18, 2>(),
+                                            fr, tr, kr, fa, ta, ka,
+                                        );
+                                        let r1 = comb_arg(
+                                            cw.slice::<8, 2>(),
+                                            cw.slice::<20, 2>(),
+                                            fr, tr, kr, fa, ta, ka,
+                                        );
+                                        let r2 = comb_arg(
+                                            cw.slice::<10, 2>(),
+                                            cw.slice::<22, 2>(),
+                                            fr, tr, kr, fa, ta, ka,
+                                        );
+                                        let fg = cf.slice::<8, 8>();
+                                        let tg = ct.slice::<8, 8>();
+                                        let kg = cc.slice::<8, 8>();
+                                        let g0 = comb_arg(
+                                            cw.slice::<6, 2>(),
+                                            cw.slice::<18, 2>(),
+                                            fg, tg, kg, fa, ta, ka,
+                                        );
+                                        let g1 = comb_arg(
+                                            cw.slice::<8, 2>(),
+                                            cw.slice::<20, 2>(),
+                                            fg, tg, kg, fa, ta, ka,
+                                        );
+                                        let g2 = comb_arg(
+                                            cw.slice::<10, 2>(),
+                                            cw.slice::<22, 2>(),
+                                            fg, tg, kg, fa, ta, ka,
+                                        );
+                                        let fb = cf.slice::<0, 8>();
+                                        let tb = ct.slice::<0, 8>();
+                                        let kb = cc.slice::<0, 8>();
+                                        let b0 = comb_arg(
+                                            cw.slice::<6, 2>(),
+                                            cw.slice::<18, 2>(),
+                                            fb, tb, kb, fa, ta, ka,
+                                        );
+                                        let b1 = comb_arg(
+                                            cw.slice::<8, 2>(),
+                                            cw.slice::<20, 2>(),
+                                            fb, tb, kb, fa, ta, ka,
+                                        );
+                                        let b2 = comb_arg(
+                                            cw.slice::<10, 2>(),
+                                            cw.slice::<22, 2>(),
+                                            fb, tb, kb, fa, ta, ka,
+                                        );
+                                        // Alpha: sources at 12, and an
+                                        // operand's one bit at 24, always
+                                        // an alpha's.
+                                        let one = U::<1>::from(1u8);
+                                        let o0 = cw.slice::<24, 1>();
+                                        let a0 = comb_arg(
+                                            cw.slice::<12, 2>(),
+                                            one.concat::<1, 2>(o0),
+                                            fa, ta, ka, fa, ta, ka,
+                                        );
+                                        let o1 = cw.slice::<25, 1>();
+                                        let a1 = comb_arg(
+                                            cw.slice::<14, 2>(),
+                                            one.concat::<1, 2>(o1),
+                                            fa, ta, ka, fa, ta, ka,
+                                        );
+                                        let o2 = cw.slice::<26, 1>();
+                                        let a2 = comb_arg(
+                                            cw.slice::<16, 2>(),
+                                            one.concat::<1, 2>(o2),
+                                            fa, ta, ka, fa, ta, ka,
+                                        );
+                                        with!(self <= {
+                                            car: r0.concat::<8, 16>(r1),
+                                            cag: g0.concat::<8, 16>(g1),
+                                            cab: b0.concat::<8, 16>(b1),
+                                            caa: a0.concat::<8, 16>(a1),
+                                            cpr: comb_products(fnc, r0, r1, r2),
+                                            cpg: comb_products(fnc, g0, g1, g2),
+                                            cpb: comb_products(fnc, b0, b1, b2),
+                                            cpa: comb_products(fna, a0, a1, a2),
+                                        });
+                                        DefaultClock::rising().await;
+                                        let cw2 = self.tcomb.get();
+                                        let fnc2 = cw2.slice::<0, 3>();
+                                        let fna2 = cw2.slice::<3, 3>();
+                                        let ar = self.car.get();
+                                        let pr = self.cpr.get();
+                                        let ag = self.cag.get();
+                                        let pg = self.cpg.get();
+                                        let ab = self.cab.get();
+                                        let pb = self.cpb.get();
+                                        let aa = self.caa.get();
+                                        let pa = self.cpa.get();
+                                        let dt = dot_term(ar, pr)
+                                            + dot_term(ag, pg)
+                                            + dot_term(ab, pb);
+                                        let dot = dt << 1usize;
+                                        let is_dot = fnc2.bit(2) & fnc2.bit(1);
+                                        let dot_a = Bit::from(fnc2 == 7);
+                                        let nr = comb_sum(fnc2, ar, pr);
+                                        let ng = comb_sum(fnc2, ag, pg);
+                                        let nb = comb_sum(fnc2, ab, pb);
+                                        let na = comb_sum(fna2, aa, pa);
+                                        with!(self <= {
+                                            cnr: mux(is_dot, dot, nr),
+                                            cng: mux(is_dot, dot, ng),
+                                            cnb: mux(is_dot, dot, nb),
+                                            cna: mux(dot_a, dot, na),
+                                        });
+                                        DefaultClock::rising().await;
+                                        let cw3 = self.tcomb.get();
+                                        let sc = cw3.slice::<27, 2>();
+                                        let fnc3 = cw3.slice::<0, 3>();
+                                        let dot_a3 = Bit::from(fnc3 == 7);
+                                        let sa3 = cw3.slice::<29, 2>();
+                                        let sa = mux(dot_a3, sc, sa3);
+                                        let or = comb_out(self.cnr.get(), sc);
+                                        let og = comb_out(self.cng.get(), sc);
+                                        let ob = comb_out(self.cnb.get(), sc);
+                                        let oa = comb_out(self.cna.get(), sa);
+                                        self.tcol.set(
+                                            oa.concat::<8, 16>(or)
+                                                .concat::<8, 24>(og)
+                                                .concat::<8, 32>(ob),
+                                        );
                                         DefaultClock::rising().await;
                                     }
                                     // Fog (issue 998), after the texture
@@ -3379,6 +3664,103 @@ impl<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `GL_COMBINE` as the rasteriser's three cycles make it (#1512), from
+    /// its stages as the pixel's process joins them.
+    fn combined(w: u32, f: u32, t: u32, c: u32) -> u32 {
+        let byte =
+            |v: u32, k: usize| U::<8>::from(((v >> (8 * k)) & 0xff) as u8);
+        let two = |at: usize| U::<2>::from(((w >> at) & 3) as u8);
+        let (fa, ta, ca) = (byte(f, 3), byte(t, 3), byte(c, 3));
+        let fnc = U::<3>::from((w & 7) as u8);
+        let fna = U::<3>::from(((w >> 3) & 7) as u8);
+        // Each channel's first two arguments, its products and its
+        // function, alpha last.
+        let stage: Vec<(U<16>, U<32>, U<24>)> = (0..4)
+            .map(|k| {
+                let arg = |j: usize| {
+                    if k == 3 {
+                        let op = U::<2>::from(2 | ((w >> (24 + j)) & 1) as u8);
+                        comb_arg(two(12 + 2 * j), op, fa, ta, ca, fa, ta, ca)
+                    } else {
+                        let (fk, tk, ck) = (byte(f, k), byte(t, k), byte(c, k));
+                        comb_arg(
+                            two(6 + 2 * j),
+                            two(18 + 2 * j),
+                            fk,
+                            tk,
+                            ck,
+                            fa,
+                            ta,
+                            ca,
+                        )
+                    }
+                };
+                let (a0, a1, a2) = (arg(0), arg(1), arg(2));
+                let func = if k == 3 { fna } else { fnc };
+                let a = a0.concat::<8, 16>(a1);
+                let pq = comb_products(func, a0, a1, a2);
+                (a, pq, comb_sum(func, a, pq))
+            })
+            .collect();
+        let dot = (0..3)
+            .map(|k| dot_term(stage[k].0, stage[k].1))
+            .fold(U::<24>::from(0u8), |s, d| s + d)
+            << 1usize;
+        let (is_dot, dot_a) = (w & 7 >= 6, w & 7 == 7);
+        let sc = two(27);
+        let sa = if dot_a { sc } else { two(29) };
+        (0..4).fold(0, |acc, k| {
+            let alpha = k == 3;
+            let n = if (alpha && dot_a) || (!alpha && is_dot) {
+                dot
+            } else {
+                stage[k].2
+            };
+            let o = comb_out(n, if alpha { sa } else { sc });
+            acc | (o.raw() as u32) << (8 * k)
+        })
+    }
+
+    /// The rasteriser's `GL_COMBINE` is the model's to the bit (#1512),
+    /// over random settings, every one of the word's, and random colours.
+    #[test]
+    fn the_rasterisers_combine_is_the_models() {
+        let mut x = 0x2545_f491u32;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x
+        };
+        for _ in 0..200_000 {
+            let w = next() & 0x7fff_ffff;
+            let (f, t, c) = (next(), next(), next());
+            assert_eq!(
+                combined(w, f, t, c),
+                crate::tex::combine(w, f, t, c),
+                "word {w:08x} f {f:08x} t {t:08x} c {c:08x}"
+            );
+        }
+    }
+
+    /// The scale, the rounding and the clamp are the model's for every
+    /// function's value, which is within 2^19 of nought, at every scale:
+    /// the divide by 255 without a divider is exact below 65280, which is
+    /// all `comb_out` asks of it.
+    #[test]
+    fn combines_rounding_is_exact() {
+        for s in 0..4u32 {
+            for n in -(1i32 << 19)..(1 << 19) {
+                let want = ((n << s) + 255).div_euclid(510).clamp(0, 255) as u8;
+                let got = comb_out(
+                    U::<24>::from((n as u32) & 0xff_ffff),
+                    U::<2>::from(s as u8),
+                );
+                assert_eq!(got.raw() as u8, want, "{n} scaled by {s}");
+            }
+        }
+    }
 
     /// The decide stage's inputs: the mark's verdict, the depth and
     /// stencil read, the pixel's depth, the depth and stencil
