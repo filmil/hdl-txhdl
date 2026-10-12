@@ -166,6 +166,120 @@ fn icache() {
     say_line(b"apart", apart - calls * warm, calls);
 }
 
+/// Three more blocks for the instruction cache (issue 1679), each timing
+/// the same 260 instructions over 65 lines as `A`, so that a line of one
+/// compares with a line of another:
+///
+/// * `FAR`: 64 lines 128 bytes apart, run in the order `37 k mod 64`,
+///   each three no-ops and a `jal` to the next, so that no line follows
+///   the one before it and a fill cannot start early.
+/// * `NEAR`: `A`'s lines, each ending in a `jal` to the next line rather
+///   than running off its end.
+/// * `LOOP`: four instructions in one line, the last a taken branch back,
+///   run 64 times: a line's instructions with no line crossed.
+const FAR: usize = map::DDR3 + 0x31_2000;
+const NEAR: usize = map::DDR3 + 0x32_2000;
+const LOOP: usize = map::DDR3 + 0x33_2000;
+const FAR_STEP: usize = 128;
+// Each on lines 512 and up, which this program's code does not reach,
+// and `FAR`'s header and last line on lines its 64 do not use.
+const _: () = assert!((FAR - map::DDR3) % 0x4000 == 0x2000);
+const _: () = assert!((NEAR - map::DDR3) % 0x4000 == 0x2000);
+const _: () = assert!((LOOP - map::DDR3) % 0x4000 == 0x2000);
+const _: () = assert!(64 * FAR_STEP <= 0x2000);
+
+/// `jal x0, off`, for an even offset of 21 bits.
+const fn jal(off: i32) -> u32 {
+    let o = off as u32;
+    (((o >> 20) & 1) << 31)
+        | (((o >> 1) & 0x3ff) << 21)
+        | (((o >> 11) & 1) << 20)
+        | (((o >> 12) & 0xff) << 12)
+        | 0x6f
+}
+/// `addi t2, zero, 64`, `addi t2, t2, -1` and `bne t2, zero, -12`.
+const LI_T2: u32 = 0x0400_0393;
+const DEC_T2: u32 = 0xfff3_8393;
+const BNE_T2: u32 = 0xfe03_9ae3;
+
+fn put(at: usize, words: [u32; 4]) {
+    let code = at as *mut u32;
+    for (i, w) in words.iter().enumerate() {
+        unsafe { core::ptr::write_volatile(code.add(i), *w) };
+    }
+}
+
+/// `FAR`: a header at `FAR + 16`, the 64 lines at `FAR + 128 p`, and the
+/// last line at `FAR + 32`.
+fn far() {
+    let line = |k: usize| FAR + FAR_STEP * ((k * 37) % 64);
+    let end = FAR + 32;
+    let hop = |from: usize, to: usize| jal(to as i32 - (from + 12) as i32);
+    put(FAR + 16, [CSRR_T0, NOP, NOP, hop(FAR + 16, line(0))]);
+    for k in 0..64 {
+        let next = if k == 63 { end } else { line(k + 1) };
+        put(line(k), [NOP, NOP, NOP, hop(line(k), next)]);
+    }
+    put(end, [CSRR_T1, SUB_A0, RET, NOP]);
+}
+
+/// `NEAR`: as `A`, with each line's last word a `jal` to the next line.
+fn near() {
+    put(NEAR, [CSRR_T0, NOP, NOP, jal(4)]);
+    for l in 1..65 {
+        put(NEAR + 16 * l, [NOP, NOP, NOP, jal(4)]);
+    }
+    put(NEAR + 16 * 65, [CSRR_T1, SUB_A0, RET, NOP]);
+}
+
+/// `LOOP`: a header that sets `t2` to 64, the loop's one line, and the
+/// last line.
+fn one_line_loop() {
+    put(LOOP, [CSRR_T0, LI_T2, NOP, NOP]);
+    put(LOOP + 16, [DEC_T2, NOP, NOP, BNE_T2]);
+    put(LOOP + 32, [CSRR_T1, SUB_A0, RET, NOP]);
+}
+
+/// The three blocks, each run cold after `fence.i` and then warm:
+/// `icache2 far <cold> <warm> near <cold> <warm> loop <cold> <warm>`,
+/// then `costs icache-<kind>` a line, as for `A`.
+fn icache_jumps() {
+    far();
+    near();
+    one_line_loop();
+    fence_i();
+    // Each block's `ret`, the third word of its last line, read back.
+    for end in [FAR + 32, NEAR + 16 * 65, LOOP + 32] {
+        let ret = (end as *const u32).wrapping_add(2);
+        if unsafe { core::ptr::read_volatile(ret) != RET } {
+            Uart::say(b"costs icache jump blocks not written\n");
+            return;
+        }
+    }
+    let mut cold = [0i32; 3];
+    let mut warm = [0i32; 3];
+    for (i, at) in [FAR + 16, NEAR, LOOP].into_iter().enumerate() {
+        fence_i();
+        cold[i] = run(at) as i32;
+        warm[i] = run(at) as i32;
+    }
+    Uart::say(b"icache2");
+    for (i, name) in [&b" far "[..], b" near ", b" loop "].iter().enumerate() {
+        Uart::say(name);
+        Uart::put_decimal(cold[i] as u32);
+        Uart::put(b' ');
+        Uart::put_decimal(warm[i] as u32);
+    }
+    Uart::put(b'\n');
+    // A far line not held, beside its warm cost; a near jump's warm and
+    // missed line; and four instructions in one line, no line crossed.
+    say_line(b"far-miss", cold[0] - warm[0], 1);
+    say_line(b"far-warm", warm[0], 1);
+    say_line(b"near-miss", cold[1] - warm[1], 1);
+    say_line(b"near-warm", warm[1], 1);
+    say_line(b"loop-warm", warm[2], 1);
+}
+
 fn mcycle() -> u32 {
     let c: u32;
     unsafe { asm!("csrr {0}, mcycle", out(reg) c) };
@@ -233,6 +347,7 @@ fn main() -> ! {
     say(b"mul", timed!("mul a2, a2, a2"), empty);
     say(b"divu", timed!("lw a3, 0(a0)", "divu a2, a2, a3"), empty);
     icache();
+    icache_jumps();
     Uart::say(b"costs done\n");
     halt()
 }
