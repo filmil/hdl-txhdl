@@ -159,6 +159,17 @@ int main(void) {
   glGetIntegerv(GL_STENCIL_CLEAR_VALUE, s + 7);
   printf("stencil %04x %d %d ops %04x %04x %04x mask %d clear %d\n", s[0],
          s[1], s[2], s[3], s[4], s[5], s[6], s[7]);
+  /* GL_COMBINE's scales (#1512): an integer gives a scale whole, and
+     the fixed-point call reads it back in 16.16. */
+  glTexEnvi(GL_TEXTURE_ENV, GL_RGB_SCALE, 2);
+  glTexEnvi(GL_TEXTURE_ENV, GL_ALPHA_SCALE, 4);
+  GLint sc[2];
+  GLfixed sx[2];
+  glGetTexEnviv(GL_TEXTURE_ENV, GL_RGB_SCALE, sc);
+  glGetTexEnviv(GL_TEXTURE_ENV, GL_ALPHA_SCALE, sc + 1);
+  glGetTexEnvxv(GL_TEXTURE_ENV, GL_RGB_SCALE, sx);
+  glGetTexEnvxv(GL_TEXTURE_ENV, GL_ALPHA_SCALE, sx + 1);
+  printf("scales %d %d fixed %d %d\n", sc[0], sc[1], sx[0], sx[1]);
 
 
   /* Buffer objects (#1488): a new context with room for their stores,

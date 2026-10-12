@@ -699,6 +699,9 @@ pub unsafe extern "C" fn glGetTexEnviv(env: u32, pname: u32, params: *mut i32) {
     with(|g| n = g.get_tex_env(env, pname, &mut v));
     let w = if pname == gl::TEXTURE_ENV_COLOR {
         v.map(|c| ((c as i64 * i32::MAX as i64) / ONE as i64) as i32)
+    } else if pname == gl::RGB_SCALE || pname == gl::ALPHA_SCALE {
+        // A scale, whole (#1512).
+        v.map(|c| c / ONE)
     } else {
         v
     };
@@ -1605,7 +1608,14 @@ pub extern "C" fn glTexEnvx(target: u32, pname: u32, param: Fx) {
 
 #[no_mangle]
 pub extern "C" fn glTexEnvi(target: u32, pname: u32, param: i32) {
-    with(|g| g.tex_env(target, pname, &[param as Fx]));
+    // A scale is a number, which an integer gives whole (#1512); every
+    // other name takes an enumerant, which goes as it is.
+    let p = if pname == gl::RGB_SCALE || pname == gl::ALPHA_SCALE {
+        param.saturating_mul(ONE)
+    } else {
+        param as Fx
+    };
+    with(|g| g.tex_env(target, pname, &[p]));
 }
 
 #[no_mangle]

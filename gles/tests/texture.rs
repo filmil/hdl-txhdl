@@ -109,6 +109,22 @@ fn library(min: u32, mag: u32, env: u32) -> (Vec<[u32; WORDS]>, Vec<u32>) {
         gl::TEXTURE_ENV_COLOR,
         &[ONE / 4, ONE, ONE / 2, ONE],
     );
+    // `GL_COMBINE` (#1512) of a kind the five cannot be: the texel and
+    // the environment's colour mixed by the fragment's colour, doubled;
+    // the alpha the constant's less the texel's.
+    for (pname, v) in [
+        (gl::COMBINE_RGB, gl::INTERPOLATE),
+        (gl::SRC0_RGB, gl::TEXTURE),
+        (gl::SRC1_RGB, gl::CONSTANT),
+        (gl::SRC2_RGB, gl::PREVIOUS),
+        (gl::OPERAND2_RGB, gl::SRC_COLOR),
+        (gl::COMBINE_ALPHA, gl::SUBTRACT),
+        (gl::SRC0_ALPHA, gl::CONSTANT),
+        (gl::SRC1_ALPHA, gl::TEXTURE),
+    ] {
+        g.tex_env(gl::TEXTURE_ENV, pname, &[v as Fx]);
+    }
+    g.tex_env(gl::TEXTURE_ENV, gl::RGB_SCALE, &[2 * ONE]);
     g.enable(gl::TEXTURE_2D);
     let [l, r, b, t, n, f] = FRUSTUM.map(fx);
     g.matrix_mode(gl::PROJECTION);
@@ -263,6 +279,13 @@ fn env(mode: u32, f: [f64; 4], t: [f64; 4], e: [f64; 4]) -> [f64; 4] {
         (gl::DECAL, _) => (f[c] * (255.0 - t[3]) + t[c] * t[3]) / 255.0,
         (gl::BLEND, 3) => m(f[3], t[3]),
         (gl::BLEND, _) => (f[c] * (255.0 - t[c]) + e[c] * t[c]) / 255.0,
+        (gl::COMBINE, 3) => (e[3] - t[3]).max(0.0),
+        // INTERPOLATE of the texel and the constant by the fragment, and
+        // doubled, as `library` sets it (#1512).
+        (gl::COMBINE, _) => {
+            let a2 = f[c] / 255.0;
+            ((t[c] * a2 + e[c] * (1.0 - a2)) * 2.0).clamp(0.0, 255.0)
+        }
         (_, 3) => m(f[3], t[3]),
         _ => (f[c] + t[c]).min(255.0),
     })
@@ -284,7 +307,14 @@ fn textures_are_floating_points() {
         (gl::NEAREST_MIPMAP_LINEAR, gl::NEAREST),
         (gl::LINEAR_MIPMAP_LINEAR, gl::LINEAR),
     ];
-    let envs = [gl::REPLACE, gl::MODULATE, gl::DECAL, gl::BLEND, gl::ADD];
+    let envs = [
+        gl::REPLACE,
+        gl::MODULATE,
+        gl::DECAL,
+        gl::BLEND,
+        gl::ADD,
+        gl::COMBINE,
+    ];
     let (frag, ecol) =
         ([255.0, 128.0, 255.0, 255.0], [64.0, 255.0, 128.0, 255.0]);
     let (mut compared, mut worst) = (0, 0f64);
@@ -762,5 +792,73 @@ fn the_texture_called_nought_is_a_texture() {
             | (b[1] as u32) << 8
             | b[2] as u32;
         assert_eq!(fb[(32 + j) * W as usize + 48 + i], want, "texel {i},{j}");
+    }
+}
+
+/// `GL_COMBINE`'s state (#1512): GL's initial settings, each setting read
+/// back as set through `glGetTexEnv`, the scales in 16.16, and the values
+/// GL refuses: a scale but one, two or four, an alpha function of
+/// `DOT3`, an alpha operand of a colour's, and a source GL does not have.
+#[test]
+fn combine_state_reads_back_and_refuses() {
+    let mut frame = vec![[0u32; WORDS]; 4];
+    let mut g = Gl::new(&mut frame, W, H);
+    let get = |g: &mut Gl, p: u32| {
+        let mut v = [0 as Fx; 4];
+        assert_eq!(g.get_tex_env(gl::TEXTURE_ENV, p, &mut v), 1);
+        v[0]
+    };
+    let at_first = [
+        (gl::COMBINE_RGB, gl::MODULATE as Fx),
+        (gl::COMBINE_ALPHA, gl::MODULATE as Fx),
+        (gl::SRC0_RGB, gl::TEXTURE as Fx),
+        (gl::SRC1_RGB, gl::PREVIOUS as Fx),
+        (gl::SRC2_RGB, gl::CONSTANT as Fx),
+        (gl::SRC0_ALPHA, gl::TEXTURE as Fx),
+        (gl::SRC1_ALPHA, gl::PREVIOUS as Fx),
+        (gl::SRC2_ALPHA, gl::CONSTANT as Fx),
+        (gl::OPERAND0_RGB, gl::SRC_COLOR as Fx),
+        (gl::OPERAND1_RGB, gl::SRC_COLOR as Fx),
+        (gl::OPERAND2_RGB, gl::SRC_ALPHA as Fx),
+        (gl::OPERAND0_ALPHA, gl::SRC_ALPHA as Fx),
+        (gl::OPERAND1_ALPHA, gl::SRC_ALPHA as Fx),
+        (gl::OPERAND2_ALPHA, gl::SRC_ALPHA as Fx),
+        (gl::RGB_SCALE, ONE),
+        (gl::ALPHA_SCALE, ONE),
+    ];
+    for (p, want) in at_first {
+        assert_eq!(get(&mut g, p), want, "{p:04x} at first");
+    }
+    let set = [
+        (gl::TEXTURE_ENV_MODE, gl::COMBINE as Fx),
+        (gl::COMBINE_RGB, gl::DOT3_RGBA as Fx),
+        (gl::COMBINE_ALPHA, gl::ADD_SIGNED as Fx),
+        (gl::SRC1_ALPHA, gl::PRIMARY_COLOR as Fx),
+        (gl::OPERAND1_RGB, gl::ONE_MINUS_SRC_ALPHA as Fx),
+        (gl::OPERAND2_ALPHA, gl::ONE_MINUS_SRC_ALPHA as Fx),
+        (gl::RGB_SCALE, 4 * ONE),
+        (gl::ALPHA_SCALE, 2 * ONE),
+    ];
+    for (p, v) in set {
+        g.tex_env(gl::TEXTURE_ENV, p, &[v]);
+        assert_eq!(g.get_error(), gl::NO_ERROR, "{p:04x}");
+        assert_eq!(get(&mut g, p), v, "{p:04x} as set");
+    }
+    for (p, v, e) in [
+        (gl::RGB_SCALE, 3 * ONE, gl::INVALID_VALUE),
+        (gl::ALPHA_SCALE, ONE / 2, gl::INVALID_VALUE),
+        (gl::COMBINE_ALPHA, gl::DOT3_RGB as Fx, gl::INVALID_ENUM),
+        (gl::COMBINE_ALPHA, gl::DOT3_RGBA as Fx, gl::INVALID_ENUM),
+        (gl::OPERAND0_ALPHA, gl::SRC_COLOR as Fx, gl::INVALID_ENUM),
+        (
+            gl::SRC0_RGB,
+            gl::ONE_MINUS_SRC_COLOR as Fx,
+            gl::INVALID_ENUM,
+        ),
+    ] {
+        let before = get(&mut g, p);
+        g.tex_env(gl::TEXTURE_ENV, p, &[v]);
+        assert_eq!(g.get_error(), e, "{p:04x} {v:x}");
+        assert_eq!(get(&mut g, p), before, "{p:04x} unchanged");
     }
 }

@@ -201,6 +201,34 @@ pub const MODULATE: u32 = 0x2100;
 pub const DECAL: u32 = 0x2101;
 pub const REPLACE: u32 = 0x1E01;
 pub const ADD: u32 = 0x0104;
+/// `GL_COMBINE` (#1512): the environment, its two functions and its
+/// scales, the functions the environments do not share, the sources,
+/// and the names of each argument's source and operand.
+pub const COMBINE: u32 = 0x8570;
+pub const COMBINE_RGB: u32 = 0x8571;
+pub const COMBINE_ALPHA: u32 = 0x8572;
+pub const RGB_SCALE: u32 = 0x8573;
+pub const ALPHA_SCALE: u32 = 0x0D1C;
+pub const ADD_SIGNED: u32 = 0x8574;
+pub const INTERPOLATE: u32 = 0x8575;
+pub const SUBTRACT: u32 = 0x84E7;
+pub const DOT3_RGB: u32 = 0x86AE;
+pub const DOT3_RGBA: u32 = 0x86AF;
+pub const CONSTANT: u32 = 0x8576;
+pub const PRIMARY_COLOR: u32 = 0x8577;
+pub const PREVIOUS: u32 = 0x8578;
+pub const SRC0_RGB: u32 = 0x8580;
+pub const SRC1_RGB: u32 = 0x8581;
+pub const SRC2_RGB: u32 = 0x8582;
+pub const SRC0_ALPHA: u32 = 0x8588;
+pub const SRC1_ALPHA: u32 = 0x8589;
+pub const SRC2_ALPHA: u32 = 0x858A;
+pub const OPERAND0_RGB: u32 = 0x8590;
+pub const OPERAND1_RGB: u32 = 0x8591;
+pub const OPERAND2_RGB: u32 = 0x8592;
+pub const OPERAND0_ALPHA: u32 = 0x8598;
+pub const OPERAND1_ALPHA: u32 = 0x8599;
+pub const OPERAND2_ALPHA: u32 = 0x859A;
 pub const ALPHA: u32 = 0x1906;
 pub const RGB: u32 = 0x1907;
 pub const RGBA: u32 = 0x1908;
