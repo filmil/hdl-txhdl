@@ -1783,17 +1783,19 @@ impl Lowered {
                 );
             }
         }
-        // A port group's field of that name is the same port at the
-        // module's edge, `rst` of a bare group (issue 1715).
+        // A port group's field port of that name is the same port at the
+        // module's edge. A group's fields are named as the edge names them,
+        // so only a bare group's field `rst` is `rst` there; a group named
+        // for its port has `scan_rst` (issue 1715).
         let mut in_group = false;
         for (n, k, _, _) in &self.ports {
             let Some(g) = self.group(n) else { continue };
-            if g.fields.iter().any(|(f, _)| f == r) {
+            if let Some((_, w)) = g.fields.iter().find(|(f, _)| f == r) {
                 assert!(
-                    *k == Kind::In,
+                    *k == Kind::In && *w == 1,
                     "unit `{}` has a port group `{n}` with a field `{r}` \
-                     that is not an In: the netlist keeps that name for the \
-                     reset. Name it for what it is, such as `{r}_req`.",
+                     that is not one bit in: the netlist keeps that name for \
+                     the reset. Name it for what it is, such as `{r}_req`.",
                     self.name
                 );
                 in_group = true;
