@@ -171,6 +171,21 @@ fn without_default(p: &[TokenTree]) -> &[TokenTree] {
     p
 }
 
+/// Whether the `:` at `toks[i]` begins a path's `::`, which its spacing
+/// says: the first `:` of `m::X` is joined to the next. A field's own
+/// `:` stands alone, so a type written from the root, `a: ::m::X`, is
+/// not taken for a path and its field dropped (issue 1700).
+fn path_colon(toks: &[TokenTree], i: usize) -> bool {
+    matches!(
+        toks.get(i),
+        Some(TokenTree::Punct(p))
+            if p.as_char() == ':' && p.spacing() == Spacing::Joint
+    ) && matches!(
+        toks.get(i + 1),
+        Some(TokenTree::Punct(q)) if q.as_char() == ':'
+    )
+}
+
 /// The field names of a braced struct body, in order.
 fn field_names(body: &Group) -> Vec<String> {
     field_idents(body).iter().map(|id| id.to_string()).collect()
@@ -206,10 +221,7 @@ fn field_flags(body: &Group, key: &str) -> Vec<bool> {
             TokenTree::Punct(p) if p.as_char() == '>' => depth -= 1,
             TokenTree::Ident(_) if depth == 0 => {
                 if let Some(TokenTree::Punct(p)) = toks.get(i + 1) {
-                    let path = matches!(
-                        toks.get(i + 2),
-                        Some(TokenTree::Punct(q)) if q.as_char() == ':'
-                    );
+                    let path = path_colon(&toks, i + 1);
                     if p.as_char() == ':' && !path {
                         out.push(std::mem::take(&mut pending));
                     }
@@ -261,10 +273,7 @@ fn field_renames(body: &Group) -> Vec<Option<(String, Span)>> {
             TokenTree::Punct(p) if p.as_char() == '>' => depth -= 1,
             TokenTree::Ident(_) if depth == 0 => {
                 if let Some(TokenTree::Punct(p)) = toks.get(i + 1) {
-                    let path = matches!(
-                        toks.get(i + 2),
-                        Some(TokenTree::Punct(q)) if q.as_char() == ':'
-                    );
+                    let path = path_colon(&toks, i + 1);
                     if p.as_char() == ':' && !path {
                         out.push(pending.take());
                     }
@@ -314,10 +323,7 @@ fn field_values(body: &Group, key: &str) -> Vec<Option<(String, Span)>> {
             TokenTree::Punct(p) if p.as_char() == '>' => depth -= 1,
             TokenTree::Ident(_) if depth == 0 => {
                 if let Some(TokenTree::Punct(p)) = toks.get(i + 1) {
-                    let path = matches!(
-                        toks.get(i + 2),
-                        Some(TokenTree::Punct(q)) if q.as_char() == ':'
-                    );
+                    let path = path_colon(&toks, i + 1);
                     if p.as_char() == ':' && !path {
                         out.push(pending.take());
                     }
@@ -344,10 +350,7 @@ fn field_idents(body: &Group) -> Vec<Ident> {
             TokenTree::Ident(id) if depth == 0 => {
                 if let Some(TokenTree::Punct(p)) = toks.get(i + 1) {
                     if p.as_char() == ':' {
-                        let next_is_path = matches!(
-                            toks.get(i + 2),
-                            Some(TokenTree::Punct(q)) if q.as_char() == ':'
-                        );
+                        let next_is_path = path_colon(&toks, i + 1);
                         if !next_is_path {
                             names.push(id.clone());
                         }
@@ -372,10 +375,7 @@ fn field_types(body: &Group) -> Vec<String> {
             TokenTree::Punct(p) if p.as_char() == '<' => depth += 1,
             TokenTree::Punct(p) if p.as_char() == '>' => depth -= 1,
             TokenTree::Punct(p) if p.as_char() == ':' && depth == 0 => {
-                let path = matches!(
-                    toks.get(i + 1),
-                    Some(TokenTree::Punct(q)) if q.as_char() == ':'
-                );
+                let path = path_colon(&toks, i);
                 if !path
                     && !matches!(toks.get(i - 1), Some(TokenTree::Punct(_)))
                 {
