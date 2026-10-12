@@ -227,3 +227,44 @@ fn a_side_of_structs_is_read_through_its_paths() {
     assert!(v.contains("& lanes_1_valid)"), "{v}");
     assert!(v.contains("assign deep = wide_0_sub_1;"), "{v}");
 }
+
+/// A struct of ports named as a channel's end is, but taking no type.
+pub mod uart {
+    use txhdl::comp::In;
+    use txhdl::types::Bit;
+    use txhdl::Ports;
+
+    /// The line a transmitter drives.
+    #[derive(Ports)]
+    pub struct Tx {
+        pub d: In<Bit>,
+    }
+}
+
+/// A tuple side holding a port written by its path and a struct of
+/// ports called `Tx`.
+#[derive(Trace, Default)]
+pub struct Named {}
+
+#[lower]
+impl Unit for Named {
+    async fn run(
+        &mut self,
+        (q, tx): (txhdl::comp::In<Bit>, uart::Tx),
+        o: Out<Bit>,
+    ) {
+        loop {
+            DefaultClock::rising().await;
+            o.set(q.get() & tx.d.get());
+        }
+    }
+}
+
+#[test]
+fn an_end_by_its_path_beside_a_struct_called_tx() {
+    let v = Named::lowered("named").verilog();
+    for port in ["input q", "input tx_d"] {
+        assert!(v.contains(port), "no `{port}` in:\n{v}");
+    }
+    assert!(v.contains("assign o = (q & tx_d);"), "{v}");
+}
