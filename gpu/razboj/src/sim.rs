@@ -1410,6 +1410,7 @@ mod tests {
 
     /// Texturing in tiles (issue 997): textured triangles in perspective,
     /// flat and shaded, under every class of texel, every environment,
+    /// `GL_COMBINE` among them under random settings (#1512),
     /// both magnification filters and all six minification filters over
     /// a texture of six levels, repeated and clamped, magnified and
     /// minified, among entries that are not textured, under a depth test
@@ -1488,9 +1489,9 @@ mod tests {
                 })),
                 Op::Texture(Some(TexMode {
                     desc: DESC,
-                    env: round % 5,
+                    env: round % 6,
                     env_colour: next(),
-                    combine: 0,
+                    combine: next() & 0x7fff_ffff,
                 })),
             ];
             let fogged = round % 4 == 3;

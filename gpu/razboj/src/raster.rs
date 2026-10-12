@@ -3664,6 +3664,99 @@ impl<
 mod tests {
     use super::*;
 
+    /// `GL_COMBINE` as the rasteriser's three cycles make it (#1512), from
+    /// its stages as the pixel's process joins them.
+    fn combined(w: u32, f: u32, t: u32, c: u32) -> u32 {
+        let byte =
+            |v: u32, k: usize| U::<8>::from(((v >> (8 * k)) & 0xff) as u8);
+        let two = |at: usize| U::<2>::from(((w >> at) & 3) as u8);
+        let (fa, ta, ca) = (byte(f, 3), byte(t, 3), byte(c, 3));
+        let fnc = U::<3>::from((w & 7) as u8);
+        let fna = U::<3>::from(((w >> 3) & 7) as u8);
+        // Each channel's first two arguments, its products and its
+        // function, alpha last.
+        let stage: Vec<(U<16>, U<32>, U<24>)> = (0..4)
+            .map(|k| {
+                let arg = |j: usize| {
+                    if k == 3 {
+                        let op = U::<2>::from(2 | ((w >> (24 + j)) & 1) as u8);
+                        comb_arg(two(12 + 2 * j), op, fa, ta, ca, fa, ta, ca)
+                    } else {
+                        let (fk, tk, ck) = (byte(f, k), byte(t, k), byte(c, k));
+                        comb_arg(
+                            two(6 + 2 * j),
+                            two(18 + 2 * j),
+                            fk,
+                            tk,
+                            ck,
+                            fa,
+                            ta,
+                            ca,
+                        )
+                    }
+                };
+                let (a0, a1, a2) = (arg(0), arg(1), arg(2));
+                let func = if k == 3 { fna } else { fnc };
+                let a = a0.concat::<8, 16>(a1);
+                let pq = comb_products(func, a0, a1, a2);
+                (a, pq, comb_sum(func, a, pq))
+            })
+            .collect();
+        let dot = (0..3)
+            .map(|k| dot_term(stage[k].0, stage[k].1))
+            .fold(U::<24>::from(0u8), |s, d| s + d)
+            << 1usize;
+        let (is_dot, dot_a) = (w & 7 >= 6, w & 7 == 7);
+        let sc = two(27);
+        let sa = if dot_a { sc } else { two(29) };
+        (0..4).fold(0, |acc, k| {
+            let alpha = k == 3;
+            let n = if (alpha && dot_a) || (!alpha && is_dot) {
+                dot
+            } else {
+                stage[k].2
+            };
+            let o = comb_out(n, if alpha { sa } else { sc });
+            acc | (o.raw() as u32) << (8 * k)
+        })
+    }
+
+    /// The rasteriser's `GL_COMBINE` is the model's to the bit (#1512),
+    /// over random settings, every one of the word's, and random colours.
+    #[test]
+    fn the_rasterisers_combine_is_the_models() {
+        let mut x = 0x2545_f491u32;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x
+        };
+        for _ in 0..200_000 {
+            let w = next() & 0x7fff_ffff;
+            let (f, t, c) = (next(), next(), next());
+            assert_eq!(
+                combined(w, f, t, c),
+                crate::tex::combine(w, f, t, c),
+                "word {w:08x} f {f:08x} t {t:08x} c {c:08x}"
+            );
+        }
+    }
+
+    /// The divide by 255 without a divider is exact below 65280, which is
+    /// all `comb_out` asks of it.
+    #[test]
+    fn combines_rounding_is_exact() {
+        for n in -(1i32 << 21)..(1 << 21) {
+            let want = ((n + 255).div_euclid(510)).clamp(0, 255) as u8;
+            let got = comb_out(
+                U::<24>::from((n as u32) & 0xff_ffff),
+                U::<2>::from(0u8),
+            );
+            assert_eq!(got.raw() as u8, want, "{n}");
+        }
+    }
+
     /// The decide stage's inputs: the mark's verdict, the depth and
     /// stencil read, the pixel's depth, the depth and stencil
     /// comparisons, the reference and its mask, the operations on a

@@ -1,20 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The traced run of texturing (issue 997): in one tile, a floor of two
 //! triangles in perspective, textured with a sixteen by sixteen texture
-//! of five levels under `BLEND`, repeated past its edges and filtered
-//! with `LINEAR_MIPMAP_LINEAR`, magnified with `LINEAR`. It writes the
+//! of five levels, the first under `BLEND` and the second under
+//! `GL_COMBINE` (#1512), repeated past its edges and filtered with
+//! `LINEAR_MIPMAP_LINEAR`, magnified with `LINEAR`. It writes the
 //! trace and the rasteriser's netlist, so the build replays the netlist
 //! under nvc and Verilator against this run: the slots and the
 //! descriptor read with the entry, the reciprocal, the level of detail,
-//! each texel's address, the cache's refills and its hits, the filters
-//! and the environment. It checks the picture against the model.
+//! each texel's address, the cache's refills and its hits, the filters,
+//! the environment and the combiner. It checks the picture against the model.
 use razboj::model::{self, Textures};
 use razboj::op::{assemble, Op, TexMode};
 use razboj::raster::Raster;
 use razboj::sim::{self, Work};
 use razboj_tile::tex::{
-    encode, level_base, side, texel_offset, Desc, BLEND, LINEAR,
-    LINEAR_MIPMAP_LINEAR,
+    encode, level_base, side, texel_offset, Combine, Desc, BLEND, COMBINE,
+    FN_INTERPOLATE, FN_SUBTRACT, LINEAR, LINEAR_MIPMAP_LINEAR, OP_SRC_COLOR,
+    SRC_CONSTANT, SRC_PRIMARY_COLOR, SRC_TEXTURE,
 };
 
 /// One tile across, and sixteen rows of it: the floor is small, since
@@ -102,6 +104,24 @@ fn main() {
             combine: 0,
         })),
         tri(0, 1, 2),
+        // The other half under GL_COMBINE (#1512): the texel and the
+        // constant mixed by the fragment, doubled, and for alpha the
+        // constant less the texel.
+        Op::Texture(Some(TexMode {
+            desc: DESC,
+            env: COMBINE,
+            env_colour: 0xff20_80c0,
+            combine: Combine {
+                rgb: FN_INTERPOLATE,
+                alpha: FN_SUBTRACT,
+                src_rgb: [SRC_TEXTURE, SRC_CONSTANT, SRC_PRIMARY_COLOR],
+                src_alpha: [SRC_CONSTANT, SRC_TEXTURE, SRC_PRIMARY_COLOR],
+                op_rgb: [OP_SRC_COLOR; 3],
+                scale_rgb: 1,
+                ..Combine::default()
+            }
+            .word(),
+        })),
         tri(0, 2, 3),
     ];
     let list = assemble(&ops, W, H);
