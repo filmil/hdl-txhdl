@@ -25,7 +25,8 @@ value: \code{Panel} reads \code{ctl.get()} and sets \code{stat} whole.
 A unit of units hands each child its own field. \code{split()} gives
 an end per field, a struct of \code{In} or \code{Out} named for the
 group with \code{Ins} or \code{Outs} after it, and \code{Desk} passes
-\code{k.en} to one lamp and \code{k.clear} to the other, each driving
+\code{k.en}, under the name \code{en}, to one lamp and \code{k.clear}
+to the other, each driving
 its own field of \code{leds}. In simulation the end of a field reads or
 drives that field of the whole wire at once, so splitting a group
 changes nothing about when a value is seen. Both netlists are checked
