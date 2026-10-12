@@ -3711,9 +3711,10 @@ impl Lowered {
         for (t, w, e) in &temps {
             // A signed product: the narrow operands as `signed`, a
             // zero-extended one with a zero above it, multiplied at
-            // their own widths and resized to the wire's, which drops
-            // at most the zero's bit, equal to the sign, since the wire
-            // is at least as wide as the narrow values (issue 1649).
+            // their own widths and resized to the wire's. A product one
+            // bit wider than the wire, which a zero-extended operand
+            // makes, fits in the wire's width, so the bit resize drops
+            // beside the sign it keeps equals it (issue 1649).
             if let Some((x, y)) =
                 signed_product(e, self).filter(|_| is_signed_mul(t))
             {
@@ -4198,7 +4199,8 @@ fn chain(
 /// A product the emitters write at its operands' own widths (issue
 /// 1649): `a * b` where each operand is a sign or zero extension of a
 /// narrower value, at least one of them a sign extension, and the
-/// product is at least as wide as the two narrow values together. A
+/// product is at least as wide as the two narrow values' widths
+/// together. A
 /// product of an N-bit and an M-bit value, either signed and the other
 /// signed or not, fits in N + M signed bits, so at that width or more
 /// it is the whole product: VHDL's resize of a signed value, which
