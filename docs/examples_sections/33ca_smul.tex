@@ -10,13 +10,12 @@ Written as the product of the extended words, a 64 by 64 product,
 it hid the operands' widths from Vivado, which built it of four DSP
 blocks in series (issue 1649). A zero-extended operand beside a signed
 one is signed with a zero above it, so it stays positive. A product
-narrower than its operands' signed widths together is written as
-before: its signed product would have to be cut, and VHDL's
-\code{resize} of a signed value keeps the sign bit rather than cutting.
+narrower than its two narrow values together is written as before,
+since it is not their whole product.
 
 The unit registers three products: two signed words, a signed word and
 an unsigned half, and a signed byte and an unsigned byte into sixteen
-bits, the last of the narrow kind. The run asserts each against the
+bits. The run asserts each against the
 same arithmetic on Rust's integers, for operands chosen at the ends of
 their ranges, and the netlist is checked against the run under both
 simulators.
@@ -24,8 +23,8 @@ simulators.
 \begin{figure}[htbp]
 \centering
 \input{smul_timing.tex}
-\caption{Two signed words, an unsigned half, and the products
-registered from them.}
+\caption{Two signed words, an unsigned half, a signed and an unsigned
+byte, and the products registered from them.}
 \label{fig:x-smul}
 \end{figure}
 

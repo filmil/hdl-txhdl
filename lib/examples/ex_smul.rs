@@ -8,10 +8,9 @@
 //! 64 product of the extended words, in which Vivado did not see the
 //! operands' widths and built four DSP blocks in series. A zero-extended
 //! operand beside a signed one is signed with a zero above it, so it
-//! stays a positive number. A product narrower than its operands'
-//! signed widths together, a byte by an unsigned byte into sixteen
-//! bits, is written as before, since its signed product would have to
-//! be cut, and VHDL's resize of a signed value does not cut it.
+//! stays a positive number. A product narrower than its two narrow
+//! values together is written as before, since it is not their whole
+//! product.
 //!
 //! Every product is asserted against the same arithmetic on Rust's
 //! integers, and the netlist is checked against the run under nvc and
@@ -23,8 +22,7 @@ use txhdl::{lower, with, Trace};
 
 // begin{unit}
 /// Three products, registered: two signed words, a signed word and an
-/// unsigned half, and a signed byte and an unsigned byte into sixteen
-/// bits, which stays as it was.
+/// unsigned half, and a signed byte and an unsigned byte.
 #[derive(Trace, Default)]
 pub struct Smul {
     pub pss: Reg<U<64>>,
@@ -57,13 +55,14 @@ impl Unit for Smul {
 
 /// Operands: signs both ways, the most negative values, and the largest
 /// unsigned ones, which a product read as signed would get wrong.
-const CASES: [(i32, i32, u16, i8, u8); 6] = [
+const CASES: [(i32, i32, u16, i8, u8); 7] = [
     (3, 4, 5, 3, 7),
     (-3, 4, 5, -3, 7),
     (-7, -9, 0xffff, -128, 255),
     (i32::MIN, i32::MIN, 0xffff, -128, 128),
     (i32::MAX, -1, 0x8000, 127, 255),
     (0x1234_5678, -0x0765_4321, 0x7fff, -1, 1),
+    (-1, 1, 0xffff, -1, 255),
 ];
 
 fn main() {
