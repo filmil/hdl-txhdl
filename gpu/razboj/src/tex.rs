@@ -18,7 +18,7 @@ use razboj_tile::tex::{
     FN_MODULATE, FN_REPLACE, LINEAR, LINEAR_MIPMAP_NEAREST, LUMINANCE,
     LUMINANCE_ALPHA, MODULATE, NEAREST, NEAREST_MIPMAP_LINEAR,
     NEAREST_MIPMAP_NEAREST, OP_SRC_ALPHA, REPLACE, RGB, SRC_CONSTANT,
-    SRC_TEXTURE,
+    SRC_PRIMARY_COLOR, SRC_TEXTURE,
 };
 use txhdl::types::U;
 
@@ -145,6 +145,11 @@ pub fn lod(n: [i32; 4], k: u32, q: u64) -> i32 {
 /// The numerators of an entry's derivatives at the pixel `i` right and
 /// `j` down of its box's first, stepped as the walk steps them.
 pub fn numerators(i: &crate::op::Insn, x: i32, y: i32) -> [i32; 4] {
+    unit_numerators(&i.unit0(), x, y)
+}
+
+/// The same for a texture unit's part of an entry (#1510).
+pub fn unit_numerators(i: &crate::op::TexUnit, x: i32, y: i32) -> [i32; 4] {
     let r = |u: txhdl::types::U<32>| u.raw() as u32;
     let at =
         |v, d, by: i32| r(v).wrapping_add(r(d).wrapping_mul(by as u32)) as i32;
@@ -323,12 +328,20 @@ pub fn env(mode: u32, class: u32, cf: u32, ct: u32, cc: u32) -> u32 {
 /// the other environments' product over 255. `DOT3_RGBA`'s alpha is its
 /// colour's value, scaled by the colour's scale.
 pub fn combine(w: u32, cf: u32, ct: u32, cc: u32) -> u32 {
+    combine_with(w, cf, cf, ct, cc)
+}
+
+/// The same on any unit (#1510): the primary colour `cp`, the fragment's
+/// as it was rasterised, apart from the previous one `cv`, the result of
+/// the unit before, which on unit 0 is the primary colour.
+pub fn combine_with(w: u32, cp: u32, cv: u32, ct: u32, cc: u32) -> u32 {
     let c = Combine::of(w);
     let src = |s: u32| {
         bytes(match s {
             SRC_TEXTURE => ct,
             SRC_CONSTANT => cc,
-            _ => cf,
+            SRC_PRIMARY_COLOR => cp,
+            _ => cv,
         })
     };
     // Channel `k` of an argument, or its alpha, under its operand.
