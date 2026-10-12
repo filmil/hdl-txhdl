@@ -780,6 +780,23 @@ pub trait Value: Copy {
     fn layout() -> Vec<(&'static str, usize)> {
         Vec::new()
     }
+    /// The bits a chain of fields names, `["h", "lo"]` for `v.h.lo`, as
+    /// the lowest bit and the width, or `None` if the value has no such
+    /// field (issue 1648). One field is found in [`Value::layout`];
+    /// `#[derive(Value)]` goes further, into each field's own type.
+    fn field_bits(path: &[&str]) -> Option<(usize, usize)> {
+        let [name] = path else {
+            return None;
+        };
+        let mut lo = Self::WIDTH;
+        for (n, w) in Self::layout() {
+            lo -= w;
+            if n == *name {
+                return Some((lo, w));
+            }
+        }
+        None
+    }
     /// Whether the value is a port group (issue 1647): a struct whose
     /// `In` or `Out` a netlist lowers one port per field rather than as
     /// one packed port. `#[value(ports)]` beside `#[derive(Value)]` sets

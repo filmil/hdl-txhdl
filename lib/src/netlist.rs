@@ -377,6 +377,20 @@ pub fn field<V: Value>(e: Expr, name: &str) -> Expr {
     panic!("`{name}` is not a field of the value")
 }
 
+/// A chain of fields of a value on a wire, `p.h.lo` as `["h", "lo"]`:
+/// the bits [`Value::field_bits`] finds through each field's type
+/// (issue 1648).
+pub fn field_path<V: Value>(e: Expr, path: &[&str]) -> Expr {
+    let Some((lo, w)) = V::field_bits(path) else {
+        panic!("`{}` is not a field of the value", path.join("."))
+    };
+    if w == 1 {
+        Expr::index(e, Expr::Num(lo as u128))
+    } else {
+        Expr::slice(e, lo, w)
+    }
+}
+
 /// A struct literal on a wire: its fields' values, named as the literal
 /// names them, concatenated in the order the struct declares them, the
 /// first field highest, as `#[derive(Value)]` lays them out (issue 1541).
