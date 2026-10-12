@@ -8,8 +8,8 @@
 //! 64 product of the extended words, in which Vivado did not see the
 //! operands' widths and built four DSP blocks in series. A zero-extended
 //! operand beside a signed one is signed with a zero above it, so it
-//! stays a positive number. (A product narrower than its narrow
-//! values' widths together is not their whole product, and is written
+//! stays a positive number. (A product narrower than the sum of its
+//! narrow operands' widths is not their whole product, and is written
 //! as before; //lib:signed_mul_test has one, and this unit none.)
 //!
 //! Every product is asserted against the same arithmetic on Rust's
