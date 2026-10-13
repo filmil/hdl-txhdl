@@ -131,8 +131,9 @@ rust_test(
     deps = [":txhdl"],
 )
 
-# A field typed by a path, `m::X`, derives as one typed by a name
-# (issue 1700).
+# A field typed by a path, `m::X` or `::m::X`, derives as the same type
+# written by a name in scope would, under Trace, Value and Ports
+# (issues 1700 and 1714).
 rust_test(
     name = "path_field_test",
     srcs = ["tests/path_field.rs"],
