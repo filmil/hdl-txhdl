@@ -290,3 +290,42 @@ fn an_output_group_named_for_its_port_may_hold_rst() {
 fn a_bare_output_group_holding_rst_is_refused() {
     let _ = AsksBare::lowered("asks_bare").verilog();
 }
+
+/// A unit of units that names its group's fields and hands the reset to
+/// both children, as a board hands its reset to every part (issue 1722).
+#[derive(Trace, Default)]
+pub struct Named {
+    pub one: Wire1,
+    pub two: Wire1,
+}
+
+#[lower]
+impl Unit for Named {
+    async fn run(&mut self, PIn { sys, scan }: PIn, POut { leds }: POut) {
+        let s = sys.split();
+        let c = scan.split();
+        let l = leds.split();
+        let rst = s.rst;
+        let rst_one = rst.clone();
+        let rst_two = rst.clone();
+        let sel = c.sel.clone();
+        let halt = l.halt;
+        join2(
+            self.one.run((rst_one, sel), halt),
+            self.two.run((rst_two, c.tdi), l.lamp),
+        )
+        .await;
+    }
+}
+
+#[test]
+fn a_split_field_is_named_and_read_by_two_children() {
+    let v = Named::lowered("named").verilog();
+    let at = v.find("module named(").expect("the parent's module");
+    let top = v[at..].split("endmodule").next().unwrap();
+    assert_eq!(top.matches("input rst,").count(), 1, "{top}");
+    for join in [".a(rst)", ".b(scan_sel)", ".o(halt)", ".b(scan_tdi)"] {
+        assert!(top.contains(join), "no `{join}` in:\n{top}");
+    }
+    assert_eq!(top.matches(".a(rst)").count(), 2, "{top}");
+}

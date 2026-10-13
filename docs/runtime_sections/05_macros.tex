@@ -161,7 +161,10 @@ port with its field's trace path, so the testbench drives and checks
 each from that field of the run. A unit of units splits a group,
 \code{let s = p.split();}, and passes \code{s.f} to a child, which
 \code{lower\_structural} joins to the field's port by the name
-\code{PortGroup::port\_of} gives; a split output's field ports are
+\code{PortGroup::port\_of} gives. A field may also be named, \code{let b = s.f;}, and a field
+of an input group cloned, \code{let c = b.clone();}, so that several
+children read it; each name stands for the field (issue 1722). A split
+output's field ports are
 driven by the children themselves, so the wire of the whole is only a
 view to read, gathered from the field ports as an input's is, which
 VHDL-2008 allows of an \code{out} port; \code{PortGroup::split} marks

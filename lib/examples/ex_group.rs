@@ -100,7 +100,10 @@ impl Unit for Desk {
     async fn run(&mut self, knobs: In<Ctl>, leds: Out<Leds>) {
         let k = knobs.split();
         let l = leds.split();
-        join2(self.a.run(k.en, l.lamp), self.b.run(k.clear, l.beat)).await;
+        // A field may be given a name, and read under it.
+        let en = k.en;
+        let lamp = l.lamp;
+        join2(self.a.run(en, lamp), self.b.run(k.clear, l.beat)).await;
     }
 }
 // end{units}
