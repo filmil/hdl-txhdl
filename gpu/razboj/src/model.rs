@@ -271,11 +271,20 @@ pub fn render_textured(
             (state && op.logic.to_bool()).then_some(op.lop.raw() as u32);
         let (sf, df) = (op.sfactor.raw() as u32, op.dfactor.raw() as u32);
         let mask = op.mask();
-        let tex = textures.filter(|_| op.tex.to_bool()).map(|t| {
-            let d = op.tdesc.raw() as u32;
-            let words = core::array::from_fn(|k| (t.mem)(d + 4 * k as u32));
-            (t, razboj_tile::tex::decode(&words))
-        });
+        // Each unit that textures the entry, unit 0 first, with its
+        // texture's descriptor (#1510).
+        let units: Vec<_> = textures
+            .map(|t| {
+                op.units()
+                    .map(|u| {
+                        let d = u.tdesc.raw() as u32;
+                        let words =
+                            core::array::from_fn(|k| (t.mem)(d + 4 * k as u32));
+                        (t, u, razboj_tile::tex::decode(&words))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let r64 = |u: U<64>| u.raw() as u64;
         let at64 = |p: [U<64>; 3], i: i32, j: i32| {
             r64(p[0])
@@ -289,20 +298,24 @@ pub fn render_textured(
                 }
                 let at = y as usize * w + x as usize;
                 let mut src = colour(op, x - x0, y - y0);
-                if let Some((t, d)) = &tex {
+                // Each unit's environment takes the unit before's result,
+                // its `PREVIOUS`, beside the fragment's own colour, the
+                // primary one (#1510).
+                let primary = src;
+                for (t, o, d) in &units {
                     let (i, j) = (x - x0, y - y0);
-                    let uq = at64([op.u0, op.udx, op.udy], i, j);
-                    let vq = at64([op.v0, op.vdx, op.vdy], i, j);
-                    let q = at64([op.q0, op.qdx, op.qdy], i, j);
+                    let uq = at64([o.u0, o.udx, o.udy], i, j);
+                    let vq = at64([o.v0, o.vdx, o.vdy], i, j);
+                    let q = at64([o.q0, o.qdx, o.qdy], i, j);
                     let (u, v) = crate::tex::texel_uv(uq, vq, q);
-                    let n = crate::tex::numerators(op, i, j);
-                    let l = crate::tex::lod(n, op.lodk.raw() as u32, q);
+                    let n = crate::tex::unit_numerators(o, i, j);
+                    let l = crate::tex::lod(n, o.lodk.raw() as u32, q);
                     let ct = crate::tex::sample(d, u, v, l, t.mem);
-                    let mode = op.tenv.raw() as u32;
-                    let cc = op.tenvc.raw() as u32;
+                    let mode = o.tenv.raw() as u32;
+                    let cc = o.tenvc.raw() as u32;
                     src = if mode == razboj_tile::tex::COMBINE {
-                        let w = op.tcomb.raw() as u32;
-                        crate::tex::combine(w, src, ct, cc)
+                        let w = o.tcomb.raw() as u32;
+                        crate::tex::combine_with(w, primary, src, ct, cc)
                     } else {
                         crate::tex::env(mode, d.class, src, ct, cc)
                     };

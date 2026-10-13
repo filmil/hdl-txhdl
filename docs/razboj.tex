@@ -373,6 +373,20 @@ operands and scales are one word, word 14 of the second texture slot,
 and each function is worked out exactly and rounded once, within half a
 level of GL's in floating point.
 Over a floor in perspective it is within a fiftieth of a level of the level of detail in floating point.
+A textured entry may also have a second texture unit (issue~\#1510): bit~15
+of word~15 gives it two slots more after the first unit's two, laid out
+as theirs, with that unit's planes, numerators, descriptor, environment,
+colour and \code{COMBINE} settings. The model samples the second unit
+after the first and applies its environment to the first's result, its
+\code{PREVIOUS}, the fragment's own colour staying \code{PRIMARY\_COLOR};
+\code{the\_second\_unit\_takes\_the\_firsts\_result} holds each
+environment and \code{COMBINE} to that, to the bit, through the format
+and the binning. In the list a second unit is the second of two: GL lets
+its unit~1 texture with unit~0 off, a unit that is off passing the
+fragment through, and a program draws that by putting it on the first
+unit, whose \code{PREVIOUS} is the primary colour. The rasteriser does not read a second unit yet, so a
+list that has one is not drawn right on the board until \#1510's third
+step.
 
 In a tile the rasteriser samples as the model does, byte for byte,
 under both magnification filters, all six minification filters and the

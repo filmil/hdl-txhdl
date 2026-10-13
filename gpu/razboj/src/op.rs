@@ -133,6 +133,16 @@ pub enum Op {
     /// as `mode` says, or not at all with `None` (issue 997). Tiled lists
     /// only.
     Texture(Option<TexMode>),
+    /// From here on, texture the entries that carry a second set of
+    /// texture coordinates on the second unit as `mode` says, or not at
+    /// all with `None` (#1510): unit 1 applies its environment to unit 0's
+    /// result, which is its `PREVIOUS`. It takes effect only while unit 0
+    /// is on, since in the list a second unit is the second of two. GL
+    /// lets unit 1 texture with unit 0 off, a unit that is off passing the
+    /// fragment through; a program draws that by putting GL's unit 1 on
+    /// this unit 0, whose `PREVIOUS` is the primary colour. Tiled lists
+    /// only.
+    Texture1(Option<TexMode>),
     /// A triangle with texture coordinates: flat in `colours[0]`, or
     /// shaded from a colour at each vertex when `shaded`; a depth at each
     /// vertex, used under a depth mode; and at each vertex `u q`, `v q`
@@ -147,6 +157,9 @@ pub enum Op {
         shaded: bool,
         z: [u32; 3],
         uvq: [(i64, i64, u64); 3],
+        /// The second unit's `u q`, `v q` and `q` at each vertex, as `uvq`
+        /// (#1510), which a second unit under [`Op::Texture1`] samples.
+        uvq1: Option<[(i64, i64, u64); 3]>,
     },
 }
 
@@ -447,6 +460,41 @@ pub struct Insn {
     pub q0: U<64>,
     pub qdx: U<64>,
     pub qdy: U<64>,
+    /// A second texture unit (#1510): whether the entry has one, which
+    /// gives it two slots more, laid out as unit 0's two; and that unit's
+    /// part of the entry.
+    pub tex1: Bit,
+    pub unit1: TexUnit,
+}
+
+/// A texture unit's part of a textured entry (#1510): its texture's
+/// descriptor, its environment, the environment's colour and
+/// `COMBINE`'s settings, its planes `u q`, `v q` and `q`, and its level
+/// of detail's numerators and their shift, as [`Insn`] has unit 0's.
+#[derive(ValueDerive, Clone, Copy, Default, Debug)]
+pub struct TexUnit {
+    pub tdesc: U<32>,
+    pub tenv: U<3>,
+    pub tenvc: U<32>,
+    pub tcomb: U<32>,
+    pub lodk: U<8>,
+    pub nux: U<32>,
+    pub nuxd: U<32>,
+    pub nvx: U<32>,
+    pub nvxd: U<32>,
+    pub nuy: U<32>,
+    pub nuyd: U<32>,
+    pub nvy: U<32>,
+    pub nvyd: U<32>,
+    pub u0: U<64>,
+    pub udx: U<64>,
+    pub udy: U<64>,
+    pub v0: U<64>,
+    pub vdx: U<64>,
+    pub vdy: U<64>,
+    pub q0: U<64>,
+    pub qdx: U<64>,
+    pub qdy: U<64>,
 }
 
 impl Insn {
@@ -457,6 +505,43 @@ impl Insn {
         } else {
             0xf
         }
+    }
+
+    /// Unit 0's part of the entry (#1510), from its fields.
+    pub fn unit0(&self) -> TexUnit {
+        TexUnit {
+            tdesc: self.tdesc,
+            tenv: self.tenv,
+            tenvc: self.tenvc,
+            tcomb: self.tcomb,
+            lodk: self.lodk,
+            nux: self.nux,
+            nuxd: self.nuxd,
+            nvx: self.nvx,
+            nvxd: self.nvxd,
+            nuy: self.nuy,
+            nuyd: self.nuyd,
+            nvy: self.nvy,
+            nvyd: self.nvyd,
+            u0: self.u0,
+            udx: self.udx,
+            udy: self.udy,
+            v0: self.v0,
+            vdx: self.vdx,
+            vdy: self.vdy,
+            q0: self.q0,
+            qdx: self.qdx,
+            qdy: self.qdy,
+        }
+    }
+
+    /// The units that texture the entry, in GL's order: none, unit 0, or
+    /// unit 0 then unit 1.
+    pub fn units(&self) -> impl Iterator<Item = TexUnit> {
+        let one = self.tex.to_bool().then(|| self.unit0());
+        let two =
+            (self.tex.to_bool() && self.tex1.to_bool()).then_some(self.unit1);
+        one.into_iter().chain(two)
     }
 
     /// Whether the entry reads the colour already there: it blends, has a
@@ -621,7 +706,8 @@ impl Op {
             | Op::Fog(_)
             | Op::SmoothAlpha(_)
             | Op::Stencil(_)
-            | Op::Texture(_) => None,
+            | Op::Texture(_)
+            | Op::Texture1(_) => None,
         }
     }
 
@@ -671,6 +757,7 @@ impl Op {
                 shaded,
                 z,
                 uvq,
+                ..
             } => {
                 let s = shaded.then_some(colours);
                 let t = Some(uvq);
@@ -902,6 +989,7 @@ pub fn assemble(ops: &[Op], sw: usize, sh: usize) -> Vec<Insn> {
     let mut depth = None;
     let mut pixel = Pixel::default();
     let mut texture = None;
+    let mut texture1 = None;
     let mut fog = None;
     let mut smooth_alpha = false;
     let mut out = Vec::new();
@@ -919,6 +1007,7 @@ pub fn assemble(ops: &[Op], sw: usize, sh: usize) -> Vec<Insn> {
             Op::LogicOp(op) => pixel.logic = op.map(|o| o & 0xf),
             Op::Stencil(mode) => pixel.stencil = mode,
             Op::Texture(mode) => texture = mode,
+            Op::Texture1(mode) => texture1 = mode,
             _ => {
                 if let Some(mut insn) =
                     within.and_then(|b| op.encode_with(b, depth, sw, sh))
@@ -938,6 +1027,34 @@ pub fn assemble(ops: &[Op], sw: usize, sh: usize) -> Vec<Insn> {
                         insn.tenv = U::from(t.env);
                         insn.tenvc = U::from(t.env_colour);
                         insn.tcomb = U::from(t.combine);
+                    }
+                    if let (
+                        Some(_),
+                        Some(t1),
+                        Op::TexTri {
+                            a,
+                            b,
+                            c,
+                            uvq1: Some(c1),
+                            ..
+                        },
+                    ) = (texture, texture1, op)
+                    {
+                        // Unit 1's planes from its own coordinates over the
+                        // same box and winding, which the vertices alone
+                        // decide.
+                        if let Some(p) = within.and_then(|w| {
+                            triangle(0, [*a, *b, *c], None, None, Some(*c1), w)
+                        }) {
+                            insn.tex1 = Bit::One;
+                            insn.unit1 = TexUnit {
+                                tdesc: U::from(t1.desc),
+                                tenv: U::from(t1.env),
+                                tenvc: U::from(t1.env_colour),
+                                tcomb: U::from(t1.combine),
+                                ..p.unit0()
+                            };
+                        }
                     }
                     out.push(insn);
                 }
