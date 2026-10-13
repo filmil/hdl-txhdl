@@ -1124,6 +1124,8 @@ latex_document(
         ":arith_timing",
         ":smul_run",
         ":smul_timing",
+        ":subfield_run",
+        ":subfield_timing",
         ":valif_run",
         ":valif_timing",
         ":range_run",
@@ -3085,6 +3087,20 @@ waveform(
         "//smul/psmall=>small",
     ],
     until = 31,
+)
+
+waveform(
+    name = "subfield",
+    example = "//lib/examples:ex_subfield",
+    lowered = ("subfield", "subfield"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//p=>p",
+        "//subfield/rlo=>lo",
+        "//subfield/rhi=>hi",
+        "//subfield/rlast=>last",
+    ],
+    until = 19,
 )
 
 waveform(

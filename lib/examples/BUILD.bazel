@@ -903,6 +903,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# Fields of nested structs in a lowered unit (issue 1648):  bazel run //lib/examples:ex_subfield
+rust_binary(
+    name = "ex_subfield",
+    srcs = ["ex_subfield.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # ex_smul's products through Vivado out of context, at the core's ten
 # nanosecond clock (issue 1649): how many DSP blocks each takes, and
 # whether the paths into the products' registers meet the clock. Manual,
@@ -1550,6 +1559,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_litfn.rs",
         "ex_arith.rs",
         "ex_smul.rs",
+        "ex_subfield.rs",
         "ex_valif.rs",
         "ex_range.rs",
         "ex_cast.rs",

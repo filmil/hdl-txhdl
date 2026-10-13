@@ -526,6 +526,24 @@ pub fn derive_value(input: TokenStream) -> TokenStream {
             })
             .collect::<Vec<_>>()
             .join(" ");
+        // A chain of fields, `v.h.lo`, goes on into the type of each
+        // field it passes through (issue 1648).
+        let deeper = names
+            .iter()
+            .zip(&types)
+            .map(|(n, t)| {
+                format!(
+                    "\"{n}\" => <{t} as ::txhdl::types::Value>\
+                     ::field_bits(rest),"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let deeper = if names.is_empty() {
+            "None".to_string()
+        } else {
+            format!("match *first {{ {deeper} _ => None }}")
+        };
         // The fields' names in declared order, as a constant of the
         // struct's own name: a constant lives in the value namespace and
         // the struct in the type namespace, so the two do not clash, a
@@ -628,7 +646,17 @@ pub fn derive_value(input: TokenStream) -> TokenStream {
              fn parts(self) -> Vec<::txhdl::types::Part> {{\n\
              vec![{fields}] }}\n\
              fn layout() -> Vec<(&'static str, usize)> {{\n\
-             vec![{layout}] }}\n}}\n\
+             vec![{layout}] }}\n\
+             fn field_bits(path: &[&str]) -> Option<(usize, usize)> {{\n\
+             let (first, rest) = path.split_first()?;\n\
+             let mut lo = <Self as ::txhdl::types::Value>::WIDTH;\n\
+             for (n, w) in <Self as ::txhdl::types::Value>::layout() {{\n\
+             lo -= w;\n\
+             if n != *first {{ continue; }}\n\
+             if rest.is_empty() {{ return Some((lo, w)); }}\n\
+             let inner: Option<(usize, usize)> = {deeper};\n\
+             return inner.map(|(l, w)| (lo + l, w)); }}\n\
+             None }}\n}}\n\
              #[doc(hidden)]\n\
              #[allow(non_upper_case_globals, dead_code)]\n\
              {v} const {n}: ::txhdl::types::Fields = \
@@ -2535,6 +2563,11 @@ thread_local! {
     /// value's type, so a field of a port's value can be sliced out.
     static PTYPES: std::cell::RefCell<Vec<(String, String)>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// Each field of a value this unit's lowering has written, `p.h`, by
+    /// its text, with the value's type, the value's own text and the
+    /// fields so far, so that `p.h.lo` goes on from it (issue 1648).
+    static FIELDS: std::cell::RefCell<Vec<FieldChain>> =
+        const { std::cell::RefCell::new(Vec::new()) };
     /// The sides of the unit that are structs implementing `Ports`,
     /// each by name with its type's text.
     static BUNDLES: std::cell::RefCell<Vec<(String, String)>> =
@@ -2751,10 +2784,63 @@ fn as_lit(
     }
 }
 
+/// A field written by the lowering, `p.h`: its text, the type of the
+/// value it is a field of, that value's text, and the fields from it.
+struct FieldChain {
+    text: String,
+    ty: String,
+    base: String,
+    path: Vec<String>,
+}
+
+/// The field `f` of a value of type `ty` whose text is `base`; when
+/// `base` is itself a field this lowering wrote, `p.h`, the chain goes
+/// on, `p.h.lo`, and the bits are found through the type of each field
+/// when `lowered` runs (issue 1648).
+fn typed_field(ty: &str, base: &str, f: &str) -> String {
+    let prior = FIELDS.with(|c| {
+        c.borrow()
+            .iter()
+            .find(|c| c.text == base)
+            .map(|c| (c.ty.clone(), c.base.clone(), c.path.clone()))
+    });
+    let (ty, base, path) = match prior {
+        Some((t, b, mut p)) => {
+            p.push(f.to_string());
+            (t, b, p)
+        }
+        None => (ty.to_string(), base.to_string(), vec![f.to_string()]),
+    };
+    let text = match path.as_slice() {
+        [one] => format!("::txhdl::netlist::field::<{ty}>({base}, \"{one}\")"),
+        _ => {
+            let list = path
+                .iter()
+                .map(|p| format!("\"{p}\""))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("::txhdl::netlist::field_path::<{ty}>({base}, &[{list}])")
+        }
+    };
+    FIELDS.with(|c| {
+        c.borrow_mut().push(FieldChain {
+            text: text.clone(),
+            ty,
+            base,
+            path,
+        })
+    });
+    text
+}
+
 /// A field of a port's value, `p.f`: the base must be a port's data,
-/// and the field's bits are found from the value type's layout when
-/// `lowered` runs, so a generic value's width is no obstacle.
+/// or a field of it this lowering wrote, and the field's bits are found
+/// from the value type's layout when `lowered` runs, so a generic
+/// value's width is no obstacle.
 fn field_of(base: &str, f: &str) -> Result<String, String> {
+    if FIELDS.with(|c| c.borrow().iter().any(|c| c.text == base)) {
+        return Ok(typed_field("", base, f));
+    }
     let name = base
         .strip_prefix("NlE::Name(\"")
         .and_then(|s| s.strip_suffix("\".to_string())"))
@@ -2785,7 +2871,61 @@ fn field_of(base: &str, f: &str) -> Result<String, String> {
             }
         };
     };
-    Ok(format!("::txhdl::netlist::field::<{ty}>({base}, \"{f}\")"))
+    Ok(typed_field(&ty, base, f))
+}
+
+#[cfg(test)]
+mod field_tests {
+    use super::{field_of, typed_field, FIELDS, PTYPES};
+
+    const P: &str = "NlE::Name(\"p_data\".to_string())";
+
+    fn port_p() {
+        FIELDS.with(|f| f.borrow_mut().clear());
+        PTYPES.with(|p| *p.borrow_mut() = vec![("p".into(), "Beat".into())]);
+    }
+
+    /// One field is written as before; a field of it goes on from the
+    /// port's value as a path through `Beat` (issue 1648).
+    #[test]
+    fn a_field_of_a_field_is_a_path_from_the_port() {
+        port_p();
+        let h = field_of(P, "h").unwrap();
+        assert_eq!(h, format!("::txhdl::netlist::field::<Beat>({P}, \"h\")"));
+        let lo = field_of(&h, "lo").unwrap();
+        assert_eq!(
+            lo,
+            format!(
+                "::txhdl::netlist::field_path::<Beat>({P}, &[\"h\", \"lo\"])"
+            )
+        );
+        let bit = field_of(&lo, "b0").unwrap();
+        assert!(bit.ends_with("&[\"h\", \"lo\", \"b0\"])"), "{bit}");
+    }
+
+    /// A helper's parameter of a known type, `b: Beat`, goes on the same
+    /// way: `b.h.lo` is a path from `b` through `Beat`.
+    #[test]
+    fn a_field_of_a_typed_parameters_field_is_a_path() {
+        port_p();
+        let b = "NlE::Name(\"b\".to_string())";
+        let h = typed_field("Beat", b, "h");
+        let lo = field_of(&h, "lo").unwrap();
+        assert_eq!(
+            lo,
+            format!(
+                "::txhdl::netlist::field_path::<Beat>({b}, &[\"h\", \"lo\"])"
+            )
+        );
+    }
+
+    /// A field of a computed value is still refused.
+    #[test]
+    fn a_field_of_a_computed_value_is_refused() {
+        port_p();
+        let e = field_of("(a + b)", "f").unwrap_err();
+        assert!(e.contains("needs a port's value"), "{e}");
+    }
 }
 
 /// The functions under `#[lower]` in a file. The macro reads the file,
@@ -4095,9 +4235,7 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                 _ => None,
             };
             match typed {
-                Some(ty) => {
-                    Ok(format!("::txhdl::netlist::field::<{ty}>({b}, \"{f}\")"))
-                }
+                Some(ty) => Ok(typed_field(&ty, &b, &f.to_string())),
                 None => field_of(&b, &f.to_string()),
             }
         }
@@ -6849,6 +6987,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         *h.borrow_mut() = find_helpers(Span::call_site().local_file())
     });
     PTYPES.with(|p| p.borrow_mut().clear());
+    FIELDS.with(|f| f.borrow_mut().clear());
     BUNDLES.with(|p| p.borrow_mut().clear());
     BUNDLED.with(|p| p.borrow_mut().clear());
     PNAMES.with(|p| p.borrow_mut().clear());

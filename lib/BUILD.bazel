@@ -142,6 +142,16 @@ rust_test(
     deps = [":txhdl"],
 )
 
+# A chain of fields finds its bits through each field's type
+# (issue 1648).
+rust_test(
+    name = "field_bits_test",
+    srcs = ["tests/field_bits.rs"],
+    edition = "2021",
+    proc_macro_deps = [":txhdl_macros"],
+    deps = [":txhdl"],
+)
+
 # A struct literal lowers in the struct's declared order, whatever order
 # it names its fields in (issue 1541).
 rust_test(

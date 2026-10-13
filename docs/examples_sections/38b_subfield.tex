@@ -1,0 +1,27 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Field of a Field}
+\label{sec:x-subfield}
+
+A lowered unit reads a field of a port's value, \code{p.get().last},
+as the bits that field takes in the value. A field of a field,
+\code{p.get().h.lo}, is read the same way: \code{lo}'s bits inside the
+type of \code{h}, at \code{h}'s place inside the port's value
+(issue 1648). So a struct written once can be a field of several
+others, or twice of one, and each use reads its own bits.
+
+Here a beat holds two pairs of halves and a flag, each pair one
+\code{Halves}. The unit registers the low half of \code{h}, the high
+half of \code{g}, and the flag. The run asserts each against the beat
+it came from, for beats whose four bytes differ, and the netlist is
+checked against the run under both simulators.
+
+\begin{figure}[htbp]
+\centering
+\input{subfield_timing.tex}
+\caption{Beats, and the fields of their fields registered from them.}
+\label{fig:x-subfield}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_subfield.rs}. Run with \code{bazel run //lib/examples:ex\_subfield}.},label={lst:x-subfield}]{lib/examples/ex_subfield.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_subfield} printed when the build ran it: each beat and the fields read from it, then the lowering.},label={lst:x-subfield-out}]{out_subfield.txt}
