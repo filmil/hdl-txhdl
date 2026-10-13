@@ -167,8 +167,9 @@ fn icache() {
 }
 
 /// Three more blocks for the instruction cache (issue 1679), each timing
-/// the same 260 instructions over 65 lines as `A`, so that a line of one
-/// compares with a line of another:
+/// the same 260 instructions as `A`, so that four instructions of one
+/// compare with four of another; `FAR` and `NEAR` over 65 lines as `A`,
+/// `LOOP` in one:
 ///
 /// * `FAR`: 64 lines 128 bytes apart, run in the order `37 k mod 64`,
 ///   each three no-ops and a `jal` to the next, so that no line follows
@@ -182,7 +183,8 @@ const NEAR: usize = map::DDR3 + 0x32_2000;
 const LOOP: usize = map::DDR3 + 0x33_2000;
 const FAR_STEP: usize = 128;
 // Each on lines 512 and up, which this program's code does not reach,
-// and `FAR`'s header and last line on lines its 64 do not use.
+// and `FAR`'s header and last line on lines its 64 do not use, away
+// from the first line it runs.
 const _: () = assert!((FAR - map::DDR3) % 0x4000 == 0x2000);
 const _: () = assert!((NEAR - map::DDR3) % 0x4000 == 0x2000);
 const _: () = assert!((LOOP - map::DDR3) % 0x4000 == 0x2000);
@@ -209,13 +211,17 @@ fn put(at: usize, words: [u32; 4]) {
     }
 }
 
-/// `FAR`: a header at `FAR + 16`, the 64 lines at `FAR + 128 p`, and the
-/// last line at `FAR + 32`.
+/// `FAR`'s header and last line: half-way into the 128 bytes of the line
+/// it runs 32nd, far from the first it runs, at `FAR`, and from the last.
+const FAR_HEAD: usize = FAR + 32 * FAR_STEP + 64;
+const FAR_END: usize = FAR_HEAD + 16;
+
+/// `FAR`: the header, the 64 lines at `FAR + 128 p`, and the last line.
 fn far() {
     let line = |k: usize| FAR + FAR_STEP * ((k * 37) % 64);
-    let end = FAR + 32;
+    let end = FAR_END;
     let hop = |from: usize, to: usize| jal(to as i32 - (from + 12) as i32);
-    put(FAR + 16, [CSRR_T0, NOP, NOP, hop(FAR + 16, line(0))]);
+    put(FAR_HEAD, [CSRR_T0, NOP, NOP, hop(FAR_HEAD, line(0))]);
     for k in 0..64 {
         let next = if k == 63 { end } else { line(k + 1) };
         put(line(k), [NOP, NOP, NOP, hop(line(k), next)]);
@@ -249,7 +255,7 @@ fn icache_jumps() {
     one_line_loop();
     fence_i();
     // Each block's `ret`, the third word of its last line, read back.
-    for end in [FAR + 32, NEAR + 16 * 65, LOOP + 32] {
+    for end in [FAR_END, NEAR + 16 * 65, LOOP + 32] {
         let ret = (end as *const u32).wrapping_add(2);
         if unsafe { core::ptr::read_volatile(ret) != RET } {
             Uart::say(b"costs icache jump blocks not written\n");
@@ -258,7 +264,7 @@ fn icache_jumps() {
     }
     let mut cold = [0i32; 3];
     let mut warm = [0i32; 3];
-    for (i, at) in [FAR + 16, NEAR, LOOP].into_iter().enumerate() {
+    for (i, at) in [FAR_HEAD, NEAR, LOOP].into_iter().enumerate() {
         fence_i();
         cold[i] = run(at) as i32;
         warm[i] = run(at) as i32;
