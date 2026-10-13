@@ -48,10 +48,11 @@ gives it a second slot of sixteen words after it, the depth plane and
 those settings, in the format the table below gives. With
 bit 14 it is textured (issue 997): two slots more hold the planes of
 $uq$, $vq$ and $q$ in 64 bits, the level of detail's numerators, the
-texture's descriptor and its environment, and the rasteriser samples
-its levels in DDR3 through a texture cache, under GL's two
-magnification and six minification filters, and applies the five
-environments of GL ES~1.1 but \code{COMBINE}, byte for byte as the
+texture's descriptor, its environment and \code{COMBINE}'s settings,
+and the rasteriser samples its levels in DDR3 through a texture cache,
+under GL's two magnification and six minification filters, and applies
+the six environments of GL ES~1.1, \code{COMBINE} among them (\#1512),
+byte for byte as the
 model of \code{gpu/razboj/src/tex.rs} does. A flat list draws such an
 entry untextured, with no depth and no state.
 
@@ -263,7 +264,17 @@ turns: its level's coordinates, its column and row wrapped with its
 weight, its address, the read of the cache of 64 lines, a refill of
 sixteen beats on a miss, the weight times each channel, and the sum.
 Then the two levels' blend, and the environment's products and their
-divide in two turns more.
+divide in two turns more. Under \code{COMBINE} three turns follow
+(\#1512), from the settings in word 14 of the second texture slot, in the layout
+\code{razboj\_tile::tex::Combine::word} gives: each channel's three
+arguments and two products, made in logic (\code{comb\_arg},
+\code{comb\_products}); its function in 510ths of a colour step, with
+\code{DOT3}'s sum of the three channels (\code{comb\_sum},
+\code{dot\_term}); and the scale, the rounding and the clamp
+(\code{comb\_out}). An argument's source is the texel, the environment's
+colour or the fragment's, which on the one texture unit is both the
+primary and the previous colour. Under \code{DOT3\_RGBA} the alpha is the
+colour's, scaled as the colour is.
 \item When a write response and a read beat arrive together, the
 write's identifier goes back first and the read's waits a cycle.
 Grants are taken and dropped.
@@ -284,6 +295,11 @@ pixel with the model of \code{gpu/razboj/src/model.rs}:
 up to four random rectangles and triangles.
 \item \code{an\_instruction\_survives\_the\_format} in the same target
 checks the display list's encoder against its decoder.
+\item \code{the\_rasterisers\_combine\_is\_the\_models} in the same target
+holds \code{COMBINE}'s three turns, joined as the pixel's process joins
+them, to the model's \code{tex::combine} over 200,000 random settings
+and colours, and \code{combines\_rounding\_is\_exact} checks the rounding
+at every scale.
 \item The build simulates the netlist of \code{Raster<16, 2, 4, 16, 0,
 0x400, 0x600>} against the trace of \code{//gpu/razboj:trace} under nvc and
 Verilator: \code{//docs:razboj\_sim\_raster\_raster\_tb\_test} and
@@ -302,12 +318,15 @@ test, a colour mask, depth and a scissor box in some rounds;
 comparison, with operations, masks and a reference;
 \item \code{texturing\_in\_tiles\_is\_the\_models}, over 25 rounds of
 every filter, environment and class of texel on a texture of six
-levels, fogged after the texture in some rounds.
+levels, fogged after the texture in some rounds, and \code{COMBINE}
+under random settings in four.
+
 \end{itemize}
 \code{what\_a\_textured\_pixel\_costs} and
 \code{a\_load\_costs\_about\_a\_write\_out} measure what those cost.
 \item The build replays the netlist against traced runs of its lists,
-its tiles, its depth, its blend and load, and its trilinear texturing:
+its tiles, its depth, its blend and load, and its trilinear texturing
+and \code{COMBINE}:
 \code{//docs:razboj\_lists}, \code{razboj\_tiles},
 \code{razboj\_depth}, \code{razboj\_blend} and \code{razboj\_tex}, each
 under nvc and Verilator. \code{razboj\_blend}'s run also draws a
@@ -341,10 +360,11 @@ lattice.
 and a pixel at a time: a pixel that tests depth or has the pixel's
 state takes three to five cycles, a fogged one a cycle more, and a
 textured one 18 more at the nearest texel of one level and about 76
-reading eight texels, its refills included. Depth, the pixel's state,
+reading eight texels, its refills included, and three more under
+\code{COMBINE}. Depth, the pixel's state,
 with its logic operation, fog and stencil, and texturing hold only in a
 tile; a flat list draws its entries in list order, flat or shaded,
-with none of them. It has one texture unit and no \code{COMBINE}. It
+with none of them. It has one texture unit. It
 clips no geometry, only boxes, and the assembler \code{Op::encode} does
 that on the host. It has one read out at a time.
 
