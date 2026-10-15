@@ -26,7 +26,8 @@ use txhdl_parts::scanout::LinePair;
 use txhdl_parts::sd::SdCard;
 use txhdl_parts::spi::FlashDevice;
 use vreteno32::board::{
-    Board, BoardIn, BoardMap, BoardOut, SlotMap, REMOTE_DEV,
+    Board, BoardIn, BoardMap, BoardOut, Bscan, Ddr3Pins, JtagAnswers, SlotMap,
+    SysIn, SysOut, REMOTE_DEV,
 };
 use vreteno32::dmem::Dmem;
 use vreteno32::hart::Hart;
@@ -752,13 +753,20 @@ fn run_all_in<const LO: usize, const HI: usize>(
     let (amo_ph, f_wait, p_wait, ic_st) =
         (core.amo_ph, core.f_wait, core.p_wait, core.ic_st);
     let (mut amo_rereads, mut amo_shared) = (0u32, false);
-    let (rst_o, rst) = signal::<Bit, DefaultClock>();
-    let (irq_o, irq) = signal::<Bit, DefaultClock>();
-    let (rx_o, rx) = signal::<Bit, DefaultClock>();
-    let quiet = || signal::<Bit, DefaultClock>().1;
-    let bit = || signal::<Bit, DefaultClock>().0;
-    let (halt_o, halt) = signal::<Bit, DefaultClock>();
-    let (tx_o, tx) = signal::<Bit, DefaultClock>();
+    // The board's plain lines, one signal per group as the board takes
+    // them, and each line's end under the name the run below uses
+    // (issue 1594).
+    let (sys_o, sys) = signal::<SysIn, DefaultClock>();
+    let (sys_out_o, sys_out) = signal::<SysOut, DefaultClock>();
+    let (ans_o, ans) = signal::<JtagAnswers, DefaultClock>();
+    let sin = sys_o.split();
+    let sout = sys_out.split();
+    let jans = ans.split();
+    let rst_o = sin.rst;
+    let irq_o = sin.irq;
+    let rx_o = sin.rx;
+    let halt = sout.halt;
+    let tx = sout.tx;
     // The Ethernet port, as the board sees it: the frames the remote
     // peripheral sends and the frames that answer them. There is no
     // MAC in these runs, so a byte goes out a cycle and the program
@@ -780,12 +788,12 @@ fn run_all_in<const LO: usize, const HI: usize>(
     let (araddr_o, araddr) = signal::<U<32>, DefaultClock>();
     let (arvalid_o, arvalid) = signal::<Bit, DefaultClock>();
     let (rready_o, rready) = signal::<Bit, DefaultClock>();
-    let (awready_o, awready) = signal::<Bit, DefaultClock>();
-    let (wready_o, wready) = signal::<Bit, DefaultClock>();
-    let (bvalid_o, bvalid) = signal::<Bit, DefaultClock>();
-    let (arready_o, arready) = signal::<Bit, DefaultClock>();
-    let (rdata_o, rdata) = signal::<U<32>, DefaultClock>();
-    let (rvalid_o, rvalid) = signal::<Bit, DefaultClock>();
+    let awready = jans.jtag_awready;
+    let wready = jans.jtag_wready;
+    let bvalid = jans.jtag_bvalid;
+    let arready = jans.jtag_arready;
+    let rdata = jans.jtag_rdata;
+    let rvalid = jans.jtag_rvalid;
     // A word wide and incrementing, as the master sends: a single beat
     // with identifier zero, unless a burst of the plan says otherwise.
     let (awid_o, awid) = signal::<U<1>, DefaultClock>();
@@ -798,11 +806,11 @@ fn run_all_in<const LO: usize, const HI: usize>(
     let (arlen_o, arlen) = signal::<U<8>, DefaultClock>();
     let (arsize_o, arsize) = signal::<U<3>, DefaultClock>();
     let (arburst_o, arburst) = signal::<U<2>, DefaultClock>();
-    let (bid_o, bid) = signal::<U<1>, DefaultClock>();
-    let (bresp_o, bresp) = signal::<U<2>, DefaultClock>();
-    let (rid_o, rid) = signal::<U<1>, DefaultClock>();
-    let (rresp_o, rresp) = signal::<U<2>, DefaultClock>();
-    let (rlast_o, rlast) = signal::<Bit, DefaultClock>();
+    let bid = jans.jtag_bid;
+    let bresp = jans.jtag_bresp;
+    let rid = jans.jtag_rid;
+    let rresp = jans.jtag_rresp;
+    let rlast = jans.jtag_rlast;
     awsize_o.set(U::from(2u8));
     awburst_o.set(U::from(1u8));
     wstrb_o.set(U::from(0xfu8));
@@ -841,10 +849,10 @@ fn run_all_in<const LO: usize, const HI: usize>(
     jtag.arid.set(U::from(0u8));
     // The configuration flash, as the board has it: the chip's identity,
     // and the start of a bitstream, whose sync word is 32 bytes in.
-    let (fl_miso_o, fl_miso) = signal::<Bit, DefaultClock>();
-    let (fl_cs_n_o, fl_cs_n) = signal::<Bit, DefaultClock>();
-    let (fl_mosi_o, fl_mosi) = signal::<Bit, DefaultClock>();
-    let (fl_cclk_o, fl_cclk) = signal::<Bit, DefaultClock>();
+    let fl_miso_o = sin.fl_miso;
+    let fl_cs_n = sout.fl_cs_n;
+    let fl_mosi = sout.fl_mosi;
+    let fl_cclk = sout.fl_cclk;
     let mut head = vec![0xffu8; 16];
     head.extend([0x00, 0x00, 0x00, 0xbb, 0x11, 0x22, 0x00, 0x44]);
     head.extend([0xff; 8]);
@@ -853,46 +861,33 @@ fn run_all_in<const LO: usize, const HI: usize>(
     let mut chip = FlashDevice::new(head, [0x20, 0xba, 0x18], false, false);
     // The Ethernet PHY's management interface, with the model PHY the
     // caller gives in `net`: `board_phy()` unless a test wants another.
-    let (phy_mdio_in_o, phy_mdio_in) = signal::<Bit, DefaultClock>();
-    let (phy_mdc_o, phy_mdc) = signal::<Bit, DefaultClock>();
-    let (phy_out_o, phy_out) = signal::<Bit, DefaultClock>();
-    let (phy_oe_o, phy_oe) = signal::<Bit, DefaultClock>();
+    let phy_mdio_in_o = sin.phy_mdio_in;
+    let phy_mdc = sout.phy_mdc;
+    let phy_out = sout.phy_mdio_out;
+    let phy_oe = sout.phy_mdio_oe;
     let mut phy = phy.unwrap_or_else(board_phy);
     phy_mdio_in_o.set(Bit::One);
     // The card in the SD slot, on the host's lines; a line nobody
     // drives reads high through its pull-up.
-    let (sd_cmd_in_o, sd_cmd_in) = signal::<Bit, DefaultClock>();
-    let (sd_dat_in_o, sd_dat_in) = signal::<U<4>, DefaultClock>();
-    let (sd_clk_o, sd_clk) = signal::<Bit, DefaultClock>();
-    let (sd_cmd_out_o, sd_cmd_out) = signal::<Bit, DefaultClock>();
-    let (sd_cmd_oe_o, sd_cmd_oe) = signal::<Bit, DefaultClock>();
-    let (sd_dat_out_o, sd_dat_out) = signal::<U<4>, DefaultClock>();
-    let (sd_dat_oe_o, sd_dat_oe) = signal::<Bit, DefaultClock>();
+    let sd_cmd_in_o = sin.sd_cmd_in;
+    let sd_dat_in_o = sin.sd_dat_in;
+    let sd_clk = sout.sd_clk;
+    let sd_cmd_out = sout.sd_cmd_out;
+    let sd_cmd_oe = sout.sd_cmd_oe;
+    let sd_dat_out = sout.sd_dat_out;
+    let sd_dat_oe = sout.sd_dat_oe;
     let mut card = card.unwrap_or_default();
     sd_cmd_in_o.set(Bit::One);
     sd_dat_in_o.set(U::<4>::from(0xfu8));
     let board = board.run(
         BoardIn {
-            rst,
-            irq,
-            rx,
-            sys_clk: quiet(),
-            sys_rst: quiet(),
+            // The board's clock and the controller's reset stay low, and
+            // there is no MAC here: the frames come straight into the port.
+            sys,
+            bscan: signal::<Bscan, Tck>().1,
             vb: vb_rx,
             vr: vr_rx,
             net_rx: net_in_rx,
-            // No MAC here: the frames come straight into the port.
-            mac_drops: signal::<U<48>, DefaultClock>().1,
-            fl_miso,
-            phy_mdio_in,
-            sd_cmd_in,
-            sd_dat_in,
-            bscan_sel: signal::<Bit, Tck>().1,
-            bscan_shift: signal::<Bit, Tck>().1,
-            bscan_capture: signal::<Bit, Tck>().1,
-            bscan_update: signal::<Bit, Tck>().1,
-            bscan_tdi: signal::<Bit, Tck>().1,
-            bscan_reset: signal::<Bit, Tck>().1,
             scan_req,
             host_aw,
             host_ar,
@@ -925,24 +920,9 @@ fn run_all_in<const LO: usize, const HI: usize>(
             },
         },
         BoardOut {
-            halt: halt_o,
-            tx: tx_o,
-            pwm_pins: signal::<U<4>, DefaultClock>().0,
-            calib: bit(),
-            ui_clk: bit(),
-            ui_rst: bit(),
-            ck_p: bit(),
-            ck_n: bit(),
-            mem_rst_n: bit(),
-            cke: bit(),
-            cs_n: bit(),
-            ras_n: bit(),
-            cas_n: bit(),
-            we_n: bit(),
-            row: signal::<U<15>, DefaultClock>().0,
-            bank: signal::<U<3>, DefaultClock>().0,
-            dm: signal::<U<4>, DefaultClock>().0,
-            odt: bit(),
+            sys_out: sys_out_o,
+            mem_pins: signal::<Ddr3Pins, DefaultClock>().0,
+            jtag_ans: ans_o,
             dq: pad::<U<32>, DefaultClock>(),
             dqs: pad::<U<4>, DefaultClock>(),
             dqs_n: pad::<U<4>, DefaultClock>(),
@@ -950,29 +930,6 @@ fn run_all_in<const LO: usize, const HI: usize>(
             var: var_tx,
             vw: vw_tx,
             net_tx: net_out_tx,
-            jtag_awready: awready_o,
-            jtag_wready: wready_o,
-            jtag_bid: bid_o,
-            jtag_bresp: bresp_o,
-            jtag_bvalid: bvalid_o,
-            jtag_arready: arready_o,
-            jtag_rid: rid_o,
-            jtag_rdata: rdata_o,
-            jtag_rresp: rresp_o,
-            jtag_rlast: rlast_o,
-            jtag_rvalid: rvalid_o,
-            fl_cs_n: fl_cs_n_o,
-            fl_mosi: fl_mosi_o,
-            fl_cclk: fl_cclk_o,
-            fl_refused: bit(),
-            phy_mdc: phy_mdc_o,
-            phy_mdio_out: phy_out_o,
-            phy_mdio_oe: phy_oe_o,
-            sd_clk: sd_clk_o,
-            sd_cmd_out: sd_cmd_out_o,
-            sd_cmd_oe: sd_cmd_oe_o,
-            sd_dat_out: sd_dat_out_o,
-            sd_dat_oe: sd_dat_oe_o,
             bscan_tdo: signal::<Bit, Tck>().0,
             // A scanout runs only when the run asks for one.
             scan_words,

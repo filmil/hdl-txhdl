@@ -21,7 +21,9 @@ use txhdl_parts::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
 use txhdl_parts::bus::axi_pins::AxiHostPins;
 use txhdl_parts::dtm::Tck;
 use txhdl_parts::eth::EthByte;
-use vreteno32::board::{Board, BoardIn, BoardOut};
+use vreteno32::board::{
+    Board, BoardIn, BoardOut, Bscan, Ddr3Pins, JtagAnswers, SysIn, SysOut,
+};
 use vreteno32::dmem::Dmem;
 use vreteno32::hart::Hart;
 use vreteno32::rom::Rom;
@@ -292,45 +294,38 @@ fn rig_with(text: Vec<u32>, busy: bool) -> Rig {
     let (araddr_o, araddr) = signal::<U<32>, DefaultClock>();
     let (arvalid_o, arvalid) = signal::<Bit, DefaultClock>();
     let (rready_o, rready) = signal::<Bit, DefaultClock>();
-    let (arready_o, arready) = signal::<Bit, DefaultClock>();
-    let (rvalid_o, rvalid) = signal::<Bit, DefaultClock>();
-    let (rdata_o, rdata) = signal::<U<32>, DefaultClock>();
+    // The master's answers come back as the board's one group of them
+    // (issue 1594).
+    let (ans_o, ans) = signal::<JtagAnswers, DefaultClock>();
+    let jans = ans.split();
+    let arready = jans.jtag_arready;
+    let rvalid = jans.jtag_rvalid;
+    let rdata = jans.jtag_rdata;
     let (arsize_o, arsize) = signal::<U<3>, DefaultClock>();
     let (arburst_o, arburst) = signal::<U<2>, DefaultClock>();
     arsize_o.set(U::from(2u8));
     arburst_o.set(U::from(1u8));
-    let (rst_o, rst) = signal::<Bit, DefaultClock>();
-    let (rx_o, rx) = signal::<Bit, DefaultClock>();
+    let (sys_o, sys) = signal::<SysIn, DefaultClock>();
+    let sin = sys_o.split();
+    let rst_o = sin.rst;
+    let rx_o = sin.rx;
     let lo = || signal::<Bit, DefaultClock>().1;
-    let out = || signal::<Bit, DefaultClock>().0;
-    let (sel_o, sel) = signal::<Bit, Tck>();
-    let (shift_o, shift) = signal::<Bit, Tck>();
-    let (capture_o, capture) = signal::<Bit, Tck>();
-    let (update_o, update) = signal::<Bit, Tck>();
-    let (tdi_o, tdi) = signal::<Bit, Tck>();
-    let (reset_o, reset) = signal::<Bit, Tck>();
+    let (bscan_o, bscan) = signal::<Bscan, Tck>();
+    let bs = bscan_o.split();
+    let sel_o = bs.sel;
+    let shift_o = bs.shift;
+    let capture_o = bs.capture;
+    let update_o = bs.update;
+    let tdi_o = bs.tdi;
+    let reset_o = bs.reset;
     let (tdo_o, _tdo) = signal::<Bit, Tck>();
     let mut sim = Running::new(board.run(
         BoardIn {
-            rst,
-            irq: lo(),
-            rx,
-            sys_clk: lo(),
-            sys_rst: lo(),
+            sys,
+            bscan,
             vb: chan::<LiteB, DefaultClock>().1,
             vr: chan::<LiteR<32>, DefaultClock>().1,
             net_rx: chan::<EthByte, DefaultClock>().1,
-            mac_drops: signal::<U<48>, DefaultClock>().1,
-            fl_miso: lo(),
-            phy_mdio_in: lo(),
-            sd_cmd_in: lo(),
-            sd_dat_in: signal::<U<4>, DefaultClock>().1,
-            bscan_sel: sel,
-            bscan_shift: shift,
-            bscan_capture: capture,
-            bscan_update: update,
-            bscan_tdi: tdi,
-            bscan_reset: reset,
             scan_req: chan::<U<32>, DefaultClock>().1,
             host_aw: chan::<Addr<32, 2>, DefaultClock>().1,
             host_ar: chan::<Addr<32, 2>, DefaultClock>().1,
@@ -363,24 +358,9 @@ fn rig_with(text: Vec<u32>, busy: bool) -> Rig {
             },
         },
         BoardOut {
-            halt: out(),
-            tx: out(),
-            pwm_pins: signal::<U<4>, DefaultClock>().0,
-            calib: out(),
-            ui_clk: out(),
-            ui_rst: out(),
-            ck_p: out(),
-            ck_n: out(),
-            mem_rst_n: out(),
-            cke: out(),
-            cs_n: out(),
-            ras_n: out(),
-            cas_n: out(),
-            we_n: out(),
-            row: signal::<U<15>, DefaultClock>().0,
-            bank: signal::<U<3>, DefaultClock>().0,
-            dm: signal::<U<4>, DefaultClock>().0,
-            odt: out(),
+            sys_out: signal::<SysOut, DefaultClock>().0,
+            mem_pins: signal::<Ddr3Pins, DefaultClock>().0,
+            jtag_ans: ans_o,
             dq: pad::<U<32>, DefaultClock>(),
             dqs: pad::<U<4>, DefaultClock>(),
             dqs_n: pad::<U<4>, DefaultClock>(),
@@ -388,29 +368,6 @@ fn rig_with(text: Vec<u32>, busy: bool) -> Rig {
             var: chan::<LiteAr<32>, DefaultClock>().0,
             vw: chan::<LiteW<32, 4>, DefaultClock>().0,
             net_tx: chan::<EthByte, DefaultClock>().0,
-            jtag_awready: out(),
-            jtag_wready: out(),
-            jtag_bid: signal::<U<1>, DefaultClock>().0,
-            jtag_bresp: signal::<U<2>, DefaultClock>().0,
-            jtag_bvalid: out(),
-            jtag_arready: arready_o,
-            jtag_rid: signal::<U<1>, DefaultClock>().0,
-            jtag_rdata: rdata_o,
-            jtag_rresp: signal::<U<2>, DefaultClock>().0,
-            jtag_rlast: out(),
-            jtag_rvalid: rvalid_o,
-            fl_cs_n: out(),
-            fl_mosi: out(),
-            fl_cclk: out(),
-            fl_refused: out(),
-            phy_mdc: out(),
-            phy_mdio_out: out(),
-            phy_mdio_oe: out(),
-            sd_clk: out(),
-            sd_cmd_out: out(),
-            sd_cmd_oe: out(),
-            sd_dat_out: signal::<U<4>, DefaultClock>().0,
-            sd_dat_oe: out(),
             bscan_tdo: tdo_o,
             // No scanout runs here: nothing asks for a line.
             scan_words: chan::<U<32>, DefaultClock>().0,
