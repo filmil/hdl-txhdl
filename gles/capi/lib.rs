@@ -111,8 +111,32 @@ struct Arrays {
     colour: Array,
     normal: Array,
     texcoord: Array,
+    /// The second unit's texture coordinates (#1510).
+    texcoord1: Array,
     /// A size a point, in 16.16 (#1507).
     point_size: Array,
+    /// The unit `glClientActiveTexture` names, whose texture coordinate
+    /// array the array calls set (#1510).
+    client: usize,
+}
+
+impl Arrays {
+    /// The client's active unit's texture coordinate array (#1510).
+    fn tc(&self) -> &Array {
+        if self.client == 1 {
+            &self.texcoord1
+        } else {
+            &self.texcoord
+        }
+    }
+
+    fn tc_mut(&mut self) -> &mut Array {
+        if self.client == 1 {
+            &mut self.texcoord1
+        } else {
+            &mut self.texcoord
+        }
+    }
 }
 
 /// The current context: the library's, and its client arrays.
@@ -151,6 +175,8 @@ pub unsafe extern "C" fn gles_make_current(
             colour: Array::OFF,
             normal: Array::OFF,
             texcoord: Array::OFF,
+            texcoord1: Array::OFF,
+            client: 0,
             point_size: Array {
                 size: 1,
                 ..Array::OFF
@@ -369,7 +395,7 @@ pub extern "C" fn glIsEnabled(cap: u32) -> u8 {
         VERTEX_ARRAY => c.arrays.vertex.on as u8,
         COLOR_ARRAY => c.arrays.colour.on as u8,
         NORMAL_ARRAY => c.arrays.normal.on as u8,
-        gl::TEXTURE_COORD_ARRAY => c.arrays.texcoord.on as u8,
+        gl::TEXTURE_COORD_ARRAY => c.arrays.tc().on as u8,
         POINT_SIZE_ARRAY => c.arrays.point_size.on as u8,
         _ => c.gl.is_enabled(cap) as u8,
     })
@@ -395,17 +421,17 @@ fn array_state(
                 0x807B => kind(&a.vertex),
                 0x807E => kind(&a.normal),
                 0x8082 => kind(&a.colour),
-                0x8089 => kind(&a.texcoord),
+                0x8089 => kind(a.tc()),
                 POINT_SIZE_ARRAY_TYPE => kind(&a.point_size),
-                // GL_CLIENT_ACTIVE_TEXTURE: the one unit's.
-                _ => 0x84C0,
+                // GL_CLIENT_ACTIVE_TEXTURE (#1510).
+                _ => gl::TEXTURE0 as i64 + a.client as i64,
             };
             return Some((t, Enum));
         }
         VERTEX_ARRAY => a.vertex.on as i64,
         NORMAL_ARRAY => a.normal.on as i64,
         COLOR_ARRAY => a.colour.on as i64,
-        gl::TEXTURE_COORD_ARRAY => a.texcoord.on as i64,
+        gl::TEXTURE_COORD_ARRAY => a.tc().on as i64,
         POINT_SIZE_ARRAY => a.point_size.on as i64,
         POINT_SIZE_ARRAY_STRIDE => stride(&a.point_size),
         POINT_SIZE_ARRAY_BUFFER_BINDING => a.point_size.buffer as i64,
@@ -414,8 +440,8 @@ fn array_state(
         0x807F => stride(&a.normal),
         0x8081 => size(&a.colour),
         0x8083 => stride(&a.colour),
-        0x8088 => size(&a.texcoord),
-        0x808A => stride(&a.texcoord),
+        0x8088 => size(a.tc()),
+        0x808A => stride(a.tc()),
         // The buffer bindings (#1488): the two targets', and the buffer
         // each array was given under.
         0x8894 => b.array as i64,
@@ -423,7 +449,7 @@ fn array_state(
         0x8896 => a.vertex.buffer as i64,
         0x8897 => a.normal.buffer as i64,
         0x8898 => a.colour.buffer as i64,
-        0x889A => a.texcoord.buffer as i64,
+        0x889A => a.tc().buffer as i64,
         _ => return None,
     };
     Some((v, Integer))
@@ -498,7 +524,7 @@ pub unsafe extern "C" fn glGetPointerv(pname: u32, out: *mut *mut c_void) {
         0x808E => a.vertex.at,
         0x808F => a.normal.at,
         0x8090 => a.colour.at,
-        0x8092 => a.texcoord.at,
+        0x8092 => a.tc().at,
         POINT_SIZE_ARRAY_POINTER => a.point_size.at,
         _ => return c.gl.record_error(gl::INVALID_ENUM),
     };
@@ -911,7 +937,7 @@ fn array(c: &mut Context, which: u32) -> Option<&mut Array> {
         VERTEX_ARRAY => Some(&mut c.arrays.vertex),
         COLOR_ARRAY => Some(&mut c.arrays.colour),
         NORMAL_ARRAY => Some(&mut c.arrays.normal),
-        gl::TEXTURE_COORD_ARRAY => Some(&mut c.arrays.texcoord),
+        gl::TEXTURE_COORD_ARRAY => Some(c.arrays.tc_mut()),
         POINT_SIZE_ARRAY => Some(&mut c.arrays.point_size),
         _ => None,
     }
@@ -1052,19 +1078,22 @@ unsafe fn fetch(c: &Arrays, i: usize) -> Vertex {
             }
         })
     });
-    let t = &c.texcoord;
-    let tex = t.on.then(|| {
-        let mut v = [0, 0, 0, ONE];
-        for (k, p) in v.iter_mut().enumerate().take(t.size) {
-            let raw = t.raw(i, k);
-            *p = if t.kind == FIXED {
-                raw as Fx
-            } else {
-                (raw << 16) as Fx
-            };
-        }
-        v
-    });
+    // Each unit's texture coordinates (#1510).
+    let coords = |t: &Array| {
+        t.on.then(|| {
+            let mut v = [0, 0, 0, ONE];
+            for (k, p) in v.iter_mut().enumerate().take(t.size) {
+                let raw = t.raw(i, k);
+                *p = if t.kind == FIXED {
+                    raw as Fx
+                } else {
+                    (raw << 16) as Fx
+                };
+            }
+            v
+        })
+    };
+    let (tex, tex1) = (coords(&c.texcoord), coords(&c.texcoord1));
     // A point's size from its array, in 16.16, which Common-Lite gives
     // in `GL_FIXED` alone (#1507).
     let point_size = c.point_size.on.then(|| c.point_size.raw(i, 0) as Fx);
@@ -1073,6 +1102,7 @@ unsafe fn fetch(c: &Arrays, i: usize) -> Vertex {
         colour,
         normal,
         tex,
+        tex1,
         point_size,
     }
 }
@@ -1086,6 +1116,7 @@ fn resolved(c: &mut Context) -> Arrays {
         &mut a.colour,
         &mut a.normal,
         &mut a.texcoord,
+        &mut a.texcoord1,
         &mut a.point_size,
     ] {
         x.at = c.buffers.resolve(x.buffer, x.at);
@@ -1297,9 +1328,13 @@ pub unsafe extern "C" fn glDeleteBuffers(n: i32, names: *const u32) {
                 }
             }
             let a = &mut c.arrays;
-            for x in
-                [&mut a.vertex, &mut a.colour, &mut a.normal, &mut a.texcoord]
-            {
+            for x in [
+                &mut a.vertex,
+                &mut a.colour,
+                &mut a.normal,
+                &mut a.texcoord,
+                &mut a.texcoord1,
+            ] {
                 if x.buffer == name {
                     x.buffer = 0;
                 }
@@ -1629,28 +1664,26 @@ pub unsafe extern "C" fn glTexEnvxv(
     with(|g| g.tex_env(target, pname, &v[..n]));
 }
 
-/// The one texture unit, `GL_TEXTURE0`: any other is
-/// `GL_INVALID_ENUM`.
-const TEXTURE0: u32 = 0x84C0;
-
+/// The two texture units (#1510), `GL_TEXTURE0` and `GL_TEXTURE1`: any
+/// other is `GL_INVALID_ENUM`.
 #[no_mangle]
 pub extern "C" fn glActiveTexture(unit: u32) {
-    if unit != TEXTURE0 {
-        gles_record_error(gl::INVALID_ENUM);
-    }
+    with(|g| g.active_texture(unit));
 }
 
+/// The unit whose texture coordinate array the array calls name, which
+/// the library and these entry points' client arrays both keep.
 #[no_mangle]
 pub extern "C" fn glClientActiveTexture(unit: u32) {
-    glActiveTexture(unit);
+    if let Some(c) = current() {
+        c.gl.client_active_texture(unit);
+        c.arrays.client = c.gl.client_active();
+    }
 }
 
 #[no_mangle]
 pub extern "C" fn glMultiTexCoord4x(unit: u32, s: Fx, t: Fx, r: Fx, q: Fx) {
-    if unit != TEXTURE0 {
-        return gles_record_error(gl::INVALID_ENUM);
-    }
-    with(|g| g.tex_coord(s, t, r, q));
+    with(|g| g.multi_tex_coord(unit, s, t, r, q));
 }
 
 #[no_mangle]

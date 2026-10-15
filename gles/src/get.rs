@@ -67,6 +67,7 @@ pub mod name {
     pub const STENCIL_BITS: u32 = 0x0D57;
     pub const TEXTURE_BINDING_2D: u32 = 0x8069;
     pub const ACTIVE_TEXTURE: u32 = 0x84E0;
+    pub const CLIENT_ACTIVE_TEXTURE: u32 = 0x84E1;
     pub const MAX_TEXTURE_UNITS: u32 = 0x84E2;
     pub const ALIASED_POINT_SIZE_RANGE: u32 = 0x846D;
     pub const ALIASED_LINE_WIDTH_RANGE: u32 = 0x846E;
@@ -194,7 +195,7 @@ impl Gl<'_> {
         match pname {
             CURRENT_COLOR => u(&self.colour),
             CURRENT_NORMAL => u(&self.normal),
-            CURRENT_TEXTURE_COORDS => f(&self.tex_coords),
+            CURRENT_TEXTURE_COORDS => f(&self.units[self.active].coords),
             POINT_SIZE => f(&[self.point_size]),
             // `glPointParameterx`'s (#1508).
             gl::POINT_SIZE_MIN => f(&[self.point_min]),
@@ -223,17 +224,25 @@ impl Gl<'_> {
             }
             MODELVIEW_STACK_DEPTH => i(&[self.mv_top as i64 + 1]),
             PROJECTION_STACK_DEPTH => i(&[self.pj_top as i64 + 1]),
-            TEXTURE_STACK_DEPTH => i(&[self.tx_top as i64 + 1]),
+            TEXTURE_STACK_DEPTH => {
+                i(&[self.units[self.active].tx_top as i64 + 1])
+            }
             MODELVIEW_MATRIX => f(&self.mv[self.mv_top]),
             PROJECTION_MATRIX => f(&self.pj[self.pj_top]),
-            TEXTURE_MATRIX => f(&self.tx[self.tx_top]),
+            TEXTURE_MATRIX => {
+                let u = &self.units[self.active];
+                f(&u.tx[u.tx_top])
+            }
             MODELVIEW_MATRIX_FLOAT_AS_INT_BITS_OES => {
                 bits(&self.mv[self.mv_top])
             }
             PROJECTION_MATRIX_FLOAT_AS_INT_BITS_OES => {
                 bits(&self.pj[self.pj_top])
             }
-            TEXTURE_MATRIX_FLOAT_AS_INT_BITS_OES => bits(&self.tx[self.tx_top]),
+            TEXTURE_MATRIX_FLOAT_AS_INT_BITS_OES => {
+                let u = &self.units[self.active];
+                bits(&u.tx[u.tx_top])
+            }
             ALPHA_TEST_FUNC => e(&[(gl::NEVER + self.alpha.0) as i64]),
             ALPHA_TEST_REF => {
                 let r = self.alpha.1 as i64;
@@ -277,9 +286,12 @@ impl Gl<'_> {
             RED_BITS | GREEN_BITS | BLUE_BITS | ALPHA_BITS => i(&[8]),
             DEPTH_BITS => i(&[16]),
             STENCIL_BITS => i(&[8]),
-            TEXTURE_BINDING_2D => i(&[self.bound as i64]),
-            ACTIVE_TEXTURE => e(&[TEXTURE0 as i64]),
-            MAX_TEXTURE_UNITS => i(&[1]),
+            TEXTURE_BINDING_2D => i(&[self.units[self.active].bound as i64]),
+            ACTIVE_TEXTURE => e(&[TEXTURE0 as i64 + self.active as i64]),
+            CLIENT_ACTIVE_TEXTURE => {
+                e(&[TEXTURE0 as i64 + self.client_active as i64])
+            }
+            MAX_TEXTURE_UNITS => i(&[crate::UNITS as i64]),
             // The ten paletted formats (#998), GL's values in GL's order.
             NUM_COMPRESSED_TEXTURE_FORMATS => i(&[10]),
             COMPRESSED_TEXTURE_FORMATS => {

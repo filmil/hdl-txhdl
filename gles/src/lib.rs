@@ -65,8 +65,10 @@ struct Vert {
     clip: [Fx; 4],
     col: [Fx; 4],
     back: [Fx; 4],
-    /// Its texture coordinates, through the texture matrix (#997).
+    /// Its texture coordinates, through the texture matrix (#997), on
+    /// unit 0 and on unit 1 (#1510).
     tex: [Fx; 4],
+    tex1: [Fx; 4],
     /// Whether it lies inside every plane a triangle is clipped against,
     /// near, far, the user's and the guard band's four edges (not the
     /// viewport's, which the rasteriser's box clips to),
@@ -239,11 +241,52 @@ pub struct Vertex {
     pub position: [Fx; 4],
     pub colour: Option<[Fx; 4]>,
     pub normal: Option<[Fx; 3]>,
-    /// Its texture coordinates, or `None` for the current ones (#997).
+    /// Its texture coordinates, or `None` for the current ones (#997), on
+    /// unit 0 and on unit 1 (#1510).
     pub tex: Option<[Fx; 4]>,
+    pub tex1: Option<[Fx; 4]>,
     /// Its point size, `OES_point_size_array`'s, or `None` for the
     /// current one (#1507).
     pub point_size: Option<Fx>,
+}
+
+/// Texture units, GL ES 1.1's least (#1510).
+pub const UNITS: usize = 2;
+
+/// A texture unit's state (#997, #1510): its texture matrix stack;
+/// whether it textures; the texture bound; its environment, Razboj's code,
+/// `GL_COMBINE`'s settings (#1512) and the environment's colour; and its
+/// current texture coordinates.
+#[derive(Clone, Copy)]
+struct Unit {
+    tx: [Mat; gl::MAX_TEXTURE_STACK_DEPTH],
+    tx_top: usize,
+    on: bool,
+    bound: u32,
+    env: u32,
+    combine: razboj_tile::tex::Combine,
+    env_colour: [Fx; 4],
+    coords: [Fx; 4],
+    /// Whether a point sprite's texture coordinates on this unit run
+    /// across it, `GL_COORD_REPLACE_OES` (#998), which GL keeps a unit.
+    coord_replace: bool,
+}
+
+impl Unit {
+    /// GL's initial state for a unit.
+    fn new() -> Unit {
+        Unit {
+            tx: [IDENTITY; gl::MAX_TEXTURE_STACK_DEPTH],
+            tx_top: 0,
+            on: false,
+            bound: 0,
+            env: razboj_tile::tex::MODULATE,
+            combine: razboj_tile::tex::Combine::default(),
+            env_colour: [0; 4],
+            coords: [0, 0, 0, ONE],
+            coord_replace: false,
+        }
+    }
 }
 
 /// A GL context drawing into a frame of Razboj's instructions.
@@ -369,28 +412,20 @@ pub struct Gl<'a> {
     alpha_on: bool,
     alpha: (u32, u32),
     colour_mask: u32,
-    /// Textures (#997): the texture matrix stack; whether texturing is
-    /// on; the texture bound; the environment, Razboj's code, and its
-    /// colour; the current texture coordinates; the room textures live
-    /// in, which the caller gives; and the rows' alignment an upload
-    /// reads.
-    tx: [Mat; gl::MAX_TEXTURE_STACK_DEPTH],
-    tx_top: usize,
-    texture_on: bool,
-    bound: u32,
-    env: u32,
-    /// `GL_COMBINE`'s settings (#1512), GL's initial ones at first.
-    combine: razboj_tile::tex::Combine,
-    env_colour: [Fx; 4],
-    tex_coords: [Fx; 4],
+    /// Textures (#997): each texture unit's state (#1510), the unit
+    /// `glActiveTexture` names and the one `glClientActiveTexture` names;
+    /// the room textures live in, which the caller gives; and the rows'
+    /// alignment an upload reads.
+    units: [Unit; UNITS],
+    active: usize,
+    client_active: usize,
     store: Option<texture::Store<'a>>,
     unpack: usize,
     /// The rows' alignment `glReadPixels` writes (#999), four at first.
     pack: usize,
-    /// Point sprites (#998): their switch, and whether a sprite's texture
-    /// coordinates run across it, `GL_COORD_REPLACE_OES`.
+    /// Point sprites (#998): their switch. Whether a sprite's texture
+    /// coordinates run across it, `GL_COORD_REPLACE_OES`, is each unit's.
     sprite_on: bool,
-    coord_replace: bool,
     error: u32,
 }
 
@@ -473,16 +508,10 @@ impl<'a> Gl<'a> {
             alpha_on: false,
             alpha: (gl::ALWAYS - gl::NEVER, 0),
             colour_mask: 0xf,
-            tx: [IDENTITY; gl::MAX_TEXTURE_STACK_DEPTH],
-            tx_top: 0,
-            texture_on: false,
+            units: [Unit::new(); UNITS],
+            active: 0,
+            client_active: 0,
             sprite_on: false,
-            coord_replace: false,
-            bound: 0,
-            env: razboj_tile::tex::MODULATE,
-            combine: razboj_tile::tex::Combine::default(),
-            env_colour: [0; 4],
-            tex_coords: [0, 0, 0, ONE],
             store: None,
             unpack: 4,
             pack: 4,
@@ -530,7 +559,10 @@ impl<'a> Gl<'a> {
     fn top(&mut self) -> &mut Mat {
         match self.mode {
             gl::PROJECTION => &mut self.pj[self.pj_top],
-            gl::TEXTURE => &mut self.tx[self.tx_top],
+            gl::TEXTURE => {
+                let u = &mut self.units[self.active];
+                &mut u.tx[u.tx_top]
+            }
             _ => &mut self.mv[self.mv_top],
         }
     }
@@ -539,7 +571,10 @@ impl<'a> Gl<'a> {
     fn stack(&mut self) -> (&mut [Mat], &mut usize) {
         match self.mode {
             gl::PROJECTION => (&mut self.pj, &mut self.pj_top),
-            gl::TEXTURE => (&mut self.tx, &mut self.tx_top),
+            gl::TEXTURE => {
+                let u = &mut self.units[self.active];
+                (&mut u.tx, &mut u.tx_top)
+            }
             _ => (&mut self.mv, &mut self.mv_top),
         }
     }
@@ -672,7 +707,7 @@ impl<'a> Gl<'a> {
             gl::SCISSOR_TEST => self.scissor_on = on,
             gl::BLEND => self.blend_on = on,
             gl::ALPHA_TEST => self.alpha_on = on,
-            gl::TEXTURE_2D => self.texture_on = on,
+            gl::TEXTURE_2D => self.units[self.active].on = on,
             gl::POINT_SPRITE_OES => self.sprite_on = on,
             l if (gl::LIGHT0..gl::LIGHT0 + gl::MAX_LIGHTS as u32)
                 .contains(&l) =>
@@ -721,7 +756,7 @@ impl<'a> Gl<'a> {
             gl::SCISSOR_TEST => self.scissor_on,
             gl::BLEND => self.blend_on,
             gl::ALPHA_TEST => self.alpha_on,
-            gl::TEXTURE_2D => self.texture_on,
+            gl::TEXTURE_2D => self.units[self.active].on,
             gl::POINT_SPRITE_OES => self.sprite_on,
             l if (gl::LIGHT0..gl::LIGHT0 + gl::MAX_LIGHTS as u32)
                 .contains(&l) =>
@@ -1239,8 +1274,11 @@ impl<'a> Gl<'a> {
         if let Some(s) = self.store.as_mut() {
             s.delete(names);
         }
-        if names.contains(&self.bound) {
-            self.bound = 0;
+        // A texture deleted while bound is unbound from every unit.
+        for u in self.units.iter_mut() {
+            if names.contains(&u.bound) {
+                u.bound = 0;
+            }
         }
     }
 
@@ -1251,11 +1289,11 @@ impl<'a> Gl<'a> {
             return self.fail(gl::INVALID_ENUM);
         }
         if name == 0 {
-            self.bound = 0;
+            self.units[self.active].bound = 0;
             return;
         }
         match self.store.as_mut().map(|s| s.ensure(name)) {
-            Some(true) => self.bound = name,
+            Some(true) => self.units[self.active].bound = name,
             Some(false) => self.fail(gl::INVALID_VALUE),
             None => self.fail(gl::OUT_OF_MEMORY),
         }
@@ -1320,7 +1358,7 @@ impl<'a> Gl<'a> {
         if internal != format || !fits {
             return self.fail(gl::INVALID_OPERATION);
         }
-        let (name, align) = (self.bound, self.unpack);
+        let (name, align) = (self.units[self.active].bound, self.unpack);
         let r = match self.store.as_mut() {
             Some(s) => s.image(
                 name, level, format, width, height, type_, pixels, align,
@@ -1354,7 +1392,7 @@ impl<'a> Gl<'a> {
         if border != 0 {
             return self.fail(gl::INVALID_VALUE);
         }
-        let name = self.bound;
+        let name = self.units[self.active].bound;
         let r = match self.store.as_mut() {
             Some(s) => s.compressed(name, level, internal, width, height, data),
             None => Err(gl::OUT_OF_MEMORY),
@@ -1369,7 +1407,7 @@ impl<'a> Gl<'a> {
         if target != gl::TEXTURE_2D {
             return self.fail(gl::INVALID_ENUM);
         }
-        let name = self.bound;
+        let name = self.units[self.active].bound;
         let r = match self.store.as_mut() {
             Some(s) => s.parameter(name, pname, value),
             None => Err(gl::OUT_OF_MEMORY),
@@ -1387,7 +1425,7 @@ impl<'a> Gl<'a> {
     pub fn tex_env(&mut self, target: u32, pname: u32, params: &[Fx]) {
         if (target, pname) == (gl::POINT_SPRITE_OES, gl::COORD_REPLACE_OES) {
             return match params.first() {
-                Some(&p) => self.coord_replace = p != 0,
+                Some(&p) => self.units[self.active].coord_replace = p != 0,
                 None => self.fail(gl::INVALID_ENUM),
             };
         }
@@ -1398,27 +1436,26 @@ impl<'a> Gl<'a> {
         let v = p as u32;
         let enum_or = |code: Option<u32>| code.ok_or(gl::INVALID_ENUM);
         let r = match pname {
-            gl::TEXTURE_ENV_MODE => {
-                enum_or(code_of(&ENVS, v)).map(|e| self.env = e)
-            }
+            gl::TEXTURE_ENV_MODE => enum_or(code_of(&ENVS, v))
+                .map(|e| self.units[self.active].env = e),
             gl::TEXTURE_ENV_COLOR if params.len() >= 4 => {
-                self.env_colour = [params[0], params[1], params[2], params[3]];
+                self.units[self.active].env_colour =
+                    [params[0], params[1], params[2], params[3]];
                 Ok(())
             }
-            gl::COMBINE_RGB => {
-                enum_or(code_of(&FUNCTIONS, v)).map(|f| self.combine.rgb = f)
-            }
+            gl::COMBINE_RGB => enum_or(code_of(&FUNCTIONS, v))
+                .map(|f| self.units[self.active].combine.rgb = f),
             // The alpha's functions are the first six (#1512).
             gl::COMBINE_ALPHA => enum_or(code_of(&FUNCTIONS[..6], v))
-                .map(|f| self.combine.alpha = f),
+                .map(|f| self.units[self.active].combine.alpha = f),
             // A scale of one, two or four (#1512), as its log2.
             gl::RGB_SCALE | gl::ALPHA_SCALE => {
                 let log = [ONE, 2 * ONE, 4 * ONE].iter().position(|&x| x == p);
                 log.ok_or(gl::INVALID_VALUE).map(|l| {
                     if pname == gl::RGB_SCALE {
-                        self.combine.scale_rgb = l as u32;
+                        self.units[self.active].combine.scale_rgb = l as u32;
                     } else {
-                        self.combine.scale_alpha = l as u32;
+                        self.units[self.active].combine.scale_alpha = l as u32;
                     }
                 })
             }
@@ -1431,7 +1468,7 @@ impl<'a> Gl<'a> {
                         ArgOf::AlphaOperand => &OPERANDS[2..],
                     };
                     enum_or(code_of(table, v)).map(|code| {
-                        let c = &mut self.combine;
+                        let c = &mut self.units[self.active].combine;
                         match which {
                             ArgOf::RgbSource => c.src_rgb[k] = code,
                             ArgOf::AlphaSource => c.src_alpha[k] = code,
@@ -1529,7 +1566,7 @@ impl<'a> Gl<'a> {
             self.fail(gl::INVALID_ENUM);
             return None;
         }
-        let name = self.bound;
+        let name = self.units[self.active].bound;
         let o = self
             .store
             .as_ref()
@@ -1568,35 +1605,39 @@ impl<'a> Gl<'a> {
         };
         match (target, pname) {
             (gl::POINT_SPRITE_OES, gl::COORD_REPLACE_OES) => {
-                one(out, self.coord_replace as u32)
+                one(out, self.units[self.active].coord_replace as u32)
             }
             (gl::TEXTURE_ENV, gl::TEXTURE_ENV_MODE) => one(
                 out,
-                ENVS.get(self.env as usize).copied().unwrap_or(gl::MODULATE),
+                ENVS.get(self.units[self.active].env as usize)
+                    .copied()
+                    .unwrap_or(gl::MODULATE),
             ),
-            (gl::TEXTURE_ENV, gl::COMBINE_RGB) => {
-                one(out, FUNCTIONS[self.combine.rgb as usize & 7])
-            }
-            (gl::TEXTURE_ENV, gl::COMBINE_ALPHA) => {
-                one(out, FUNCTIONS[self.combine.alpha as usize & 7])
-            }
+            (gl::TEXTURE_ENV, gl::COMBINE_RGB) => one(
+                out,
+                FUNCTIONS[self.units[self.active].combine.rgb as usize & 7],
+            ),
+            (gl::TEXTURE_ENV, gl::COMBINE_ALPHA) => one(
+                out,
+                FUNCTIONS[self.units[self.active].combine.alpha as usize & 7],
+            ),
             // The scales in 16.16, as GL keeps them, one, two or four.
             (gl::TEXTURE_ENV, gl::RGB_SCALE) => {
                 if let Some(o) = out.first_mut() {
-                    *o = ONE << self.combine.scale_rgb;
+                    *o = ONE << self.units[self.active].combine.scale_rgb;
                 }
                 1
             }
             (gl::TEXTURE_ENV, gl::ALPHA_SCALE) => {
                 if let Some(o) = out.first_mut() {
-                    *o = ONE << self.combine.scale_alpha;
+                    *o = ONE << self.units[self.active].combine.scale_alpha;
                 }
                 1
             }
             (gl::TEXTURE_ENV, p) if combine_arg(p).is_some() => {
                 let (which, k) =
                     combine_arg(p).unwrap_or((ArgOf::RgbSource, 0));
-                let c = &self.combine;
+                let c = &self.units[self.active].combine;
                 let v = match which {
                     ArgOf::RgbSource => SOURCES[c.src_rgb[k] as usize & 3],
                     ArgOf::AlphaSource => SOURCES[c.src_alpha[k] as usize & 3],
@@ -1607,7 +1648,8 @@ impl<'a> Gl<'a> {
             }
             (gl::TEXTURE_ENV, gl::TEXTURE_ENV_COLOR) => {
                 let n = out.len().min(4);
-                out[..n].copy_from_slice(&self.env_colour[..n]);
+                out[..n]
+                    .copy_from_slice(&self.units[self.active].env_colour[..n]);
                 n
             }
             _ => {
@@ -1627,10 +1669,46 @@ impl<'a> Gl<'a> {
         Some(self.plane)
     }
 
-    /// `glMultiTexCoord4x` for the one unit: the texture coordinates a
-    /// vertex without its own takes.
+    /// `glMultiTexCoord4x` for unit 0: the texture coordinates a vertex
+    /// without its own takes.
     pub fn tex_coord(&mut self, s: Fx, t: Fx, r: Fx, q: Fx) {
-        self.tex_coords = [s, t, r, q];
+        self.units[0].coords = [s, t, r, q];
+    }
+
+    /// `glMultiTexCoord4x` (#1510): the current texture coordinates of
+    /// `unit`, `GL_TEXTURE0` or `GL_TEXTURE1`; any other unit is
+    /// `GL_INVALID_ENUM`.
+    pub fn multi_tex_coord(&mut self, unit: u32, s: Fx, t: Fx, r: Fx, q: Fx) {
+        match unit_of(unit) {
+            Some(k) => self.units[k].coords = [s, t, r, q],
+            None => self.fail(gl::INVALID_ENUM),
+        }
+    }
+
+    /// `glActiveTexture` (#1510): the unit the texture calls and the
+    /// texture matrix act on, `GL_TEXTURE0` or `GL_TEXTURE1`; any other
+    /// is `GL_INVALID_ENUM`.
+    pub fn active_texture(&mut self, unit: u32) {
+        match unit_of(unit) {
+            Some(k) => self.active = k,
+            None => self.fail(gl::INVALID_ENUM),
+        }
+    }
+
+    /// `glClientActiveTexture` (#1510): the unit whose texture coordinate
+    /// array the array calls name, as [`Gl::client_active`] says; any unit
+    /// but GL's two is `GL_INVALID_ENUM`.
+    pub fn client_active_texture(&mut self, unit: u32) {
+        match unit_of(unit) {
+            Some(k) => self.client_active = k,
+            None => self.fail(gl::INVALID_ENUM),
+        }
+    }
+
+    /// The client's active unit (#1510), from nought: whose texture
+    /// coordinate array a caller with client arrays reads and sets.
+    pub fn client_active(&self) -> usize {
+        self.client_active
     }
 
     /// `glPixelStorei`: the rows' alignment an upload reads,
@@ -1976,6 +2054,7 @@ impl<'a> Gl<'a> {
                 colour: colours.map(|c| c[k]),
                 normal: normals.map(|v| v[k]),
                 tex: None,
+                tex1: None,
                 point_size: None,
             },
         );
@@ -2011,6 +2090,7 @@ impl<'a> Gl<'a> {
                 colour: colours.map(|c| c[i]),
                 normal: normals.map(|v| v[i]),
                 tex: None,
+                tex1: None,
                 point_size: None,
             }
         });
@@ -2059,7 +2139,10 @@ impl<'a> Gl<'a> {
         };
         let (mv, pj, current) =
             (self.modelview(), self.projection(), self.colour);
-        let (tx, tex_now) = (self.tx[self.tx_top], self.tex_coords);
+        // Each unit's texture matrix and current coordinates (#1510).
+        let [u0, u1] = self.units;
+        let (tx, tex_now) = (u0.tx[u0.tx_top], u0.coords);
+        let (tx1, tex1_now) = (u1.tx[u1.tx_top], u1.coords);
         // The normal matrix and the rescale factor, once a draw.
         let nm = if self.lighting {
             matrix::normal_matrix(&mv).unwrap_or([0; 9])
@@ -2095,6 +2178,7 @@ impl<'a> Gl<'a> {
             let clip = matrix::mul_vec(&pj, &eye);
             let col = v.colour.unwrap_or(current);
             let tex = matrix::mul_vec(&tx, &v.tex.unwrap_or(tex_now));
+            let tex1 = matrix::mul_vec(&tx1, &v.tex1.unwrap_or(tex1_now));
             if !lighting {
                 return Vert {
                     eye,
@@ -2102,6 +2186,7 @@ impl<'a> Gl<'a> {
                     col,
                     back: col,
                     tex,
+                    tex1,
                     size,
                     ..Vert::default()
                 };
@@ -2125,6 +2210,7 @@ impl<'a> Gl<'a> {
                 col: front,
                 back,
                 tex,
+                tex1,
                 size,
                 ..Vert::default()
             }
@@ -2247,9 +2333,17 @@ impl<'a> Gl<'a> {
         let (x0, gy0) = (lo(wx), lo(wy));
         let (x1, y0, y1) = (x0 + s - 1, sh - gy0 - s, sh - 1 - gy0);
         let c = |v: i64| v.clamp(-(1 << 20), 1 << 20) as i32;
-        if self.sprite_on && self.coord_replace {
-            if let Some(sides) = self.texturing() {
-                return self.sprite(&v, (x0, y0, x1, y1), sides);
+        if self.sprite_on {
+            // A sprite's coordinates are its own, on the first unit that
+            // textures it and replaces its coordinates; Razboj draws a
+            // sprite with that one unit (#1510).
+            let replaced = self
+                .texturing()
+                .into_iter()
+                .flatten()
+                .find(|t| self.units[t.0].coord_replace);
+            if let Some((k, lw, lh)) = replaced {
+                return self.sprite(&v, (x0, y0, x1, y1), k, (lw, lh));
             }
         }
         // A point sprite is not antialiased, whatever GL_POINT_SMOOTH
@@ -2283,6 +2377,7 @@ impl<'a> Gl<'a> {
         &mut self,
         v: &Vert,
         (x0, y0, x1, y1): (i64, i64, i64, i64),
+        unit: usize,
         (lw, lh): (u32, u32),
     ) {
         let r = |c: i64| (16 * c).clamp(VMIN as i64, VMAX as i64) as i32;
@@ -2302,6 +2397,7 @@ impl<'a> Gl<'a> {
                 emit::textured([a, bb, cc], [st[i], st[j], st[k]], screen);
             if let Some((w, slot)) = drawn {
                 let fog = self.fogged(&w, [a, bb, cc], [v; 3]);
+                let tex = [tex.map(|s| (unit, s)), None];
                 self.push_textured(w, slot, tex, Planes { fog, alpha: None });
             }
         }
@@ -2751,7 +2847,7 @@ impl<'a> Gl<'a> {
             }
         };
         let flat = colour_word(&face(last));
-        // The texture, when texturing is on and it is complete (#997).
+        // The units that texture it, each on and complete (#997, #1510).
         let texture = self.texturing();
         for k in 1..n - 1 {
             let (a, b, c) = (at(0), at(k), at(k + 1));
@@ -2765,10 +2861,20 @@ impl<'a> Gl<'a> {
                 emit::triangle(flat, a, b, c, None, z, screen)
             };
             let w = w.map(|(w, s)| (w, s.map(|s| self.offset_depth(s))));
-            let tex = texture.and_then(|(lw, lh)| {
-                let t = uvq([&poly[0], &poly[k], &poly[k + 1]], lw, lh)?;
-                emit::textured([a, b, c], t, screen)
+            let at3 = [&poly[0], &poly[k], &poly[k + 1]];
+            let tex = texture.map(|t| {
+                t.and_then(|(u, lw, lh)| {
+                    let t = uvq(at3, u, lw, lh)?;
+                    emit::textured([a, b, c], t, screen).map(|s| (u, s))
+                })
             });
+            // A unit that cannot texture the triangle leaves it
+            // untextured, as the one unit always has.
+            let whole = texture
+                .iter()
+                .zip(&tex)
+                .all(|(t, s)| t.is_some() == s.is_some());
+            let tex = if whole { tex } else { [None; UNITS] };
             if let Some((w, slot)) = w {
                 let at = [&poly[0], &poly[k], &poly[k + 1]];
                 let planes = Planes {
@@ -2797,47 +2903,71 @@ impl<'a> Gl<'a> {
         s
     }
 
-    /// The bound texture's log2 sides, when texturing is on and the
-    /// texture is complete, as GL needs before it textures anything.
-    fn texturing(&self) -> Option<(u32, u32)> {
-        let s = self.store.as_ref()?;
-        if !self.texture_on || !s.complete(self.bound) {
-            return None;
+    /// The units that texture what is drawn (#1510), in Razboj's order:
+    /// each of GL's units that is on with a complete texture, as GL needs
+    /// before it textures anything, with its texture's log2 sides. GL's
+    /// unit 1 alone goes on Razboj's unit 0, which draws the same, since a
+    /// unit that is off passes the fragment through.
+    fn texturing(&self) -> [Option<(usize, u32, u32)>; UNITS] {
+        let mut out = [None; UNITS];
+        let Some(s) = self.store.as_ref() else {
+            return out;
+        };
+        let mut n = 0;
+        for (k, u) in self.units.iter().enumerate() {
+            if !u.on || !s.complete(u.bound) {
+                continue;
+            }
+            if let Some(d) = s.desc(u.bound) {
+                out[n] = Some((k, d.log_w, d.log_h));
+                n += 1;
+            }
         }
-        s.desc(self.bound).map(|d| (d.log_w, d.log_h))
+        out
     }
 
-    /// An entry drawn with its texture's two slots, when it has them: its
-    /// second slot as [`Gl::push_drawn`] makes it, or nought, then the
-    /// texture's, which name the texture and its environment.
+    /// An entry drawn with its texture units' slots, when it has them: its
+    /// second slot as [`Gl::push_drawn`] makes it, or nought, then two
+    /// slots for each unit that textures it, each pair naming the texture
+    /// of GL's unit `k` and its environment (#1510).
     fn push_textured(
         &mut self,
         mut w: [u32; WORDS],
         slot: Option<[u32; WORDS]>,
-        tex: Option<[[u32; WORDS]; 2]>,
+        tex: [Option<(usize, [[u32; WORDS]; 2])>; UNITS],
         planes: Planes,
     ) {
-        let Some([mut ta, mut tb]) = tex else {
+        let Some(first) = tex[0] else {
             return self.push_drawn(w, slot, planes);
         };
+        let fill = |(k, [mut ta, mut tb]): (usize, [[u32; WORDS]; 2])| {
+            let u = &self.units[k];
+            ta[13] = self.store.as_ref().map_or(0, |s| s.desc_at(u.bound));
+            ta[14] = u.env;
+            ta[15] = colour_word(&u.env_colour);
+            // `GL_COMBINE`'s settings (#1512), in the second texture
+            // slot's word 14; nought under the other environments.
+            tb[14] = if u.env == razboj_tile::tex::COMBINE {
+                u.combine.word()
+            } else {
+                0
+            };
+            [ta, tb]
+        };
+        let (one, two) = (fill(first), tex[1].map(fill));
         let depth = self.depth_test && slot.is_some();
         let pixel = self.pixel();
         let p = self.second(&mut w, slot.filter(|_| depth), pixel, planes);
         emit::textured_bit(&mut w);
-        ta[13] = self.store.as_ref().map_or(0, |s| s.desc_at(self.bound));
-        ta[14] = self.env;
-        ta[15] = colour_word(&self.env_colour);
-        // `GL_COMBINE`'s settings (#1512), in the second texture slot's
-        // word 14; nought under the other environments.
-        tb[14] = if self.env == razboj_tile::tex::COMBINE {
-            self.combine.word()
-        } else {
-            0
-        };
-        if self.frame.len() - self.used < 4 {
+        if two.is_some() {
+            w[15] |= razboj_tile::tex::TWO_UNITS;
+        }
+        let n = 4 + 2 * two.is_some() as usize;
+        if self.frame.len() - self.used < n {
             return self.fail(gl::OUT_OF_MEMORY);
         }
-        for s in [w, p, ta, tb] {
+        let more = two.into_iter().flatten();
+        for s in [w, p, one[0], one[1]].into_iter().chain(more) {
             self.frame[self.used] = s;
             self.used += 1;
         }
@@ -2938,9 +3068,16 @@ fn depth_units(d: Fx) -> u32 {
 /// `w`, which is the same up to the scale the power of two then sets,
 /// and the three products keep their top 31 bits. On the core a division
 /// here is a 128-bit one in software.
-fn uvq(v: [&Vert; 3], lw: u32, lh: u32) -> Option<[(i64, i64, u64); 3]> {
+fn uvq(
+    v: [&Vert; 3],
+    unit: usize,
+    lw: u32,
+    lh: u32,
+) -> Option<[(i64, i64, u64); 3]> {
+    // The unit's coordinates (#1510).
+    let tc = v.map(|v| if unit == 0 { v.tex } else { v.tex1 });
     let w = v.map(|v| v.clip[3] as i64);
-    let q = v.map(|v| v.tex[3] as i64);
+    let q = tc.map(|t| t[3] as i64);
     if q.iter().chain(w.iter()).any(|&x| x <= 0) {
         return None;
     }
@@ -2962,8 +3099,8 @@ fn uvq(v: [&Vert; 3], lw: u32, lh: u32) -> Option<[(i64, i64, u64); 3]> {
         }
     };
     Some(core::array::from_fn(|k| {
-        let s = v[k].tex[0] as i64 * o[k];
-        let t = v[k].tex[1] as i64 * o[k];
+        let s = tc[k][0] as i64 * o[k];
+        let t = tc[k][1] as i64 * o[k];
         let (bu, bv) = (e + 16 - lw as i32, e + 16 - lh as i32);
         (at(s, bu), at(t, bv), at(x[k], e) as u64)
     }))
@@ -3063,6 +3200,7 @@ fn between(a: &Vert, b: &Vert, da: i128, db: i128) -> Vert {
         col: mix(&a.col, &b.col),
         back: mix(&a.back, &b.back),
         tex: mix(&a.tex, &b.tex),
+        tex1: mix(&a.tex1, &b.tex1),
         ..Vert::default()
     }
 }
@@ -3257,6 +3395,13 @@ impl Planes {
     fn is_none(&self) -> bool {
         self.fog.is_none() && self.alpha.is_none()
     }
+}
+
+/// A texture unit's index from its name, `GL_TEXTURE0` or `GL_TEXTURE1`
+/// (#1510), or `None` for any other.
+fn unit_of(unit: u32) -> Option<usize> {
+    let k = unit.checked_sub(gl::TEXTURE0)? as usize;
+    (k < UNITS).then_some(k)
 }
 
 #[cfg(test)]
