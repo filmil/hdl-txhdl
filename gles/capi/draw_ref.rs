@@ -133,6 +133,9 @@ fn main() {
     );
     // GL_COMBINE's scales (#1512), as draw.c sets them whole.
     println!("scales 2 4 fixed {} {}", 2 * ONE, 4 * ONE);
+    // Two texture units (#1510): unit 1's array on, unit 0's off, and
+    // the server's unit still the first.
+    println!("units client {:04x} on 1 0 server {:04x}", 0x84C1, 0x84C0);
 
     // Buffer objects (#1488): the quad in a new context, scaled by a half,
     // its colours per vertex, as draw.c draws it from its buffers.
