@@ -166,10 +166,11 @@ fn icache() {
     say_line(b"apart", apart - calls * warm, calls);
 }
 
-/// Three more blocks for the instruction cache (issue 1679), each timing
-/// the same 260 instructions as `A`, so that four instructions of one
-/// compare with four of another; `FAR` and `NEAR` over 65 lines as `A`,
-/// `LOOP` in one:
+/// Four more blocks for the instruction cache (issue 1679). `FAR`, `NEAR`
+/// and `LOOP` each time the same 260 instructions as `A`, so that four
+/// instructions of one compare with four of another; `HELD` runs three a
+/// line, 195. `FAR`, `NEAR` and `HELD` are over 65 lines as `A`, `LOOP`
+/// in one:
 ///
 /// * `FAR`: 64 lines 128 bytes apart, run in the order `37 k mod 64`,
 ///   each three no-ops and a `jal` to the next, so that no line follows
@@ -178,9 +179,14 @@ fn icache() {
 ///   than running off its end.
 /// * `LOOP`: four instructions in one line, the last a taken branch back,
 ///   run 64 times: a line's instructions with no line crossed.
+/// * `HELD`: `FAR` with each line's `jal` one word earlier, so that the
+///   word after it is in its own line. The core fetches the word after a
+///   jump while the jump executes; in `FAR` that word starts a line not
+///   held, and its fill may go out before the target's.
 const FAR: usize = map::DDR3 + 0x31_2000;
 const NEAR: usize = map::DDR3 + 0x32_2000;
 const LOOP: usize = map::DDR3 + 0x33_2000;
+const HELD: usize = map::DDR3 + 0x34_2000;
 const FAR_STEP: usize = 128;
 // Each on lines 512 and up, which this program's code does not reach,
 // and `FAR`'s header and last line on lines its 64 do not use, away
@@ -188,6 +194,7 @@ const FAR_STEP: usize = 128;
 const _: () = assert!((FAR - map::DDR3) % 0x4000 == 0x2000);
 const _: () = assert!((NEAR - map::DDR3) % 0x4000 == 0x2000);
 const _: () = assert!((LOOP - map::DDR3) % 0x4000 == 0x2000);
+const _: () = assert!((HELD - map::DDR3) % 0x4000 == 0x2000);
 const _: () = assert!(64 * FAR_STEP <= 0x2000);
 
 /// `jal x0, off`, for an even offset of 21 bits.
@@ -229,6 +236,24 @@ fn far() {
     put(end, [CSRR_T1, SUB_A0, RET, NOP]);
 }
 
+/// `HELD`'s header and last line, placed as `FAR`'s.
+const HELD_HEAD: usize = HELD + 32 * FAR_STEP + 64;
+const HELD_END: usize = HELD_HEAD + 16;
+
+/// `HELD`: as `FAR`, with each `jal` in its line's third word and a
+/// no-op after it, which is fetched and never run.
+fn held() {
+    let line = |k: usize| HELD + FAR_STEP * ((k * 37) % 64);
+    let end = HELD_END;
+    let hop = |from: usize, to: usize| jal(to as i32 - (from + 8) as i32);
+    put(HELD_HEAD, [CSRR_T0, NOP, hop(HELD_HEAD, line(0)), NOP]);
+    for k in 0..64 {
+        let next = if k == 63 { end } else { line(k + 1) };
+        put(line(k), [NOP, NOP, hop(line(k), next), NOP]);
+    }
+    put(end, [CSRR_T1, SUB_A0, RET, NOP]);
+}
+
 /// `NEAR`: as `A`, with each line's last word a `jal` to the next line.
 fn near() {
     put(NEAR, [CSRR_T0, NOP, NOP, jal(4)]);
@@ -246,31 +271,33 @@ fn one_line_loop() {
     put(LOOP + 32, [CSRR_T1, SUB_A0, RET, NOP]);
 }
 
-/// The three blocks, each run cold after `fence.i` and then warm:
-/// `icache2 far <cold> <warm> near <cold> <warm> loop <cold> <warm>`,
-/// then `costs icache-<kind>` a line, as for `A`.
+/// The four blocks, each run cold after `fence.i` and then warm:
+/// `icache2 far <cold> <warm> near <cold> <warm> loop <cold> <warm>
+/// held <cold> <warm>`, then `costs icache-<kind>` a line, as for `A`.
 fn icache_jumps() {
     far();
     near();
     one_line_loop();
+    held();
     fence_i();
     // Each block's `ret`, the third word of its last line, read back.
-    for end in [FAR_END, NEAR + 16 * 65, LOOP + 32] {
+    for end in [FAR_END, NEAR + 16 * 65, LOOP + 32, HELD_END] {
         let ret = (end as *const u32).wrapping_add(2);
         if unsafe { core::ptr::read_volatile(ret) != RET } {
             Uart::say(b"costs icache jump blocks not written\n");
             return;
         }
     }
-    let mut cold = [0i32; 3];
-    let mut warm = [0i32; 3];
-    for (i, at) in [FAR_HEAD, NEAR, LOOP].into_iter().enumerate() {
+    let mut cold = [0i32; 4];
+    let mut warm = [0i32; 4];
+    for (i, at) in [FAR_HEAD, NEAR, LOOP, HELD_HEAD].into_iter().enumerate() {
         fence_i();
         cold[i] = run(at) as i32;
         warm[i] = run(at) as i32;
     }
     Uart::say(b"icache2");
-    for (i, name) in [&b" far "[..], b" near ", b" loop "].iter().enumerate() {
+    let names = [&b" far "[..], b" near ", b" loop ", b" held "];
+    for (i, name) in names.iter().enumerate() {
         Uart::say(name);
         Uart::put_decimal(cold[i] as u32);
         Uart::put(b' ');
@@ -284,6 +311,10 @@ fn icache_jumps() {
     say_line(b"near-miss", cold[1] - warm[1], 1);
     say_line(b"near-warm", warm[1], 1);
     say_line(b"loop-warm", warm[2], 1);
+    // A far line not held whose jump's next word is in its own line, and
+    // its warm cost, which is of three instructions a line, not four.
+    say_line(b"held-miss", cold[3] - warm[3], 1);
+    say_line(b"held-warm", warm[3], 1);
 }
 
 fn mcycle() -> u32 {
