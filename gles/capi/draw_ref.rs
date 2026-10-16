@@ -100,9 +100,7 @@ fn main() {
     }
     println!("error {:04x}", g.get_error());
     println!("unimplemented {:04x}", gl::INVALID_OPERATION);
-    println!(
-        "version OpenGL ES-CL 1.1 TxHDL, Common-Lite, one texture unit, not conformant"
-    );
+    println!("version OpenGL ES-CL 1.1 TxHDL, Common-Lite, not conformant");
     // The queries (#1484), of the state set above.
     let mut v = [0i32; 4];
     g.get_integer(gles::get::name::VIEWPORT, &mut v);

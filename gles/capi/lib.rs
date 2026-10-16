@@ -913,9 +913,7 @@ pub extern "C" fn glGetString(name: u32) -> *const u8 {
     let s: &'static [u8] = match name {
         VENDOR => b"TxHDL\0",
         RENDERER => b"Razboj\0",
-        VERSION => {
-            b"OpenGL ES-CL 1.1 TxHDL, Common-Lite, one texture unit, not conformant\0"
-        }
+        VERSION => b"OpenGL ES-CL 1.1 TxHDL, Common-Lite, not conformant\0",
         // The required profile extensions the library has, as Appendix C.3
         // puts them in the string (#1521); the fourth, the point size array,
         // is #1507's.
