@@ -430,9 +430,12 @@ impl<S: Group, C: Clock> Out<S, C> {
 /// on the [`Driver`]'s side and an `In<T>` on the [`Receiver`]'s, and
 /// `S::Read<T>` the other way round; `S::Send<T>` and `S::Recv<T>` are
 /// a channel's two ends the same way. Every end is on `DefaultClock`.
-/// `#[derive(Ports)]` on a struct whose one generic parameter is
-/// bounded by `Side` writes [`Link`] both ways, so `link::<B<Driver>>()`
-/// or `link::<B<Receiver>>()` makes the two ends at once.
+/// `#[derive(Ports)]` on a struct with a parameter bounded by `Side`,
+/// beside any others, writes [`Link`] both ways, so `link::<B<Driver>>()`
+/// or `link::<B<Receiver>>()` makes the two ends at once. Every field of
+/// such a struct goes through its side: a field that is the same end on
+/// both sides, a plain `Out<T>`, has no opposite to be joined to, and
+/// the derived `Link` does not compile.
 pub trait Side: 'static {
     /// A wire the driver drives: its `Out` on the [`Driver`]'s side,
     /// its `In` on the [`Receiver`]'s.
@@ -476,6 +479,9 @@ impl Side for Receiver {
 
 /// An end of a wire or a channel, made together with the end opposite
 /// it: an `Out` with its `In`, a `Tx` with its `Rx`, and the reverse.
+/// Every [`Side`]'s ends are `Mirror`, and the `Link` that
+/// `#[derive(Ports)]` writes makes each field of a bundle with it, so a
+/// user's own end type needs it only to be one of a side's ends.
 pub trait Mirror: Sized {
     /// The end opposite this one.
     type Other;

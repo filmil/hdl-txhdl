@@ -738,11 +738,10 @@ pub fn derive_ports(input: TokenStream) -> TokenStream {
     // its ends at once: the driver's, each field paired with the
     // receiver's opposite end. Its other parameters, `const A: usize`
     // say, stay parameters of the two impls (issue 1650).
-    let side = item.generics.iter().position(|(n, full)| {
-        full.strip_prefix(n.as_str())
-            .is_some_and(|rest| rest.trim_start().starts_with(':'))
-            && full.contains("Side")
-    });
+    let side = item
+        .generics
+        .iter()
+        .position(|(n, full)| side_bounded(n, full));
     let bundle = if let Some(k) = side {
         let names = field_names(body);
         let lets = names
@@ -820,6 +819,25 @@ pub fn derive_ports(input: TokenStream) -> TokenStream {
     )
     .parse()
     .unwrap()
+}
+
+/// Whether a generic parameter, as `parse_item` keeps it, is bounded by
+/// `Side`: one of the bounds after its `:` is a path ending in `Side`,
+/// `Side` or `txhdl::comp::Side`, and not a name that merely contains it,
+/// `Sideband` (issue 1650).
+fn side_bounded(name: &str, full: &str) -> bool {
+    let Some(rest) = full.strip_prefix(name) else {
+        return false;
+    };
+    let Some(bounds) = rest.trim_start().strip_prefix(':') else {
+        return false;
+    };
+    bounds.split('+').any(|b| {
+        let b = b.split('=').next().unwrap_or("");
+        b.rsplit("::")
+            .next()
+            .is_some_and(|last| last.trim() == "Side")
+    })
 }
 
 /// `#[derive(Trace)]`: every field is registered under its own name,
@@ -3519,7 +3537,18 @@ fn port_struct_fields(
 /// way (issue 1650). A path before the side, `txhdl::comp::Driver`, is
 /// dropped with it; any other type is as it was.
 fn side_end(ty: &[TokenTree]) -> Vec<TokenTree> {
+    // Only at the type's head: everything before the side is a path,
+    // names and `::`, so a side inside another type's arguments,
+    // `Wrapper<Driver::Drive<T>>`, is left as it is.
+    let path = |t: &TokenTree| match t {
+        TokenTree::Ident(_) => true,
+        TokenTree::Punct(p) => p.as_char() == ':',
+        _ => false,
+    };
     for i in 0..ty.len() {
+        if !ty[..i].iter().all(path) {
+            break;
+        }
         let (Some(TokenTree::Ident(side)), Some(TokenTree::Ident(assoc))) =
             (ty.get(i), ty.get(i + 3))
         else {
