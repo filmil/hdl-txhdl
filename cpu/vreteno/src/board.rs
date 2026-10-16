@@ -41,7 +41,7 @@ use txhdl::comp::{
 };
 use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
-use txhdl::{lower, Trace};
+use txhdl::{lower, Trace, Value};
 use txhdl_parts::bus::arbiter::{Arbiter, Arbiter2};
 use txhdl_parts::bus::axi::{
     Answer, Ar, Aw, AxiHost, AxiPer, Done, Grant, Issue, PerPort, PerReq, B, R,
@@ -495,44 +495,64 @@ pub struct Board<const DIV: u32> {
 // end{board}
 
 // begin{ports}
-/// The board's inputs: the resets, the interrupt, the serial line, the
-/// board's clock and the controller's reset, the video slot's answers, the frames arriving, and
-/// the JTAG master's pins, named as AXI4 names them under `jtag_`,
-/// as one field.
-pub struct BoardIn {
-    pub rst: In<Bit>,
-    pub irq: In<Bit>,
-    pub rx: In<Bit>,
-    pub sys_clk: In<Bit>,
-    pub sys_rst: In<Bit>,
-    pub vb: Rx<LiteB>,
-    pub vr: Rx<LiteR<32>>,
-    pub net_rx: Rx<EthByte>,
+/// The board's plain inputs on its own clock, one port group, bare, so
+/// each line keeps its own name at the module's edge (issue 1594).
+#[derive(Value, Clone, Copy, Default, PartialEq, Debug)]
+#[value(ports, bare)]
+pub struct SysIn {
+    /// The reset.
+    pub rst: Bit,
+    /// The interrupt line.
+    pub irq: Bit,
+    /// The serial line.
+    pub rx: Bit,
+    /// The board's clock and the controller's reset.
+    pub sys_clk: Bit,
+    pub sys_rst: Bit,
     /// The MAC's drops ahead of the slots, room, check and size, each
     /// sixteen bits in Gray code: the receiver counts them on the
     /// PHY's clock, and the top samples them through two flip-flops
     /// onto this one (issue 1404).
-    pub mac_drops: In<U<48>>,
+    pub mac_drops: U<48>,
+    /// The configuration flash's data out, pin D01.
+    pub fl_miso: Bit,
+    /// The Ethernet PHY's management data line, as read at the pad.
+    pub phy_mdio_in: Bit,
+    /// The SD card's command line and four data lines, as read at
+    /// the pads.
+    pub sd_cmd_in: Bit,
+    pub sd_dat_in: U<4>,
+}
+
+/// The top's `BSCANE2` on `USER4`, on the cable's clock: selected, the
+/// TAP's shift, capture and update, the data in, and the TAP's reset
+/// (issue 154). A group named for its port, so `bscan_sel` and the rest.
+#[derive(Value, Clone, Copy, Default, PartialEq, Debug)]
+#[value(ports)]
+pub struct Bscan {
+    pub sel: Bit,
+    pub shift: Bit,
+    pub capture: Bit,
+    pub update: Bit,
+    pub tdi: Bit,
+    pub reset: Bit,
+}
+
+/// The board's inputs: its plain lines in two groups, one per clock,
+/// then the channels, the video slot's answers, the frames arriving,
+/// the scanout's requests and the board top's host, and the JTAG
+/// master's pins, named as AXI4 names them under `jtag_`, as one field.
+pub struct BoardIn {
+    /// Every plain input on the board's clock.
+    pub sys: In<SysIn>,
+    /// The six `BSCANE2` lines, on the cable's clock.
+    pub bscan: In<Bscan, Tck>,
+    pub vb: Rx<LiteB>,
+    pub vr: Rx<LiteR<32>>,
+    pub net_rx: Rx<EthByte>,
     /// The JTAG master's pins, one field; its ports are `jtag_awid`
     /// and the rest (issue 579).
     pub jtag: AxiHostPins<32, 32, 4, 1>,
-    /// The configuration flash's data out, pin D01.
-    pub fl_miso: In<Bit>,
-    /// The Ethernet PHY's management data line, as read at the pad.
-    pub phy_mdio_in: In<Bit>,
-    /// The SD card's command line and four data lines, as read at
-    /// the pads.
-    pub sd_cmd_in: In<Bit>,
-    pub sd_dat_in: In<U<4>>,
-    /// The top's `BSCANE2` on `USER4`, on the cable's clock: selected,
-    /// the TAP's shift, capture and update, the data in, and the TAP's
-    /// reset (issue 154).
-    pub bscan_sel: In<Bit, Tck>,
-    pub bscan_shift: In<Bit, Tck>,
-    pub bscan_capture: In<Bit, Tck>,
-    pub bscan_update: In<Bit, Tck>,
-    pub bscan_tdi: In<Bit, Tck>,
-    pub bscan_reset: In<Bit, Tck>,
     /// The scanout's line requests, from the pixel clock's side.
     pub scan_req: Rx<U<32>>,
     /// The board top's host on the arbiter's fourth port (issue 1634):
@@ -546,28 +566,96 @@ pub struct BoardIn {
     pub host_w: Rx<W<32, 4>>,
 }
 
-/// The board's outputs: the halt and the serial line, the modulator,
-/// the memory's pins, the video slot's requests, the frames leaving,
-/// and the JTAG master's answers.
+/// The board's plain outputs on its own clock, bare (issue 1594).
+#[derive(Value, Clone, Copy, Default, PartialEq, Debug)]
+#[value(ports, bare)]
+pub struct SysOut {
+    /// The core halted.
+    pub halt: Bit,
+    /// The serial line.
+    pub tx: Bit,
+    /// The modulator's four pins.
+    pub pwm_pins: U<4>,
+    /// The controller has calibrated; the clock it makes and its reset.
+    pub calib: Bit,
+    pub ui_clk: Bit,
+    pub ui_rst: Bit,
+    /// The configuration flash's select and data in, pins FCS_B and
+    /// D00; its clock pin as the startup block's model shows it, which
+    /// a board leaves open, since the primitive drives the real one;
+    /// and whether the pins refused write enable.
+    pub fl_cs_n: Bit,
+    pub fl_mosi: Bit,
+    pub fl_cclk: Bit,
+    pub fl_refused: Bit,
+    /// The Ethernet PHY's management clock, the level driven on the
+    /// management data line, and whether the board drives it; the top
+    /// makes the pad three-state from the two.
+    pub phy_mdc: Bit,
+    pub phy_mdio_out: Bit,
+    pub phy_mdio_oe: Bit,
+    /// The SD card's clock, its command line and four data lines as
+    /// driven, and each one's drive enable; the top makes the pads
+    /// three-state from the pairs.
+    pub sd_clk: Bit,
+    pub sd_cmd_out: Bit,
+    pub sd_cmd_oe: Bit,
+    pub sd_dat_out: U<4>,
+    pub sd_dat_oe: Bit,
+}
+
+/// The memory's pins that are outputs, bare: the clock pair, the reset,
+/// the commands, the address, the bank, the data masks and the
+/// termination.
+#[derive(Value, Clone, Copy, Default, PartialEq, Debug)]
+#[value(ports, bare)]
+pub struct Ddr3Pins {
+    pub ck_p: Bit,
+    pub ck_n: Bit,
+    pub mem_rst_n: Bit,
+    pub cke: Bit,
+    pub cs_n: Bit,
+    pub ras_n: Bit,
+    pub cas_n: Bit,
+    pub we_n: Bit,
+    pub row: U<15>,
+    pub bank: U<3>,
+    pub dm: U<4>,
+    pub odt: Bit,
+}
+
+/// The JTAG master's answers, bare, its fields named as the pins are,
+/// `jtag_awready` and the rest, since `jtag` is the master's pins on
+/// the other side.
+#[derive(Value, Clone, Copy, Default, PartialEq, Debug)]
+#[value(ports, bare)]
+pub struct JtagAnswers {
+    pub jtag_awready: Bit,
+    pub jtag_wready: Bit,
+    pub jtag_bid: U<1>,
+    pub jtag_bresp: U<2>,
+    pub jtag_bvalid: Bit,
+    pub jtag_arready: Bit,
+    pub jtag_rid: U<1>,
+    pub jtag_rdata: U<32>,
+    pub jtag_rresp: U<2>,
+    pub jtag_rlast: Bit,
+    pub jtag_rvalid: Bit,
+}
+
+/// The board's outputs: its plain lines in three groups on its clock,
+/// the transport's data out on the cable's, the memory's data pads,
+/// and the channels, the video slot's requests, the frames leaving,
+/// the scanout's words and the answers to the board top's host.
 pub struct BoardOut {
-    pub halt: Out<Bit>,
-    pub tx: Out<Bit>,
-    pub pwm_pins: Out<U<4>>,
-    pub calib: Out<Bit>,
-    pub ui_clk: Out<Bit>,
-    pub ui_rst: Out<Bit>,
-    pub ck_p: Out<Bit>,
-    pub ck_n: Out<Bit>,
-    pub mem_rst_n: Out<Bit>,
-    pub cke: Out<Bit>,
-    pub cs_n: Out<Bit>,
-    pub ras_n: Out<Bit>,
-    pub cas_n: Out<Bit>,
-    pub we_n: Out<Bit>,
-    pub row: Out<U<15>>,
-    pub bank: Out<U<3>>,
-    pub dm: Out<U<4>>,
-    pub odt: Out<Bit>,
+    /// Every plain output on the board's clock but the memory's.
+    pub sys_out: Out<SysOut>,
+    /// The memory's pins; not `ddr3`, which is the controller's name.
+    pub mem_pins: Out<Ddr3Pins>,
+    /// The JTAG master's answers.
+    pub jtag_ans: Out<JtagAnswers>,
+    /// The transport's data out, to `BSCANE2`'s TDO.
+    pub bscan_tdo: Out<Bit, Tck>,
     pub dq: Pad<U<32>>,
     pub dqs: Pad<U<4>>,
     pub dqs_n: Pad<U<4>>,
@@ -575,45 +663,6 @@ pub struct BoardOut {
     pub var: Tx<LiteAr<32>>,
     pub vw: Tx<LiteW<32, 4>>,
     pub net_tx: Tx<EthByte>,
-    pub jtag_awready: Out<Bit>,
-    pub jtag_wready: Out<Bit>,
-    pub jtag_bid: Out<U<1>>,
-    pub jtag_bresp: Out<U<2>>,
-    pub jtag_bvalid: Out<Bit>,
-    pub jtag_arready: Out<Bit>,
-    pub jtag_rid: Out<U<1>>,
-    pub jtag_rdata: Out<U<32>>,
-    pub jtag_rresp: Out<U<2>>,
-    pub jtag_rlast: Out<Bit>,
-    pub jtag_rvalid: Out<Bit>,
-    /// The configuration flash's select and data in, pins FCS_B and
-    /// D00; its clock pin as the startup block's model shows it, which
-    /// a board leaves open, since the primitive drives the real one;
-    /// and whether the pins refused write enable.
-    pub fl_cs_n: Out<Bit>,
-    /// The flash's data in.
-    pub fl_mosi: Out<Bit>,
-    /// The flash's clock, in simulation only.
-    pub fl_cclk: Out<Bit>,
-    /// Write enable was refused.
-    pub fl_refused: Out<Bit>,
-    /// The Ethernet PHY's management clock.
-    pub phy_mdc: Out<Bit>,
-    /// The level driven on the management data line.
-    pub phy_mdio_out: Out<Bit>,
-    /// High while the board drives the management data line; the top
-    /// makes the pad three-state from the two.
-    pub phy_mdio_oe: Out<Bit>,
-    /// The SD card's clock, its command line and four data lines as
-    /// driven, and each one's drive enable; the top makes the pads
-    /// three-state from the pairs.
-    pub sd_clk: Out<Bit>,
-    pub sd_cmd_out: Out<Bit>,
-    pub sd_cmd_oe: Out<Bit>,
-    pub sd_dat_out: Out<U<4>>,
-    pub sd_dat_oe: Out<Bit>,
-    /// The transport's data out, to `BSCANE2`'s TDO.
-    pub bscan_tdo: Out<Bit, Tck>,
     /// The scanout's words, to the pixel clock's side.
     pub scan_words: Tx<U<32>>,
     /// The answers to the board top's host (issue 1634).
@@ -627,50 +676,22 @@ impl<const DIV: u32> Unit for Board<DIV> {
     async fn run(
         &mut self,
         BoardIn {
-            rst,
-            irq,
-            rx,
-            sys_clk,
-            sys_rst,
+            sys,
+            bscan,
             vb,
             vr,
             net_rx,
-            mac_drops,
             jtag,
-            fl_miso,
-            phy_mdio_in,
-            sd_cmd_in,
-            sd_dat_in,
-            bscan_sel,
-            bscan_shift,
-            bscan_capture,
-            bscan_update,
-            bscan_tdi,
-            bscan_reset,
             scan_req,
             host_aw,
             host_ar,
             host_w,
         }: BoardIn,
         BoardOut {
-            halt,
-            tx,
-            pwm_pins,
-            calib,
-            ui_clk,
-            ui_rst,
-            ck_p,
-            ck_n,
-            mem_rst_n,
-            cke,
-            cs_n,
-            ras_n,
-            cas_n,
-            we_n,
-            row,
-            bank,
-            dm,
-            odt,
+            sys_out,
+            mem_pins,
+            jtag_ans,
+            bscan_tdo,
             dq,
             dqs,
             dqs_n,
@@ -678,35 +699,75 @@ impl<const DIV: u32> Unit for Board<DIV> {
             var,
             vw,
             net_tx,
-            jtag_awready,
-            jtag_wready,
-            jtag_bid,
-            jtag_bresp,
-            jtag_bvalid,
-            jtag_arready,
-            jtag_rid,
-            jtag_rdata,
-            jtag_rresp,
-            jtag_rlast,
-            jtag_rvalid,
-            fl_cs_n,
-            fl_mosi,
-            fl_cclk,
-            fl_refused,
-            phy_mdc,
-            phy_mdio_out,
-            phy_mdio_oe,
-            sd_clk,
-            sd_cmd_out,
-            sd_cmd_oe,
-            sd_dat_out,
-            sd_dat_oe,
-            bscan_tdo,
             scan_words,
             host_b,
             host_r,
         }: BoardOut,
     ) {
+        // Each group's lines under their own names, as the parts below
+        // read them (issue 1594).
+        let si = sys.split();
+        let rst = si.rst;
+        let irq = si.irq;
+        let rx = si.rx;
+        let sys_clk = si.sys_clk;
+        let sys_rst = si.sys_rst;
+        let mac_drops = si.mac_drops;
+        let fl_miso = si.fl_miso;
+        let phy_mdio_in = si.phy_mdio_in;
+        let sd_cmd_in = si.sd_cmd_in;
+        let sd_dat_in = si.sd_dat_in;
+        let bs = bscan.split();
+        let bscan_sel = bs.sel;
+        let bscan_shift = bs.shift;
+        let bscan_capture = bs.capture;
+        let bscan_update = bs.update;
+        let bscan_tdi = bs.tdi;
+        let bscan_reset = bs.reset;
+        let so = sys_out.split();
+        let halt = so.halt;
+        let tx = so.tx;
+        let pwm_pins = so.pwm_pins;
+        let calib = so.calib;
+        let ui_clk = so.ui_clk;
+        let ui_rst = so.ui_rst;
+        let fl_cs_n = so.fl_cs_n;
+        let fl_mosi = so.fl_mosi;
+        let fl_cclk = so.fl_cclk;
+        let fl_refused = so.fl_refused;
+        let phy_mdc = so.phy_mdc;
+        let phy_mdio_out = so.phy_mdio_out;
+        let phy_mdio_oe = so.phy_mdio_oe;
+        let sd_clk = so.sd_clk;
+        let sd_cmd_out = so.sd_cmd_out;
+        let sd_cmd_oe = so.sd_cmd_oe;
+        let sd_dat_out = so.sd_dat_out;
+        let sd_dat_oe = so.sd_dat_oe;
+        let mp = mem_pins.split();
+        let ck_p = mp.ck_p;
+        let ck_n = mp.ck_n;
+        let mem_rst_n = mp.mem_rst_n;
+        let cke = mp.cke;
+        let cs_n = mp.cs_n;
+        let ras_n = mp.ras_n;
+        let cas_n = mp.cas_n;
+        let we_n = mp.we_n;
+        let row = mp.row;
+        let bank = mp.bank;
+        let dm = mp.dm;
+        let odt = mp.odt;
+        let ja = jtag_ans.split();
+        let jtag_awready = ja.jtag_awready;
+        let jtag_wready = ja.jtag_wready;
+        let jtag_bid = ja.jtag_bid;
+        let jtag_bresp = ja.jtag_bresp;
+        let jtag_bvalid = ja.jtag_bvalid;
+        let jtag_arready = ja.jtag_arready;
+        let jtag_rid = ja.jtag_rid;
+        let jtag_rdata = ja.jtag_rdata;
+        let jtag_rresp = ja.jtag_rresp;
+        let jtag_rlast = ja.jtag_rlast;
+        let jtag_rvalid = ja.jtag_rvalid;
         // The reset, read by the core, the timer and the serial port.
         let rst_timer = rst.clone();
         let rst_uart = rst.clone();
