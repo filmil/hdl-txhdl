@@ -425,6 +425,94 @@ impl<S: Group, C: Clock> Out<S, C> {
     }
 }
 
+/// Which end of a bundle a unit holds, so that one struct of ports
+/// serves both ends (issue 1650): a field `S::Drive<T>` is an `Out<T>`
+/// on the [`Driver`]'s side and an `In<T>` on the [`Receiver`]'s, and
+/// `S::Read<T>` the other way round; `S::Send<T>` and `S::Recv<T>` are
+/// a channel's two ends the same way. Every end is on `DefaultClock`.
+/// `#[derive(Ports)]` on a struct whose one generic parameter is
+/// bounded by `Side` writes [`Link`] both ways, so `link::<B<Driver>>()`
+/// or `link::<B<Receiver>>()` makes the two ends at once.
+pub trait Side: 'static {
+    /// A wire the driver drives: its `Out` on the [`Driver`]'s side,
+    /// its `In` on the [`Receiver`]'s.
+    type Drive<T: crate::types::Value + Default + 'static>: Mirror
+        + crate::netlist::PortField;
+    /// A wire the driver reads: its `In` on the driver's side, its
+    /// `Out` on the receiver's.
+    type Read<T: crate::types::Value + Default + 'static>: Mirror
+        + crate::netlist::PortField;
+    /// A channel the driver sends on: its `Tx` on the driver's side,
+    /// its `Rx` on the receiver's.
+    type Send<T: Transaction + crate::types::Value>: Mirror
+        + crate::netlist::PortField;
+    /// A channel the driver receives from: its `Rx` on the driver's
+    /// side, its `Tx` on the receiver's.
+    type Recv<T: Transaction + crate::types::Value>: Mirror
+        + crate::netlist::PortField;
+}
+
+/// The side of a bundle that drives its `Drive` wires and sends on its
+/// `Send` channels.
+pub struct Driver;
+
+/// The other side: it reads what the [`Driver`] drives, and drives
+/// what it reads.
+pub struct Receiver;
+
+impl Side for Driver {
+    type Drive<T: crate::types::Value + Default + 'static> = Out<T>;
+    type Read<T: crate::types::Value + Default + 'static> = In<T>;
+    type Send<T: Transaction + crate::types::Value> = Tx<T>;
+    type Recv<T: Transaction + crate::types::Value> = Rx<T>;
+}
+
+impl Side for Receiver {
+    type Drive<T: crate::types::Value + Default + 'static> = In<T>;
+    type Read<T: crate::types::Value + Default + 'static> = Out<T>;
+    type Send<T: Transaction + crate::types::Value> = Rx<T>;
+    type Recv<T: Transaction + crate::types::Value> = Tx<T>;
+}
+
+/// An end of a wire or a channel, made together with the end opposite
+/// it: an `Out` with its `In`, a `Tx` with its `Rx`, and the reverse.
+pub trait Mirror: Sized {
+    /// The end opposite this one.
+    type Other;
+    /// This end and the one opposite it, joined.
+    fn pair() -> (Self, Self::Other);
+}
+
+impl<T: Copy + Default, C: Clock> Mirror for Out<T, C> {
+    type Other = In<T, C>;
+    fn pair() -> (Self, In<T, C>) {
+        signal()
+    }
+}
+
+impl<T: Copy + Default, C: Clock> Mirror for In<T, C> {
+    type Other = Out<T, C>;
+    fn pair() -> (Self, Out<T, C>) {
+        let (o, i) = signal();
+        (i, o)
+    }
+}
+
+impl<T: Transaction, C: Clock> Mirror for Tx<T, C> {
+    type Other = Rx<T, C>;
+    fn pair() -> (Self, Rx<T, C>) {
+        chan()
+    }
+}
+
+impl<T: Transaction, C: Clock> Mirror for Rx<T, C> {
+    type Other = Tx<T, C>;
+    fn pair() -> (Self, Tx<T, C>) {
+        let (t, r) = chan();
+        (r, t)
+    }
+}
+
 impl<S: Copy + 'static, C: Clock> In<S, C> {
     /// The end of one field of this wire, through `get`, which
     /// `#[derive(Value)]` writes for a port group.

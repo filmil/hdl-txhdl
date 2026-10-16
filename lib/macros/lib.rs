@@ -45,6 +45,8 @@ struct Item {
     name: String,
     bounds: String,
     args: String,
+    /// Each generic parameter, by name and as written with its bounds.
+    generics: Vec<(String, String)>,
     body: Option<Group>,
 }
 
@@ -79,6 +81,7 @@ fn parse_item(input: TokenStream) -> Item {
     let name = toks[i + 1].to_string();
     i += 2;
     let (mut bounds, mut args) = (String::new(), String::new());
+    let mut generics = Vec::new();
     if let Some(TokenTree::Punct(p)) = toks.get(i) {
         if p.as_char() == '<' {
             // Collect the generic parameters up to the matching `>`.
@@ -131,6 +134,7 @@ fn parse_item(input: TokenStream) -> Item {
             }
             bounds = format!("<{}>", full.join(", "));
             args = format!("<{}>", names.join(", "));
+            generics = names.into_iter().zip(full).collect();
         }
     }
     let body = toks[i..].iter().find_map(|t| match t {
@@ -145,6 +149,7 @@ fn parse_item(input: TokenStream) -> Item {
         name,
         bounds,
         args,
+        generics,
         body,
     }
 }
@@ -729,6 +734,75 @@ pub fn derive_ports(input: TokenStream) -> TokenStream {
         })
         .collect::<Vec<_>>()
         .join(" ");
+    // A struct generic over its side, `Dbg<S: Side>`, is made with both
+    // its ends at once: the driver's, each field paired with the
+    // receiver's opposite end. Its other parameters, `const A: usize`
+    // say, stay parameters of the two impls (issue 1650).
+    let side = item.generics.iter().position(|(n, full)| {
+        full.strip_prefix(n.as_str())
+            .is_some_and(|rest| rest.trim_start().starts_with(':'))
+            && full.contains("Side")
+    });
+    let bundle = if let Some(k) = side {
+        let names = field_names(body);
+        let lets = names
+            .iter()
+            .map(|f| format!("let {f} = <_ as ::txhdl::comp::Mirror>::pair();"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let end = |e: usize| {
+            names
+                .iter()
+                .map(|f| format!("{f}: {f}.{e}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let rest: Vec<&str> = item
+            .generics
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| *j != k)
+            .map(|(_, (_, full))| full.as_str())
+            .collect();
+        let bounds = if rest.is_empty() {
+            String::new()
+        } else {
+            format!("<{}>", rest.join(", "))
+        };
+        let on = |s: &str| {
+            let args = item
+                .generics
+                .iter()
+                .enumerate()
+                .map(|(j, (n, _))| {
+                    if j == k {
+                        format!("::txhdl::comp::{s}")
+                    } else {
+                        n.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{}<{args}>", item.name)
+        };
+        let way = |me: &str, other: &str, a: usize, b: usize| {
+            format!(
+                "\nimpl{bounds} ::txhdl::comp::Link for {me_ty} {{\n\
+                 type Host = {other_ty};\n\
+                 fn link() -> (Self::Host, Self) {{ {lets} \
+                 ({n} {{ {h} }}, {n} {{ {s} }}) }}\n}}",
+                me_ty = on(me),
+                other_ty = on(other),
+                n = item.name,
+                h = end(a),
+                s = end(b),
+            )
+        };
+        // Each field's pair is the driver's end then the receiver's.
+        way("Receiver", "Driver", 0, 1) + &way("Driver", "Receiver", 1, 0)
+    } else {
+        String::new()
+    };
     // A struct of ports is a port field too, so another struct of ports
     // may hold it: its ports are flattened, each `field_sub` (issue 498).
     format!(
@@ -739,7 +813,7 @@ pub fn derive_ports(input: TokenStream) -> TokenStream {
          fn ports_of(name: &str) -> Vec<::txhdl::netlist::BundlePort> {{ \
          <Self as ::txhdl::netlist::Ports>::ports().into_iter().map(|mut p| \
          {{ p.name = format!(\"{{name}}_{{}}\", p.name); p }})\
-         .collect() }}\n}}",
+         .collect() }}\n}}{bundle}",
         b = item.bounds,
         n = item.name,
         a = item.args
@@ -3428,12 +3502,49 @@ fn port_struct_fields(
         s.fields
             .iter()
             .map(|(n, t)| {
-                let t: String =
-                    substitute(t, &map).iter().map(|t| t.to_string()).collect();
+                let t: String = side_end(&substitute(t, &map))
+                    .iter()
+                    .map(|t| t.to_string())
+                    .collect();
                 (n.clone(), t)
             })
             .collect(),
     )))
+}
+
+/// A field of a struct generic over its side, `S::Drive<T>` with `S`
+/// put in as `Driver` or `Receiver`, as the end it is on that side:
+/// `Driver::Drive<T>` is `Out<T>` and `Receiver::Drive<T>` is `In<T>`,
+/// `Read` the reverse, and `Send` and `Recv` a channel's ends the same
+/// way (issue 1650). A path before the side, `txhdl::comp::Driver`, is
+/// dropped with it; any other type is as it was.
+fn side_end(ty: &[TokenTree]) -> Vec<TokenTree> {
+    for i in 0..ty.len() {
+        let (Some(TokenTree::Ident(side)), Some(TokenTree::Ident(assoc))) =
+            (ty.get(i), ty.get(i + 3))
+        else {
+            continue;
+        };
+        if !(punct_at(ty, i + 1, ':') && punct_at(ty, i + 2, ':')) {
+            continue;
+        }
+        let driver = match side.to_string().as_str() {
+            "Driver" => true,
+            "Receiver" => false,
+            _ => continue,
+        };
+        let end = match (assoc.to_string().as_str(), driver) {
+            ("Drive", true) | ("Read", false) => "Out",
+            ("Drive", false) | ("Read", true) => "In",
+            ("Send", true) | ("Recv", false) => "Tx",
+            ("Send", false) | ("Recv", true) => "Rx",
+            _ => continue,
+        };
+        let mut out = vec![TokenTree::Ident(Ident::new(end, assoc.span()))];
+        out.extend(ty[i + 4..].iter().cloned());
+        return out;
+    }
+    ty.to_vec()
 }
 
 /// The marker `bound` carries first among a side's fields when the

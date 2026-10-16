@@ -1,0 +1,39 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{One Bundle for Both Its Ends}
+\label{sec:x-flipped}
+
+A bundle that runs both ways, a request one way and the answer the
+other, was two structs: every \code{In} of one an \code{Out} of the
+other, or a \code{Tx} and an \code{Rx}, written twice and kept in step
+by hand. A struct generic over its side is written once (issue 1650).
+A field \code{S::Drive<T>} is an \code{Out<T>} on the
+\code{Driver}'s side and an \code{In<T>} on the \code{Receiver}'s,
+\code{S::Read<T>} the reverse, and \code{S::Send<T>} and
+\code{S::Recv<T>} are a channel's two ends the same way.
+\code{\#[derive(Ports)]} writes \code{Link} for both sides, so
+\code{link::<Dbg<Receiver>>()} makes the two ends at once, as
+Section~\ref{sec:x-link} makes a link of two structs.
+
+Here \code{Dm} takes \code{Dbg<Driver>} and raises \code{haltreq}
+every other cycle, and \code{Hart} takes \code{Dbg<Receiver>}, sends
+its count on \code{rdata} and reports the request it reads.
+\code{Pair} joins them with one link. The answer is a channel rather
+than a wire: \code{Dm} runs before \code{Hart} in a step, and a wire is
+set before it is read, while a channel is registered. The run checks
+both reports cycle by cycle and prints the ports of the two sides, the
+same names each turned round; the netlist is checked against the run
+under both simulators. AXI-Lite's \code{LitePort} and
+\code{LiteHostPort} are now one such struct, \code{LiteBus}, with the
+same netlists.
+
+\begin{figure}[htbp]
+\centering
+\input{flipped_timing.tex}
+\caption{The request every other cycle, the count, and what each side
+reports of the other.}
+\label{fig:x-flipped}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_flipped.rs}. Run with \code{bazel run //lib/examples:ex\_flipped}.},label={lst:x-flipped}]{lib/examples/ex_flipped.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_flipped} printed when the build ran it: the two reports each cycle, the ports of each side, then the lowering.},label={lst:x-flipped-out}]{out_flipped.txt}

@@ -1126,6 +1126,8 @@ latex_document(
         ":smul_timing",
         ":subfield_run",
         ":subfield_timing",
+        ":flipped_run",
+        ":flipped_timing",
         ":valif_run",
         ":valif_timing",
         ":range_run",
@@ -3101,6 +3103,20 @@ waveform(
         "//subfield/rlast=>last",
     ],
     until = 19,
+)
+
+waveform(
+    name = "flipped",
+    example = "//lib/examples:ex_flipped",
+    lowered = ("flipped", "flipped"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//flipped/dm/halt=>halt",
+        "//flipped/hart/count=>count",
+        "//halted=>halted",
+        "//got=>got",
+    ],
+    until = 17,
 )
 
 waveform(

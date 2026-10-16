@@ -912,6 +912,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# One bundle type for both its ends, Dbg<S: Side> (issue 1650):  bazel run //lib/examples:ex_flipped
+rust_binary(
+    name = "ex_flipped",
+    srcs = ["ex_flipped.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # ex_smul's products through Vivado out of context, at the core's ten
 # nanosecond clock (issue 1649): how many DSP blocks each takes, and
 # whether the paths into the products' registers meet the clock. Manual,
@@ -1560,6 +1569,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_arith.rs",
         "ex_smul.rs",
         "ex_subfield.rs",
+        "ex_flipped.rs",
         "ex_valif.rs",
         "ex_range.rs",
         "ex_cast.rs",
