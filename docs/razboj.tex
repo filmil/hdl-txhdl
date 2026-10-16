@@ -384,9 +384,7 @@ environment and \code{COMBINE} to that, to the bit, through the format
 and the binning. In the list a second unit is the second of two: GL lets
 its unit~1 texture with unit~0 off, a unit that is off passing the
 fragment through, and a program draws that by putting it on the first
-unit, whose \code{PREVIOUS} is the primary colour. The rasteriser does not read a second unit yet, so a
-list that has one is not drawn right on the board until \#1510's third
-step.
+unit, whose \code{PREVIOUS} is the primary colour.
 
 In a tile the rasteriser samples as the model does, byte for byte,
 under both magnification filters, all six minification filters and the
@@ -419,6 +417,21 @@ three channels; and the scale, the rounding and the clamp, the divide by
 510 a halving and a divide by 255 without a divider. The unit test
 \code{the\_rasterisers\_combine\_is\_the\_models} holds these stages to
 the model's \code{tex::combine} over 200,000 random settings and colours.
+With a second texture unit (issue~\#1510) the rasteriser reads that
+unit's two slots and its descriptor first, into the unit's registers,
+which then trade places with a second set before the first unit's are
+read; the walk steps both sets; the two units'
+level addresses share one table of 32 words, sixteen a unit. A pixel
+then takes the texture's turns once a unit: the two sets trade places in
+a turn after each, the second unit's environment takes the first's
+result in place of the fragment's colour, and its \code{COMBINE} reads
+the fragment's colour as \code{PRIMARY\_COLOR} and the first's result as
+\code{PREVIOUS}. How many units draw a pixel is a wire beside the one
+that says whether the primitive covers it, so a pixel that is not
+textured, or not covered, takes no turn more. A pixel of two units, each on a
+cached texel, takes 39 cycles more than an untextured one, as
+\code{what\_a\_textured\_pixel\_costs} measures: the first unit's turns,
+the second's, and a turn after each for the trading.
 Then the colour
 goes on to the depth test and the blend as an untextured pixel's does.
 A textured pixel at the nearest texel of one level takes 18 cycles more

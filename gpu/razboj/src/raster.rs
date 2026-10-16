@@ -166,6 +166,8 @@ pub struct Raster<
     /// it is the one thing a waveform of a triangle wants to show,
     /// and the walk waits on it.
     pub hit: Wire<Bit>,
+    /// How many texture units draw this pixel (#1510).
+    pub tpass: Wire<U<2>>,
     /// The word this pixel takes, the entry's alpha above its colour,
     /// which for a shaded triangle is worked out from its three
     /// channels here.
@@ -393,7 +395,59 @@ pub struct Raster<
     pub tcs: Reg<Bit>,
     pub tct: Reg<Bit>,
     pub tclass: Reg<U<3>>,
-    pub tlvl: Mem<U<32>, 16>,
+    pub tlvl: Mem<U<32>, 32>,
+    /// A second texture unit (#1510): which half of `tlvl` the unit in
+    /// these registers reads, sixteen levels a unit; the other unit's
+    /// registers, which trade places with these to draw it; whether the
+    /// entry has a second unit, in a tile, and in any list; the colour the
+    /// unit's environment takes, the fragment's on the first unit and the
+    /// first's result on the second, and whether the second is being drawn;
+    /// how many units are read, whether one is still to come, and the next
+    /// one's slots' offset from the entry.
+    pub tbank: Reg<Bit>,
+    pub xuc: Reg<U<64>>,
+    pub xur: Reg<U<64>>,
+    pub xudx: Reg<U<64>>,
+    pub xudy: Reg<U<64>>,
+    pub xvc: Reg<U<64>>,
+    pub xvr: Reg<U<64>>,
+    pub xvdx: Reg<U<64>>,
+    pub xvdy: Reg<U<64>>,
+    pub xqc: Reg<U<64>>,
+    pub xqr: Reg<U<64>>,
+    pub xqdx: Reg<U<64>>,
+    pub xqdy: Reg<U<64>>,
+    pub xlodk: Reg<U<8>>,
+    pub xnux: Reg<U<32>>,
+    pub xnuxd: Reg<U<32>>,
+    pub xnvx: Reg<U<32>>,
+    pub xnvxd: Reg<U<32>>,
+    pub xnuy: Reg<U<32>>,
+    pub xnuy0: Reg<U<32>>,
+    pub xnuyd: Reg<U<32>>,
+    pub xnvy: Reg<U<32>>,
+    pub xnvy0: Reg<U<32>>,
+    pub xnvyd: Reg<U<32>>,
+    pub xdesc: Reg<U<32>>,
+    pub xenv: Reg<U<3>>,
+    pub xenvc: Reg<U<32>>,
+    pub xcomb: Reg<U<32>>,
+    pub xlogw: Reg<U<4>>,
+    pub xlogh: Reg<U<4>>,
+    pub xlevels: Reg<U<4>>,
+    pub xmin: Reg<U<3>>,
+    pub xmag: Reg<Bit>,
+    pub xcs: Reg<Bit>,
+    pub xct: Reg<Bit>,
+    pub xclass: Reg<U<3>>,
+    pub xbank: Reg<Bit>,
+    pub tex1on: Reg<Bit>,
+    pub texd2: Reg<Bit>,
+    pub tfrag: Reg<U<32>>,
+    pub tp1: Reg<Bit>,
+    pub tnl: Reg<U<2>>,
+    pub tmore: Reg<Bit>,
+    pub tsl: Reg<U<16>>,
     /// The level of detail's numerators (issue 997), as a channel's
     /// planes: the two that step down at this row, the two that step
     /// across at this pixel and at the start of the row, their steps,
@@ -1189,10 +1243,11 @@ fn tex_env(
 }
 
 /// One of `GL_COMBINE`'s arguments for one channel (#1512), as
-/// `tex::combine` takes it: from the source `s`, the texel, the
-/// environment's colour or else the fragment, whose channels are `tk`,
-/// `ck` and `fk` and whose alphas are `ta`, `ca` and `fa`; the alpha
-/// under an operand's high bit, and one less it under its low bit.
+/// `tex::combine_with` takes it: from the source `s`, the texel, the
+/// environment's colour, the primary colour or the previous one (#1510),
+/// whose channels are `tk`, `ck`, `pk` and `fk` and whose alphas are
+/// `ta`, `ca`, `pa` and `fa`; the alpha under an operand's high bit, and
+/// one less it under its low bit.
 #[allow(clippy::too_many_arguments)]
 #[lower]
 fn comb_arg(
@@ -1204,11 +1259,14 @@ fn comb_arg(
     fa: U<8>,
     ta: U<8>,
     ca: U<8>,
+    pk: U<8>,
+    pa: U<8>,
 ) -> U<8> {
     let tex = Bit::from(s == 0);
     let con = Bit::from(s == 1);
-    let ak = mux(tex, tk, mux(con, ck, fk));
-    let aa = mux(tex, ta, mux(con, ca, fa));
+    let pri = Bit::from(s == 2);
+    let ak = mux(tex, tk, mux(con, ck, mux(pri, pk, fk)));
+    let aa = mux(tex, ta, mux(con, ca, mux(pri, pa, fa)));
     let v = mux(op.bit(1), aa, ak);
     mux(op.bit(0), U::<8>::from(255u8) - v, v)
 }
@@ -1358,7 +1416,21 @@ impl<
                     let n2 = !self.e2.get().bit(31);
                     let boxed = Bit::from(self.kind.get() != Kind::Tri)
                         & Bit::from(self.kind.get() != Kind::Shaded);
-                    self.hit.set(boxed | (n0 & n1 & n2));
+                    let hit = boxed | (n0 & n1 & n2);
+                    self.hit.set(hit);
+                    // How many units texture this pixel (#1510): none when
+                    // it is not textured or the primitive misses it, two
+                    // for an entry with a second unit. A wire, as `hit` is,
+                    // so that it is this pixel's by the time the walk reads it.
+                    self.tpass.set(mux(
+                        self.tex_on.get() & hit,
+                        mux(
+                            self.tex1on.get(),
+                            U::<2>::from(2u8),
+                            U::<2>::from(1u8),
+                        ),
+                        U::<2>::from(0u8),
+                    ));
                     // The word this pixel takes: its alpha above a
                     // shaded triangle's three planes here, or above
                     // every other entry's own colour.
@@ -1747,6 +1819,11 @@ impl<
                                               | v.bit(14),
                                           texd: v.bit(14),
                                           tex_on: v.bit(14) & self.tiled.get(),
+                                          // A second unit (#1510).
+                                          texd2: v.bit(14) & v.bit(15),
+                                          tex1on: v.bit(14)
+                                              & v.bit(15)
+                                              & self.tiled.get(),
                                           zon: v.bit(8) & self.tiled.get(),
 
                                           son: v.bit(13) & self.tiled.get(),
@@ -1998,7 +2075,30 @@ impl<
                                   // draws the entry untextured. A plane's
                                   // low word lands first and is held for
                                   // its high one.
+                                  // With a second unit (#1510), its two
+                                  // slots and its descriptor are read
+                                  // first, at four and five past the
+                                  // entry, into the other unit's
+                                  // registers, and the first unit's next.
                                   if self.tex_on.get().to_bool() {
+                                    let two = self.tex1on.get();
+                                    with!(self <= {
+                                        tnl: mux(
+                                            two,
+                                            U::<2>::from(2u8),
+                                            U::<2>::from(1u8),
+                                        ),
+                                        tmore: two,
+                                        tsl: mux(
+                                            two,
+                                            U::<16>::from(4u8),
+                                            U::<16>::from(2u8),
+                                        ),
+                                        tbank: two,
+                                        xbank: Bit::Zero,
+                                    });
+                                    DefaultClock::rising().await;
+                                    for _ in 0..self.tnl.get().raw() as usize {
                                       until(DefaultClock::rising, || {
                                           issue.ready().to_bool()
                                       })
@@ -2007,7 +2107,7 @@ impl<
                                           read: Bit::One,
                                           addr: U::<A>::from(DL as u32)
                                               + U::<A>::from(ENTRIES_AT)
-                                              + ((self.insn.get() + 2)
+                                              + ((self.insn.get() + self.tsl.get())
                                                   .resize::<A>()
                                                   << SHIFT),
                                           len: U::<8>::from(15u8),
@@ -2081,7 +2181,7 @@ impl<
                                           read: Bit::One,
                                           addr: U::<A>::from(DL as u32)
                                               + U::<A>::from(ENTRIES_AT)
-                                              + ((self.insn.get() + 3)
+                                              + ((self.insn.get() + self.tsl.get() + 1)
                                                   .resize::<A>()
                                                   << SHIFT),
                                           len: U::<8>::from(14u8),
@@ -2204,16 +2304,110 @@ impl<
                                           }
                                           let dl = (dk - 1).slice::<0, 4>();
                                           let dput = Bit::from(dk != 0);
+                                          // The unit's half of the table.
+                                          let half = mux(
+                                              self.tbank.get(),
+                                              U::<5>::from(16u8),
+                                              U::<5>::from(0u8),
+                                          );
+                                          let dl5 = half + dl.resize::<5>();
                                           with!(self <= {
-                                              dput ? { tlvl.at(dl): dw },
+                                              dput ? { tlvl.at(dl5): dw },
                                           });
                                       }
+                                      // The second unit's state into the
+                                      // other registers, and the first
+                                      // unit's slots next.
+                                      if self.tmore.get().to_bool() {
+                                          with!(self <= {
+                                                tuc: self.xuc.get(),
+                                                xuc: self.tuc.get(),
+                                                tur: self.xur.get(),
+                                                xur: self.tur.get(),
+                                                tudx: self.xudx.get(),
+                                                xudx: self.tudx.get(),
+                                                tudy: self.xudy.get(),
+                                                xudy: self.tudy.get(),
+                                                tvc: self.xvc.get(),
+                                                xvc: self.tvc.get(),
+                                                tvr: self.xvr.get(),
+                                                xvr: self.tvr.get(),
+                                                tvdx: self.xvdx.get(),
+                                                xvdx: self.tvdx.get(),
+                                                tvdy: self.xvdy.get(),
+                                                xvdy: self.tvdy.get(),
+                                                tqc: self.xqc.get(),
+                                                xqc: self.tqc.get(),
+                                                tqr: self.xqr.get(),
+                                                xqr: self.tqr.get(),
+                                                tqdx: self.xqdx.get(),
+                                                xqdx: self.tqdx.get(),
+                                                tqdy: self.xqdy.get(),
+                                                xqdy: self.tqdy.get(),
+                                                tlodk: self.xlodk.get(),
+                                                xlodk: self.tlodk.get(),
+                                                tnux: self.xnux.get(),
+                                                xnux: self.tnux.get(),
+                                                tnuxd: self.xnuxd.get(),
+                                                xnuxd: self.tnuxd.get(),
+                                                tnvx: self.xnvx.get(),
+                                                xnvx: self.tnvx.get(),
+                                                tnvxd: self.xnvxd.get(),
+                                                xnvxd: self.tnvxd.get(),
+                                                tnuy: self.xnuy.get(),
+                                                xnuy: self.tnuy.get(),
+                                                tnuy0: self.xnuy0.get(),
+                                                xnuy0: self.tnuy0.get(),
+                                                tnuyd: self.xnuyd.get(),
+                                                xnuyd: self.tnuyd.get(),
+                                                tnvy: self.xnvy.get(),
+                                                xnvy: self.tnvy.get(),
+                                                tnvy0: self.xnvy0.get(),
+                                                xnvy0: self.tnvy0.get(),
+                                                tnvyd: self.xnvyd.get(),
+                                                xnvyd: self.tnvyd.get(),
+                                                tdesc: self.xdesc.get(),
+                                                xdesc: self.tdesc.get(),
+                                                tenv: self.xenv.get(),
+                                                xenv: self.tenv.get(),
+                                                tenvc: self.xenvc.get(),
+                                                xenvc: self.tenvc.get(),
+                                                tcomb: self.xcomb.get(),
+                                                xcomb: self.tcomb.get(),
+                                                tlogw: self.xlogw.get(),
+                                                xlogw: self.tlogw.get(),
+                                                tlogh: self.xlogh.get(),
+                                                xlogh: self.tlogh.get(),
+                                                tlevels: self.xlevels.get(),
+                                                xlevels: self.tlevels.get(),
+                                                tmin: self.xmin.get(),
+                                                xmin: self.tmin.get(),
+                                                tmag: self.xmag.get(),
+                                                xmag: self.tmag.get(),
+                                                tcs: self.xcs.get(),
+                                                xcs: self.tcs.get(),
+                                                tct: self.xct.get(),
+                                                xct: self.tct.get(),
+                                                tclass: self.xclass.get(),
+                                                xclass: self.tclass.get(),
+                                                tbank: self.xbank.get(),
+                                                xbank: self.tbank.get(),
+                                              tmore: Bit::Zero,
+                                              tsl: U::<16>::from(2u8),
+                                          });
+                                          DefaultClock::rising().await;
+                                      }
+                                    }
                                   }
                                   self.insn.set(
                                       self.insn.get()
                                           + mux(
                                               self.texd.get(),
-                                              U::<16>::from(3u8),
+                                              mux(
+                                                  self.texd2.get(),
+                                                  U::<16>::from(5u8),
+                                                  U::<16>::from(3u8),
+                                              ),
                                               U::<16>::from(1u8),
                                           ),
                                   );
@@ -2382,9 +2576,12 @@ impl<
                                     // the two levels' blend, and the
                                     // environment, its products and
                                     // then their divide.
-                                    if (self.tex_on.get() & self.hit.get())
-                                        .to_bool()
-                                    {
+                                    // A second unit (#1510): the same
+                                    // turns again once the two units'
+                                    // registers trade places, its
+                                    // environment taking the first's
+                                    // result as the fragment's colour.
+                                    for _ in 0..self.tpass.get().raw() as usize {
                                         let tq = self.tqc.get();
                                         let one64 = U::<64>::from(1u8);
                                         let tq1 = mux(tq == 0, one64, tq);
@@ -2394,10 +2591,18 @@ impl<
                                             self.tnuy.get(),
                                             self.tnvy.get(),
                                         );
+                                        // The colour the environment takes:
+                                        // the fragment's on the first unit.
+                                        let tf = mux(
+                                            self.tp1.get(),
+                                            self.tfrag.get(),
+                                            self.rgb.get(),
+                                        );
                                         with!(self <= {
                                             tn: lz64(tq1),
                                             tx: norm64(tq1).slice::<32, 32>(),
                                             mlm: nm,
+                                            tfrag: tf,
                                         });
                                         DefaultClock::rising().await;
                                         let tx0 = self.tx.get();
@@ -2545,7 +2750,6 @@ impl<
                                             mk: U::<4>::from(0u8),
                                         });
                                         DefaultClock::rising().await;
-                                    }
                                     // Each texel the filters read, none
                                     // for a pixel that is not textured.
                                     for _ in 0..self.mnt.get().raw() as usize {
@@ -2573,7 +2777,13 @@ impl<
                                             mvs: sra(self.tiv.get(), lsh),
                                             mlw: mux(lw < lev, z4, lw - lev),
                                             mlh: mux(lh < lev, z4, lh - lev),
-                                            mbase: self.tlvl.read(lev),
+                                            mbase: self.tlvl.read(
+                                                mux(
+                                                    self.tbank.get(),
+                                                    U::<5>::from(16u8),
+                                                    U::<5>::from(0u8),
+                                                ) + lev.resize::<5>(),
+                                            ),
                                         });
                                         DefaultClock::rising().await;
                                         // Linear takes the texels about the
@@ -2752,7 +2962,7 @@ impl<
                                         // colour by the texel; and the
                                         // fragment and the texel by the
                                         // texel's alpha.
-                                        let ef = self.rgb.get();
+                                        let ef = self.tfrag.get();
                                         let et = self.mtx.get();
                                         let ec = self.tenvc.get();
                                         let w32 = U::<32>::from(0xff_ffffu32);
@@ -2788,7 +2998,7 @@ impl<
                                         let em = earg.concat::<8, 32>(eb);
                                         let el = over255x3(self.mbl.get());
                                         let ed = over255x3(self.mdc.get());
-                                        let f2 = self.rgb.get();
+                                        let f2 = self.tfrag.get();
                                         let t2 = self.mtx.get();
                                         let ar = add255(
                                             f2.slice::<16, 8>(),
@@ -2830,7 +3040,12 @@ impl<
                                     .to_bool()
                                     {
                                         let cw = self.tcomb.get();
-                                        let cf = self.rgb.get();
+                                        let cf = self.tfrag.get();
+                                        let cp = self.rgb.get();
+                                        let ppa = cp.slice::<24, 8>();
+                                        let pr = cp.slice::<16, 8>();
+                                        let pg = cp.slice::<8, 8>();
+                                        let pb = cp.slice::<0, 8>();
                                         let ct = self.mtx.get();
                                         let cc = self.tenvc.get();
                                         let fa = cf.slice::<24, 8>();
@@ -2847,16 +3062,19 @@ impl<
                                             cw.slice::<6, 2>(),
                                             cw.slice::<18, 2>(),
                                             fr, tr, kr, fa, ta, ka,
+                                            pr, ppa,
                                         );
                                         let r1 = comb_arg(
                                             cw.slice::<8, 2>(),
                                             cw.slice::<20, 2>(),
                                             fr, tr, kr, fa, ta, ka,
+                                            pr, ppa,
                                         );
                                         let r2 = comb_arg(
                                             cw.slice::<10, 2>(),
                                             cw.slice::<22, 2>(),
                                             fr, tr, kr, fa, ta, ka,
+                                            pr, ppa,
                                         );
                                         let fg = cf.slice::<8, 8>();
                                         let tg = ct.slice::<8, 8>();
@@ -2865,16 +3083,19 @@ impl<
                                             cw.slice::<6, 2>(),
                                             cw.slice::<18, 2>(),
                                             fg, tg, kg, fa, ta, ka,
+                                            pg, ppa,
                                         );
                                         let g1 = comb_arg(
                                             cw.slice::<8, 2>(),
                                             cw.slice::<20, 2>(),
                                             fg, tg, kg, fa, ta, ka,
+                                            pg, ppa,
                                         );
                                         let g2 = comb_arg(
                                             cw.slice::<10, 2>(),
                                             cw.slice::<22, 2>(),
                                             fg, tg, kg, fa, ta, ka,
+                                            pg, ppa,
                                         );
                                         let fb = cf.slice::<0, 8>();
                                         let tb = ct.slice::<0, 8>();
@@ -2883,16 +3104,19 @@ impl<
                                             cw.slice::<6, 2>(),
                                             cw.slice::<18, 2>(),
                                             fb, tb, kb, fa, ta, ka,
+                                            pb, ppa,
                                         );
                                         let b1 = comb_arg(
                                             cw.slice::<8, 2>(),
                                             cw.slice::<20, 2>(),
                                             fb, tb, kb, fa, ta, ka,
+                                            pb, ppa,
                                         );
                                         let b2 = comb_arg(
                                             cw.slice::<10, 2>(),
                                             cw.slice::<22, 2>(),
                                             fb, tb, kb, fa, ta, ka,
+                                            pb, ppa,
                                         );
                                         // Alpha: sources at 12, and an
                                         // operand's one bit at 24, always
@@ -2903,18 +3127,21 @@ impl<
                                             cw.slice::<12, 2>(),
                                             one.concat::<1, 2>(o0),
                                             fa, ta, ka, fa, ta, ka,
+                                            ppa, ppa,
                                         );
                                         let o1 = cw.slice::<25, 1>();
                                         let a1 = comb_arg(
                                             cw.slice::<14, 2>(),
                                             one.concat::<1, 2>(o1),
                                             fa, ta, ka, fa, ta, ka,
+                                            ppa, ppa,
                                         );
                                         let o2 = cw.slice::<26, 1>();
                                         let a2 = comb_arg(
                                             cw.slice::<16, 2>(),
                                             one.concat::<1, 2>(o2),
                                             fa, ta, ka, fa, ta, ka,
+                                            ppa, ppa,
                                         );
                                         with!(self <= {
                                             car: r0.concat::<8, 16>(r1),
@@ -2971,6 +3198,89 @@ impl<
                                                 .concat::<8, 32>(ob),
                                         );
                                         DefaultClock::rising().await;
+                                    }
+                                    // The units trade places, after each
+                                    // of a pixel's two, so that the first's
+                                    // are back for the next pixel.
+                                    if (self.tex1on.get() & self.hit.get()).to_bool() {
+                                        with!(self <= {
+                                            tuc: self.xuc.get(),
+                                            xuc: self.tuc.get(),
+                                            tur: self.xur.get(),
+                                            xur: self.tur.get(),
+                                            tudx: self.xudx.get(),
+                                            xudx: self.tudx.get(),
+                                            tudy: self.xudy.get(),
+                                            xudy: self.tudy.get(),
+                                            tvc: self.xvc.get(),
+                                            xvc: self.tvc.get(),
+                                            tvr: self.xvr.get(),
+                                            xvr: self.tvr.get(),
+                                            tvdx: self.xvdx.get(),
+                                            xvdx: self.tvdx.get(),
+                                            tvdy: self.xvdy.get(),
+                                            xvdy: self.tvdy.get(),
+                                            tqc: self.xqc.get(),
+                                            xqc: self.tqc.get(),
+                                            tqr: self.xqr.get(),
+                                            xqr: self.tqr.get(),
+                                            tqdx: self.xqdx.get(),
+                                            xqdx: self.tqdx.get(),
+                                            tqdy: self.xqdy.get(),
+                                            xqdy: self.tqdy.get(),
+                                            tlodk: self.xlodk.get(),
+                                            xlodk: self.tlodk.get(),
+                                            tnux: self.xnux.get(),
+                                            xnux: self.tnux.get(),
+                                            tnuxd: self.xnuxd.get(),
+                                            xnuxd: self.tnuxd.get(),
+                                            tnvx: self.xnvx.get(),
+                                            xnvx: self.tnvx.get(),
+                                            tnvxd: self.xnvxd.get(),
+                                            xnvxd: self.tnvxd.get(),
+                                            tnuy: self.xnuy.get(),
+                                            xnuy: self.tnuy.get(),
+                                            tnuy0: self.xnuy0.get(),
+                                            xnuy0: self.tnuy0.get(),
+                                            tnuyd: self.xnuyd.get(),
+                                            xnuyd: self.tnuyd.get(),
+                                            tnvy: self.xnvy.get(),
+                                            xnvy: self.tnvy.get(),
+                                            tnvy0: self.xnvy0.get(),
+                                            xnvy0: self.tnvy0.get(),
+                                            tnvyd: self.xnvyd.get(),
+                                            xnvyd: self.tnvyd.get(),
+                                            tdesc: self.xdesc.get(),
+                                            xdesc: self.tdesc.get(),
+                                            tenv: self.xenv.get(),
+                                            xenv: self.tenv.get(),
+                                            tenvc: self.xenvc.get(),
+                                            xenvc: self.tenvc.get(),
+                                            tcomb: self.xcomb.get(),
+                                            xcomb: self.tcomb.get(),
+                                            tlogw: self.xlogw.get(),
+                                            xlogw: self.tlogw.get(),
+                                            tlogh: self.xlogh.get(),
+                                            xlogh: self.tlogh.get(),
+                                            tlevels: self.xlevels.get(),
+                                            xlevels: self.tlevels.get(),
+                                            tmin: self.xmin.get(),
+                                            xmin: self.tmin.get(),
+                                            tmag: self.xmag.get(),
+                                            xmag: self.tmag.get(),
+                                            tcs: self.xcs.get(),
+                                            xcs: self.tcs.get(),
+                                            tct: self.xct.get(),
+                                            xct: self.tct.get(),
+                                            tclass: self.xclass.get(),
+                                            xclass: self.tclass.get(),
+                                            tbank: self.xbank.get(),
+                                            xbank: self.tbank.get(),
+                                            tfrag: self.tcol.get(),
+                                            tp1: !self.tp1.get(),
+                                        });
+                                        DefaultClock::rising().await;
+                                    }
                                     }
                                     // Fog (issue 998), after the texture
                                     // and before the alpha test: each of
@@ -3456,6 +3766,12 @@ impl<
                                         tqc: self.tqc.get() + self.tqdx.get(),
                                         tnuy: nuy,
                                         tnvy: nvy,
+                                        // The other unit's, alike (#1510).
+                                        xuc: self.xuc.get() + self.xudx.get(),
+                                        xvc: self.xvc.get() + self.xvdx.get(),
+                                        xqc: self.xqc.get() + self.xqdx.get(),
+                                        xnuy: self.xnuy.get() + self.xnuyd.get(),
+                                        xnvy: self.xnvy.get() + self.xnvyd.get(),
                                         pa: py.slice::<0, 6>().concat::<6, 12>(
                                             (px + 1).slice::<0, 6>(),
                                         ),
@@ -3477,6 +3793,9 @@ impl<
                                 let qu = self.tur.get() + self.tudy.get();
                                 let qv = self.tvr.get() + self.tvdy.get();
                                 let qq = self.tqr.get() + self.tqdy.get();
+                                let xu = self.xur.get() + self.xudy.get();
+                                let xv = self.xvr.get() + self.xvdy.get();
+                                let xq = self.xqr.get() + self.xqdy.get();
                                 with!(self <= {
                                     x: self.xa.get(),
                                     y: self.y.get() + 1,
@@ -3490,6 +3809,14 @@ impl<
                                     tnvx: self.tnvx.get() + self.tnvxd.get(),
                                     tnuy: self.tnuy0.get(),
                                     tnvy: self.tnvy0.get(),
+                                    // The other unit's, alike (#1510).
+                                    xuc: xu, xur: xu,
+                                    xvc: xv, xvr: xv,
+                                    xqc: xq, xqr: xq,
+                                    xnux: self.xnux.get() + self.xnuxd.get(),
+                                    xnvx: self.xnvx.get() + self.xnvxd.get(),
+                                    xnuy: self.xnuy0.get(),
+                                    xnvy: self.xnvy0.get(),
                                     pa: (self.y.get() + 1)
                                         .slice::<0, 6>()
                                         .concat::<6, 12>(
@@ -3521,6 +3848,10 @@ impl<
                                     self.serial.get(),
                                 ),
                                 clean: self.clean.get() | scrub,
+                                // One unit a pixel, from the first, until
+                                // the next entry says otherwise (#1510).
+                                tex1on: Bit::Zero,
+                                tp1: Bit::Zero,
                                 scrub: Bit::Zero,
                                 load: load & scrub,
                             });
@@ -3666,12 +3997,14 @@ mod tests {
     use super::*;
 
     /// `GL_COMBINE` as the rasteriser's three cycles make it (#1512), from
-    /// its stages as the pixel's process joins them.
-    fn combined(w: u32, f: u32, t: u32, c: u32) -> u32 {
+    /// its stages as the pixel's process joins them, with `p` the primary
+    /// colour and `f` the previous one (#1510).
+    fn combined(w: u32, p: u32, f: u32, t: u32, c: u32) -> u32 {
         let byte =
             |v: u32, k: usize| U::<8>::from(((v >> (8 * k)) & 0xff) as u8);
         let two = |at: usize| U::<2>::from(((w >> at) & 3) as u8);
         let (fa, ta, ca) = (byte(f, 3), byte(t, 3), byte(c, 3));
+        let pa = byte(p, 3);
         let fnc = U::<3>::from((w & 7) as u8);
         let fna = U::<3>::from(((w >> 3) & 7) as u8);
         // Each channel's first two arguments, its products and its
@@ -3681,7 +4014,18 @@ mod tests {
                 let arg = |j: usize| {
                     if k == 3 {
                         let op = U::<2>::from(2 | ((w >> (24 + j)) & 1) as u8);
-                        comb_arg(two(12 + 2 * j), op, fa, ta, ca, fa, ta, ca)
+                        comb_arg(
+                            two(12 + 2 * j),
+                            op,
+                            fa,
+                            ta,
+                            ca,
+                            fa,
+                            ta,
+                            ca,
+                            pa,
+                            pa,
+                        )
                     } else {
                         let (fk, tk, ck) = (byte(f, k), byte(t, k), byte(c, k));
                         comb_arg(
@@ -3693,6 +4037,8 @@ mod tests {
                             fa,
                             ta,
                             ca,
+                            byte(p, k),
+                            pa,
                         )
                     }
                 };
@@ -3723,7 +4069,8 @@ mod tests {
     }
 
     /// The rasteriser's `GL_COMBINE` is the model's to the bit (#1512),
-    /// over random settings, every one of the word's, and random colours.
+    /// over random settings, every one of the word's, and random colours,
+    /// the primary colour apart from the previous one (#1510).
     #[test]
     fn the_rasterisers_combine_is_the_models() {
         let mut x = 0x2545_f491u32;
@@ -3735,11 +4082,13 @@ mod tests {
         };
         for _ in 0..200_000 {
             let w = next() & 0x7fff_ffff;
-            let (f, t, c) = (next(), next(), next());
+            // The primary colour apart from the previous one, as on the
+            // second unit (#1510).
+            let (p, f, t, c) = (next(), next(), next(), next());
             assert_eq!(
-                combined(w, f, t, c),
-                crate::tex::combine(w, f, t, c),
-                "word {w:08x} f {f:08x} t {t:08x} c {c:08x}"
+                combined(w, p, f, t, c),
+                crate::tex::combine_with(w, p, f, t, c),
+                "word {w:08x} p {p:08x} f {f:08x} t {t:08x} c {c:08x}"
             );
         }
     }

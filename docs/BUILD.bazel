@@ -1636,7 +1636,9 @@ waveform(
     from_tick = 0,
     until = 200,
     width = 8.2,
-    nvc_heap = "64m",
+    # The rasteriser's second texture unit (#1510) widens every frame of
+    # the trace past nvc's 64 MB at elaboration.
+    nvc_heap = "128m",
     sim_size = "large",
 )
 
