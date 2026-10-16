@@ -772,7 +772,7 @@ Keys are bytes on the serial line, each held for 180 ms: `w`, `a`, `s` and `d` o
 Enter three times from the title goes through the menu, the episode and the skill, and a fourth starts E1M1.
 
 Pass:
-* `max-download-size` answers `0x0ffff000`.
+* `max-download-size` answers `0x0ffff000` (it answered `0x02fff000` at 48 MiB, in the October 8 run below).
 * The serial log has Doom's startup text, ending in `I_InitGraphics`, then a `doom frame` line every 64 frames, with the cycles of the last frame and the frames a second.
 * The screen shows the title and the demo loop, 320 by 200 doubled, between black bands, then E1M1 after the keys, and the view moves with them.
 
@@ -804,11 +804,12 @@ ssh $TXHDL_BOARD_SERVER txhdl_fastboot/fastboot -s tcp:192.168.1.50 \
 Pass:
 * `max-download-size` answers `0x0ffff000`.
 * The console's `fastboot:` line says the bytes received and the staged sum, and the two sums agree.
-* `ramdisk at 0x48001800 bytes 62914573 end 0x4c00180d`: it ends past `0x4b00_0000`, where the 48 MiB stage ended.
+* `ramdisk at 0x48001800 bytes 62914573 end 0x4bc0180d`: it ends past `0x4b00_0000`, where the 48 MiB stage ended.
 * The `ramdisk first` and `ramdisk last` words are the ones `od` printed for the file, then `ramdisk done`.
 
 At about 0.9 MB/s the image takes a little over a minute; a full 256 MiB one would take about five.
-`ramdisk_probe_ram_bin` with the same image laid at `0x4800_0000` by the machine's `--dtb` reads the same words off the board.
+Off the board, the machine model runs the same probe: lay a version 0 boot image, built by hand from a 2048-byte header, `ramdisk_probe_fastboot.bin` and a ramdisk, at `0x4800_0000` with `--dtb ... --dtb-at 0x48000000`, and run `ramdisk_probe_ram_bin`.
+A program sent this way reads its ramdisk where it was staged, so it must keep its own stack, heap and buffers clear of the stage, below `0x4800_0000` as Doom does.
 
 ### The ES 1.1 conformance suite, #999
 
