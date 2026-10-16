@@ -166,10 +166,11 @@ fn icache() {
     say_line(b"apart", apart - calls * warm, calls);
 }
 
-/// Four more blocks for the instruction cache (issue 1679), each timing
-/// the same 260 instructions as `A`, so that four instructions of one
-/// compare with four of another, but `HELD`, which runs three a line;
-/// `FAR`, `NEAR` and `HELD` over 65 lines as `A`, `LOOP` in one:
+/// Four more blocks for the instruction cache (issue 1679). `FAR`, `NEAR`
+/// and `LOOP` each time the same 260 instructions as `A`, so that four
+/// instructions of one compare with four of another; `HELD` runs three a
+/// line, 195. `FAR`, `NEAR` and `HELD` are over 65 lines as `A`, `LOOP`
+/// in one:
 ///
 /// * `FAR`: 64 lines 128 bytes apart, run in the order `37 k mod 64`,
 ///   each three no-ops and a `jal` to the next, so that no line follows
@@ -310,7 +311,8 @@ fn icache_jumps() {
     say_line(b"near-miss", cold[1] - warm[1], 1);
     say_line(b"near-warm", warm[1], 1);
     say_line(b"loop-warm", warm[2], 1);
-    // A far line not held whose jump's next word is in its own line.
+    // A far line not held whose jump's next word is in its own line, and
+    // its warm cost, which is of three instructions a line, not four.
     say_line(b"held-miss", cold[3] - warm[3], 1);
     say_line(b"held-warm", warm[3], 1);
 }
