@@ -25,7 +25,7 @@ pub mod sim;
 
 use txhdl::comp::trace::Kind;
 use txhdl::comp::{
-    join2, signal, Clock, DefaultClock, In, Out, Pad, Reg, Rx, Tx, Unit,
+    join2, signal, tie, Clock, DefaultClock, In, Out, Pad, Reg, Rx, Tx, Unit,
 };
 use txhdl::netlist::{foreign, Lower, Lowered};
 use txhdl::types::{Bit, U};
@@ -76,6 +76,11 @@ pub type CtlIn = (
     In<U<4>>,
     In<Bit>,
     In<Bit>,
+    In<U<5>>,
+    In<U<32>>,
+    In<U<8>>,
+    In<Bit>,
+    In<Bit>,
 );
 
 /// The controller's outputs: the AXI4 pins it drives, its readies and
@@ -92,6 +97,12 @@ pub type CtlOut = (
     Out<Bit>,
     Out<U<5>>,
     Out<U<32>>,
+    Out<U<2>>,
+    Out<Bit>,
+    Out<Bit>,
+    Out<Bit>,
+    Out<U<5>>,
+    Out<U<256, 2>>,
     Out<U<2>>,
     Out<Bit>,
     Out<Bit>,
@@ -170,6 +181,11 @@ impl Lower for Ddr3 {
                 ("i_arqos", Kind::In, 4),
                 ("i_arvalid", Kind::In, 1),
                 ("i_rready", Kind::In, 1),
+                ("i_xarid", Kind::In, 5),
+                ("i_xaraddr", Kind::In, 32),
+                ("i_xarlen", Kind::In, 8),
+                ("i_xarvalid", Kind::In, 1),
+                ("i_xrready", Kind::In, 1),
                 ("o_awready", Kind::Out, 1),
                 ("o_wready", Kind::Out, 1),
                 ("o_bid", Kind::Out, 5),
@@ -181,6 +197,12 @@ impl Lower for Ddr3 {
                 ("o_rresp", Kind::Out, 2),
                 ("o_rlast", Kind::Out, 1),
                 ("o_rvalid", Kind::Out, 1),
+                ("o_xarready", Kind::Out, 1),
+                ("o_xrid", Kind::Out, 5),
+                ("o_xrdata", Kind::Out, 256),
+                ("o_xrresp", Kind::Out, 2),
+                ("o_xrlast", Kind::Out, 1),
+                ("o_xrvalid", Kind::Out, 1),
                 ("o_calib_complete", Kind::Out, 1),
                 ("o_ui_clk", Kind::Out, 1),
                 ("o_ui_rst", Kind::Out, 1),
@@ -255,6 +277,11 @@ impl Unit<CtlIn, CtlOut> for Ddr3 {
             _arqos,
             arvalid,
             rready,
+            xarid,
+            xaraddr,
+            xarlen,
+            xarvalid,
+            xrready,
         ): CtlIn,
         (
             awready,
@@ -268,6 +295,12 @@ impl Unit<CtlIn, CtlOut> for Ddr3 {
             rresp,
             rlast,
             rvalid,
+            xarready,
+            xrid,
+            xrdata,
+            xrresp,
+            xrlast,
+            xrvalid,
             calib,
             ..,
         ): CtlOut,
@@ -318,9 +351,16 @@ impl Unit<CtlIn, CtlOut> for Ddr3 {
             MODEL_WRITE_LATENCY as u64,
             MODEL_WARMUP as u64,
         );
+        // The wide read port, on the same words (issue 1696).
+        let wide = sim::serve_wide_pins(
+            self.words.clone(),
+            (xarid, xaraddr, xarlen, xarvalid, xrready),
+            (xarready, xrid, xrdata, xrresp, xrlast, xrvalid),
+            MODEL_WARMUP as u64,
+        );
         let mut left = MODEL_WARMUP;
         let calibrated = &self.calibrated;
-        join2(mem.serve(), async move {
+        join2(join2(mem.serve(), wide), async move {
             loop {
                 DefaultClock::rising().await;
                 calib.set(calibrated.get());
@@ -436,22 +476,60 @@ impl Unit for Ddr3Per {
         let (rresp_o, rresp_i) = signal::<U<2>, DefaultClock>();
         let (rlast_o, rlast_i) = signal::<Bit, DefaultClock>();
         let (rvalid_o, rvalid_i) = signal::<Bit, DefaultClock>();
+        // The wide read port's answers, which nothing here reads: the port
+        // is tied off, offering nothing and taking every answer, until a
+        // design brings it out (issue 1696).
+        let (xarready_o, _xarready_i) = signal::<Bit, DefaultClock>();
+        let (xrid_o, _xrid_i) = signal::<U<5>, DefaultClock>();
+        let (xrdata_o, _xrdata_i) = signal::<U<256, 2>, DefaultClock>();
+        let (xrresp_o, _xrresp_i) = signal::<U<2>, DefaultClock>();
+        let (xrlast_o, _xrlast_i) = signal::<Bit, DefaultClock>();
+        let (xrvalid_o, _xrvalid_i) = signal::<Bit, DefaultClock>();
         // The controller first: in simulation it is the model, whose
         // pins the unit reads in the same step.
         join2(
             self.ctl.run(
                 (
-                    sys_clk, sys_rst, awid_i, awaddr_i, awlen_i, awsize_i,
-                    awburst_i, awlock_i, awcache_i, awprot_i, awqos_i,
-                    awvalid_i, wdata_i, wstrb_i, wlast_i, wvalid_i, bready_i,
-                    arid_i, araddr_i, arlen_i, arsize_i, arburst_i, arlock_i,
-                    arcache_i, arprot_i, arqos_i, arvalid_i, rready_i,
+                    sys_clk,
+                    sys_rst,
+                    awid_i,
+                    awaddr_i,
+                    awlen_i,
+                    awsize_i,
+                    awburst_i,
+                    awlock_i,
+                    awcache_i,
+                    awprot_i,
+                    awqos_i,
+                    awvalid_i,
+                    wdata_i,
+                    wstrb_i,
+                    wlast_i,
+                    wvalid_i,
+                    bready_i,
+                    arid_i,
+                    araddr_i,
+                    arlen_i,
+                    arsize_i,
+                    arburst_i,
+                    arlock_i,
+                    arcache_i,
+                    arprot_i,
+                    arqos_i,
+                    arvalid_i,
+                    rready_i,
+                    tie(U::<5>::from(0u8)),
+                    tie(U::<32>::from(0u32)),
+                    tie(U::<8>::from(0u8)),
+                    tie(Bit::Zero),
+                    tie(Bit::One),
                 ),
                 (
                     awready_o, wready_o, bid_o, bresp_o, bvalid_o, arready_o,
-                    rid_o, rdata_o, rresp_o, rlast_o, rvalid_o, calib, ui_clk,
-                    ui_rst, ck_p, ck_n, mem_rst_n, cke, cs_n, ras_n, cas_n,
-                    we_n, row, bank, dm, odt, dq, dqs, dqs_n,
+                    rid_o, rdata_o, rresp_o, rlast_o, rvalid_o, xarready_o,
+                    xrid_o, xrdata_o, xrresp_o, xrlast_o, xrvalid_o, calib,
+                    ui_clk, ui_rst, ck_p, ck_n, mem_rst_n, cke, cs_n, ras_n,
+                    cas_n, we_n, row, bank, dm, odt, dq, dqs, dqs_n,
                 ),
             ),
             self.pins.run(

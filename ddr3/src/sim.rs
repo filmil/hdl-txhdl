@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use txhdl::comp::trace::{Scope, Traceable};
-use txhdl::comp::{Clock, DefaultClock, Rx, Tx, Unit};
+use txhdl::comp::{Clock, DefaultClock, In, Out, Rx, Tx, Unit};
 use txhdl::netlist::Port;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{Ar, Resp, R};
@@ -110,5 +110,161 @@ impl<const I: usize> Unit<Rx<Ar<32, I>>, Tx<R<256, I, 2>>> for WideRead<I> {
                 r.send(q.pop_front().unwrap().0);
             }
         }
+    }
+}
+
+/// The wide port's pins as the model reads them: `ARID`, `ARADDR`,
+/// `ARLEN`, `ARVALID` and `RREADY` (issue 1696).
+pub type WidePinsIn = (In<U<5>>, In<U<32>>, In<U<8>>, In<Bit>, In<Bit>);
+
+/// The wide port's pins as the model drives them: `ARREADY`, `RID`,
+/// `RDATA`, `RRESP`, `RLAST` and `RVALID`.
+pub type WidePinsOut = (
+    Out<Bit>,
+    Out<U<5>>,
+    Out<U<256, 2>>,
+    Out<U<2>>,
+    Out<Bit>,
+    Out<Bit>,
+);
+
+/// Answer the wide port's reads on its pins for ever, as [`WideRead`]
+/// answers them on a channel: beats of 32 bytes from the address
+/// rounded down to 32 bytes, the first [`MODEL_READ_LATENCY`] steps after
+/// the address was taken, then one a step while `RREADY` is high, and
+/// not ready for the first `warmup` steps. The pins are read as the unit
+/// drove them a step before, as `PinRam` reads its own (issue 1696).
+pub async fn serve_wide_pins(
+    words: Words,
+    (arid, araddr, arlen, arvalid, rready): WidePinsIn,
+    (arready, rid, rdata, rresp, rlast, rvalid): WidePinsOut,
+    warmup: u64,
+) {
+    let port = WideRead::<5>::on(words);
+    let mut q: VecDeque<(U<5>, U<256, 2>, bool, u64)> = VecDeque::new();
+    let (mut ready, mut offered) = (false, false);
+    let mut now: u64 = 0;
+    loop {
+        DefaultClock::rising().await;
+        now += 1;
+        if ready && arvalid.get().to_bool() {
+            let first = (araddr.get().raw() & !(WIDE_BYTES - 1)) >> 2;
+            let n = arlen.get().raw() + 1;
+            let due = now + MODEL_READ_LATENCY as u64;
+            for k in 0..n {
+                let data = port.beat(first + 8 * k);
+                q.push_back((arid.get(), data, k + 1 == n, due));
+            }
+        }
+        if offered && rready.get().to_bool() {
+            q.pop_front();
+        }
+        ready = now > warmup;
+        arready.set(Bit::from_bool(ready));
+        offered = matches!(q.front(), Some(&(_, _, _, due)) if due <= now);
+        if let Some(&(id, data, last, _)) = q.front() {
+            rid.set(id);
+            rdata.set(data);
+            rresp.set(U::<2>::from(0u8));
+            rlast.set(Bit::from_bool(last));
+        }
+        rvalid.set(Bit::from_bool(offered));
+    }
+}
+
+/// The wide port's pins, driven as a design would: two beats of eight
+/// words each, from inside the first 32 bytes, at the model's latency
+/// and then a beat a step.
+#[cfg(test)]
+mod tests {
+    use super::{serve_wide_pins, Words, MODEL_READ_LATENCY};
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+    use txhdl::comp::{join2, signal, Clock, DefaultClock, Running};
+    use txhdl::types::{Bit, U};
+
+    #[test]
+    fn the_wide_pins_stream_a_burst() {
+        let words = Words::default();
+        for k in 0..16u128 {
+            words
+                .0
+                .borrow_mut()
+                .insert(0x400 + k, U::new(0x1000_0000 + k));
+        }
+        let (arid_o, arid) = signal::<U<5>, DefaultClock>();
+        let (araddr_o, araddr) = signal::<U<32>, DefaultClock>();
+        let (arlen_o, arlen) = signal::<U<8>, DefaultClock>();
+        let (arvalid_o, arvalid) = signal::<Bit, DefaultClock>();
+        let (rready_o, rready) = signal::<Bit, DefaultClock>();
+        let (arready_o, arready) = signal::<Bit, DefaultClock>();
+        let (rid_o, rid) = signal::<U<5>, DefaultClock>();
+        let (rdata_o, rdata) = signal::<U<256, 2>, DefaultClock>();
+        let (rresp_o, _rresp) = signal::<U<2>, DefaultClock>();
+        let (rlast_o, rlast) = signal::<Bit, DefaultClock>();
+        let (rvalid_o, rvalid) = signal::<Bit, DefaultClock>();
+        let now = Rc::new(Cell::new(0u32));
+        let got = Rc::new(RefCell::new(Vec::new()));
+        let taken = Rc::new(Cell::new(None));
+        let (at, into, took) = (now.clone(), got.clone(), taken.clone());
+        // The design: offers one address once the port is ready, takes it
+        // when ARREADY is high, and takes every beat.
+        let design = async move {
+            rready_o.set(Bit::One);
+            let mut asked = false;
+            loop {
+                DefaultClock::rising().await;
+                if rvalid.get().to_bool() {
+                    into.borrow_mut().push((
+                        at.get(),
+                        rid.get().raw(),
+                        rdata.get().limbs(),
+                        rlast.get().to_bool(),
+                    ));
+                }
+                if asked && arready.get().to_bool() {
+                    arvalid_o.set(Bit::Zero);
+                }
+                if !asked && arready.get().to_bool() {
+                    arid_o.set(U::new(7));
+                    araddr_o.set(U::new(0x4000_1004));
+                    arlen_o.set(U::new(1));
+                    arvalid_o.set(Bit::One);
+                    took.set(Some(at.get()));
+                    asked = true;
+                }
+            }
+        };
+        let mut sim = Running::new(join2(
+            serve_wide_pins(
+                words,
+                (arid, araddr, arlen, arvalid, rready),
+                (arready_o, rid_o, rdata_o, rresp_o, rlast_o, rvalid_o),
+                4,
+            ),
+            design,
+        ));
+        for c in 0..200u32 {
+            now.set(c);
+            sim.cycle();
+        }
+        let got = got.borrow();
+        assert_eq!(got.len(), 2, "two beats");
+        let asked = taken.get().expect("an address offered");
+        assert_eq!(got[1].0, got[0].0 + 1, "one beat a step");
+        assert!(
+            got[0].0 - asked >= MODEL_READ_LATENCY,
+            "the first beat at the model's latency: {got:?}, asked {asked}"
+        );
+        let low = [
+            0x1000_0003_1000_0002_1000_0001_1000_0000u128,
+            0x1000_0007_1000_0006_1000_0005_1000_0004,
+        ];
+        let high = [
+            0x1000_000b_1000_000a_1000_0009_1000_0008u128,
+            0x1000_000f_1000_000e_1000_000d_1000_000c,
+        ];
+        assert_eq!(got[0], (got[0].0, 7, low, false));
+        assert_eq!(got[1], (got[1].0, 7, high, true));
     }
 }
