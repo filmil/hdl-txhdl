@@ -23,9 +23,9 @@ Everything before the pixel is the library's: vertices, matrices, lighting, clip
 Everything from the pixel on is Razboj's: coverage, the fill rule, interpolating colour across a triangle, and later depth and blending.
 
 It is not conformant ES 1.1, and does not claim to be.
-ES 1.1 requires texturing, which issue 997 adds with one texture unit, and the per-pixel steps, which issue 998 completes with the stencil.
+ES 1.1 requires texturing, which issue 997 adds with one texture unit and #1510 with the second ES 1.1 asks for, and the per-pixel steps, which issue 998 completes with the stencil.
 The conformance run is issue 999.
-Until then `glGetString(GL_VERSION)` says what the library is, "Common-Lite, one texture unit, not conformant", rather than claim the profile.
+Until then `glGetString(GL_VERSION)` says what the library is, "Common-Lite, not conformant", rather than claim the profile.
 
 ## 2. The API subset
 
@@ -49,7 +49,7 @@ A later issue means the entry point is accepted from the start but does what tha
 | Blending and masks | `glBlendFunc`, `glAlphaFuncx`, `glColorMask`, `glLogicOp`; `GL_COLOR_LOGIC_OP` | Now, from #993, drawn in a tile table; the logic operations from #998 |
 | Fog | `glFogx`, `glFogxv`; `GL_FOG` | From #998, drawn in a tile table, its factor worked out at each vertex |
 | Stencil | `glStencilFunc`, `glStencilOp`, `glStencilMask`, `glClearStencil`; `GL_STENCIL_TEST` | From #998, 8 bits, drawn in a tile table |
-| Textures | `glGenTextures`, `glDeleteTextures`, `glBindTexture`, `glTexImage2D`, `glTexParameteri`, `glTexParameterx`, `glTexEnvi`, `glTexEnvx`, `glTexEnvxv`, `glTexCoordPointer`, `glMultiTexCoord4x`, `glActiveTexture`, `glClientActiveTexture`, `glPixelStorei`; `GL_TEXTURE_2D` and `GL_TEXTURE_COORD_ARRAY` | From #997, drawn in a tile table, and a second unit from #1510, which the model draws and the rasteriser does not yet; the rasteriser samples under every filter, mipmapped, and applies every environment, as Razboj's model does; `GL_COMBINE` from #1512 |
+| Textures | `glGenTextures`, `glDeleteTextures`, `glBindTexture`, `glTexImage2D`, `glTexParameteri`, `glTexParameterx`, `glTexEnvi`, `glTexEnvx`, `glTexEnvxv`, `glTexCoordPointer`, `glMultiTexCoord4x`, `glActiveTexture`, `glClientActiveTexture`, `glPixelStorei`; `GL_TEXTURE_2D` and `GL_TEXTURE_COORD_ARRAY` | From #997, drawn in a tile table, and a second unit from #1510; the rasteriser samples under every filter, mipmapped, and applies every environment, as Razboj's model does; `GL_COMBINE` from #1512 |
 | Points and lines | `glPointSizex`, `glLineWidthx`, `glPointParameterx` and `xv`, `glPointSizePointerOES`, and the point and line modes of the draw calls; `GL_POINT_SPRITE_OES` and `GL_COORD_REPLACE_OES` | Now, from issue 994; point sprites from #998; point parameters from #1508; the point size array from #1507 |
 | Switches | `glEnable`, `glDisable`, `glIsEnabled` for `GL_LIGHTING`, `GL_LIGHT0` to `GL_LIGHT7`, `GL_CULL_FACE`, `GL_NORMALIZE`, `GL_RESCALE_NORMAL`, `GL_COLOR_MATERIAL`, `GL_CLIP_PLANE0`, `GL_DEPTH_TEST`, `GL_BLEND`, `GL_ALPHA_TEST`, `GL_DITHER`, `GL_SCISSOR_TEST`, `GL_FOG`, `GL_STENCIL_TEST`; and the rest as the issues above land | Now, and growing |
 | Queries and errors | `glGetError`, `glGetIntegerv`, `glGetFixedv`, `glGetBooleanv`, `glGetString`, `glGetPointerv`, `glGetLightxv`, `glGetMaterialxv`, `glGetTexParameteriv`, `glGetTexParameterxv`, `glGetTexEnviv`, `glGetTexEnvxv`, `glGetClipPlanex` | Now, the queries from #1484 (section 10), the parameters' from #1511 |
@@ -296,7 +296,7 @@ Each step is a pull request, checked before the next.
    The queries give the two bindings and the buffer each array was given under.
    `GLES/gl.h`, `GLES/glplatform.h` and `KHR/khrplatform.h` are not copied into the tree: `MODULE.bazel` fetches them from Khronos's OpenGL-Registry and EGL-Registry at pinned commits, by their sha256, and `//third_party/khronos:gles1` lays them out for `#include <GLES/gl.h>`.
    The other entry points gl.h declares, the floating-point ones among them, are C that `gles/capi/stubs.sh` writes from gl.h itself, leaving out every name `lib.rs` defines; each sets `GL_INVALID_OPERATION`, so every GL ES 1.1 program links and is told what it asked for is not there.
-   `glGetString(GL_VERSION)` says "OpenGL ES-CL 1.1 TxHDL, Common-Lite, one texture unit, not conformant", which answers the last question of section 11 for now.
+   `glGetString(GL_VERSION)` says "OpenGL ES-CL 1.1 TxHDL, Common-Lite, not conformant", which answers the last question of section 11 for now.
    It departs from the plan in one place: making a context current is EGL's, so until issue 996 lands `gles_make_current` does it over a frame its caller owns, and `glFlush` and `glFinish` leave the frame for EGL to hand to Razboj.
    `//gles:capi_test` draws one scene in C through `:gles_c` and through the Rust API, and holds the two frames to each other word for word, with what an unimplemented entry point and `glGetString` say.
    It then draws the quad again in C from a vertex buffer, its colours at an offset into the same store, and an element buffer, against the same quad drawn from Rust's arrays.
@@ -446,7 +446,7 @@ Each unit has its own texture, environment, colour, `GL_COMBINE` settings, curre
 With both units on, a triangle carries two slots more for the second, laid out as the first's, and the second unit takes the first's result as its `PREVIOUS`, the vertex colour staying `PRIMARY_COLOR`.
 With the second on alone, it goes on Razboj's first unit, which draws the same, since a unit that is off passes the fragment through.
 `two_units_chain_as_gl_says` in `//gles:texture_test` holds every pixel under each of the six environments on the second unit to that, through Razboj's model, and `each_units_state_is_its_own` reads each unit's state back.
-The rasteriser does not read a second unit yet, so on the board a triangle drawn with both units on is drawn wrongly until #1510's third step teaches it; `glGetString(GL_VERSION)` says one texture unit until then.
+The rasteriser draws both units as the model does, byte for byte, which `texturing_in_tiles_is_the_models` in `//gpu/razboj:razboj_test` holds it to, and a pixel of two units on cached texels takes 39 cycles more than an untextured one, against 18 for one unit.
 A textured frame is binned into a tile table as one that tests depth is; each entry names its descriptor by address, so Razboj needs nothing else to find it.
 `//gles:texture_test` draws a floor in perspective under each of six pairs of filters and the six environments, the sixth a `GL_COMBINE` the five cannot express, through Razboj's model, and holds it pixel by pixel to a reference that runs GL's pipeline in f64.
 Each of 96,984 pixels is within 3 a channel of what GL gives within the sixteenth of a pixel a snapped vertex moves, at a level of detail within 0.012 of GL's.
