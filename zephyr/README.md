@@ -91,8 +91,9 @@ goes over the wire.
 
 `fastboot boot` wraps a file that is not an Android boot image in one,
 and the server takes the program back out of it.
-The download is staged in DDR3 at `0x4800_0000`, 48 MiB of it reserved
-in `fastboot/app/boards/ax7a200b.overlay`.
+The download is staged in DDR3 at `0x4800_0000`, 256 MiB of it, up to
+`0x5800_0000`, reserved in `fastboot/app/boards/ax7a200b.overlay`, so
+that a boot image's ramdisk can carry a large data set (issue 1731).
 It is copied there a word at a time whatever the alignment fastboot's
 framing leaves, by `fb_copy` in the core, where `memcpy` copied a byte
 at a time: 41 cycles a byte against 11 in `board_test`'s model of the
@@ -102,12 +103,14 @@ loader uses too, and jumps.
 The copy overwrites the Zephyr that is doing it, so it runs from a few
 words of position-independent assembly moved first to the staging
 area's last page, `fastboot/app/src/jump.S`.
-A download over `0x00fff000` bytes, the staging area less the last
-page the copy routine takes, is refused, so a program is always
+A download over `0x0ffff000` bytes, the staging area less the last
+page the copy routine takes, is refused, so a boot image is always
 shorter than that; separately, `boot` refuses a program over 16 MiB,
 because the Ethernet engines store received frames at `0x4100_0000`
-and go on doing so after the jump.
-The host test's server has no jump page and offers the full 16 MiB.
+and go on doing so after the jump. The ramdisk is not copied: the
+program reads it where it was staged.
+The host test's server takes the same limit, from the generated
+`fb_limits.h`, so it holds 256 MiB of host memory for the stage.
 
 `//zephyr:fastboot_profile` is the same server saying where a
 download's time goes (issue 1230), with `fastboot/profile.conf`.

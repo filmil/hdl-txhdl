@@ -290,7 +290,7 @@ ssh $TXHDL_BOARD_SERVER txhdl_fastboot/fastboot -s tcp:192.168.1.50 \
 The three checks #143 lists, in its comment on PR #528:
 
 1. The console says `fastboot: listening on port 5554`.
-2. `getvar max-download-size` answers `0x00fff000`.
+2. `getvar max-download-size` answers `0x0ffff000`, the 256 MiB stage less the jump page (#1731; it was `0x00fff000` at 16 MiB, in the runs below).
 3. `fastboot boot` of `hello_fastboot` ends with `hello from rust` on the serial line, which proves the copy, the jump and the posted stores read back on real DDR3.
 
 Done on September 28 and again on October 1, 2026: all three passed, on flagship `9755f9c85be5d066` and on main `b747d42`'s flagship; both runs are on #143 and in `zephyr/README.md`.
@@ -748,7 +748,7 @@ A flagship from a `main` that holds #1445 (the data cache) or later, programmed 
 Nothing is written to flash.
 
 `//demo/doom:doom` is doomgeneric for the core, bare metal, with Freedoom's first episode as its game data (#1177).
-It is 314 KB, too large for the loader's serial line, so it goes through fastboot (section 7), which stages 48 MiB since #1177, and the game data is 28.8 MB.
+It is 314 KB, too large for the loader's serial line, so it goes through fastboot (section 7), which stages 256 MiB since #1731 (48 MiB from #1177), and the game data is 28.8 MB.
 The game data goes as the boot image's ramdisk, and the program reads it where fastboot staged it, at `0x4800_0000`:
 
 ```sh
@@ -772,13 +772,43 @@ Keys are bytes on the serial line, each held for 180 ms: `w`, `a`, `s` and `d` o
 Enter three times from the title goes through the menu, the episode and the skill, and a fourth starts E1M1.
 
 Pass:
-* `max-download-size` answers `0x02fff000`.
+* `max-download-size` answers `0x0ffff000`.
 * The serial log has Doom's startup text, ending in `I_InitGraphics`, then a `doom frame` line every 64 frames, with the cycles of the last frame and the frames a second.
 * The screen shows the title and the demo loop, 320 by 200 doubled, between black bands, then E1M1 after the keys, and the view moves with them.
 
 Done on October 8, 2026, on flagship main ed9a9a70 with #1445, with a recording: the demo loop at 4.6 to 6.0 frames a second, E1M1 at 6.3 to 7.5, the 28.4 MB boot in 31.9 s.
 E1M1 started 5 s after the Enter that chose the skill, and the keys moved, turned and fired.
 The logs are on #1177.
+
+### A ramdisk of 60 MB, #1731
+
+Fastboot stages 256 MiB since #1731, so a boot image's ramdisk can carry a data set larger than Doom's.
+`ramdisk_probe_fastboot` finds the ramdisk where fastboot staged it, as Doom finds its game data, and says where it starts, its length, and its first and last sixteen bytes.
+The ramdisk is any file; one of random bytes, made on the board server, is enough:
+
+```sh
+bazel build //zephyr:fastboot //cpu/vreteno/rust:ramdisk_probe_fastboot
+scp bazel-bin/cpu/vreteno/rust/ramdisk_probe_fastboot.bin $TXHDL_BOARD_SERVER:txhdl_fastboot/
+ssh $TXHDL_BOARD_SERVER 'cd txhdl_fastboot && head -c 62914573 /dev/urandom >rd60.bin &&
+    od -An -tx4 -N16 rd60.bin && tail -c 16 rd60.bin | od -An -tx4'
+bazel run //flagship:flagship_prog -- "${PROG[@]}"
+bazel run //cpu/vreteno/board/remote:load -- \
+    --image=$PWD/bazel-bin/zephyr/fastboot.bin --seconds=200 \
+    2>&1 | tee board-1731.log &
+ssh $TXHDL_BOARD_SERVER txhdl_fastboot/fastboot -s tcp:192.168.1.50 \
+    getvar max-download-size
+ssh $TXHDL_BOARD_SERVER txhdl_fastboot/fastboot -s tcp:192.168.1.50 \
+    boot txhdl_fastboot/ramdisk_probe_fastboot.bin txhdl_fastboot/rd60.bin
+```
+
+Pass:
+* `max-download-size` answers `0x0ffff000`.
+* The console's `fastboot:` line says the bytes received and the staged sum, and the two sums agree.
+* `ramdisk at 0x48001800 bytes 62914573 end 0x4c00180d`: it ends past `0x4b00_0000`, where the 48 MiB stage ended.
+* The `ramdisk first` and `ramdisk last` words are the ones `od` printed for the file, then `ramdisk done`.
+
+At about 0.9 MB/s the image takes a little over a minute; a full 256 MiB one would take about five.
+`ramdisk_probe_ram_bin` with the same image laid at `0x4800_0000` by the machine's `--dtb` reads the same words off the board.
 
 ### The ES 1.1 conformance suite, #999
 
