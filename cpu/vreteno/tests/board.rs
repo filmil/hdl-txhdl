@@ -5523,6 +5523,51 @@ fn the_wide_port_reads_what_the_host_wrote() {
     eprintln!("wide port: {bursts} beats whole at {wide_at}");
 }
 
+/// The wide port and the host's narrow reads at once (issue 1696): once
+/// the four bursts are written, the host reads them back through its
+/// port while the wide port reads them too, and each side gets its own
+/// words, the controller's read addresses shared between the two.
+#[test]
+fn the_wide_port_and_narrow_reads_share_the_controller() {
+    let (bursts, words) = (4, 8);
+    let net = Net {
+        host: Some(HostPlan {
+            at: 200,
+            addr: 0x4010_0000,
+            bursts,
+            words,
+            read: true,
+            wide: true,
+        }),
+        ..Net::default()
+    };
+    let ran = run_all(
+        hello_program::TEXT,
+        hello_program::DATA,
+        b"",
+        &[],
+        200_000,
+        net,
+        &[],
+    );
+    let log = &ran.host;
+    assert!(log.read_at.is_some(), "every narrow read came whole");
+    assert!(log.wide_at.is_some(), "the wide read came whole");
+    for k in 0..bursts {
+        let beats: Vec<_> =
+            log.read.iter().filter(|b| b.0 as usize == k).collect();
+        assert_eq!(beats.len(), words, "burst {k}'s narrow beats");
+        for (i, b) in beats.iter().enumerate() {
+            assert_eq!(b.1, host_word(k, i), "burst {k} narrow beat {i}");
+        }
+        let mut want = [0u128; 2];
+        for i in 0..words {
+            want[i / 4] |= (host_word(k, i) as u128) << (32 * (i % 4));
+        }
+        assert_eq!(log.wide[k].1, want, "wide beat {k}");
+    }
+}
+
 /// A program that reads the DDR3 word at `0x4010_0000`, which puts its
 /// line in the data cache, says `r`, reads the word again until it is
 /// no longer what it first read, says `c` and halts. With the line kept
