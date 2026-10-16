@@ -162,6 +162,16 @@ rust_test(
     deps = [":txhdl"],
 )
 
+# `#[derive(Link)]`: the other side's struct, arrays and nested bundles
+# turned round, and `link` in a run and a unit of units (issue 1695).
+rust_test(
+    name = "link_derive_test",
+    srcs = ["tests/link_derive.rs"],
+    edition = "2021",
+    proc_macro_deps = [":txhdl_macros"],
+    deps = [":txhdl"],
+)
+
 # A struct literal lowers in the struct's declared order, whatever order
 # it names its fields in (issue 1541).
 rust_test(
