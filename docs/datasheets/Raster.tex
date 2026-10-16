@@ -58,7 +58,8 @@ has a second texture unit (issue 1510): two slots more, read at four and
 five past the entry, hold that unit's planes, its own descriptor,
 environment and \code{COMBINE}'s settings, and the unit draws on the
 first unit's result. A flat list draws such an entry untextured, with no
-depth and no state.
+depth and no state, and steps over all its slots, the second unit's
+too.
 
 It is an AXI host written as hardware. It issues bursts on
 \code{issue}, sends a pixel's beat on \code{wbeat}, and hands
@@ -276,8 +277,8 @@ arguments and two products, made in logic (\code{comb\_arg},
 \code{DOT3}'s sum of the three channels (\code{comb\_sum},
 \code{dot\_term}); and the scale, the rounding and the clamp
 (\code{comb\_out}). An argument's source is the texel, the environment's
-colour or the fragment's. On the first unit the fragment's colour is
-both the primary and the previous colour. On the second, every
+colour, the primary colour or the previous one. On the first unit the
+fragment's colour is both the primary and the previous colour. On the second, every
 environment takes the first unit's result in place of the fragment's
 colour, and \code{COMBINE} reads the first's result as
 \code{PREVIOUS} and the fragment's colour as \code{PRIMARY\_COLOR}.
