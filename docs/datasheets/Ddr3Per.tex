@@ -32,6 +32,15 @@ its address is taken, so a write that lands while the read waits out
 the controller's latency is not in them, as the controller may answer
 (issue 1424). The model does not drive the memory's pins.
 
+The model keeps its memory in a field, \code{words}, a
+\code{ddr3::sim::Words}, and \code{memory()} hands out another handle
+on the same words. \code{ddr3::sim::WideRead<I>} reads them: a read
+port 256 bits wide that stands in for the controller's native
+interface in simulation, taking read address phases on
+\code{Rx<Ar<32, I>>} and answering on \code{Tx<R<256, I, 2>>}.
+Neither is in the netlist: the words are the model's state, not a
+port, and the wide port is not lowered.
+
 On the memory side its ports are the board's clock and the
 controller's reset in, the design's clock and its reset out, since the
 controller makes them, the \code{calib} output, and the memory's pins,
@@ -88,6 +97,15 @@ measured them against the Micron models: a read's first beat 25
 cycles after its address phase was taken, 27 for a burst of sixteen
 and 63 right after a write, and a write's response 3 cycles after its
 last beat.
+\item The wide read port answers a burst with \code{len + 1} beats of
+32 bytes from the address rounded down to 32 bytes, the word at the
+lowest address in bits 31:0 of the first limb and the eighth in bits
+127:96 of the second. Its first beat is offered
+\code{MODEL\_READ\_LATENCY} steps after it takes the address, as the
+32-bit port's is, then one beat a step while the sink is ready, and
+bursts in the order their addresses came. It takes the words when it
+takes the address, as the 32-bit port does, and answers
+\code{OKAY}; it does not read \code{AxSIZE} or \code{AxBURST}.
 \end{itemize}
 
 \subsection*{Verification}
@@ -99,6 +117,12 @@ Behind an \code{AxiHost}, it writes words at \code{0x4000\_0000},
 still calibrates. It reads them back, writes and reads back a burst of
 sixteen, and checks that \code{calib} did not rise before the
 warm-up.
+\item \code{//ddr3:ddr3\_test} runs
+\code{a\_wide\_read\_streams\_what\_was\_written}. Words written
+through the 32-bit port are read back through the wide one, which
+shares the model's memory: a burst of two beats from an address inside
+the first, each beat eight words with the lowest address in bits
+31:0, one beat a step.
 \item \code{//ddr3:ddr3\_test} also runs
 \code{the\_controller\_is\_instantiated\_and\_not\_written}. It checks
 that the Verilog and the VHDL of \code{Ddr3Per} instantiate
