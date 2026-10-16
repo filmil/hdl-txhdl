@@ -520,6 +520,20 @@ impl<T: Transaction, C: Clock> Mirror for Rx<T, C> {
     }
 }
 
+/// An array of ends, each made with its opposite (issue 1695).
+impl<P: Mirror, const N: usize> Mirror for [P; N] {
+    type Other = [P::Other; N];
+    fn pair() -> (Self, [P::Other; N]) {
+        let (mine, theirs): (Vec<P>, Vec<P::Other>) =
+            (0..N).map(|_| P::pair()).unzip();
+        let (Ok(mine), Ok(theirs)) = (mine.try_into(), theirs.try_into())
+        else {
+            unreachable!("N pairs were made")
+        };
+        (mine, theirs)
+    }
+}
+
 impl<S: Copy + 'static, C: Clock> In<S, C> {
     /// The end of one field of this wire, through `get`, which
     /// `#[derive(Value)]` writes for a port group.
