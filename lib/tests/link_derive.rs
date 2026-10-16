@@ -144,12 +144,96 @@ impl Unit for Pair {
 #[test]
 fn a_derived_link_lowers_as_a_net_per_port() {
     let v = Pair::lowered("pair").verilog();
+    // The feeder takes the lane channel's sending end, the taker its
+    // receiving end, and both the one stall wire.
+    let feed = instance(&v, "pair_feed feed(");
+    let take = instance(&v, "pair_take take(");
     for want in [
-        ".lane_data_valid(",
-        ".lane_data_ready(",
-        ".lane_data_data(",
-        ".lane_stall(",
+        ".lane_data_data(host_data_tx_data)",
+        ".lane_stall(host_stall)",
+    ] {
+        assert!(feed.contains(want), "no `{want}` in:\n{feed}");
+    }
+    for want in [
+        ".lane_data_data(host_data_rx_data)",
+        ".lane_stall(host_stall)",
+    ] {
+        assert!(take.contains(want), "no `{want}` in:\n{take}");
+    }
+}
+
+/// A lane as wide as a parameter says.
+#[derive(Ports, Link)]
+pub struct Wide<const W: usize> {
+    pub data: Rx<U<W>>,
+    pub tag: Out<U<W>>,
+}
+
+/// A derived host keeps the struct's parameters, and links from its own
+/// side too: `link::<WideHost<12>>()` gives the struct's side first.
+#[test]
+fn a_host_keeps_the_parameters_and_links_too() {
+    assert_eq!(
+        kinds::<WideHost<12>>(),
+        [
+            ("data".to_string(), Kind::Tx),
+            ("tag".to_string(), Kind::In)
+        ]
+    );
+    let widths: Vec<_> = <WideHost<12> as txhdl::netlist::Ports>::ports()
+        .into_iter()
+        .map(|p| p.width)
+        .collect();
+    assert_eq!(widths, [12, 12]);
+    let (wide, host) = WideHost::<12>::link();
+    host.data.send(U::from(0xabcu16));
+    wide.tag.set(U::from(5u8));
+    settle();
+    assert_eq!(wide.data.recv().map(|v| v.raw()), Some(0xabc));
+    assert_eq!(host.tag.get().raw(), 5);
+}
+
+/// The bus's own side, lowered: its array of lanes and its nested
+/// side-generic bundle are ports by their paths.
+#[derive(Trace, Default)]
+pub struct Sink {}
+
+#[lower]
+impl Unit for Sink {
+    async fn run(&mut self, bus: Bus, seen: Out<Bit>) {
+        loop {
+            DefaultClock::rising().await;
+            let _ = bus.lanes[0].data.recv();
+            let _ = bus.lanes[1].data.recv();
+            bus.lanes[0].stall.set(bus.go.get());
+            bus.lanes[1].stall.set(Bit::Zero);
+            bus.dbg.rdata.set(U::from(3u8));
+            seen.set(bus.dbg.halt.get());
+        }
+    }
+}
+
+/// Each of the bus's ports is the lowered unit's, with its direction.
+#[test]
+fn a_nested_bus_lowers_with_its_paths() {
+    let v = Sink::lowered("sink").verilog();
+    for want in [
+        "input bus_go",
+        "input [7:0] bus_lanes_0_data_data",
+        "output bus_lanes_1_stall",
+        "input bus_dbg_halt",
+        "output [7:0] bus_dbg_rdata",
     ] {
         assert!(v.contains(want), "no `{want}` in:\n{v}");
     }
+}
+
+/// The text of one child's instance in a netlist, from its head to the
+/// `);` that ends it.
+fn instance<'a>(netlist: &'a str, head: &str) -> &'a str {
+    let at = netlist
+        .find(head)
+        .unwrap_or_else(|| panic!("no `{head}` in:\n{netlist}"));
+    let rest = &netlist[at..];
+    &rest[..rest.find(");").unwrap_or(rest.len())]
 }

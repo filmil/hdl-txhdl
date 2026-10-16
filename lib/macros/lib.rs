@@ -863,9 +863,12 @@ fn side_bounded(name: &str, full: &str) -> bool {
 /// other side holds, `{Name}Host`, each field the end opposite the
 /// struct's, `<T as Mirror>::Other`, so an `In` there is an `Out`, a `Tx`
 /// an `Rx`, an array of ends the array of their opposites and a bundle
-/// the bundle's other side; `Ports` for it; `Link` for the struct, which
-/// `link::<Name>()` needs; and `Mirror` both ways, so either may be a
-/// field of a bigger bundle. It goes beside `#[derive(Ports)]`. A struct
+/// the bundle's other side; `Ports` for it; `Link` both ways, so
+/// `link::<Name>()` and `link::<NameHost>()` both work; and `Mirror` both
+/// ways, so either may be a field, or an array's element, of another
+/// struct that derives `Link`. Not of a struct generic over its `Side`,
+/// whose fields must be the same field on both sides, which `Name` and
+/// `NameHost` are not. It goes beside `#[derive(Ports)]`. A struct
 /// generic over its `Side` needs none of it: `#[derive(Ports)]` writes
 /// its `Link` (issue 1650).
 #[proc_macro_derive(Link)]
@@ -922,7 +925,11 @@ pub fn derive_link(input: TokenStream) -> TokenStream {
          impl{b} ::txhdl::comp::Mirror for {n}Host{a} {{\n\
          type Other = {n}{a};\n\
          fn pair() -> (Self, Self::Other) {{ \
-         <{n}{a} as ::txhdl::comp::Link>::link() }}\n}}",
+         <{n}{a} as ::txhdl::comp::Link>::link() }}\n}}\n\
+         impl{b} ::txhdl::comp::Link for {n}Host{a} {{\n\
+         type Host = {n}{a};\n\
+         fn link() -> (Self::Host, Self) {{ \
+         let (h, s) = <{n}{a} as ::txhdl::comp::Link>::link(); (s, h) }}\n}}",
         h = end(1),
         s = end(0),
     )
