@@ -49,7 +49,7 @@ A later issue means the entry point is accepted from the start but does what tha
 | Blending and masks | `glBlendFunc`, `glAlphaFuncx`, `glColorMask`, `glLogicOp`; `GL_COLOR_LOGIC_OP` | Now, from #993, drawn in a tile table; the logic operations from #998 |
 | Fog | `glFogx`, `glFogxv`; `GL_FOG` | From #998, drawn in a tile table, its factor worked out at each vertex |
 | Stencil | `glStencilFunc`, `glStencilOp`, `glStencilMask`, `glClearStencil`; `GL_STENCIL_TEST` | From #998, 8 bits, drawn in a tile table |
-| Textures | `glGenTextures`, `glDeleteTextures`, `glBindTexture`, `glTexImage2D`, `glTexParameteri`, `glTexParameterx`, `glTexEnvi`, `glTexEnvx`, `glTexEnvxv`, `glTexCoordPointer`, `glMultiTexCoord4x`, `glActiveTexture`, `glClientActiveTexture`, `glPixelStorei`; `GL_TEXTURE_2D` and `GL_TEXTURE_COORD_ARRAY` | From #997, one unit, drawn in a tile table; the rasteriser samples under every filter, mipmapped, and applies every environment, as Razboj's model does; `GL_COMBINE` from #1512 |
+| Textures | `glGenTextures`, `glDeleteTextures`, `glBindTexture`, `glTexImage2D`, `glTexParameteri`, `glTexParameterx`, `glTexEnvi`, `glTexEnvx`, `glTexEnvxv`, `glTexCoordPointer`, `glMultiTexCoord4x`, `glActiveTexture`, `glClientActiveTexture`, `glPixelStorei`; `GL_TEXTURE_2D` and `GL_TEXTURE_COORD_ARRAY` | From #997, drawn in a tile table, and a second unit from #1510, which the model draws and the rasteriser does not yet; the rasteriser samples under every filter, mipmapped, and applies every environment, as Razboj's model does; `GL_COMBINE` from #1512 |
 | Points and lines | `glPointSizex`, `glLineWidthx`, `glPointParameterx` and `xv`, `glPointSizePointerOES`, and the point and line modes of the draw calls; `GL_POINT_SPRITE_OES` and `GL_COORD_REPLACE_OES` | Now, from issue 994; point sprites from #998; point parameters from #1508; the point size array from #1507 |
 | Switches | `glEnable`, `glDisable`, `glIsEnabled` for `GL_LIGHTING`, `GL_LIGHT0` to `GL_LIGHT7`, `GL_CULL_FACE`, `GL_NORMALIZE`, `GL_RESCALE_NORMAL`, `GL_COLOR_MATERIAL`, `GL_CLIP_PLANE0`, `GL_DEPTH_TEST`, `GL_BLEND`, `GL_ALPHA_TEST`, `GL_DITHER`, `GL_SCISSOR_TEST`, `GL_FOG`, `GL_STENCIL_TEST`; and the rest as the issues above land | Now, and growing |
 | Queries and errors | `glGetError`, `glGetIntegerv`, `glGetFixedv`, `glGetBooleanv`, `glGetString`, `glGetPointerv`, `glGetLightxv`, `glGetMaterialxv`, `glGetTexParameteriv`, `glGetTexParameterxv`, `glGetTexEnviv`, `glGetTexEnvxv`, `glGetClipPlanex` | Now, the queries from #1484 (section 10), the parameters' from #1511 |
@@ -57,7 +57,7 @@ A later issue means the entry point is accepted from the start but does what tha
 | Reading back | `glReadPixels`, `glPixelStorei(GL_PACK_ALIGNMENT)` | From #999, `GL_RGBA` and `GL_UNSIGNED_BYTE`, the frame so far drawn first |
 | Hints | `glHint` | Accepted and ignored, as the specification allows, from #1490 |
 
-Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D`, compressed formats other than the paletted ones, and a second texture unit (#1510), which wait for a program that needs them.
+Left out until their issues: `glTexSubImage2D`, `glCopyTexImage2D` and `glCopyTexSubImage2D` and compressed formats other than the paletted ones, which wait for a program that needs them.
 An entry point that is left out still exists, so that a program links, and sets `GL_INVALID_ENUM` or `GL_INVALID_OPERATION` as the specification says for an unsupported value.
 
 The limits the library reports are the specification's minimums: a modelview stack of 16, projection and texture stacks of 2, eight lights, one clip plane.
@@ -405,15 +405,12 @@ Antialiased points and lines are held to each pixel's coverage, sampled 8 by 8, 
 The largest difference is under 33, on the 8.5 pixel point; the points of 1 and 1.125 pixels, which are scaled, are held within 16, and the point of 1.5 pixels, which is not, within 20; the point of one pixel misses unscaled by at least 34.
 A four-pixel line shaded from red to blue is read at its three inner pixels, each within 8 of the mix a quarter, a half and three quarters along.
 The fourth is four of piglit's ES 1 tests, in `gles/conform/piglit`, ported with their float calls made fixed point for Common-Lite, each change marked.
-Of 203 state checks, 202 pass; of 100 error checks, 100; of 93 rendering checks, 93; and of piglit's four, four. The one failure falls under one issue:
-
-| Issue | Checks | What is missing or wrong |
-|---|---|---|
-| #1510 | 1 | A second texture unit |
+Of 203 state checks, 203 pass; of 100 error checks, 100; of 93 rendering checks, 93; and of piglit's four, four.
+None fails, so `known_failures.txt` lists none.
 
 On the board the same programs run on the core against Razboj, built as `//gles:conform_board` and sent by fastboot (`docs/board-checks.md`), and the suite runs to its count in about five minutes.
 hil's run of 2026-10-10 (main 2499d950 on flagship 7d9fbdd6) gave 344 of 390, the host's failures and two more: `render.read_keeps_depth` and `render.read_keeps_stencil`, whose fix the board's machine undid by laying its tile table over the frame GL kept (#1596).
-With that fixed the board and the host should agree check for check, and every failure is one of the issues in the table.
+With that fixed the board and the host should agree check for check.
 
 The queries are issue 1484's.
 `glGetIntegerv`, `glGetFixedv` and `glGetBooleanv` answer every name the library keeps state for: the viewport and the depth range, the matrix mode, the three matrices and their stacks' depths, the current colour, normal and texture coordinates, the clears, the depth, blend, alpha test and colour mask settings, the faces and the shading, the point size and the line width, the bound texture, the unpack alignment, the light model, and every switch `glIsEnabled` knows.
@@ -426,7 +423,7 @@ A boolean is one or nought; a fixed value asked for as an integer is rounded; a 
 The C entry points add the client arrays' own state, each array's switch, size, type and stride, and `glGetPointerv` gives back each array's pointer.
 `//gles:get_test` reads back what each setter leaves, the conversions and the limits, and `//gles:capi_test` asks the same through the C entry points.
 
-Textures are issue 997's, one texture unit, in the layout `razboj_tile::tex` gives Razboj.
+Textures are issue 997's, in the layout `razboj_tile::tex` gives Razboj, with the two texture units of #1510.
 The machine gives the context room for them at `eglMakeCurrent`, words of DDR3 with the bus address Razboj reads them at, through `Machine::textures`.
 The room's head is a table of 64 descriptors, one an object, and the texels follow it, handed out in order and never given back.
 `glTexImage2D` takes sides that are powers of two up to 1024, in the five base formats as bytes and in the three packed types of 16 bits.
@@ -442,7 +439,14 @@ A textured triangle carries two slots after its pixel's: the byte address of the
 Under `GL_COMBINE` (#1512) the second slot also carries the combiner's settings, its two functions, each argument's source and operand and its two scales, in one word, which `glTexEnv` sets and `glGetTexEnv` reads back as GL's enumerants.
 The emitter works them out as Razboj's assembler does, bit for bit, which `//gles:model_test` holds it to.
 The rasteriser combines as the model does, byte for byte, which `texturing_in_tiles_is_the_models` in `//gpu/razboj:razboj_test` holds it to, and a combined pixel takes three cycles more than one under the other five environments.
-Texture coordinates go through the texture matrix, and points and lines are drawn untextured for now.
+Texture coordinates go through the texture matrix.
+Lines are drawn untextured for now, and so are points, but for point sprites (#998), which take the first unit whose `GL_COORD_REPLACE_OES` is on, that being each unit's own.
+Each unit has its own texture, environment, colour, `GL_COMBINE` settings, current coordinates and texture matrix stack (#1510).
+`glActiveTexture` picks the unit those calls act on, `glClientActiveTexture` the unit whose coordinate array the array calls set, and `glMultiTexCoord4x` sets either unit's coordinates.
+With both units on, a triangle carries two slots more for the second, laid out as the first's, and the second unit takes the first's result as its `PREVIOUS`, the vertex colour staying `PRIMARY_COLOR`.
+With the second on alone, it goes on Razboj's first unit, which draws the same, since a unit that is off passes the fragment through.
+`two_units_chain_as_gl_says` in `//gles:texture_test` holds every pixel under each of the six environments on the second unit to that, through Razboj's model, and `each_units_state_is_its_own` reads each unit's state back.
+The rasteriser does not read a second unit yet, so on the board a triangle drawn with both units on is drawn wrongly until #1510's third step teaches it; `glGetString(GL_VERSION)` says one texture unit until then.
 A textured frame is binned into a tile table as one that tests depth is; each entry names its descriptor by address, so Razboj needs nothing else to find it.
 `//gles:texture_test` draws a floor in perspective under each of six pairs of filters and the six environments, the sixth a `GL_COMBINE` the five cannot express, through Razboj's model, and holds it pixel by pixel to a reference that runs GL's pipeline in f64.
 Each of 96,984 pixels is within 3 a channel of what GL gives within the sixteenth of a pixel a snapped vertex moves, at a level of detail within 0.012 of GL's.

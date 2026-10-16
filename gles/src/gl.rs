@@ -176,6 +176,9 @@ pub const SRC_ALPHA_SATURATE: u32 = 0x0308;
 /// array, the parameters and their values, the environment, and the
 /// formats and types `glTexImage2D` takes.
 pub const TEXTURE_2D: u32 = 0x0DE1;
+/// The texture units (#1510): `GL_TEXTURE0`, and `GL_TEXTURE1` after it.
+pub const TEXTURE0: u32 = 0x84C0;
+pub const TEXTURE1: u32 = 0x84C1;
 pub const TEXTURE: u32 = 0x1702;
 pub const TEXTURE_COORD_ARRAY: u32 = 0x8078;
 pub const TEXTURE_MAG_FILTER: u32 = 0x2800;

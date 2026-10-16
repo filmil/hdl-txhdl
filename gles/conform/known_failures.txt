@@ -1,4 +1,3 @@
 # The conformance suite's failures on the host (#999), each with the issue
 # that records it. conform_test fails on a failure not listed here, and on
 # one listed here that passes.
-state.MAX_TEXTURE_UNITS                  #1510

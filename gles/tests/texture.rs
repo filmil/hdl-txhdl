@@ -139,6 +139,7 @@ fn library(min: u32, mag: u32, env: u32) -> (Vec<[u32; WORDS]>, Vec<u32>) {
             colour: None,
             normal: None,
             tex: Some([fx(st[0]), fx(st[1]), 0, ONE]),
+            tex1: None,
             point_size: None,
         }
     };
@@ -685,6 +686,7 @@ fn a_point_sprite_is_the_texture_across_it() {
             colour: None,
             normal: None,
             tex: None,
+            tex1: None,
             point_size: None,
         });
         assert_eq!(g.get_error(), gl::NO_ERROR);
@@ -766,6 +768,7 @@ fn the_texture_called_nought_is_a_texture() {
         colour: None,
         normal: None,
         tex: None,
+        tex1: None,
         point_size: None,
     });
     assert_eq!(g.get_error(), gl::NO_ERROR);
@@ -861,4 +864,250 @@ fn combine_state_reads_back_and_refuses() {
         assert_eq!(g.get_error(), e, "{p:04x} {v:x}");
         assert_eq!(get(&mut g, p), before, "{p:04x} unchanged");
     }
+}
+
+/// The quad drawn with two texture units (#1510), each on as `on` says:
+/// unit 0 the image under `MODULATE`; unit 1 a second image, of its own
+/// pattern, under `env1`, with its own texture matrix, a scale of two, and
+/// its own coordinates, the quad's turned. Under `GL_COMBINE` unit 1 mixes
+/// the texel and the previous colour by the primary colour, and for alpha
+/// adds the previous colour's to the texel's. The picture, through Razboj's
+/// model, and its entries.
+fn two_units(on: [bool; 2], env1: u32) -> (Vec<u32>, Vec<razboj::op::Insn>) {
+    let mut frame = vec![[0u32; WORDS]; 512];
+    let room: &'static mut [u32] =
+        Box::leak(vec![0u32; 1 << 16].into_boxed_slice());
+    let mut g = Gl::new(&mut frame, W, H);
+    g.texture_room(room, BUS);
+    let mut names = [0u32; 2];
+    g.gen_textures(&mut names);
+    let (s, rgba, ub) = (SIDE as u32, gl::RGBA, gl::UNSIGNED_BYTE);
+    let other: Vec<u8> = image()
+        .chunks(4)
+        .flat_map(|p| [p[2], p[0], 255 - p[1], 255 - p[3] / 2])
+        .collect();
+    for (k, (img, env)) in [(image(), gl::MODULATE), (other, env1)]
+        .into_iter()
+        .enumerate()
+    {
+        g.active_texture(gl::TEXTURE0 + k as u32);
+        g.bind_texture(gl::TEXTURE_2D, names[k]);
+        g.tex_parameter(gl::TEXTURE_2D, gl::GENERATE_MIPMAP, 1);
+        let min = gl::LINEAR_MIPMAP_LINEAR;
+        g.tex_parameter(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, min);
+        g.tex_image_2d(gl::TEXTURE_2D, 0, rgba, s, s, 0, rgba, ub, &img);
+        g.tex_env(gl::TEXTURE_ENV, gl::TEXTURE_ENV_MODE, &[env as Fx]);
+        let colour = [ONE / 4, ONE, ONE / 2, ONE / 2];
+        g.tex_env(gl::TEXTURE_ENV, gl::TEXTURE_ENV_COLOR, &colour);
+        if k == 1 {
+            for (pname, v) in [
+                (gl::COMBINE_RGB, gl::INTERPOLATE),
+                (gl::SRC0_RGB, gl::TEXTURE),
+                (gl::SRC1_RGB, gl::PREVIOUS),
+                (gl::SRC2_RGB, gl::PRIMARY_COLOR),
+                (gl::OPERAND2_RGB, gl::SRC_COLOR),
+                (gl::COMBINE_ALPHA, gl::ADD),
+                (gl::SRC0_ALPHA, gl::PREVIOUS),
+                (gl::SRC1_ALPHA, gl::TEXTURE),
+            ] {
+                g.tex_env(gl::TEXTURE_ENV, pname, &[v as Fx]);
+            }
+            g.matrix_mode(gl::TEXTURE);
+            g.scale(2 * ONE, 2 * ONE, ONE);
+        }
+        if on[k] {
+            g.enable(gl::TEXTURE_2D);
+        }
+    }
+    g.active_texture(gl::TEXTURE0);
+    let [l, r, b, t, n, f] = FRUSTUM.map(fx);
+    g.matrix_mode(gl::PROJECTION);
+    g.frustum(l, r, b, t, n, f);
+    g.matrix_mode(gl::MODELVIEW);
+    g.color(ONE, ONE / 2, ONE, ONE);
+    g.shade_model(gl::FLAT);
+    let vertex = |k: usize| {
+        let (p, st) = CORNERS[[0, 1, 2, 0, 2, 3][k]];
+        Vertex {
+            position: [fx(p[0]), fx(p[1]), fx(p[2]), ONE],
+            colour: None,
+            normal: None,
+            tex: Some([fx(st[0]), fx(st[1]), 0, ONE]),
+            tex1: Some([fx(st[1]), fx(st[0]), 0, ONE]),
+            point_size: None,
+        }
+    };
+    g.draw_vertices(gl::TRIANGLES, 6, vertex);
+    assert_eq!(g.get_error(), gl::NO_ERROR);
+    let used = g.frame().len();
+    let words = g.textures().unwrap().words().to_vec();
+    let list = decode_list(&frame[..used]);
+    let read = |a: u32| words[((a - BUS) / 4) as usize];
+    let t = Textures { mem: &read };
+    let (w, h) = (W as usize, H as usize);
+    (render_textured(&list, w, h, vec![0; w * h], Some(&t)), list)
+}
+
+/// Two texture units (#1510): with both on, under each environment and
+/// `GL_COMBINE` on unit 1, every pixel is unit 1's environment of what unit
+/// 0 draws alone and of what unit 1's texture gives alone under `REPLACE`,
+/// to the bit, the flat colour being `PRIMARY_COLOR`; each unit's texture,
+/// environment, coordinates and texture matrix are its own. Unit 1 on
+/// alone draws on Razboj's first unit, one unit's entries, as GL draws a
+/// unit after one that is off.
+#[test]
+fn two_units_chain_as_gl_says() {
+    use razboj_tile::tex::{self as t, Combine};
+    let one = |l: &[razboj::op::Insn]| {
+        l.iter().all(|i| i.tex.to_bool() && !i.tex1.to_bool())
+    };
+    let (first, l) = two_units([true, false], gl::MODULATE);
+    assert!(one(&l), "unit 0 alone is one unit");
+    let (texel, l) = two_units([false, true], gl::REPLACE);
+    assert!(one(&l), "unit 1 alone goes on Razboj's first unit");
+    let (bare, _) = two_units([false, false], gl::MODULATE);
+    // Unit 1 alone under COMBINE: after a unit that is off, its PREVIOUS
+    // is the fragment's colour, as Razboj's first unit's is.
+    let (lone, lone_list) = two_units([false, true], gl::COMBINE);
+    assert!(one(&lone_list), "unit 1 alone is one unit");
+    // Unit 1's COMBINE as the library sets it from GL's names.
+    let combine = Combine {
+        rgb: t::FN_INTERPOLATE,
+        alpha: t::FN_ADD,
+        src_rgb: [t::SRC_TEXTURE, t::SRC_PREVIOUS, t::SRC_PRIMARY_COLOR],
+        src_alpha: [t::SRC_PREVIOUS, t::SRC_TEXTURE, t::SRC_CONSTANT],
+        op_rgb: [t::OP_SRC_COLOR; 3],
+        ..Default::default()
+    }
+    .word();
+    let mut covered = 0;
+    for (env, code) in [
+        (gl::REPLACE, t::REPLACE),
+        (gl::MODULATE, t::MODULATE),
+        (gl::DECAL, t::DECAL),
+        (gl::BLEND, t::BLEND),
+        (gl::ADD, t::ADD),
+        (gl::COMBINE, t::COMBINE),
+    ] {
+        let (got, l) = two_units([true, true], env);
+        assert!(l.iter().all(|i| i.tex1.to_bool()), "both on is two units");
+        let u1 = l[0].unit1;
+        assert_eq!(u1.tenv.raw() as u32, code);
+        let cc = u1.tenvc.raw() as u32;
+        if code == t::COMBINE {
+            assert_eq!(u1.tcomb.raw() as u32, combine, "COMBINE's word");
+        }
+        for at in 0..got.len() {
+            if bare[at] == 0 {
+                assert_eq!(got[at], 0, "outside the quad");
+                continue;
+            }
+            let (p, x) = (first[at], texel[at]);
+            let want = if code == t::COMBINE {
+                razboj::tex::combine_with(combine, bare[at], p, x, cc)
+            } else {
+                razboj::tex::env(code, t::RGBA, p, x, cc)
+            };
+            assert_eq!(got[at], want, "env {env:04x} at {at}");
+            covered += 1;
+        }
+    }
+    assert!(covered > 6 * 1000, "{covered} pixels");
+    // Unit 1 alone under COMBINE, on Razboj's first unit, reads the
+    // fragment's colour as PREVIOUS.
+    let (cc, word) = (lone_list[0].tenvc.raw() as u32, lone_list[0].tcomb);
+    assert_eq!(word.raw() as u32, combine, "unit 1's COMBINE on the first");
+    for at in 0..lone.len() {
+        if bare[at] != 0 {
+            let (f, x) = (bare[at], texel[at]);
+            let want = razboj::tex::combine_with(combine, f, f, x, cc);
+            assert_eq!(lone[at], want, "unit 1 alone at {at}");
+        }
+    }
+    // The two units' pictures differ, so each unit's own state was used.
+    let apart = (0..first.len()).filter(|&k| first[k] != texel[k]).count();
+    assert!(apart > 1000, "{apart}");
+}
+
+/// Each unit's state is its own (#1510): `GL_MAX_TEXTURE_UNITS` is two;
+/// `glActiveTexture` picks the unit the texture calls, the queries and
+/// the texture matrix act on; `glMultiTexCoord4x` sets either unit's
+/// coordinates; and a third unit is `GL_INVALID_ENUM`, which changes
+/// nothing.
+#[test]
+fn each_units_state_is_its_own() {
+    use gles::get::name::{
+        ACTIVE_TEXTURE, CLIENT_ACTIVE_TEXTURE, CURRENT_TEXTURE_COORDS,
+        MAX_TEXTURE_UNITS, TEXTURE_BINDING_2D, TEXTURE_MATRIX,
+        TEXTURE_STACK_DEPTH,
+    };
+    let mut frame = vec![[0u32; WORDS]; 4];
+    let mut g = Gl::new(&mut frame, W, H);
+    let room: &'static mut [u32] =
+        Box::leak(vec![0u32; 1 << 12].into_boxed_slice());
+    g.texture_room(room, BUS);
+    let int = |g: &mut Gl, p: u32| {
+        let mut v = [0i32; 16];
+        g.get_integer(p, &mut v);
+        v[0]
+    };
+    assert_eq!(int(&mut g, MAX_TEXTURE_UNITS), 2);
+    assert_eq!(int(&mut g, ACTIVE_TEXTURE), gl::TEXTURE0 as i32);
+    let mut names = [0u32; 2];
+    g.gen_textures(&mut names);
+    g.bind_texture(gl::TEXTURE_2D, names[0]);
+    g.enable(gl::TEXTURE_2D);
+    g.tex_env(gl::TEXTURE_ENV, gl::TEXTURE_ENV_MODE, &[gl::DECAL as Fx]);
+    g.multi_tex_coord(gl::TEXTURE1, ONE, 2 * ONE, 0, ONE);
+    g.active_texture(gl::TEXTURE1);
+    assert_eq!(int(&mut g, ACTIVE_TEXTURE), gl::TEXTURE1 as i32);
+    // Unit 1 starts as GL's initial state, whatever unit 0 holds.
+    assert_eq!(int(&mut g, TEXTURE_BINDING_2D), 0);
+    assert!(!g.is_enabled(gl::TEXTURE_2D));
+    let mut v = [0 as Fx; 4];
+    g.get_tex_env(gl::TEXTURE_ENV, gl::TEXTURE_ENV_MODE, &mut v);
+    assert_eq!(v[0], gl::MODULATE as Fx);
+    let mut c = [0 as Fx; 4];
+    g.get_fixed(CURRENT_TEXTURE_COORDS, &mut c);
+    assert_eq!(c, [ONE, 2 * ONE, 0, ONE], "unit 1's coordinates");
+    g.bind_texture(gl::TEXTURE_2D, names[1]);
+    g.matrix_mode(gl::TEXTURE);
+    g.push_matrix();
+    g.scale(2 * ONE, ONE, ONE);
+    assert_eq!(int(&mut g, TEXTURE_STACK_DEPTH), 2, "unit 1's stack");
+    // A sprite's coordinate replacement is the unit's (OES_point_sprite).
+    g.tex_env(gl::POINT_SPRITE_OES, gl::COORD_REPLACE_OES, &[1]);
+    // The client's unit is apart from the server's.
+    g.client_active_texture(gl::TEXTURE1);
+    assert_eq!(int(&mut g, CLIENT_ACTIVE_TEXTURE), gl::TEXTURE1 as i32);
+    g.client_active_texture(gl::TEXTURE0);
+    assert_eq!(int(&mut g, ACTIVE_TEXTURE), gl::TEXTURE1 as i32);
+    let mut m = [0 as Fx; 16];
+    g.get_fixed(TEXTURE_MATRIX, &mut m);
+    assert_eq!(m[0], 2 * ONE, "unit 1's matrix");
+    // A third unit is refused and changes nothing.
+    g.active_texture(gl::TEXTURE1 + 1);
+    assert_eq!(g.get_error(), gl::INVALID_ENUM);
+    g.multi_tex_coord(gl::TEXTURE1 + 1, 0, 0, 0, 0);
+    assert_eq!(g.get_error(), gl::INVALID_ENUM);
+    assert_eq!(int(&mut g, ACTIVE_TEXTURE), gl::TEXTURE1 as i32);
+    // Back on unit 0, its own state is as it was.
+    g.active_texture(gl::TEXTURE0);
+    assert_eq!(int(&mut g, TEXTURE_BINDING_2D), names[0] as i32);
+    assert!(g.is_enabled(gl::TEXTURE_2D));
+    g.get_tex_env(gl::TEXTURE_ENV, gl::TEXTURE_ENV_MODE, &mut v);
+    assert_eq!(v[0], gl::DECAL as Fx);
+    g.get_fixed(TEXTURE_MATRIX, &mut m);
+    assert_eq!(m[0], ONE, "unit 0's matrix");
+    assert_eq!(int(&mut g, TEXTURE_STACK_DEPTH), 1, "unit 0's stack");
+    g.get_tex_env(gl::POINT_SPRITE_OES, gl::COORD_REPLACE_OES, &mut v);
+    assert_eq!(v[0], 0, "unit 0's coordinate replacement");
+    g.get_fixed(CURRENT_TEXTURE_COORDS, &mut c);
+    assert_eq!(c, [0, 0, 0, ONE], "unit 0's coordinates");
+    // Deleting a texture unbinds it from every unit.
+    g.delete_textures(&names);
+    assert_eq!(int(&mut g, TEXTURE_BINDING_2D), 0, "unit 0");
+    g.active_texture(gl::TEXTURE1);
+    assert_eq!(int(&mut g, TEXTURE_BINDING_2D), 0, "unit 1");
+    assert_eq!(g.get_error(), gl::NO_ERROR);
 }

@@ -83,6 +83,7 @@ fn both(n: usize, idx: &[u16]) -> (Vec<[u32; 16]>, Vec<[u32; 16]>) {
             colour: Some(col[i]),
             normal: Some(nor[i]),
             tex: None,
+            tex1: None,
             point_size: None,
         }
     });

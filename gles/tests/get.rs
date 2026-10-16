@@ -153,7 +153,7 @@ fn the_limits_are_the_libraries() {
     assert_eq!(ints(&mut g, name::MAX_MODELVIEW_STACK_DEPTH, 1), [16]);
     assert_eq!(ints(&mut g, name::MAX_PROJECTION_STACK_DEPTH, 1), [2]);
     assert_eq!(ints(&mut g, name::MAX_TEXTURE_STACK_DEPTH, 1), [2]);
-    assert_eq!(ints(&mut g, name::MAX_TEXTURE_UNITS, 1), [1]);
+    assert_eq!(ints(&mut g, name::MAX_TEXTURE_UNITS, 1), [2]);
     assert_eq!(ints(&mut g, name::SUBPIXEL_BITS, 1), [4]);
     assert_eq!(ints(&mut g, name::RED_BITS, 1), [8]);
     assert_eq!(ints(&mut g, name::DEPTH_BITS, 1), [16]);

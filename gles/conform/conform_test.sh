@@ -17,7 +17,9 @@ report="$("$run")" || {
 echo "$report"
 
 failed="$(echo "$report" | sed -n 's/^FAIL \([^:]*\):.*/\1/p' | sort)"
-expected="$(grep -v '^#' "$known" | awk 'NF { print $1 }' | sort)"
+# An empty list is a list: grep finds no line in it and exits 1 (#1727);
+# a missing list, 2, still fails.
+expected="$({ grep -v '^#' "$known" || [ $? -eq 1 ]; } | awk 'NF { print $1 }' | sort)"
 new="$(comm -23 <(echo "$failed") <(echo "$expected") | sed '/^$/d')"
 fixed="$(comm -13 <(echo "$failed") <(echo "$expected") | sed '/^$/d')"
 status=0

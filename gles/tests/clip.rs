@@ -68,6 +68,7 @@ fn clamped(near: f64, seed: u64, n: usize) -> (usize, usize) {
             colour: None,
             normal: None,
             tex: None,
+            tex1: None,
             point_size: None,
         });
         for w in g.frame() {
@@ -205,6 +206,7 @@ fn colours_at_cuts(seed: u64, plane: bool) -> (usize, f64) {
             colour: Some(col[k]),
             normal: None,
             tex: None,
+            tex1: None,
             point_size: None,
         });
         // The corners in clip space, from the matrix the library made,

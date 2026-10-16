@@ -170,6 +170,21 @@ int main(void) {
   glGetTexEnvxv(GL_TEXTURE_ENV, GL_RGB_SCALE, sx);
   glGetTexEnvxv(GL_TEXTURE_ENV, GL_ALPHA_SCALE, sx + 1);
   printf("scales %d %d fixed %d %d\n", sc[0], sc[1], sx[0], sx[1]);
+  /* Two texture units (#1510): the client's unit picks the coordinate
+     array the array calls set, apart from the server's unit. */
+  glClientActiveTexture(GL_TEXTURE1);
+  glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+  GLint un[4];
+  glGetIntegerv(GL_CLIENT_ACTIVE_TEXTURE, un);
+  un[1] = glIsEnabled(GL_TEXTURE_COORD_ARRAY);
+  glClientActiveTexture(GL_TEXTURE0);
+  un[2] = glIsEnabled(GL_TEXTURE_COORD_ARRAY);
+  glGetIntegerv(GL_ACTIVE_TEXTURE, un + 3);
+  glClientActiveTexture(GL_TEXTURE1);
+  glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+  glClientActiveTexture(GL_TEXTURE0);
+  printf("units client %04x on %d %d server %04x\n", un[0], un[1], un[2],
+         un[3]);
 
 
   /* Buffer objects (#1488): a new context with room for their stores,
