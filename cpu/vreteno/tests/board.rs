@@ -511,6 +511,9 @@ struct HostPlan {
     bursts: usize,
     words: usize,
     read: bool,
+    /// Read everything written back on the board's wide port as well,
+    /// once the writes are answered (issue 1696).
+    wide: bool,
 }
 
 /// The word a [`HostPlan`] writes as burst `k`'s word `i`.
@@ -529,6 +532,10 @@ struct HostLog {
     read: Vec<(u8, u32, Resp, bool)>,
     asked_before_first: usize,
     read_at: Option<u64>,
+    /// Each beat of the wide port with its cycle, its two limbs and
+    /// whether it was last, and the cycle the last came (issue 1696).
+    wide: Vec<(u64, [u128; 2], bool)>,
+    wide_at: Option<u64>,
 }
 
 /// A scanout's pixel side on the board's `scan_req` and `scan_words`:
@@ -682,6 +689,10 @@ fn run_all_in<const LO: usize, const HI: usize>(
     let (host_w_tx, host_w) = chan::<W<32, 4>, DefaultClock>();
     let (host_b, host_b_rx) = chan::<B<2>, DefaultClock>();
     let (host_r, host_r_rx) = chan::<R<32, 2>, DefaultClock>();
+    // The board's wide read port (issue 1696).
+    let (wide_ar_tx, wide_ar) = chan::<Addr<32, 5>, DefaultClock>();
+    let (wide_r, wide_r_rx) = chan::<R<256, 5, 2>, DefaultClock>();
+    let mut wide_asked = false;
     let mut host_log = HostLog::default();
     // How far the plan is: the address phases and beats given, the
     // reads asked, and the bursts read whole.
@@ -892,6 +903,7 @@ fn run_all_in<const LO: usize, const HI: usize>(
             host_aw,
             host_ar,
             host_w,
+            wide_ar,
             jtag: AxiHostPins {
                 awid,
                 awaddr,
@@ -935,6 +947,7 @@ fn run_all_in<const LO: usize, const HI: usize>(
             scan_words,
             host_b,
             host_r,
+            wide_r,
         },
     );
     let mut sim = Running::new(join2(
@@ -1323,7 +1336,31 @@ fn run_all_in<const LO: usize, const HI: usize>(
                     }
                 }
             }
-            host_idle = written && (!p.read || host_whole == p.bursts);
+            // One wide read of everything written, once it is all
+            // answered: a beat of 32 bytes per eight words (issue 1696).
+            if p.wide && written && !wide_asked && wide_ar_tx.ready().to_bool()
+            {
+                let beats = 4 * p.words * p.bursts / 32;
+                wide_ar_tx.send(Addr::<32, 5> {
+                    id: U::<5>::from(3u8),
+                    addr: U::<32>::from(p.addr),
+                    len: U::<8>::from((beats - 1) as u8),
+                    size: U::<3>::from(5u8),
+                    burst: BurstKind::Incr,
+                    ..Default::default()
+                });
+                wide_asked = true;
+            }
+            if let Some(r) = wide_r_rx.recv_if(true) {
+                let last = r.last.to_bool();
+                host_log.wide.push((cycle, r.data.limbs(), last));
+                if last {
+                    host_log.wide_at = Some(cycle);
+                }
+            }
+            host_idle = written
+                && (!p.read || host_whole == p.bursts)
+                && (!p.wide || host_log.wide_at.is_some());
         }
         // The cycle the core halted is kept even while the host's plan
         // runs on, so that it is the halt's and not the plan's end.
@@ -5395,6 +5432,7 @@ fn the_board_tops_host_writes_and_reads_the_ddr3() {
             bursts,
             words,
             read: true,
+            wide: false,
         }),
         ..Net::default()
     };
@@ -5439,6 +5477,52 @@ fn the_board_tops_host_writes_and_reads_the_ddr3() {
     assert!(ran.halted_at.is_some(), "the core halted: {}", ran.said);
 }
 
+/// The board's wide read port (issue 1696): four bursts of eight words
+/// written through the host port, then read back on the wide port as
+/// one burst of four beats of 256 bits, each burst's eight words in a
+/// beat, the lowest address in bits 31:0, one beat a cycle once the
+/// first has come.
+#[test]
+fn the_wide_port_reads_what_the_host_wrote() {
+    let (bursts, words) = (4, 8);
+    let net = Net {
+        host: Some(HostPlan {
+            at: 200,
+            addr: 0x4010_0000,
+            bursts,
+            words,
+            read: false,
+            wide: true,
+        }),
+        ..Net::default()
+    };
+    let ran = run_all(
+        hello_program::TEXT,
+        hello_program::DATA,
+        b"",
+        &[],
+        200_000,
+        net,
+        &[],
+    );
+    let log = &ran.host;
+    assert_eq!(log.wrote.len(), bursts, "the writes answered");
+    let wide_at = log.wide_at.expect("the wide read came whole");
+    assert_eq!(log.wide.len(), bursts, "a beat per burst");
+    for (k, &(_, limbs, last)) in log.wide.iter().enumerate() {
+        let mut want = [0u128; 2];
+        for i in 0..words {
+            want[i / 4] |= (host_word(k, i) as u128) << (32 * (i % 4));
+        }
+        assert_eq!(limbs, want, "beat {k}");
+        assert_eq!(last, k + 1 == bursts, "beat {k}'s last");
+    }
+    for k in 1..bursts {
+        assert_eq!(log.wide[k].0, log.wide[k - 1].0 + 1, "beat {k} streams");
+    }
+    eprintln!("wide port: {bursts} beats whole at {wide_at}");
+}
+
 /// A program that reads the DDR3 word at `0x4010_0000`, which puts its
 /// line in the data cache, says `r`, reads the word again until it is
 /// no longer what it first read, says `c` and halts. With the line kept
@@ -5472,6 +5556,7 @@ fn the_board_tops_host_writes_are_snooped() {
             bursts: 1,
             words: 8,
             read: false,
+            wide: false,
         }),
         ..Net::default()
     };

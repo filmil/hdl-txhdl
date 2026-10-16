@@ -305,6 +305,10 @@ module flagship (
     .host_w_data(37'd0), .host_w_valid(1'b0), .host_w_ready(),
     .host_b_data(), .host_b_valid(), .host_b_ready(1'b1),
     .host_r_data(), .host_r_valid(), .host_r_ready(1'b1),
+    // The wide read port into DDR3 (issue 1696): nothing offered and
+    // every answer taken.
+    .wide_ar_data(66'd0), .wide_ar_valid(1'b0), .wide_ar_ready(),
+    .wide_r_data(), .wide_r_valid(), .wide_r_ready(1'b1),
     // The remote peripheral at `0x3300`, whose frames leave and
     // arrive on the Ethernet port, crossed below.
     .net_tx_data(net_tx_data), .net_tx_valid(net_tx_valid),

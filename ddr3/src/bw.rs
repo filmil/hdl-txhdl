@@ -20,9 +20,11 @@
 //! board run of issue 1023 measures the controller itself.
 use std::cell::Cell;
 use std::rc::Rc;
-use txhdl::comp::{join2, pad, signal, DefaultClock, Running, Unit};
+use txhdl::comp::{chan, join2, pad, signal, DefaultClock, Running, Unit};
 use txhdl::types::{Bit, U};
-use txhdl_parts::bus::axi::{axi, AxiHost, Host, Link, Pending, Rd, Resp, Wr};
+use txhdl_parts::bus::axi::{
+    axi, Ar, AxiHost, Host, Link, Pending, Rd, Resp, Wr, R,
+};
 use txhdl_parts::bus::axi_per_pins::sim::pins as pin_ram;
 use txhdl_parts::bus::axi_per_pins::AxiPerPins;
 
@@ -154,7 +156,16 @@ pub fn ddr3_per(beats: usize, bursts: usize, write: bool) -> Measured {
         h.run(host_in, host_out),
         join2(
             mem.run(
-                (signal::<Bit, DefaultClock>().1, aw, ar, w, b, r),
+                (
+                    signal::<Bit, DefaultClock>().1,
+                    aw,
+                    ar,
+                    w,
+                    b,
+                    r,
+                    chan::<Ar<32, 5>, DefaultClock>().1,
+                    chan::<R<256, 5, 2>, DefaultClock>().0,
+                ),
                 (
                     sys_clk,
                     sys_rst,
