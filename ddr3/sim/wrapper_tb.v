@@ -43,6 +43,14 @@ module wrapper_tb;
   wire [3:0] dm;
   wire [31:0] dq;
   wire [3:0] dqs, dqs_n;
+  // The wide read port (issue 1696).
+  reg [31:0] xaraddr = 0;
+  reg [7:0] xarlen = 0;
+  reg xarvalid = 0;
+  wire xarready, xrvalid, xrlast;
+  wire [4:0] xrid;
+  wire [1:0] xrresp;
+  wire [255:0] xrdata;
 
   // Every burst incrementing words, normal, unprotected, with one
   // identifier, as the pins part drives what the link asks for.
@@ -57,6 +65,10 @@ module wrapper_tb;
     .i_arburst(2'b01), .i_arlock(1'b0), .i_arcache(4'b0011),
     .i_arprot(3'd0), .i_arqos(4'd0), .i_arvalid(arvalid),
     .i_rready(1'b1),
+    .i_xarid(5'd9), .i_xaraddr(xaraddr), .i_xarlen(xarlen),
+    .i_xarvalid(xarvalid), .i_xrready(1'b1),
+    .o_xarready(xarready), .o_xrid(xrid), .o_xrdata(xrdata),
+    .o_xrresp(xrresp), .o_xrlast(xrlast), .o_xrvalid(xrvalid),
     .o_awready(awready), .o_wready(wready), .o_bid(bid), .o_bresp(bresp),
     .o_bvalid(bvalid), .o_arready(arready), .o_rid(rid), .o_rdata(rdata),
     .o_rresp(rresp), .o_rlast(rlast), .o_rvalid(rvalid),
@@ -133,6 +145,36 @@ module wrapper_tb;
     end
   endtask
 
+  // A read on the wide port of `len + 1` beats of 32 bytes, from the
+  // address rounded down to 32 bytes, each the eight words from `want`
+  // up, the lowest in bits 31:0, as the thirty-two bit side wrote them
+  // (issue 1696).
+  task wide_read(input [31:0] at, input [7:0] len, input [31:0] want);
+    integer i, j, t;
+    reg [255:0] w;
+    begin
+      @(posedge ck); xaraddr <= at; xarlen <= len; xarvalid <= 1;
+      @(posedge ck); while (!xarready) @(posedge ck);
+      xarvalid <= 0; t = cyc; i = 0; lat = -1;
+      while (i <= len) begin
+        if (xrvalid) begin
+          if (lat < 0) lat = cyc - t;
+          for (j = 0; j < 8; j = j + 1)
+            w[32 * j +: 32] = want + 8 * i + j;
+          if (xrdata !== w || xrresp != 2'b00 || xrid != 5'd9
+              || xrlast !== (i == len)) begin
+            ok = 0;
+            $display("wide read %h beat %0d: %h, want %h", at, i, xrdata, w);
+          end
+          i = i + 1;
+        end
+        if (i <= len) @(posedge ck);
+      end
+      $display("wide read %h len %0d: first beat after %0d cycles", at,
+               len + 1, lat);
+    end
+  endtask
+
   initial begin
     wait (calib);
     $display("calibrated at %0t ps", $time);
@@ -141,6 +183,14 @@ module wrapper_tb;
     write_burst(32'h0000_1000, 8'd15, 32'h1000_0000, 4'hf);
     read_burst(32'h0000_1000, 8'd15, 32'h1000_0000);
     read_burst(32'h0000_1000, 8'd15, 32'h1000_0000);
+    // The same sixteen words on the wide port, from an address inside
+    // the first 32 bytes, then a narrow and a wide read at once, each
+    // answer back on its own side.
+    wide_read(32'h0000_1004, 8'd1, 32'h1000_0000);
+    fork
+      read_burst(32'h0000_1000, 8'd15, 32'h1000_0000);
+      wide_read(32'h0000_1000, 8'd1, 32'h1000_0000);
+    join
     // A word alone, in another row and bank.
     write_burst(32'h0123_4564, 8'd0, 32'h89ab_cdef, 4'hf);
     read_burst(32'h0123_4564, 8'd0, 32'h89ab_cdef);
