@@ -797,8 +797,24 @@ pub fn derive_ports(input: TokenStream) -> TokenStream {
                 s = end(b),
             )
         };
+        // Each side mirrors the other, so the struct may be a field of
+        // another bundle (issue 1695): its pair is its `link`, which gives
+        // the other side first, turned round.
+        let mirror = |me: &str, other: &str| {
+            format!(
+                "\nimpl{bounds} ::txhdl::comp::Mirror for {me_ty} {{\n\
+                 type Other = {other_ty};\n\
+                 fn pair() -> (Self, Self::Other) {{ \
+                 let (o, s) = <Self as ::txhdl::comp::Link>::link(); (s, o) }}\n}}",
+                me_ty = on(me),
+                other_ty = on(other),
+            )
+        };
         // Each field's pair is the driver's end then the receiver's.
-        way("Receiver", "Driver", 0, 1) + &way("Driver", "Receiver", 1, 0)
+        way("Receiver", "Driver", 0, 1)
+            + &way("Driver", "Receiver", 1, 0)
+            + &mirror("Driver", "Receiver")
+            + &mirror("Receiver", "Driver")
     } else {
         String::new()
     };
@@ -858,6 +874,84 @@ fn side_bounded(name: &str, full: &str) -> bool {
             .next()
             .is_some_and(|last| last.trim() == "Side")
     })
+}
+
+/// `#[derive(Link)]` on a struct of ports (issue 1695): the struct the
+/// other side holds, `{Name}Host`, each field the end opposite the
+/// struct's, `<T as Mirror>::Other`, so an `In` there is an `Out`, a `Tx`
+/// an `Rx`, an array of ends the array of their opposites and a bundle
+/// the bundle's other side; `Ports` for it; `Link` both ways, so
+/// `link::<Name>()` and `link::<NameHost>()` both work; and `Mirror` both
+/// ways, so either may be a field, or an array's element, of another
+/// struct that derives `Link`. Not of a struct generic over its `Side`,
+/// whose fields must be the same field on both sides, which `Name` and
+/// `NameHost` are not. It goes beside `#[derive(Ports)]`. A struct
+/// generic over its `Side` needs none of it: `#[derive(Ports)]` writes
+/// its `Link` (issue 1650).
+#[proc_macro_derive(Link)]
+pub fn derive_link(input: TokenStream) -> TokenStream {
+    let item = parse_item(input);
+    let (Some(body), "struct") = (&item.body, item.kind.as_str()) else {
+        return err(Span::call_site(), "Link needs a struct with named fields");
+    };
+    if item.generics.iter().any(|(n, full)| side_bounded(n, full)) {
+        return err(
+            Span::call_site(),
+            "a struct generic over its `Side` has its `Link` from \
+             `#[derive(Ports)]` already; derive `Ports` alone",
+        );
+    }
+    let (n, b, a, v) = (&item.name, &item.bounds, &item.args, &item.vis);
+    let names = field_names(body);
+    let types = field_types(body);
+    let fields = names
+        .iter()
+        .zip(&types)
+        .map(|(f, t)| {
+            format!(
+                "    /// The end opposite `{n}`'s `{f}`.\n    \
+                 pub {f}: <{t} as ::txhdl::comp::Mirror>::Other,\n"
+            )
+        })
+        .collect::<String>();
+    let lets = names
+        .iter()
+        .map(|f| format!("let {f} = <_ as ::txhdl::comp::Mirror>::pair();"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let end = |k: usize| {
+        names
+            .iter()
+            .map(|f| format!("{f}: {f}.{k}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!(
+        "/// What the other side holds of [`{n}`]: each end turned round, \
+         as `#[derive(Link)]` writes it (issue 1695).\n\
+         #[derive(::txhdl::Ports)]\n\
+         {v} struct {n}Host{b} {{\n{fields}}}\n\
+         impl{b} ::txhdl::comp::Link for {n}{a} {{\n\
+         type Host = {n}Host{a};\n\
+         fn link() -> (Self::Host, Self) {{ {lets} \
+         ({n}Host {{ {h} }}, {n} {{ {s} }}) }}\n}}\n\
+         impl{b} ::txhdl::comp::Mirror for {n}{a} {{\n\
+         type Other = {n}Host{a};\n\
+         fn pair() -> (Self, Self::Other) {{ \
+         let (h, s) = <Self as ::txhdl::comp::Link>::link(); (s, h) }}\n}}\n\
+         impl{b} ::txhdl::comp::Mirror for {n}Host{a} {{\n\
+         type Other = {n}{a};\n\
+         fn pair() -> (Self, Self::Other) {{ \
+         <{n}{a} as ::txhdl::comp::Link>::link() }}\n}}\n\
+         impl{b} ::txhdl::comp::Link for {n}Host{a} {{\n\
+         type Host = {n}{a};\n\
+         fn link() -> (Self::Host, Self) {{ \
+         let (h, s) = <{n}{a} as ::txhdl::comp::Link>::link(); (s, h) }}\n}}",
+        h = end(1),
+        s = end(0),
+    )
+    .parse()
+    .unwrap()
 }
 
 /// `#[derive(Trace)]`: every field is registered under its own name,

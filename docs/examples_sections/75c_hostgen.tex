@@ -1,0 +1,37 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{The Other Side of a Bundle, Derived}
+\label{sec:x-hostgen}
+
+\code{link::<B>()} makes both sides of a bundle in one line of a unit
+of units, as Section~\ref{sec:x-link} does, for a \code{B} that
+implements \code{Link}. \code{Link} was written by hand, and so was the
+struct the other side holds. \code{\#[derive(Link)]} writes both
+(issue 1695). Beside \code{Lane} it writes \code{LaneHost}, each field
+the end opposite \code{Lane}'s, an \code{Rx} a \code{Tx} and an
+\code{Out} an \code{In}, with \code{Ports} on it and the \code{Link}
+between the two. An array of lanes and a nested bundle turn round
+too, so \code{Lanes} holding \code{[Lane; 2]} gets \code{LanesHost}
+holding \code{[LaneHost; 2]}. A struct generic over its side needs no
+derive of its own: Section~\ref{sec:x-flipped}'s \code{\#[derive(Ports)]}
+writes its \code{Link}.
+
+Here \code{Feed} takes \code{LanesHost} and sends a count on both
+lanes, the second a hundred above the first, and counts the first
+lane's acknowledgements. \code{Take} takes \code{Lanes}, keeps each
+lane's last beat and acknowledges it. \code{Pair} joins them with
+\code{link::<Lanes>()}. Both ways are channels, so the order the two
+units run in does not matter. The run checks every cycle from the
+third, and the netlist is checked against the run under both
+simulators.
+
+\begin{figure}[htbp]
+\centering
+\input{hostgen_timing.tex}
+\caption{The count sent, the last beat of each lane, and the first
+lane's acknowledgements.}
+\label{fig:x-hostgen}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_hostgen.rs}. Run with \code{bazel run //lib/examples:ex\_hostgen}.},label={lst:x-hostgen}]{lib/examples/ex_hostgen.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_hostgen} printed when the build ran it: each cycle's acknowledgements and lanes, then the lowering.},label={lst:x-hostgen-out}]{out_hostgen.txt}
