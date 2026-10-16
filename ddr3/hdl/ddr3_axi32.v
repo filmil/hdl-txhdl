@@ -3,11 +3,15 @@
 // AMD's MIG 7 Series controller generated with its AXI4 port,
 // `ddr3_mig_axi`, as the foreign module `ddr3::Ddr3` names.
 //
-// The controller does the work itself: it cuts a burst into the
-// memory's commands, packs thirty-two bit beats into its 256-bit native
-// interface and masks them, and keeps transactions outstanding by
-// identifier. This module only gives it the inputs a design has no
-// reason to drive. Its AXI reset is the user clock's reset, inverted
+// The controller's AXI4 port is 256 bits wide, the width of its native
+// interface, with narrow bursts on (issue 1696). It cuts a burst into
+// the memory's commands, masks a narrow beat to its bytes, and keeps
+// transactions outstanding by identifier. This module puts two ports on
+// it: the thirty-two bit one, whose beats it steers to their lanes, and
+// a read-only one of 256 bits beside it, the two sharing the read
+// addresses; how is said below, where it is done. Otherwise it gives
+// the controller the inputs a design has no reason to drive. Its AXI
+// reset is the user clock's reset, inverted
 // and registered, as AMD's example design makes it. The refresh,
 // self-refresh and ZQ requests are never made, since the controller
 // makes them itself. The temperature is a constant, as the controller's
@@ -60,6 +64,11 @@ module ddr3_axi32 (
   input [3:0] i_arqos,
   input i_arvalid,
   input i_rready,
+  input [4:0] i_xarid,
+  input [31:0] i_xaraddr,
+  input [7:0] i_xarlen,
+  input i_xarvalid,
+  input i_xrready,
   output o_awready,
   output o_wready,
   output [4:0] o_bid,
@@ -71,6 +80,12 @@ module ddr3_axi32 (
   output [1:0] o_rresp,
   output o_rlast,
   output o_rvalid,
+  output o_xarready,
+  output [4:0] o_xrid,
+  output [255:0] o_xrdata,
+  output [1:0] o_xrresp,
+  output o_xrlast,
+  output o_xrvalid,
   output o_calib_complete,
   output o_ui_clk,
   output o_ui_rst,
@@ -95,6 +110,117 @@ module ddr3_axi32 (
   // The AXI reset, low while the user clock's reset is high.
   reg aresetn = 0;
   always @(posedge i_ui_clk) aresetn <= ~ui_rst;
+
+
+  // The controller's port is 256 bits, with narrow bursts on (issue
+  // 1696). The thirty-two bit side's beats stay four-byte transfers:
+  // a write's word is repeated across the lanes and its strobe moved to
+  // the beat's lane, and a read beat is the word at its lane. The
+  // identifier gains a top bit, the side: 0 for the thirty-two bit
+  // side, which alone writes, and 1 for the wide read port.
+
+  // The thirty-two bit side is `AxiPerPins`, which drives what the link
+  // asks for: bursts of incrementing four-byte beats, a write's address
+  // offered with or before its data, and identifiers each of which is
+  // in flight once, as the trackers allocate them. The lanes below rest
+  // on those three. All of this state starts again with the controller's
+  // AXI reset.
+
+  // Writes. Each burst's first lane, in address order, for its beats;
+  // the beats of one burst follow its address phase, as AXI4 asks.
+  wire m_awready, m_wready;
+  wire [5:0] m_bid;
+  reg [2:0] wq [0:7];
+  reg [3:0] wq_head = 0, wq_tail = 0;
+  reg [2:0] wk = 0;
+  wire wq_full = (wq_tail - wq_head) == 4'd8;
+  wire wq_empty = wq_tail == wq_head;
+  wire m_awvalid = i_awvalid & ~wq_full;
+  assign o_awready = m_awready & ~wq_full;
+  wire m_wvalid = i_wvalid & ~wq_empty;
+  assign o_wready = m_wready & ~wq_empty;
+  wire [2:0] wlane = wq[wq_head[2:0]] + wk;
+  wire [31:0] m_wstrb = {28'd0, i_wstrb} << {wlane, 2'b00};
+  always @(posedge i_ui_clk) begin
+    if (!aresetn) begin
+      wq_head <= 4'd0;
+      wq_tail <= 4'd0;
+      wk <= 3'd0;
+    end else begin
+      if (m_awvalid & m_awready) begin
+        wq[wq_tail[2:0]] <= i_awaddr[4:2];
+        wq_tail <= wq_tail + 4'd1;
+      end
+      if (m_wvalid & m_wready) begin
+        if (i_wlast) begin
+          wq_head <= wq_head + 4'd1;
+          wk <= 3'd0;
+        end else
+          wk <= wk + 3'd1;
+      end
+    end
+  end
+  assign o_bid = m_bid[4:0];
+
+  // Read addresses: the two sides in turn, a grant held from the step
+  // an address is offered until it is taken, so what the controller
+  // sees offered does not change under it.
+  wire m_arready;
+  reg held = 0, held_x = 0, last_x = 0;
+  wire pick_x = held ? held_x
+              : (i_xarvalid & (~i_arvalid | ~last_x));
+  wire m_arvalid = pick_x ? i_xarvalid : i_arvalid;
+  wire [5:0] m_arid = pick_x ? {1'b1, i_xarid} : {1'b0, i_arid};
+  // A wide read starts at its address rounded down to 32 bytes.
+  wire [29:0] m_araddr = pick_x ? {i_xaraddr[29:5], 5'd0} : i_araddr[29:0];
+  wire [7:0] m_arlen = pick_x ? i_xarlen : i_arlen;
+  wire [2:0] m_arsize = pick_x ? 3'd5 : i_arsize;
+  wire [1:0] m_arburst = pick_x ? 2'b01 : i_arburst;
+  wire m_arlock = pick_x ? 1'b0 : i_arlock;
+  wire [3:0] m_arcache = pick_x ? 4'd0 : i_arcache;
+  wire [2:0] m_arprot = pick_x ? 3'd0 : i_arprot;
+  wire [3:0] m_arqos = pick_x ? 4'd0 : i_arqos;
+  assign o_arready = m_arready & ~pick_x;
+  assign o_xarready = m_arready & pick_x;
+  always @(posedge i_ui_clk) begin
+    if (!aresetn) begin
+      held <= 1'b0;
+      held_x <= 1'b0;
+      last_x <= 1'b0;
+    end else begin
+      held <= m_arvalid & ~m_arready;
+      held_x <= pick_x;
+      if (m_arvalid & m_arready) last_x <= pick_x;
+    end
+  end
+
+  // Read beats, back to the side their identifier names; a thirty-two
+  // bit beat is the word at its lane, which moves on a lane a beat from
+  // the one the burst's address named, kept per identifier.
+  wire [5:0] m_rid;
+  wire [255:0] m_rdata;
+  wire [1:0] m_rresp;
+  wire m_rlast, m_rvalid;
+  reg [2:0] rlane [0:31];
+  wire to_x = m_rid[5];
+  wire [2:0] lane = rlane[m_rid[4:0]];
+  wire m_rready = to_x ? i_xrready : i_rready;
+  assign o_rvalid = m_rvalid & ~to_x;
+  assign o_rid = m_rid[4:0];
+  assign o_rdata = m_rdata[{lane, 5'd0} +: 32];
+  assign o_rresp = m_rresp;
+  assign o_rlast = m_rlast;
+  assign o_xrvalid = m_rvalid & to_x;
+  assign o_xrid = m_rid[4:0];
+  assign o_xrdata = m_rdata;
+  assign o_xrresp = m_rresp;
+  assign o_xrlast = m_rlast;
+  always @(posedge i_ui_clk) begin
+    if (o_arready & i_arvalid)
+      rlane[i_arid] <= i_araddr[4:2];
+    if (o_rvalid & i_rready & (o_arready & i_arvalid ? i_arid != m_rid[4:0] : 1'b1))
+      rlane[m_rid[4:0]] <= lane + 3'd1;
+  end
 
   ddr3_mig_axi ctl (
     .ddr3_dq(io_ddr3_dq),
@@ -123,7 +249,7 @@ module ddr3_axi32 (
     .app_sr_active(),
     .app_ref_ack(),
     .app_zq_ack(),
-    .s_axi_awid(i_awid),
+    .s_axi_awid({1'b0, i_awid}),
     .s_axi_awaddr(i_awaddr[29:0]),
     .s_axi_awlen(i_awlen),
     .s_axi_awsize(i_awsize),
@@ -132,34 +258,34 @@ module ddr3_axi32 (
     .s_axi_awcache(i_awcache),
     .s_axi_awprot(i_awprot),
     .s_axi_awqos(i_awqos),
-    .s_axi_awvalid(i_awvalid),
-    .s_axi_awready(o_awready),
-    .s_axi_wdata(i_wdata),
-    .s_axi_wstrb(i_wstrb),
+    .s_axi_awvalid(m_awvalid),
+    .s_axi_awready(m_awready),
+    .s_axi_wdata({8{i_wdata}}),
+    .s_axi_wstrb(m_wstrb),
     .s_axi_wlast(i_wlast),
-    .s_axi_wvalid(i_wvalid),
-    .s_axi_wready(o_wready),
+    .s_axi_wvalid(m_wvalid),
+    .s_axi_wready(m_wready),
     .s_axi_bready(i_bready),
-    .s_axi_bid(o_bid),
+    .s_axi_bid(m_bid),
     .s_axi_bresp(o_bresp),
     .s_axi_bvalid(o_bvalid),
-    .s_axi_arid(i_arid),
-    .s_axi_araddr(i_araddr[29:0]),
-    .s_axi_arlen(i_arlen),
-    .s_axi_arsize(i_arsize),
-    .s_axi_arburst(i_arburst),
-    .s_axi_arlock(i_arlock),
-    .s_axi_arcache(i_arcache),
-    .s_axi_arprot(i_arprot),
-    .s_axi_arqos(i_arqos),
-    .s_axi_arvalid(i_arvalid),
-    .s_axi_arready(o_arready),
-    .s_axi_rready(i_rready),
-    .s_axi_rid(o_rid),
-    .s_axi_rdata(o_rdata),
-    .s_axi_rresp(o_rresp),
-    .s_axi_rlast(o_rlast),
-    .s_axi_rvalid(o_rvalid),
+    .s_axi_arid(m_arid),
+    .s_axi_araddr(m_araddr),
+    .s_axi_arlen(m_arlen),
+    .s_axi_arsize(m_arsize),
+    .s_axi_arburst(m_arburst),
+    .s_axi_arlock(m_arlock),
+    .s_axi_arcache(m_arcache),
+    .s_axi_arprot(m_arprot),
+    .s_axi_arqos(m_arqos),
+    .s_axi_arvalid(m_arvalid),
+    .s_axi_arready(m_arready),
+    .s_axi_rready(m_rready),
+    .s_axi_rid(m_rid),
+    .s_axi_rdata(m_rdata),
+    .s_axi_rresp(m_rresp),
+    .s_axi_rlast(m_rlast),
+    .s_axi_rvalid(m_rvalid),
     .init_calib_complete(calib),
     .device_temp_i(12'd0),
     .device_temp(),

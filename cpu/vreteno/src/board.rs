@@ -564,6 +564,12 @@ pub struct BoardIn {
     pub host_aw: Rx<Aw<32, 2>>,
     pub host_ar: Rx<Ar<32, 2>>,
     pub host_w: Rx<W<32, 4>>,
+    /// The wide read port into DDR3 (issue 1696): a design beside the
+    /// core reads memory 256 bits a beat, its address decoded as the
+    /// controller's port takes it, the top two bits dropped. Read only:
+    /// writes go through the host port, so the cores' snoop sees them. A
+    /// top with nothing there offers nothing and takes every answer.
+    pub wide_ar: Rx<Ar<32, 5>>,
 }
 
 /// The board's plain outputs on its own clock, bare (issue 1594).
@@ -668,6 +674,8 @@ pub struct BoardOut {
     /// The answers to the board top's host (issue 1634).
     pub host_b: Tx<B<2>>,
     pub host_r: Tx<R<32, 2>>,
+    /// The wide read port's answers (issue 1696).
+    pub wide_r: Tx<R<256, 5, 2>>,
 }
 // end{ports}
 
@@ -686,6 +694,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
             host_aw,
             host_ar,
             host_w,
+            wide_ar,
         }: BoardIn,
         BoardOut {
             sys_out,
@@ -702,6 +711,7 @@ impl<const DIV: u32> Unit for Board<DIV> {
             scan_words,
             host_b,
             host_r,
+            wide_r,
         }: BoardOut,
     ) {
         // Each group's lines under their own names, as the parts below
@@ -1877,7 +1887,8 @@ join2(
                                 ),
                             ),
                             self.ddr3.run(
-                                (rst_ddr3, aw3_rx, ar3_rx, w3_rx, b3_tx, r3_tx),
+                                (rst_ddr3, aw3_rx, ar3_rx, w3_rx, b3_tx, r3_tx, wide_ar,
+                                 wide_r),
                                 (
                                     sys_clk, sys_rst, calib, ui_clk, ui_rst,
                                     ck_p, ck_n, mem_rst_n, cke, cs_n, ras_n,

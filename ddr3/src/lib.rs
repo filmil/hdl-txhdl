@@ -25,12 +25,12 @@ pub mod sim;
 
 use txhdl::comp::trace::Kind;
 use txhdl::comp::{
-    join2, signal, Clock, DefaultClock, In, Out, Pad, Reg, Rx, Tx, Unit,
+    join2, mux, signal, Clock, DefaultClock, In, Out, Pad, Reg, Rx, Tx, Unit,
 };
 use txhdl::netlist::{foreign, Lower, Lowered};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, Trace};
-use txhdl_parts::bus::axi::{Ar, Aw, B, R, W};
+use txhdl::{lower, select, with, Trace};
+use txhdl_parts::bus::axi::{Ar, Aw, Resp, B, R, W};
 use txhdl_parts::bus::axi_per_pins::sim::{PinRam, PinRamIn, PinRamOut};
 use txhdl_parts::bus::axi_per_pins::{
     AxiPerDriven, AxiPerPins, AxiPerPinsIn, AxiPerPinsOut,
@@ -76,6 +76,11 @@ pub type CtlIn = (
     In<U<4>>,
     In<Bit>,
     In<Bit>,
+    In<U<5>>,
+    In<U<32>>,
+    In<U<8>>,
+    In<Bit>,
+    In<Bit>,
 );
 
 /// The controller's outputs: the AXI4 pins it drives, its readies and
@@ -92,6 +97,12 @@ pub type CtlOut = (
     Out<Bit>,
     Out<U<5>>,
     Out<U<32>>,
+    Out<U<2>>,
+    Out<Bit>,
+    Out<Bit>,
+    Out<Bit>,
+    Out<U<5>>,
+    Out<U<256, 2>>,
     Out<U<2>>,
     Out<Bit>,
     Out<Bit>,
@@ -170,6 +181,11 @@ impl Lower for Ddr3 {
                 ("i_arqos", Kind::In, 4),
                 ("i_arvalid", Kind::In, 1),
                 ("i_rready", Kind::In, 1),
+                ("i_xarid", Kind::In, 5),
+                ("i_xaraddr", Kind::In, 32),
+                ("i_xarlen", Kind::In, 8),
+                ("i_xarvalid", Kind::In, 1),
+                ("i_xrready", Kind::In, 1),
                 ("o_awready", Kind::Out, 1),
                 ("o_wready", Kind::Out, 1),
                 ("o_bid", Kind::Out, 5),
@@ -181,6 +197,12 @@ impl Lower for Ddr3 {
                 ("o_rresp", Kind::Out, 2),
                 ("o_rlast", Kind::Out, 1),
                 ("o_rvalid", Kind::Out, 1),
+                ("o_xarready", Kind::Out, 1),
+                ("o_xrid", Kind::Out, 5),
+                ("o_xrdata", Kind::Out, 256),
+                ("o_xrresp", Kind::Out, 2),
+                ("o_xrlast", Kind::Out, 1),
+                ("o_xrvalid", Kind::Out, 1),
                 ("o_calib_complete", Kind::Out, 1),
                 ("o_ui_clk", Kind::Out, 1),
                 ("o_ui_rst", Kind::Out, 1),
@@ -255,6 +277,11 @@ impl Unit<CtlIn, CtlOut> for Ddr3 {
             _arqos,
             arvalid,
             rready,
+            xarid,
+            xaraddr,
+            xarlen,
+            xarvalid,
+            xrready,
         ): CtlIn,
         (
             awready,
@@ -268,6 +295,12 @@ impl Unit<CtlIn, CtlOut> for Ddr3 {
             rresp,
             rlast,
             rvalid,
+            xarready,
+            xrid,
+            xrdata,
+            xrresp,
+            xrlast,
+            xrvalid,
             calib,
             ..,
         ): CtlOut,
@@ -318,9 +351,16 @@ impl Unit<CtlIn, CtlOut> for Ddr3 {
             MODEL_WRITE_LATENCY as u64,
             MODEL_WARMUP as u64,
         );
+        // The wide read port, on the same words (issue 1696).
+        let wide = sim::serve_wide_pins(
+            self.words.clone(),
+            (xarid, xaraddr, xarlen, xarvalid, xrready),
+            (xarready, xrid, xrdata, xrresp, xrlast, xrvalid),
+            MODEL_WARMUP as u64,
+        );
         let mut left = MODEL_WARMUP;
         let calibrated = &self.calibrated;
-        join2(mem.serve(), async move {
+        join2(join2(mem.serve(), wide), async move {
             loop {
                 DefaultClock::rising().await;
                 calib.set(calibrated.get());
@@ -332,6 +372,95 @@ impl Unit<CtlIn, CtlOut> for Ddr3 {
     }
 }
 
+// begin{wide}
+/// The wide read port's channels on the controller's wide pins (issue
+/// 1696): the address channel's head offered on the `AR` pins and taken
+/// when `ARREADY` was high, and each beat the controller offers put on
+/// the `R` channel when the channel has room, which is `RREADY`. It is
+/// read only, so there is no write side.
+///
+/// Under the design's reset and after it, while beats are still owed, it
+/// offers no new address and takes and drops the beats, as `AxiPerPins`
+/// does, since the controller runs through a reset of the design: a read
+/// asked before the reset is not answered after it.
+#[derive(Trace, Default)]
+pub struct WidePins {
+    /// Beats asked for that have not come.
+    pub owe: Reg<U<14>>,
+    /// Draining after a reset.
+    pub drain: Reg<Bit>,
+}
+
+#[lower]
+impl Unit for WidePins {
+    async fn run(
+        &mut self,
+        (rst, ar, arready, rid, rdata, rresp, rlast, rvalid): (
+            In<Bit>,
+            Rx<Ar<32, 5>>,
+            In<Bit>,
+            In<U<5>>,
+            In<U<256, 2>>,
+            In<U<2>>,
+            In<Bit>,
+            In<Bit>,
+        ),
+        (r, arid, araddr, arlen, arvalid, rready): (
+            Tx<R<256, 5, 2>>,
+            Out<U<5>>,
+            Out<U<32>>,
+            Out<U<8>>,
+            Out<Bit>,
+            Out<Bit>,
+        ),
+    ) {
+        loop {
+            DefaultClock::rising().await;
+            let owe = self.owe.get();
+            let drain = self.drain.get() | rst.get();
+            let h = ar.head();
+            let offer = Bit::from(ar.peek().is_some()) & !drain;
+            arvalid.set(offer);
+            arid.set(h.id);
+            araddr.set(h.addr);
+            arlen.set(h.len);
+            let ar_go = offer & arready.get();
+            let _ = ar.recv_if(ar_go);
+            let room = r.ready();
+            // Draining, every beat is taken and dropped.
+            let take = drain | room;
+            rready.set(take);
+            let resp_pin = rresp.get();
+            let resp = select!(resp_pin.raw() => {
+                0 => Resp::Okay,
+                1 => Resp::ExOkay,
+                2 => Resp::SlvErr,
+                _ => Resp::DecErr,
+            });
+            if (rvalid.get() & room & !drain).to_bool() {
+                r.send(R {
+                    id: rid.get(),
+                    data: rdata.get(),
+                    resp,
+                    last: rlast.get(),
+                });
+            }
+            // A beat counts only while one is owed, as in `AxiPerPins`, so
+            // the pins before the controller is ready are masked.
+            let zero = U::<14>::from(0u16);
+            let r_go = rvalid.get() & take & Bit::from(owe != zero);
+            let asked = h.len.zext::<14>() + U::<14>::from(1u16);
+            let next = mux(ar_go, owe + asked, owe);
+            let next = mux(r_go, next - U::<14>::from(1u16), next);
+            with!(self <= {
+                owe: next,
+                drain: rst.get() | (self.drain.get() & Bit::from(next != zero)),
+            });
+        }
+    }
+}
+// end{wide}
+
 // begin{per}
 /// The memory as a peripheral: the link's peripheral end on the
 /// controller's pins.
@@ -339,19 +468,23 @@ impl Unit<CtlIn, CtlOut> for Ddr3 {
 pub struct Ddr3Per {
     pub pins: AxiPerPins<32, 32, 4, 5>,
     pub ctl: Ddr3,
+    /// The wide read port's channels on the controller's wide pins.
+    pub wide: WidePins,
 }
 
 #[lower]
 impl Unit for Ddr3Per {
     async fn run(
         &mut self,
-        (rst, aw, ar, w, b, r): (
+        (rst, aw, ar, w, b, r, xar, xr): (
             In<Bit>,
             Rx<Aw<32, 5>>,
             Rx<Ar<32, 5>>,
             Rx<W<32, 4>>,
             Tx<B<5>>,
             Tx<R<32, 5>>,
+            Rx<Ar<32, 5>>,
+            Tx<R<256, 5, 2>>,
         ),
         (
             sys_clk,
@@ -436,74 +569,101 @@ impl Unit for Ddr3Per {
         let (rresp_o, rresp_i) = signal::<U<2>, DefaultClock>();
         let (rlast_o, rlast_i) = signal::<Bit, DefaultClock>();
         let (rvalid_o, rvalid_i) = signal::<Bit, DefaultClock>();
+        // The reset, read by both pins parts.
+        let rst_wide = rst.clone();
+        // The wide read port's pins, each way (issue 1696).
+        let (xarid_o, xarid_i) = signal::<U<5>, DefaultClock>();
+        let (xaraddr_o, xaraddr_i) = signal::<U<32>, DefaultClock>();
+        let (xarlen_o, xarlen_i) = signal::<U<8>, DefaultClock>();
+        let (xarvalid_o, xarvalid_i) = signal::<Bit, DefaultClock>();
+        let (xrready_o, xrready_i) = signal::<Bit, DefaultClock>();
+        let (xarready_o, xarready_i) = signal::<Bit, DefaultClock>();
+        let (xrid_o, xrid_i) = signal::<U<5>, DefaultClock>();
+        let (xrdata_o, xrdata_i) = signal::<U<256, 2>, DefaultClock>();
+        let (xrresp_o, xrresp_i) = signal::<U<2>, DefaultClock>();
+        let (xrlast_o, xrlast_i) = signal::<Bit, DefaultClock>();
+        let (xrvalid_o, xrvalid_i) = signal::<Bit, DefaultClock>();
         // The controller first: in simulation it is the model, whose
         // pins the unit reads in the same step.
         join2(
-            self.ctl.run(
-                (
-                    sys_clk, sys_rst, awid_i, awaddr_i, awlen_i, awsize_i,
-                    awburst_i, awlock_i, awcache_i, awprot_i, awqos_i,
-                    awvalid_i, wdata_i, wstrb_i, wlast_i, wvalid_i, bready_i,
-                    arid_i, araddr_i, arlen_i, arsize_i, arburst_i, arlock_i,
-                    arcache_i, arprot_i, arqos_i, arvalid_i, rready_i,
+            join2(
+                self.ctl.run(
+                    (
+                        sys_clk, sys_rst, awid_i, awaddr_i, awlen_i, awsize_i,
+                        awburst_i, awlock_i, awcache_i, awprot_i, awqos_i,
+                        awvalid_i, wdata_i, wstrb_i, wlast_i, wvalid_i,
+                        bready_i, arid_i, araddr_i, arlen_i, arsize_i,
+                        arburst_i, arlock_i, arcache_i, arprot_i, arqos_i,
+                        arvalid_i, rready_i, xarid_i, xaraddr_i, xarlen_i,
+                        xarvalid_i, xrready_i,
+                    ),
+                    (
+                        awready_o, wready_o, bid_o, bresp_o, bvalid_o,
+                        arready_o, rid_o, rdata_o, rresp_o, rlast_o, rvalid_o,
+                        xarready_o, xrid_o, xrdata_o, xrresp_o, xrlast_o,
+                        xrvalid_o, calib, ui_clk, ui_rst, ck_p, ck_n,
+                        mem_rst_n, cke, cs_n, ras_n, cas_n, we_n, row, bank,
+                        dm, odt, dq, dqs, dqs_n,
+                    ),
                 ),
-                (
-                    awready_o, wready_o, bid_o, bresp_o, bvalid_o, arready_o,
-                    rid_o, rdata_o, rresp_o, rlast_o, rvalid_o, calib, ui_clk,
-                    ui_rst, ck_p, ck_n, mem_rst_n, cke, cs_n, ras_n, cas_n,
-                    we_n, row, bank, dm, odt, dq, dqs, dqs_n,
+                self.pins.run(
+                    AxiPerPinsIn {
+                        rst,
+                        pins: AxiPerDriven {
+                            awready: awready_i,
+                            wready: wready_i,
+                            bid: bid_i,
+                            bresp: bresp_i,
+                            bvalid: bvalid_i,
+                            arready: arready_i,
+                            rid: rid_i,
+                            rdata: rdata_i,
+                            rresp: rresp_i,
+                            rlast: rlast_i,
+                            rvalid: rvalid_i,
+                        },
+                        aw,
+                        ar,
+                        w,
+                    },
+                    AxiPerPinsOut {
+                        b,
+                        r,
+                        awid: awid_o,
+                        awaddr: awaddr_o,
+                        awlen: awlen_o,
+                        awsize: awsize_o,
+                        awburst: awburst_o,
+                        awlock: awlock_o,
+                        awcache: awcache_o,
+                        awprot: awprot_o,
+                        awqos: awqos_o,
+                        awvalid: awvalid_o,
+                        wdata: wdata_o,
+                        wstrb: wstrb_o,
+                        wlast: wlast_o,
+                        wvalid: wvalid_o,
+                        bready: bready_o,
+                        arid: arid_o,
+                        araddr: araddr_o,
+                        arlen: arlen_o,
+                        arsize: arsize_o,
+                        arburst: arburst_o,
+                        arlock: arlock_o,
+                        arcache: arcache_o,
+                        arprot: arprot_o,
+                        arqos: arqos_o,
+                        arvalid: arvalid_o,
+                        rready: rready_o,
+                    },
                 ),
             ),
-            self.pins.run(
-                AxiPerPinsIn {
-                    rst,
-                    pins: AxiPerDriven {
-                        awready: awready_i,
-                        wready: wready_i,
-                        bid: bid_i,
-                        bresp: bresp_i,
-                        bvalid: bvalid_i,
-                        arready: arready_i,
-                        rid: rid_i,
-                        rdata: rdata_i,
-                        rresp: rresp_i,
-                        rlast: rlast_i,
-                        rvalid: rvalid_i,
-                    },
-                    aw,
-                    ar,
-                    w,
-                },
-                AxiPerPinsOut {
-                    b,
-                    r,
-                    awid: awid_o,
-                    awaddr: awaddr_o,
-                    awlen: awlen_o,
-                    awsize: awsize_o,
-                    awburst: awburst_o,
-                    awlock: awlock_o,
-                    awcache: awcache_o,
-                    awprot: awprot_o,
-                    awqos: awqos_o,
-                    awvalid: awvalid_o,
-                    wdata: wdata_o,
-                    wstrb: wstrb_o,
-                    wlast: wlast_o,
-                    wvalid: wvalid_o,
-                    bready: bready_o,
-                    arid: arid_o,
-                    araddr: araddr_o,
-                    arlen: arlen_o,
-                    arsize: arsize_o,
-                    arburst: arburst_o,
-                    arlock: arlock_o,
-                    arcache: arcache_o,
-                    arprot: arprot_o,
-                    arqos: arqos_o,
-                    arvalid: arvalid_o,
-                    rready: rready_o,
-                },
+            self.wide.run(
+                (
+                    rst_wide, xar, xarready_i, xrid_i, xrdata_i, xrresp_i,
+                    xrlast_i, xrvalid_i,
+                ),
+                (xr, xarid_o, xaraddr_o, xarlen_o, xarvalid_o, xrready_o),
             ),
         )
         .await;
@@ -566,7 +726,16 @@ mod tests {
             h.run(host_in, host_out),
             join2(
                 mem.run(
-                    (signal::<Bit, DefaultClock>().1, aw, ar, w, b, r),
+                    (
+                        signal::<Bit, DefaultClock>().1,
+                        aw,
+                        ar,
+                        w,
+                        b,
+                        r,
+                        chan::<Ar<32, 5>, DefaultClock>().1,
+                        chan::<R<256, 5, 2>, DefaultClock>().0,
+                    ),
                     (
                         sys_clk,
                         sys_rst,
@@ -657,7 +826,16 @@ mod tests {
             h.run(host_in, host_out),
             join2(
                 mem.run(
-                    (signal::<Bit, DefaultClock>().1, aw, ar, w, b, r),
+                    (
+                        signal::<Bit, DefaultClock>().1,
+                        aw,
+                        ar,
+                        w,
+                        b,
+                        r,
+                        chan::<Ar<32, 5>, DefaultClock>().1,
+                        chan::<R<256, 5, 2>, DefaultClock>().0,
+                    ),
                     (
                         signal::<Bit, DefaultClock>().1,
                         signal::<Bit, DefaultClock>().1,

@@ -39,7 +39,7 @@ use txhdl::{lower, select, with, Ports, Trace};
 ///
 /// [`AxiHostPins`]: super::axi_pins::AxiHostPins
 #[derive(Ports)]
-pub struct AxiPerDriven<const D: usize, const I: usize> {
+pub struct AxiPerDriven<const D: usize, const I: usize, const L: usize = 1> {
     /// The peripheral takes a write address phase.
     pub awready: In<Bit>,
     /// The peripheral takes a write beat.
@@ -55,7 +55,7 @@ pub struct AxiPerDriven<const D: usize, const I: usize> {
     /// The burst a read beat belongs to.
     pub rid: In<U<I>>,
     /// The word read.
-    pub rdata: In<U<D>>,
+    pub rdata: In<U<D, L>>,
     /// How the beat went, as AXI4 encodes it.
     pub rresp: In<U<2>>,
     /// The last beat of the burst.
@@ -71,18 +71,19 @@ pub struct AxiPerPinsIn<
     const D: usize,
     const S: usize,
     const I: usize,
+    const L: usize = 1,
 > {
     /// The design's reset, which the peripheral does not share: the
     /// unit answers it itself (issue 1532).
     pub rst: In<Bit>,
     /// The peripheral's pins.
-    pub pins: AxiPerDriven<D, I>,
+    pub pins: AxiPerDriven<D, I, L>,
     /// The write address phases, from the link.
     pub aw: Rx<Aw<A, I>>,
     /// The read address phases, from the link.
     pub ar: Rx<Ar<A, I>>,
     /// The write beats, from the link.
-    pub w: Rx<W<D, S>>,
+    pub w: Rx<W<D, S, L>>,
 }
 
 /// The answers to the link, and what the peripheral is driven with:
@@ -92,11 +93,12 @@ pub struct AxiPerPinsOut<
     const D: usize,
     const S: usize,
     const I: usize,
+    const L: usize = 1,
 > {
     /// The write responses, to the link.
     pub b: Tx<B<I>>,
     /// The read beats, to the link.
-    pub r: Tx<R<D, I>>,
+    pub r: Tx<R<D, I, L>>,
     /// `AWID`.
     pub awid: Out<U<I>>,
     /// `AWADDR`.
@@ -118,7 +120,7 @@ pub struct AxiPerPinsOut<
     /// A write address phase offered.
     pub awvalid: Out<Bit>,
     /// `WDATA`.
-    pub wdata: Out<U<D>>,
+    pub wdata: Out<U<D, L>>,
     /// `WSTRB`.
     pub wstrb: Out<U<S>>,
     /// `WLAST`.
@@ -178,6 +180,7 @@ pub struct AxiPerPins<
     const D: usize,
     const S: usize,
     const I: usize,
+    const L: usize = 1,
 > {
     /// A write is being given: offered, and its address or a beat not
     /// yet taken.
@@ -217,8 +220,13 @@ pub struct AxiPerPins<
 
 // begin{unit}
 #[lower]
-impl<const A: usize, const D: usize, const S: usize, const I: usize> Unit
-    for AxiPerPins<A, D, S, I>
+impl<
+        const A: usize,
+        const D: usize,
+        const S: usize,
+        const I: usize,
+        const L: usize,
+    > Unit for AxiPerPins<A, D, S, I, L>
 {
     async fn run(
         &mut self,
@@ -228,8 +236,8 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize> Unit
             aw,
             ar,
             w,
-        }: AxiPerPinsIn<A, D, S, I>,
-        outp: AxiPerPinsOut<A, D, S, I>,
+        }: AxiPerPinsIn<A, D, S, I, L>,
+        outp: AxiPerPinsOut<A, D, S, I, L>,
     ) {
         loop {
             DefaultClock::rising().await;
