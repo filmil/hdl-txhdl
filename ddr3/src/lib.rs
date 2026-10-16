@@ -25,11 +25,11 @@ pub mod sim;
 
 use txhdl::comp::trace::Kind;
 use txhdl::comp::{
-    join2, signal, Clock, DefaultClock, In, Out, Pad, Reg, Rx, Tx, Unit,
+    join2, mux, signal, Clock, DefaultClock, In, Out, Pad, Reg, Rx, Tx, Unit,
 };
 use txhdl::netlist::{foreign, Lower, Lowered};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, select, Trace};
+use txhdl::{lower, select, with, Trace};
 use txhdl_parts::bus::axi::{Ar, Aw, Resp, B, R, W};
 use txhdl_parts::bus::axi_per_pins::sim::{PinRam, PinRamIn, PinRamOut};
 use txhdl_parts::bus::axi_per_pins::{
@@ -378,14 +378,25 @@ impl Unit<CtlIn, CtlOut> for Ddr3 {
 /// when `ARREADY` was high, and each beat the controller offers put on
 /// the `R` channel when the channel has room, which is `RREADY`. It is
 /// read only, so there is no write side.
+///
+/// Under the design's reset and after it, while beats are still owed, it
+/// offers no new address and takes and drops the beats, as `AxiPerPins`
+/// does, since the controller runs through a reset of the design: a read
+/// asked before the reset is not answered after it.
 #[derive(Trace, Default)]
-pub struct WidePins {}
+pub struct WidePins {
+    /// Beats asked for that have not come.
+    pub owe: Reg<U<14>>,
+    /// Draining after a reset.
+    pub drain: Reg<Bit>,
+}
 
 #[lower]
 impl Unit for WidePins {
     async fn run(
         &mut self,
-        (ar, arready, rid, rdata, rresp, rlast, rvalid): (
+        (rst, ar, arready, rid, rdata, rresp, rlast, rvalid): (
+            In<Bit>,
             Rx<Ar<32, 5>>,
             In<Bit>,
             In<U<5>>,
@@ -405,15 +416,20 @@ impl Unit for WidePins {
     ) {
         loop {
             DefaultClock::rising().await;
+            let owe = self.owe.get();
+            let drain = self.drain.get() | rst.get();
             let h = ar.head();
-            let offer = Bit::from(ar.peek().is_some());
+            let offer = Bit::from(ar.peek().is_some()) & !drain;
             arvalid.set(offer);
             arid.set(h.id);
             araddr.set(h.addr);
             arlen.set(h.len);
-            let _ = ar.recv_if(offer & arready.get());
+            let ar_go = offer & arready.get();
+            let _ = ar.recv_if(ar_go);
             let room = r.ready();
-            rready.set(room);
+            // Draining, every beat is taken and dropped.
+            let take = drain | room;
+            rready.set(take);
             let resp_pin = rresp.get();
             let resp = select!(resp_pin.raw() => {
                 0 => Resp::Okay,
@@ -421,7 +437,7 @@ impl Unit for WidePins {
                 2 => Resp::SlvErr,
                 _ => Resp::DecErr,
             });
-            if (rvalid.get() & room).to_bool() {
+            if (rvalid.get() & room & !drain).to_bool() {
                 r.send(R {
                     id: rid.get(),
                     data: rdata.get(),
@@ -429,6 +445,17 @@ impl Unit for WidePins {
                     last: rlast.get(),
                 });
             }
+            // A beat counts only while one is owed, as in `AxiPerPins`, so
+            // the pins before the controller is ready are masked.
+            let zero = U::<14>::from(0u16);
+            let r_go = rvalid.get() & take & Bit::from(owe != zero);
+            let asked = h.len.zext::<14>() + U::<14>::from(1u16);
+            let next = mux(ar_go, owe + asked, owe);
+            let next = mux(r_go, next - U::<14>::from(1u16), next);
+            with!(self <= {
+                owe: next,
+                drain: rst.get() | (self.drain.get() & Bit::from(next != zero)),
+            });
         }
     }
 }
@@ -542,6 +569,8 @@ impl Unit for Ddr3Per {
         let (rresp_o, rresp_i) = signal::<U<2>, DefaultClock>();
         let (rlast_o, rlast_i) = signal::<Bit, DefaultClock>();
         let (rvalid_o, rvalid_i) = signal::<Bit, DefaultClock>();
+        // The reset, read by both pins parts.
+        let rst_wide = rst.clone();
         // The wide read port's pins, each way (issue 1696).
         let (xarid_o, xarid_i) = signal::<U<5>, DefaultClock>();
         let (xaraddr_o, xaraddr_i) = signal::<U<32>, DefaultClock>();
@@ -631,8 +660,8 @@ impl Unit for Ddr3Per {
             ),
             self.wide.run(
                 (
-                    xar, xarready_i, xrid_i, xrdata_i, xrresp_i, xrlast_i,
-                    xrvalid_i,
+                    rst_wide, xar, xarready_i, xrid_i, xrdata_i, xrresp_i,
+                    xrlast_i, xrvalid_i,
                 ),
                 (xr, xarid_o, xaraddr_o, xarlen_o, xarvalid_o, xrready_o),
             ),

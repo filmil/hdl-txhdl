@@ -119,6 +119,13 @@ module ddr3_axi32 (
   // identifier gains a top bit, the side: 0 for the thirty-two bit
   // side, which alone writes, and 1 for the wide read port.
 
+  // The thirty-two bit side is `AxiPerPins`, which drives what the link
+  // asks for: bursts of incrementing four-byte beats, a write's address
+  // offered with or before its data, and identifiers each of which is
+  // in flight once, as the trackers allocate them. The lanes below rest
+  // on those three. All of this state starts again with the controller's
+  // AXI reset.
+
   // Writes. Each burst's first lane, in address order, for its beats;
   // the beats of one burst follow its address phase, as AXI4 asks.
   wire m_awready, m_wready;
@@ -135,16 +142,22 @@ module ddr3_axi32 (
   wire [2:0] wlane = wq[wq_head[2:0]] + wk;
   wire [31:0] m_wstrb = {28'd0, i_wstrb} << {wlane, 2'b00};
   always @(posedge i_ui_clk) begin
-    if (m_awvalid & m_awready) begin
-      wq[wq_tail[2:0]] <= i_awaddr[4:2];
-      wq_tail <= wq_tail + 4'd1;
-    end
-    if (m_wvalid & m_wready) begin
-      if (i_wlast) begin
-        wq_head <= wq_head + 4'd1;
-        wk <= 3'd0;
-      end else
-        wk <= wk + 3'd1;
+    if (!aresetn) begin
+      wq_head <= 4'd0;
+      wq_tail <= 4'd0;
+      wk <= 3'd0;
+    end else begin
+      if (m_awvalid & m_awready) begin
+        wq[wq_tail[2:0]] <= i_awaddr[4:2];
+        wq_tail <= wq_tail + 4'd1;
+      end
+      if (m_wvalid & m_wready) begin
+        if (i_wlast) begin
+          wq_head <= wq_head + 4'd1;
+          wk <= 3'd0;
+        end else
+          wk <= wk + 3'd1;
+      end
     end
   end
   assign o_bid = m_bid[4:0];
@@ -158,7 +171,8 @@ module ddr3_axi32 (
               : (i_xarvalid & (~i_arvalid | ~last_x));
   wire m_arvalid = pick_x ? i_xarvalid : i_arvalid;
   wire [5:0] m_arid = pick_x ? {1'b1, i_xarid} : {1'b0, i_arid};
-  wire [29:0] m_araddr = pick_x ? i_xaraddr[29:0] : i_araddr[29:0];
+  // A wide read starts at its address rounded down to 32 bytes.
+  wire [29:0] m_araddr = pick_x ? {i_xaraddr[29:5], 5'd0} : i_araddr[29:0];
   wire [7:0] m_arlen = pick_x ? i_xarlen : i_arlen;
   wire [2:0] m_arsize = pick_x ? 3'd5 : i_arsize;
   wire [1:0] m_arburst = pick_x ? 2'b01 : i_arburst;
@@ -169,9 +183,15 @@ module ddr3_axi32 (
   assign o_arready = m_arready & ~pick_x;
   assign o_xarready = m_arready & pick_x;
   always @(posedge i_ui_clk) begin
-    held <= m_arvalid & ~m_arready;
-    held_x <= pick_x;
-    if (m_arvalid & m_arready) last_x <= pick_x;
+    if (!aresetn) begin
+      held <= 1'b0;
+      held_x <= 1'b0;
+      last_x <= 1'b0;
+    end else begin
+      held <= m_arvalid & ~m_arready;
+      held_x <= pick_x;
+      if (m_arvalid & m_arready) last_x <= pick_x;
+    end
   end
 
   // Read beats, back to the side their identifier names; a thirty-two
