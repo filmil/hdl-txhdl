@@ -304,10 +304,11 @@ pub struct Timing {
     pub div: u64,
     pub load_use: u64,
     /// The instruction cache (issue 1561): the core's, direct-mapped,
-    /// 1024 lines of 16 bytes; a line it does not hold costs the first,
-    /// and running on into the next line it holds the second. None
-    /// models no cache, as `taken` alone did.
-    pub icache: Option<(u64, u64)>,
+    /// 1024 lines of 16 bytes. A line it does not hold costs the first
+    /// when a jump or a branch went to it and the second when the line
+    /// before ran on into it (#1679), and running on into a line it holds
+    /// costs the third. None models no cache, as `taken` alone did.
+    pub icache: Option<(u64, u64, u64)>,
     /// A translation the TLB does not hold: the page walk's two reads of
     /// the DDR3 (issue 1561).
     pub walk: u64,
@@ -373,9 +374,20 @@ impl Timing {
     /// `sc.w` 56.1, `amoadd.w` 56.4, a `fence` 2.2 alone and 13.8 more after a
     /// store, a multiply 3.4 and a division 35.4. From `board_test`'s
     /// `core_costs_for_the_machine`, which the board has not measured: a
-    /// load's word used at once 1 more, an instruction-cache line not
-    /// held 54.5 more than one held and running on into the next line 3.
-    /// A page walk is two loads that miss.
+    /// load's word used at once 1 more. From `costs.rs`'s instruction-cache
+    /// blocks on the board (#1679, flagships 6238e0c8 and 63ba1e5f), in
+    /// cycles a line of four instructions: a line not held that a jump went
+    /// to 83.95 more than one held, one the line before ran on into 42.1
+    /// more (41.6 after a `jal` to the next line), running on into a line
+    /// held 3 more than four steps (straight lines 7.0). A line the line
+    /// before ran on into is charged its miss in place of the running on,
+    /// so its figure is 42 and 3. A taken jump or branch stays the 4 of
+    /// `cpi.rs`'s loop: the blocks' loop says 6, 10.0 a line, but with 6
+    /// the teapot's list on the model is 5.7% over the board's, and with 4
+    /// it is 0.6% under (main 146138b8: 38.57M against 38.82M, where it
+    /// was 33.43M before these figures). A `jal` to the next instruction,
+    /// which the board charges as a jump, the model sees as running on. A
+    /// page walk is two loads that miss.
     pub fn board_cached() -> Self {
         let mut t = Timing {
             hit: Some(2),
@@ -383,7 +395,7 @@ impl Timing {
             mul: 2,
             div: 34,
             load_use: 1,
-            icache: Some((54, 0)),
+            icache: Some((84, 45, 3)),
             walk: 86,
             fence: 14,
             fence_alone: 1,
@@ -1209,7 +1221,7 @@ impl Model {
             c += t.taken;
         }
         // The instruction cache, by the instruction's line (issue 1561).
-        if let Some((miss, step)) = t.icache {
+        if let Some((jumped, ran_on, step)) = t.icache {
             let line = pc >> 4;
             if line != self.last_line {
                 if self.ic.len() != 1024 {
@@ -1217,7 +1229,7 @@ impl Model {
                 }
                 let slot = (line & 1023) as usize;
                 if self.ic[slot] != line + 1 {
-                    c += miss;
+                    c += if self.fell { ran_on } else { jumped };
                     self.ic[slot] = line + 1;
                 } else if self.fell {
                     c += step;
@@ -1916,5 +1928,43 @@ mod tests {
         assert_eq!(m.csr.mcause, CAUSE_STORE_MISALIGNED, "sh at 0x1003");
         // And the store that trapped wrote nothing.
         assert_eq!(m.mem[0], 0, "a trapping store leaves the word alone");
+    }
+
+    /// A line of the instruction cache costs by how it was reached (#1679),
+    /// against no cache: cold, the first line and a line a `jal` went to
+    /// each cost a jumped-to miss, and the line the second ran on into a
+    /// ran-on miss; warm, only the line run on into costs, its running on.
+    #[test]
+    fn a_line_costs_by_how_it_was_reached() {
+        use crate::isa::jal;
+        let mut imem = vec![addi(1, 1, 1), addi(1, 1, 1), addi(1, 1, 1)];
+        imem.push(jal(0, 52)); // 12: to 64, line 4
+        imem.resize(16, halt());
+        imem.extend([addi(1, 1, 1); 5]); // 64 to 80: lines 4 and 5
+        imem.push(halt());
+        let run = |icache: Option<(u64, u64, u64)>| {
+            let timing = Timing {
+                icache,
+                ..Timing::board()
+            };
+            let mut m = Model {
+                timing: Some(timing),
+                ..Model::default()
+            };
+            let mut cycles = vec![];
+            for _ in 0..2 {
+                // Back to the start, as a jump goes there.
+                (m.pc, m.halted, m.fell) = (0, None, false);
+                let before = m.cycles;
+                while m.halted.is_none() {
+                    m.step(&imem, None);
+                }
+                cycles.push(m.cycles - before);
+            }
+            cycles
+        };
+        let (with, without) = (run(Some((84, 45, 3))), run(None));
+        assert_eq!(with[0] - without[0], 84 + 84 + 45, "cold");
+        assert_eq!(with[1] - without[1], 3, "warm");
     }
 }
