@@ -1411,6 +1411,8 @@ mod tests {
     /// Texturing in tiles (issue 997): textured triangles in perspective,
     /// flat and shaded, under every class of texel, every environment,
     /// `GL_COMBINE` among them under random settings (#1512),
+    /// a second unit on a texture of its own in a third of the rounds
+    /// (#1510),
     /// both magnification filters and all six minification filters over
     /// a texture of six levels, repeated and clamped, magnified and
     /// minified, among entries that are not textured, under a depth test
@@ -1434,6 +1436,9 @@ mod tests {
         // framebuffer and the list.
         const DESC: u32 = 0x8000;
         const BASE: u32 = 0x8040;
+        // The second unit's (#1510).
+        const DESC1: u32 = 0x9000;
+        const BASE1: u32 = 0x9040;
         let texel = |l: u32, i: u32, j: u32| {
             ((0x80 + 4 * (i + j) + 16 * l) << 24)
                 | ((i * 8 + l * 40) << 16)
@@ -1473,6 +1478,38 @@ mod tests {
                     }
                 }
             }
+            // A second unit in a third of the rounds (#1510), on a texture
+            // of its own, eight by eight with four levels, under its own
+            // filters, class and environment.
+            let two = round % 3 == 0;
+            let d1 = Desc {
+                base: BASE1,
+                log_w: 3,
+                log_h: 3,
+                levels: 4,
+                clamp_s: round % 2 == 0,
+                clamp_t: false,
+                min: (round / 3) % 6,
+                mag: (round / 3 + 1) % 2,
+                class: (round / 3 + 2) % 5,
+            };
+            if two {
+                more.extend(
+                    encode(&d1)
+                        .iter()
+                        .enumerate()
+                        .map(|(k, w)| (DESC1 as usize + 4 * k, *w)),
+                );
+                for l in 0..d1.levels {
+                    for j in 0..side(d1.log_h, l) {
+                        for i in 0..side(d1.log_w, l) {
+                            let at =
+                                level_base(&d1, l) + texel_offset(&d1, l, i, j);
+                            more.push((at as usize, !texel(l + 1, j, i)));
+                        }
+                    }
+                }
+            }
             // Texel coordinates across a range that magnifies in some
             // rounds and minifies in others.
             let span = [96.0, 384.0, 1536.0][round as usize % 3];
@@ -1494,6 +1531,18 @@ mod tests {
                     combine: next() & 0x7fff_ffff,
                 })),
             ];
+            if two {
+                ops.push(Op::Texture1(Some(TexMode {
+                    desc: DESC1,
+                    env: if round % 2 == 0 {
+                        razboj_tile::tex::COMBINE
+                    } else {
+                        (round / 3) % 6
+                    },
+                    env_colour: next(),
+                    combine: next() & 0x7fff_ffff,
+                })));
+            }
             let fogged = round % 4 == 3;
             if fogged {
                 ops.push(Op::Fog(Some(Fog {
@@ -1538,7 +1587,7 @@ mod tests {
                     shaded: k % 2 == 1,
                     z: [r & 0xffff, s & 0xffff, (r ^ s) >> 16],
                     uvq,
-                    uvq1: None,
+                    uvq1: two.then(|| uvq.map(|(u, v, q)| (v / 2, u, q))),
                 });
             }
             ops.push(Op::Rect {
@@ -1594,6 +1643,7 @@ mod tests {
     /// pixel misses and refills a line. A refill is one burst of sixteen beats.
     /// And once with three texels a pixel under `LINEAR_MIPMAP_LINEAR`, which
     /// reads eight texels, four from each of two levels.
+    /// And once with two units, each on a cached texel (#1510).
     #[test]
     fn what_a_textured_pixel_costs() {
         use crate::op::{Op, TexMode};
@@ -1627,7 +1677,7 @@ mod tests {
         };
         // A square of two triangles with `u` growing by `step` texels a
         // pixel across, and `q` one throughout.
-        let square = |textured: bool, step: i64, d: &Desc| {
+        let square = |textured: bool, two: bool, step: i64, d: &Desc| {
             let q = 1u64 << 48;
             let u = |x: i64| (x * step) << 32;
             let s = 64 * 16;
@@ -1636,6 +1686,13 @@ mod tests {
                 Op::Texture(textured.then_some(TexMode {
                     desc: DESC,
                     env: 0,
+                    env_colour: 0,
+                    combine: 0,
+                })),
+                // A second unit on the same texture (#1510).
+                Op::Texture1(two.then_some(TexMode {
+                    desc: DESC,
+                    env: 1,
                     env_colour: 0,
                     combine: 0,
                 })),
@@ -1652,7 +1709,7 @@ mod tests {
                     shaded: false,
                     z: [0; 3],
                     uvq: [at(a), at(b), at(c)],
-                    uvq1: None,
+                    uvq1: two.then_some([at(a), at(b), at(c)]),
                 });
             }
             let list = assemble(&ops, W, H);
@@ -1661,9 +1718,9 @@ mod tests {
                 ..Work::tiled(&list, W, H)
             }
         };
-        let cost = |step: i64, d: &Desc| {
+        let costs = |two: bool, step: i64, d: &Desc| {
             let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
-                &[square(false, step, d), square(true, step, d)],
+                &[square(false, false, step, d), square(true, two, step, d)],
                 false,
                 false,
             );
@@ -1672,6 +1729,7 @@ mod tests {
             let beats = runs[1].reads.1 - 2 * runs[0].reads.1;
             (cycles as f64 / px as f64, beats as f64 / px as f64)
         };
+        let cost = |step: i64, d: &Desc| costs(false, step, d);
         let (hit, hit_beats) = cost(0, &d);
         let (miss, miss_beats) = cost(16, &d);
         // Three texels a pixel under `LINEAR_MIPMAP_LINEAR`: levels one
@@ -1683,10 +1741,18 @@ mod tests {
             ..d
         };
         let (eight, _) = cost(3, &tri);
+        // Two units, each on a cached texel (#1510): the first unit's turns,
+        // the second's, and a turn after each for the trading.
+        let (two, _) = costs(true, 0, &d);
         println!(
             "a textured pixel: {hit:.1} cycles on a hit, {miss:.1} on a \
              miss, whose refill is {miss_beats:.1} beats ({hit_beats:.3} \
-             a pixel on hits); {eight:.1} reading eight texels"
+             a pixel on hits); {eight:.1} reading eight texels; {two:.1} on \
+             two units"
+        );
+        assert!(
+            two > 2.0 * hit && two < 2.0 * hit + 4.0,
+            "{two:.1} on two units"
         );
         // A nearest texel of one level: the reciprocal, the level of detail
         // and the texel's own turns (issue 997), about 18.

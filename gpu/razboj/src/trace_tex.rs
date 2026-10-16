@@ -2,7 +2,8 @@
 //! The traced run of texturing (issue 997): in one tile, a floor of two
 //! triangles in perspective, textured with a sixteen by sixteen texture
 //! of five levels, the first under `BLEND` and the second under
-//! `GL_COMBINE` (#1512), repeated past its edges and filtered with
+//! `GL_COMBINE` (#1512) with a second unit combining onto it (#1510),
+//! repeated past its edges and filtered with
 //! `LINEAR_MIPMAP_LINEAR`, magnified with `LINEAR`. It writes the
 //! trace and the rasteriser's netlist, so the build replays the netlist
 //! under nvc and Verilator against this run: the slots and the
@@ -15,8 +16,8 @@ use razboj::raster::Raster;
 use razboj::sim::{self, Work};
 use razboj_tile::tex::{
     encode, level_base, side, texel_offset, Combine, Desc, BLEND, COMBINE,
-    FN_INTERPOLATE, FN_SUBTRACT, LINEAR, LINEAR_MIPMAP_LINEAR, OP_SRC_COLOR,
-    SRC_CONSTANT, SRC_PRIMARY_COLOR, SRC_TEXTURE,
+    FN_ADD, FN_INTERPOLATE, FN_SUBTRACT, LINEAR, LINEAR_MIPMAP_LINEAR,
+    OP_SRC_COLOR, SRC_CONSTANT, SRC_PREVIOUS, SRC_PRIMARY_COLOR, SRC_TEXTURE,
 };
 
 /// One tile across, and sixteen rows of it: the floor is small, since
@@ -124,7 +125,35 @@ fn main() {
             }
             .word(),
         })),
-        tri(0, 2, 3),
+        // And a second unit on it (#1510): the same texture, its
+        // coordinates turned, under GL_COMBINE mixing the texel and the
+        // first unit's result by the fragment's colour, and for alpha
+        // adding the first's to the texel's, so that the netlist reads
+        // PRIMARY_COLOR apart from PREVIOUS.
+        Op::Texture1(Some(TexMode {
+            desc: DESC,
+            env: COMBINE,
+            env_colour: 0,
+            combine: Combine {
+                rgb: FN_INTERPOLATE,
+                alpha: FN_ADD,
+                src_rgb: [SRC_TEXTURE, SRC_PREVIOUS, SRC_PRIMARY_COLOR],
+                src_alpha: [SRC_PREVIOUS, SRC_TEXTURE, SRC_CONSTANT],
+                op_rgb: [OP_SRC_COLOR; 3],
+                ..Combine::default()
+            }
+            .word(),
+        })),
+        Op::TexTri {
+            a: corners[0].0,
+            b: corners[2].0,
+            c: corners[3].0,
+            colours: [0xffc0_e0ff; 3],
+            shaded: false,
+            z: [0; 3],
+            uvq: [uvq(0), uvq(2), uvq(3)],
+            uvq1: Some([uvq(0), uvq(2), uvq(3)].map(|(u, v, q)| (v, u, q))),
+        },
     ];
     let list = assemble(&ops, W, H);
     let work = Work {
