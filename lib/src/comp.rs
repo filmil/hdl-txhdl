@@ -479,9 +479,10 @@ impl Side for Receiver {
 
 /// An end of a wire or a channel, made together with the end opposite
 /// it: an `Out` with its `In`, a `Tx` with its `Rx`, and the reverse.
-/// Every [`Side`]'s ends are `Mirror`, and the `Link` that
-/// `#[derive(Ports)]` writes makes each field of a bundle with it, so a
-/// user's own end type needs it only to be one of a side's ends.
+/// The `Link` that `#[derive(Ports)]` writes for a struct generic over
+/// its [`Side`] makes each field with `Mirror::pair`, so every field's
+/// type must be `Mirror`: each of a side's ends is, and so are arrays of
+/// them and, with `#[derive(Link)]` or a side of their own, bundles.
 pub trait Mirror: Sized {
     /// The end opposite this one.
     type Other;

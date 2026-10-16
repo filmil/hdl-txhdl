@@ -66,6 +66,20 @@ fn a_link_from_the_drivers_side_joins_every_end() {
     assert_eq!(tx.ans.recv().map(|v| v.raw()), Some(9));
 }
 
+/// `link::<B<Receiver>>()` gives the driver's side first, the other
+/// way round from the driver's own link, every end joined the same.
+#[test]
+fn a_link_from_the_receivers_side_joins_every_end() {
+    let (tx, rx) = Pkt::<Receiver, 6>::link();
+    tx.go.set(Bit::One);
+    tx.req.send(U::from(3u8));
+    rx.ans.send(U::from(4u8));
+    settle();
+    assert_eq!(rx.go.get(), Bit::One);
+    assert_eq!(rx.req.recv().map(|v| v.raw()), Some(3));
+    assert_eq!(tx.ans.recv().map(|v| v.raw()), Some(4));
+}
+
 /// The driver's side: a request and `go` out, the answer and `busy` in.
 #[derive(Trace, Default)]
 pub struct Host {}
@@ -146,5 +160,19 @@ fn each_side_lowers_with_its_ends() {
         assert!(dev.contains(want), "no `{want}` in:\n{dev}");
     }
     let both = Both::lowered("both").verilog();
-    assert!(both.contains("both_host host("), "{both}");
+    // Each child takes its own end of each channel the link made: the
+    // host the request's sending end and the answer's receiving end, the
+    // device the other two, and both the same two wires.
+    for want in [
+        "both_host host(",
+        "both_dev dev(",
+        ".p_req_data(rx_req_tx_data)",
+        ".p_ans_data(rx_ans_rx_data)",
+        ".p_req_data(rx_req_rx_data)",
+        ".p_ans_data(rx_ans_tx_data)",
+    ] {
+        assert!(both.contains(want), "no `{want}` in:\n{both}");
+    }
+    assert_eq!(both.matches(".p_go(rx_go)").count(), 2, "{both}");
+    assert_eq!(both.matches(".p_busy(rx_busy)").count(), 2, "{both}");
 }

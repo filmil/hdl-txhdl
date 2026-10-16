@@ -832,8 +832,11 @@ fn side_bounded(name: &str, full: &str) -> bool {
     let Some(bounds) = rest.trim_start().strip_prefix(':') else {
         return false;
     };
+    // Each bound's path, before any arguments of its own, so a `Side`
+    // inside another trait's arguments, `Trait<Assoc = x::Side>`, is
+    // not taken for it.
     bounds.split('+').any(|b| {
-        let b = b.split('=').next().unwrap_or("");
+        let b = b.split(['<', '=']).next().unwrap_or("");
         b.rsplit("::")
             .next()
             .is_some_and(|last| last.trim() == "Side")
@@ -2964,6 +2967,27 @@ fn field_of(base: &str, f: &str) -> Result<String, String> {
         };
     };
     Ok(typed_field(&ty, base, f))
+}
+
+#[cfg(test)]
+mod side_tests {
+    use super::side_bounded;
+
+    /// A parameter is the side when one of its bounds is a path ending in
+    /// `Side`, as `parse_item` writes it, tokens joined by spaces; not
+    /// when a bound merely contains the word, or names `Side` inside its
+    /// own arguments (issue 1736).
+    #[test]
+    fn the_side_is_a_bound_that_is_side() {
+        assert!(side_bounded("S", "S : Side"));
+        assert!(side_bounded("Si", "Si : :: txhdl :: comp :: Side"));
+        assert!(side_bounded("S", "S : Copy + Side + 'static"));
+        assert!(!side_bounded("S", "S : Sideband"));
+        assert!(!side_bounded("S", "S : InsideOut"));
+        assert!(!side_bounded("S", "S : Trait < Assoc = x :: Side >"));
+        assert!(!side_bounded("S", "S : Wrap < Side >"));
+        assert!(!side_bounded("A", "const A : usize"));
+    }
 }
 
 #[cfg(test)]
