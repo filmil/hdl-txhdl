@@ -890,6 +890,31 @@ vreteno_fastboot(
     flat = ":hello_ram_bin",
 )
 
+# The staged ramdisk read back, for `fastboot boot` with a ramdisk
+# beside it: where it starts, its length, and its first and last words,
+# which a host compares with the file it sent (issue 1731).
+rust_binary(
+    name = "ramdisk_probe_ram",
+    srcs = ["ramdisk_probe.rs"],
+    compile_data = [":vreteno_ram_ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS,
+    tags = ["manual"],
+    target_compatible_with = CORE_ONLY,
+    deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
+)
+
+vreteno_flat(
+    name = "ramdisk_probe_ram_bin",
+    platform = ":vreteno",
+    program = ":ramdisk_probe_ram",
+)
+
+vreteno_fastboot(
+    name = "ramdisk_probe_fastboot",
+    flat = ":ramdisk_probe_ram_bin",
+)
+
 # The entropy source measured, for the loader: the test above, then
 # 4096 raw words and 4096 words of the extractor's output up the serial
 # line, which is what a host estimates the source's bias and entropy
