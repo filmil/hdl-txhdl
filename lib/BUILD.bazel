@@ -152,6 +152,16 @@ rust_test(
     deps = [":txhdl"],
 )
 
+# A struct generic over its side, each of the four ends, a const
+# parameter beside the side, lowered and linked (issue 1650).
+rust_test(
+    name = "side_ends_test",
+    srcs = ["tests/side_ends.rs"],
+    edition = "2021",
+    proc_macro_deps = [":txhdl_macros"],
+    deps = [":txhdl"],
+)
+
 # A struct literal lowers in the struct's declared order, whatever order
 # it names its fields in (issue 1541).
 rust_test(
