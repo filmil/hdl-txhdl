@@ -3457,6 +3457,7 @@ fn floor_plan() -> Vec<Op> {
         shaded: false,
         z: [0; 3],
         uvq: [uvq(a), uvq(b), uvq(c)],
+        uvq1: None,
     };
     let list = assemble(
         &[
