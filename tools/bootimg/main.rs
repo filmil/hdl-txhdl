@@ -63,7 +63,8 @@ pub const KERNEL: u32 = 0x4040_0000;
 /// the server's own `max-download-size`, its staging area less the page
 /// `jump.S` runs from (`zephyr/fastboot/app/src/main.c`,
 /// `MAX_DOWNLOAD`), which a test reads from the server's sources; that
-/// is 48 MiB less a page since the stage grew for Doom (#1459).
+/// is 256 MiB less a page since the stage grew for large ramdisks
+/// (#1731).
 pub const MAX_DOWNLOAD: u32 = 0x0100_0000 - 0x1000;
 /// The header stock `fastboot boot` puts in front of a plain file: one
 /// page of a version 0 Android boot image, at the tool's default page
