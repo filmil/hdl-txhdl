@@ -3,11 +3,15 @@
 // AMD's MIG 7 Series controller generated with its AXI4 port,
 // `ddr3_mig_axi`, as the foreign module `ddr3::Ddr3` names.
 //
-// The controller does the work itself: it cuts a burst into the
-// memory's commands, packs thirty-two bit beats into its 256-bit native
-// interface and masks them, and keeps transactions outstanding by
-// identifier. This module only gives it the inputs a design has no
-// reason to drive. Its AXI reset is the user clock's reset, inverted
+// The controller's AXI4 port is 256 bits wide, the width of its native
+// interface, with narrow bursts on (issue 1696). It cuts a burst into
+// the memory's commands, masks a narrow beat to its bytes, and keeps
+// transactions outstanding by identifier. This module puts two ports on
+// it: the thirty-two bit one, whose beats it steers to their lanes, and
+// a read-only one of 256 bits beside it, the two sharing the read
+// addresses; how is said below, where it is done. Otherwise it gives
+// the controller the inputs a design has no reason to drive. Its AXI
+// reset is the user clock's reset, inverted
 // and registered, as AMD's example design makes it. The refresh,
 // self-refresh and ZQ requests are never made, since the controller
 // makes them itself. The temperature is a constant, as the controller's
