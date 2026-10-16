@@ -53,8 +53,13 @@ and the rasteriser samples its levels in DDR3 through a texture cache,
 under GL's two magnification and six minification filters, and applies
 the six environments of GL ES~1.1, \code{COMBINE} among them (\#1512),
 byte for byte as the
-model of \code{gpu/razboj/src/tex.rs} does. A flat list draws such an
-entry untextured, with no depth and no state.
+model of \code{gpu/razboj/src/tex.rs} does. With bit 15 as well it
+has a second texture unit (issue 1510): two slots more, read at four and
+five past the entry, hold that unit's planes, its own descriptor,
+environment and \code{COMBINE}'s settings, and the unit draws on the
+first unit's result. A flat list draws such an entry untextured, with no
+depth and no state, and steps over all its slots, the second unit's
+too.
 
 It is an AXI host written as hardware. It issues bursts on
 \code{issue}, sends a pixel's beat on \code{wbeat}, and hands
@@ -272,9 +277,24 @@ arguments and two products, made in logic (\code{comb\_arg},
 \code{DOT3}'s sum of the three channels (\code{comb\_sum},
 \code{dot\_term}); and the scale, the rounding and the clamp
 (\code{comb\_out}). An argument's source is the texel, the environment's
-colour or the fragment's, which on the one texture unit is both the
-primary and the previous colour. Under \code{DOT3\_RGBA} the alpha is the
-colour's, scaled as the colour is.
+colour, the primary colour or the previous one. On the first unit the
+fragment's colour is both the primary and the previous colour. On the second, every
+environment takes the first unit's result in place of the fragment's
+colour, and \code{COMBINE} reads the first's result as
+\code{PREVIOUS} and the fragment's colour as \code{PRIMARY\_COLOR}.
+Under \code{DOT3\_RGBA} the alpha is the colour's, scaled as the
+colour is.
+\item An entry with a second texture unit has that unit's two slots and
+descriptor read first, into the unit's registers, which then trade
+places with a second set, \code{xuc}, \code{xur} and the registers
+after them, before the first unit's are read. The walk steps both sets' planes and numerators. The
+two units' level addresses share one table of 32 words, sixteen a unit,
+each set naming its half. A pixel takes the texture's turns once a
+unit, and the two sets trade places in a turn after each. How many
+units draw a pixel is a wire, \code{tpass}, beside the one that says
+whether the primitive covers it, so a pixel that is not textured or not
+covered takes no turn more, and a pixel of one unit takes what it
+did.
 \item When a write response and a read beat arrive together, the
 write's identifier goes back first and the read's waits a cycle.
 Grants are taken and dropped.
@@ -318,15 +338,20 @@ test, a colour mask, depth and a scissor box in some rounds;
 comparison, with operations, masks and a reference;
 \item \code{texturing\_in\_tiles\_is\_the\_models}, over 25 rounds of
 every filter, environment and class of texel on a texture of six
-levels, fogged after the texture in some rounds, and \code{COMBINE}
-under random settings in four.
+levels, fogged after the texture in some rounds, \code{COMBINE}
+under random settings in four, and a second unit on a texture of its
+own, under its own filters, class, environment and \code{COMBINE}
+settings, in nine; fed the fragment's colour in place of the first
+unit's result, it fails at round 0.
 
 \end{itemize}
 \code{what\_a\_textured\_pixel\_costs} and
-\code{a\_load\_costs\_about\_a\_write\_out} measure what those cost.
+\code{a\_load\_costs\_about\_a\_write\_out} measure what those cost,
+the first with two units too: more than twice one unit's hit and less
+than four cycles over it.
 \item The build replays the netlist against traced runs of its lists,
 its tiles, its depth, its blend and load, and its trilinear texturing
-and \code{COMBINE}:
+and \code{COMBINE} with a second unit on it:
 \code{//docs:razboj\_lists}, \code{razboj\_tiles},
 \code{razboj\_depth}, \code{razboj\_blend} and \code{razboj\_tex}, each
 under nvc and Verilator. \code{razboj\_blend}'s run also draws a
@@ -364,7 +389,9 @@ reading eight texels, its refills included, and three more under
 \code{COMBINE}. Depth, the pixel's state,
 with its logic operation, fog and stencil, and texturing hold only in a
 tile; a flat list draws its entries in list order, flat or shaded,
-with none of them. It has one texture unit. It
+with none of them. It has two texture units, GL ES~1.1's least; a
+pixel of two, each on a cached texel, takes 39 cycles more than an
+untextured one. It
 clips no geometry, only boxes, and the assembler \code{Op::encode} does
 that on the host. It has one read out at a time.
 
