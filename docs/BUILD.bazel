@@ -1128,6 +1128,8 @@ latex_document(
         ":subfield_timing",
         ":flipped_run",
         ":flipped_timing",
+        ":hostgen_run",
+        ":hostgen_timing",
         ":valif_run",
         ":valif_timing",
         ":range_run",
@@ -3103,6 +3105,20 @@ waveform(
         "//subfield/rlast=>last",
     ],
     until = 19,
+)
+
+waveform(
+    name = "hostgen",
+    example = "//lib/examples:ex_hostgen",
+    lowered = ("hostgen", "hostgen"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//hostgen/feed/count=>count",
+        "//hostgen/take/last0=>last0",
+        "//hostgen/take/last1=>last1",
+        "//acked=>acked",
+    ],
+    until = 21,
 )
 
 waveform(
