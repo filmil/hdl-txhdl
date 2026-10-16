@@ -46,8 +46,8 @@ native \code{struct}; a hardware module is a \code{struct} implementing the
 configuration is a trait constraint. A clock is an affine type, paired
 implicitly with its synchronous reset: every emitted netlist binds one, every
 lowered sub-unit joins its parent domain, and no unit pollutes its interface
-with explicit reset wiring---sparing approximately 127 individual \code{.run}
-invocation sites. Under reset assertion, every register restores its initial
+with explicit reset wiring, which spares approximately 127 individual
+\code{.run} invocation sites. Under reset assertion, every register restores its initial
 state and every communication channel empties. The host compiler, \code{rustc},
 serves as front-end parser and design-rule checker: driving a wire from
 multiple sources violates affine move semantics, crossing clock domains outside
@@ -179,7 +179,7 @@ receipt.
 
 The design operates seamlessly on silicon targets. Lowered RTL netlists are
 synthesized hermetically through Vivado targeting an Alinx AX7A200B FPGA; upon
-boot, the hardware UART emits the expected simulation string---\code{OK}---and
+boot, the hardware UART emits the expected simulation string, \code{OK}, and
 faithfully echoes interactive character input. The identical netlist is
 lowered to an open 45\,nm standard-cell library using pinned releases of Yosys
 and OpenROAD, yielding a square die of \asicdie\,$\mu$m per side meeting a
@@ -275,7 +275,7 @@ multi-host, multi-peripheral fabrics require a packet-routed topology. TxHDL
 implements a scalable 2D torus/mesh network-on-chip: each routing node couples
 bidirectional links to its cardinal neighbours with a fifth injection/ejection
 port attached to an AXI protocol bridge. Every physical link multiplexes two
-virtual channels---one dedicated to requests and one to responses---precluding
+virtual channels, one dedicated to requests and one to responses, which keeps
 request buffers from saturating the fabric and stalling the response packets
 required to drain them. Dimension-order routing guarantees structural freedom
 from routing deadlocks without virtual-channel reassignment.
@@ -405,8 +405,8 @@ synthesizable Verilog. The project is consumed via standard external repository
 rules pinned to an immutable git commit. Continuous integration builds this
 standalone tutorial design against the active working tree to ensure external
 examples never suffer bitrot. Every toolchain in Table~\ref{tab:w-tools} is
-fetched and verified hermetically by Bazel---either via cryptographic checksum
-or compiled directly from source---with the sole exception of AMD Vivado, which
+fetched and verified hermetically by Bazel, either by cryptographic checksum
+or compiled directly from source, with the sole exception of AMD Vivado, which
 requires authenticated vendor licensing. No supplementary toolchains are
 installed manually on local workstations or CI runners.
 

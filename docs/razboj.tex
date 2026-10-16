@@ -598,8 +598,8 @@ The core meets timing constraints at 100\,MHz with $+1.193$\,ns worst-case
 setup slack. Initial unpipelined designs evaluated two 32-bit products and
 subtraction in a single cycle, failing timing by $-1.660$\,ns across an
 11.66\,ns critical path (issue 1034). Pipelining setup across three
-cycles—coordinate differences, parallel DSP multiplication, and sum
-accumulation—reduced the critical path to 8.20\,ns while adding only 24
+cycles (coordinate differences, parallel DSP multiplication, and sum
+accumulation) reduced the critical path to 8.20\,ns while adding only 24
 cycles across an eight-primitive scene.
 
 \section{What It Is Not}

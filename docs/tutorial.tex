@@ -113,8 +113,8 @@ the clock edge, while \code{self.n} reads the registered count. Macro
 latches \code{n + 1} at the cycle boundary, using struct-literal syntax with
 update operator \code{<=}. Combinational output \code{tick.set} asserts during
 the active cycle based on the state sampled at edge arrival. This
-structure---a wait, reads, combinational evaluations, and single-assignment
-drives---defines the canonical shape of all lowerable units.
+structure (a wait, reads, combinational evaluations, and single-assignment
+drives) defines the canonical shape of all lowerable units.
 
 Execute the design via \code{bazel run //lib/examples:ex\_cheat}. The runner
 executes the embedded testbench (Section~\ref{sec:t-testbench}) and emits the
@@ -245,8 +245,8 @@ taken, and passed on incremented on \code{out} a cycle later.}
 \label{fig:t-stage}
 \end{figure}
 
-Modules running continuously every clock cycle---such as processor
-pipelines---avoid blocking \code{until} calls. Instead, they sample channels
+Modules running continuously every clock cycle, such as processor
+pipelines, avoid blocking \code{until} calls. Instead, they sample channels
 opportunistically using \code{take} and drive downstream channels under standard
 \code{if} blocks, where the branch condition maps directly to channel
 \code{valid}. Listing~\ref{lst:t-tap} shows this pattern in a stream filter

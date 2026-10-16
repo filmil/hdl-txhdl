@@ -59,8 +59,8 @@ so and carries the prompts that led to it, verbatim.}%
 \begin{abstract}
 A design that has been simulated, lowered, verified against its execution
 trace, and synthesized onto an FPGA has still never taken physical shape
-on silicon. This paper takes the Vreteno core's structural Verilog—the
-exact netlist targeted to hardware in its FPGA build—maps it onto an open
+on silicon. This paper takes the Vreteno core's structural Verilog, the
+exact netlist targeted to hardware in its FPGA build, maps it onto an open
 45\,nm standard-cell library using Yosys, and floorplans, places, routes,
 and times it with OpenROAD. The result is a die \asicdie\,$\mu$m square
 holding \asiccells{} cells that meets a \asicperiod\,ns clock with
@@ -123,7 +123,7 @@ with software generators that produce dense SRAM macros of whatever width
 and depth are required. Nangate45 provides only empty mock macros of
 fixed dimensions for placement experimentation, and an empty macro holds
 no data. Section~\ref{sec:t-cells} details what the core's memories
-became instead—yielding the most instructive architectural lesson of
+became instead, which is the most instructive architectural lesson of
 this run.
 
 \section{The Tools, and How They Are Pinned}
@@ -141,16 +141,16 @@ The build resolves the complete dependency closure in advance.
 index, walks the dependency tree starting from the required binaries,
 and writes an immutable lockfile. Each entry records the package name,
 exact version, payload size, SHA-256 digest, and dual retrieval URLs.
-The first URL points to the live Debian mirror—fast, but ephemeral across
-distribution updates; the second points to \code{snapshot.debian.org}—slow,
+The first URL points to the live Debian mirror: fast, but ephemeral across
+distribution updates. The second points to \code{snapshot.debian.org}: slow,
 but permanently immutable. A fetcher that tries the live mirror before
 falling back to the snapshot achieves maximum download speed while
 guaranteeing bit-for-bit reproducibility years into the future.
 
 Two such lockfiles are maintained in the tree. Yosys 0.52 and its ten
 shared-library dependencies comprise eleven packages totaling
-13\,MB. OpenROAD—pinned to the final binary release published by the
-project—spans 52\,MB in isolation, but its transitive closure demands
+13\,MB. OpenROAD, pinned to the final binary release published by the
+project, spans 52\,MB in isolation, but its transitive closure demands
 131 auxiliary packages totaling an additional 75\,MB. Roughly two-thirds
 of that footprint comprises Qt and the associated Mesa, LLVM, X11, and
 ICU runtime libraries that Qt pulls in, which the executable dynamically
@@ -184,7 +184,7 @@ elements must be bound to library flip-flops prior to combinational
 optimization, as the technology mapper cannot infer sequential cells.
 Next, \code{setundef} assigns explicit binary levels to uninitialized or
 don't-care nets, and \code{splitnets} decomposes multibit buses into
-individual scalar wires—an essential flattening step, as gate-level
+individual scalar wires. That flattening is essential, as gate-level
 standard-cell netlists admit no vector abstractions. Then \code{hilomap}
 substitutes literal logic constants (\code{1'b0} and \code{1'b1}) with
 explicit tie-off cells (\code{TIEL} and \code{TIEH}); the mapper will
@@ -227,7 +227,7 @@ spanning a 32-bit word boundary can be decoded in a single cycle. On the
 ASIC, lacking block RAM and an SRAM compiler, the read-only instruction
 store resolves to pure combinational logic: because the program is static
 and known at elaboration, synthesis collapses the memory into a massive
-mask ROM. Its gate count is an exact function of binary entropy—a
+mask ROM. Its gate count is an exact function of binary entropy: a
 different program produces a different gate count and a different
 physical area. This distinction is vital to state explicitly: the
 silicon area reported below measures this core executing this exact
@@ -251,8 +251,8 @@ synthesized entirely from discrete standard cells.
 \label{sec:t-pnr}
 
 Listing~\ref{lst:t-sdc} specifies the timing constraints applied during
-place-and-route. We constrain the clock period to 3\,ns (333\,MHz)—over
-three times the FPGA board target (100\,MHz)—reflecting the inherently
+place-and-route. We constrain the clock period to 3\,ns (333\,MHz), over
+three times the FPGA board target (100\,MHz), reflecting the inherently
 faster intrinsic delays of 45\,nm standard cells over 28\,nm FPGA lookup
 tables. Specifying an aggressive target gives meaning to downstream
 timing slack: every picosecond of margin reflects real design
@@ -297,7 +297,7 @@ flip-flop density alone, normalized against the peak bin
 total cells, so against a fully occupied square the panel would appear
 as a uniform pale wash. The architectural state exhibits distinct
 spatial geometry: regions devoid of flip-flops consist entirely of
-combinational logic—dominated by the mask ROM encoding the program—while
+combinational logic, dominated by the mask ROM encoding the program, while
 dense flip-flop clusters reveal the register file and pipeline stage
 registers.}
 \label{fig:t-map}
@@ -400,8 +400,8 @@ zero-DRC metric achieved here reflects the router's internal geometric
 checks rather than independent signoff. Full physical verification
 requires DRC and Layout-Versus-Schematic (LVS) validation using
 foundry-supplied decks (such as KLayout or Calibre). On an open foundry
-PDK with fabrication backing—such as SkyWater 130\,nm or
-GlobalFoundries GF180MCU—these decks exist and would run directly
+PDK with fabrication backing, such as SkyWater 130\,nm or
+GlobalFoundries GF180MCU, these decks exist and would run directly
 against the emitted layout.
 
 \emph{A writable instruction store.} Implemented as a mask ROM,
@@ -413,9 +413,9 @@ core reset. Vreteno already incorporates the bus interface needed to
 attach such a loader.
 
 \emph{I/O pad ring and ESD protection.} The core's \asiccells{} cells
-currently terminate at perimeter pins on the core boundary—suitable for
-macro integration in a larger SoC, but insufficient for a standalone
-packaged die. A fabricated chip requires a pad ring: I/O pads with
+currently terminate at perimeter pins on the core boundary. That suits
+macro integration in a larger SoC, but not a standalone packaged
+die. A fabricated chip requires a pad ring: I/O pads with
 level shifters, high-current output drivers, electrostatic discharge
 (ESD) protection networks, bond or bump arrays, and independent I/O
 supply rings.
@@ -435,7 +435,7 @@ leaving its 32-entry register file uninitialized. On an FPGA, the
 global configuration bitstream clears all storage elements at startup.
 On silicon, unreset flip-flops power up in random states. While RISC-V
 architectural semantics tolerate undefined values in registers
-$x1$--$x31$ prior to software initialization, register $x0$ must
+$x1$ to $x31$ prior to software initialization, register $x0$ must
 strictly evaluate to zero. Vreteno safeguards $x0$ by hardwiring reads
 to zero rather than fetching from the storage array. Nonetheless,
 physical signoff mandates explicit power-on-reset sequencing: an initial
