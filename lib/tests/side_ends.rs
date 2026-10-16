@@ -72,10 +72,12 @@ fn a_link_from_the_drivers_side_joins_every_end() {
 fn a_link_from_the_receivers_side_joins_every_end() {
     let (tx, rx) = Pkt::<Receiver, 6>::link();
     tx.go.set(Bit::One);
+    rx.busy.set(Bit::One);
     tx.req.send(U::from(3u8));
     rx.ans.send(U::from(4u8));
     settle();
     assert_eq!(rx.go.get(), Bit::One);
+    assert_eq!(tx.busy.get(), Bit::One);
     assert_eq!(rx.req.recv().map(|v| v.raw()), Some(3));
     assert_eq!(tx.ans.recv().map(|v| v.raw()), Some(4));
 }
@@ -163,16 +165,70 @@ fn each_side_lowers_with_its_ends() {
     // Each child takes its own end of each channel the link made: the
     // host the request's sending end and the answer's receiving end, the
     // device the other two, and both the same two wires.
+    let host = instance(&both, "both_host host(");
+    let dev = instance(&both, "both_dev dev(");
     for want in [
-        "both_host host(",
-        "both_dev dev(",
         ".p_req_data(rx_req_tx_data)",
         ".p_ans_data(rx_ans_rx_data)",
+        ".p_go(rx_go)",
+        ".p_busy(rx_busy)",
+    ] {
+        assert!(host.contains(want), "no `{want}` in:\n{host}");
+    }
+    for want in [
         ".p_req_data(rx_req_rx_data)",
         ".p_ans_data(rx_ans_tx_data)",
+        ".p_go(rx_go)",
+        ".p_busy(rx_busy)",
     ] {
-        assert!(both.contains(want), "no `{want}` in:\n{both}");
+        assert!(dev.contains(want), "no `{want}` in:\n{dev}");
     }
-    assert_eq!(both.matches(".p_go(rx_go)").count(), 2, "{both}");
-    assert_eq!(both.matches(".p_busy(rx_busy)").count(), 2, "{both}");
+}
+
+/// The text of one child's instance in a netlist, from its head to the
+/// `);` that ends it.
+fn instance<'a>(netlist: &'a str, head: &str) -> &'a str {
+    let at = netlist
+        .find(head)
+        .unwrap_or_else(|| panic!("no `{head}` in:\n{netlist}"));
+    let rest = &netlist[at..];
+    &rest[..rest.find(");").unwrap_or(rest.len())]
+}
+
+/// The side named by its path, `txhdl::comp::Driver`, as a unit may
+/// write it: the lowering reads its ends as it reads `Driver`'s.
+#[derive(Trace, Default)]
+pub struct QHost {}
+
+#[lower]
+impl Unit for QHost {
+    async fn run(&mut self, p: Pkt<txhdl::comp::Driver, 6>, seen: Out<Bit>) {
+        loop {
+            DefaultClock::rising().await;
+            if p.req.ready().to_bool() {
+                p.req.send(U::from(2u8));
+            }
+            let _ = p.ans.recv();
+            p.go.set(Bit::One);
+            seen.set(p.busy.get());
+        }
+    }
+}
+
+/// The qualified side lowers to the same ports as the plain one.
+#[test]
+fn a_side_by_its_path_lowers_as_by_its_name() {
+    let q = QHost::lowered("host").verilog();
+    let h = Host::lowered("host").verilog();
+    let ports = |v: &str| -> Vec<String> {
+        v.lines()
+            .filter(|l| {
+                l.trim_start().starts_with("input ")
+                    || l.trim_start().starts_with("output ")
+            })
+            .map(str::to_string)
+            .collect()
+    };
+    assert_eq!(ports(&q), ports(&h));
+    assert!(q.contains("output p_go"), "{q}");
 }

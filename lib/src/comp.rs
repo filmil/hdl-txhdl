@@ -481,8 +481,8 @@ impl Side for Receiver {
 /// it: an `Out` with its `In`, a `Tx` with its `Rx`, and the reverse.
 /// The `Link` that `#[derive(Ports)]` writes for a struct generic over
 /// its [`Side`] makes each field with `Mirror::pair`, so every field's
-/// type must be `Mirror`: each of a side's ends is, and so are arrays of
-/// them and, with `#[derive(Link)]` or a side of their own, bundles.
+/// type must be `Mirror`, and its `Other` must be the same field on the
+/// other side: each of a side's ends is so.
 pub trait Mirror: Sized {
     /// The end opposite this one.
     type Other;

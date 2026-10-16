@@ -832,11 +832,28 @@ fn side_bounded(name: &str, full: &str) -> bool {
     let Some(bounds) = rest.trim_start().strip_prefix(':') else {
         return false;
     };
-    // Each bound's path, before any arguments of its own, so a `Side`
-    // inside another trait's arguments, `Trait<Assoc = x::Side>`, is
-    // not taken for it.
-    bounds.split('+').any(|b| {
-        let b = b.split(['<', '=']).next().unwrap_or("");
+    // The bounds are split at the `+` outside any brackets, and each is
+    // read up to its own arguments, so a `Side` inside another trait's
+    // arguments, `Trait<Copy + Side>` or `Fn() -> x::Side`, is not taken
+    // for it.
+    let mut depth = 0i32;
+    let mut parts = vec![String::new()];
+    for c in bounds.chars() {
+        match c {
+            '<' | '(' | '[' => depth += 1,
+            '>' | ')' | ']' => depth -= 1,
+            '+' if depth == 0 => {
+                parts.push(String::new());
+                continue;
+            }
+            _ => {}
+        }
+        if let Some(p) = parts.last_mut() {
+            p.push(c);
+        }
+    }
+    parts.iter().any(|b| {
+        let b = b.split(['<', '(', '=']).next().unwrap_or("");
         b.rsplit("::")
             .next()
             .is_some_and(|last| last.trim() == "Side")
@@ -2986,6 +3003,9 @@ mod side_tests {
         assert!(!side_bounded("S", "S : InsideOut"));
         assert!(!side_bounded("S", "S : Trait < Assoc = x :: Side >"));
         assert!(!side_bounded("S", "S : Wrap < Side >"));
+        assert!(!side_bounded("S", "S : Trait < Copy + Side + Send >"));
+        assert!(!side_bounded("F", "F : Fn () -> x :: Side"));
+        assert!(side_bounded("S", "S : Trait < A > + Side"));
         assert!(!side_bounded("A", "const A : usize"));
     }
 }
