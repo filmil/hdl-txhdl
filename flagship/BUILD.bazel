@@ -118,8 +118,14 @@ sh_test(
     name = "prog_given_test",
     size = "small",
     srcs = ["prog_given_test.sh"],
-    args = ["$(rootpath :flagship_prog_given)"],
-    data = [":flagship_prog_given"],
+    args = [
+        "$(rootpath :flagship_prog_given)",
+        "$(rootpath :given.bit)",
+    ],
+    data = [
+        "given.bit",
+        ":flagship_prog_given",
+    ],
     tags = ["manual"],
 )
 

@@ -17,7 +17,8 @@
 # It refuses a file whose sha256 is not the one given, or that does not
 # start with a bitstream's 13-byte header, and says the sum it
 # programmed, so a board log names the bitstream that ran. With
-# --dry-run it checks and says, and programs nothing. Every other
+# --dry-run it checks, builds what it would run, and programs nothing.
+# A relative --bit is taken from where bazel was run. Every other
 # argument goes to the programming script, as flagship_prog's do.
 set -euo pipefail
 
@@ -36,45 +37,38 @@ bit=""
 sum=""
 dry=""
 rest=()
-for a in "$@"; do
-  case "$a" in
-    --bit=*) bit="${a#*=}" ;;
-    --sha256=*) sum="${a#*=}" ;;
+while (($#)); do
+  case "$1" in
+    --bit=*) bit="${1#*=}" ;;
+    --bit) bit="${2:-}"; shift ;;
+    --sha256=*) sum="${1#*=}" ;;
+    --sha256) sum="${2:-}"; shift ;;
     --dry-run) dry=1 ;;
-    *) rest+=("$a") ;;
+    *) rest+=("$1") ;;
   esac
+  shift
 done
 if [[ -z "$bit" || -z "$sum" ]]; then
   echo "usage: flagship_prog_given --bit=PATH --sha256=HEX" \
     "[--dry-run] [args]" >&2
   exit 2
 fi
+# `bazel run` starts this in its runfiles, so a relative path is the
+# caller's, from where bazel was run.
+if [[ "$bit" != /* && -n "${BUILD_WORKING_DIRECTORY:-}" ]]; then
+  bit="$BUILD_WORKING_DIRECTORY/$bit"
+fi
 if [[ ! -f "$bit" ]]; then
   echo "refused: no such file: $bit" >&2
   exit 1
-fi
-bit="$(realpath -- "$bit")"
-got="$(sha256sum -- "$bit" | cut -d' ' -f1)"
-if [[ "$got" != "${sum,,}" ]]; then
-  echo "refused: $bit has sha256 $got, not $sum" >&2
-  exit 1
-fi
-# The header the programming script checks as well.
-if [[ "$(head -c 13 -- "$bit" | od -An -tx1 | tr -d ' \n')" \
-  != "00090ff00ff00ff00ff0000001" ]]; then
-  echo "refused: not a bitstream: $bit" >&2
-  exit 1
-fi
-echo "programming $bit, sha256 $got"
-if [[ -n "$dry" ]]; then
-  echo "dry run: nothing programmed"
-  exit 0
 fi
 
 # The generated script names its bitstream and its tools by paths in
 # the main repository's runfiles, from where it runs. So it runs from
 # a copy of that tree, made of links, with the given file in the
-# bitstream's place.
+# bitstream's place. The file is copied before it is checked, and the
+# copy is what is checked and programmed, so that a file on a shared
+# disk changing meanwhile cannot slip past the check.
 base="$(rlocation txhdl/flagship/flagship_prog_given_base.sh)"
 main="$(dirname "$(dirname "$base")")"
 tmp="$(mktemp -d)"
@@ -89,6 +83,29 @@ for e in "$main"/flagship/*; do
 done
 rm "$tmp/flagship/given.bit"
 cp -- "$bit" "$tmp/flagship/given.bit"
+copy="$tmp/flagship/given.bit"
+
+got="$(sha256sum -- "$copy" | cut -d' ' -f1)"
+if [[ "$got" != "${sum,,}" ]]; then
+  echo "refused: $bit has sha256 $got, not $sum" >&2
+  exit 1
+fi
+# The header the programming script checks as well.
+if [[ "$(head -c 13 -- "$copy" | od -An -tx1 | tr -d ' \n')" \
+  != "00090ff00ff00ff00ff0000001" ]]; then
+  echo "refused: not a bitstream: $bit" >&2
+  exit 1
+fi
+if [[ ! -x "$tmp/flagship/flagship_prog_given_base.sh" ]]; then
+  echo "no programming script in the copy of the runfiles" >&2
+  exit 1
+fi
+echo "programming $bit, sha256 $got"
+if [[ -n "$dry" ]]; then
+  echo "dry run: nothing programmed"
+  exit 0
+fi
+
 export RUNFILES_DIR
 RUNFILES_DIR="$(dirname "$main")"
 cd "$tmp"
