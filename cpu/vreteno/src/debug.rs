@@ -157,21 +157,35 @@ pub struct Dm {
 }
 // end{dm}
 
+/// The debug module's link to the core (issue 726): whether the core is
+/// halted and the register it read, in; the requests to halt and to
+/// resume, and a register's number, the word to write and whether to
+/// write it, out. Taken apart in `run`, so each port keeps its name.
+pub struct DmCore {
+    pub halted: In<Bit>,
+    pub rdata: In<U<32>>,
+    pub haltreq_o: Out<Bit>,
+    pub resumereq_o: Out<Bit>,
+    pub regno_o: Out<U<16>>,
+    pub wdata_o: Out<U<32>>,
+    pub we_o: Out<Bit>,
+}
+
 // begin{run}
 #[lower]
 impl Unit for Dm {
     async fn run(
         &mut self,
         bus: LitePort<32, 32, 4>,
-        (halted, rdata, haltreq_o, resumereq_o, regno_o, wdata_o, we_o): (
-            In<Bit>,
-            In<U<32>>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<U<16>>,
-            Out<U<32>>,
-            Out<Bit>,
-        ),
+        DmCore {
+            halted,
+            rdata,
+            haltreq_o,
+            resumereq_o,
+            regno_o,
+            wdata_o,
+            we_o,
+        }: DmCore,
     ) {
         loop {
             DefaultClock::rising().await;
@@ -415,7 +429,7 @@ mod tests {
         let mut sim = Running::new(join2(
             dm.run(
                 bus,
-                (
+                DmCore {
                     halted,
                     rdata,
                     haltreq_o,
@@ -423,7 +437,7 @@ mod tests {
                     regno_o,
                     wdata_o,
                     we_o,
-                ),
+                },
             ),
             async move {
                 body.await;
