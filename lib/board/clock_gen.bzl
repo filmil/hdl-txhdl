@@ -15,7 +15,9 @@
 writes `clk_pix.v`, the module `clk_pix(clk_in, rst, clk_0.., locked)`
 that //tools/clockgen planned, and `clk_pix.txt`, the plan: the settings
 and what each output gets. The build fails, naming the outputs, when no
-setting meets them all. With `testbench = True` it writes
+setting meets them all. Output `k` is the primitive's `CLKOUT<k>`, so of an
+MMCM's only the first may divide in eighths: list first the output that
+needs them. With `testbench = True` it writes
 `clk_pix_tb.v` as well, which measures each output in simulation.
 """
 

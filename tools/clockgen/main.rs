@@ -60,6 +60,10 @@ fn main() {
     let name = name.expect("--name is required");
     let input = input.expect("--input-hz is required");
     if let Some(s) = settings {
+        if s.len() < 3 {
+            eprintln!("{name}: --settings is D,M8,O8[,O8...], three or more");
+            std::process::exit(2);
+        }
         let p = fixed(prim, input, s[0], s[1], &s[2..]);
         let wants: Vec<Want> =
             p.outs.iter().map(|o| Want { hz: o.hz, ppm: 0.0 }).collect();
@@ -100,9 +104,20 @@ fn main() {
                 Refusal::Input(hz) => eprintln!(
                     "{name}: the input, {hz} Hz, is outside the part's range"
                 ),
+                Refusal::TooMany { asked: 0, .. } => {
+                    eprintln!("{name}: no outputs asked")
+                }
                 Refusal::TooMany { asked, has } => {
                     eprintln!("{name}: {asked} outputs asked, the primitive has {has}")
                 }
+                Refusal::Want(k) => eprintln!(
+                    "{name}: clk_{k} wants a frequency above nought and a \
+                     tolerance not below it"
+                ),
+                Refusal::Unmet(near) if near.is_empty() => eprintln!(
+                    "{name}: no setting puts every output inside the \
+                     part's output range"
+                ),
                 Refusal::Unmet(near) => {
                     eprintln!(
                         "{name}: no setting meets every output; the nearest:"
