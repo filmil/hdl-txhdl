@@ -13,7 +13,8 @@
 #   tx copy 60      840 on the board, 852 here (+1.4%)
 #
 # Each loop's exit is a backward branch that falls through, which costs
-# its wrong guess, 2 cycles (#1752).#
+# its wrong guess, 2 cycles (#1752).
+#
 # A change to the costs moves these, which is what this test is for: it
 # says so, and the comment above is updated with the new fit.
 #
