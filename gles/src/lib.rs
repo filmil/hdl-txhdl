@@ -209,19 +209,19 @@ impl View {
     /// The vertex with its place: whether no plane a triangle is clipped
     /// against cuts it, and then where it lands and at what depth. A
     /// triangle of three such vertices is drawn from these as it is,
-    /// unclipped (#1624).
-    fn placed(&self, mut v: Vert) -> Vert {
+    /// unclipped (#1624). It is placed where it lies, so that one made in
+    /// a cache's slot is not copied (#1750).
+    fn place_vert(&self, v: &mut Vert) {
         v.inside = v.clip[3] > 0
             && (0..7).all(|p| {
-                (p == 2 && !self.plane_on) || self.distances(&v, p) >= 0
+                (p == 2 && !self.plane_on) || self.distances(v, p) >= 0
             });
         if v.inside {
-            v.win = self.window(&v).unwrap_or_default();
+            v.win = self.window(v).unwrap_or_default();
             if self.depth_test {
-                v.zw = self.window_z(&v);
+                v.zw = self.window_z(v);
             }
         }
-        v
     }
 }
 
@@ -298,10 +298,6 @@ pub struct Gl<'a> {
     /// EGL has put the window lower, on the half of a double buffer not
     /// shown (issue 996). Nothing is drawn above it.
     window_top: u32,
-    /// The vertices `glDrawElements` has worked out in this call, each
-    /// with its index, in the slot the index picks (#1624). A call
-    /// forgets them by its keys; a slot is read only under its own.
-    vcache: [(usize, Vert); VCACHE],
     mode: u32,
     mv: [Mat; gl::MAX_MODELVIEW_STACK_DEPTH],
     mv_top: usize,
@@ -439,7 +435,6 @@ impl<'a> Gl<'a> {
             used: 0,
             screen: (sw, sh),
             window_top: 0,
-            vcache: [(usize::MAX, Vert::default()); VCACHE],
             mode: gl::MODELVIEW,
             mv: [IDENTITY; gl::MAX_MODELVIEW_STACK_DEPTH],
             mv_top: 0,
@@ -2077,11 +2072,7 @@ impl<'a> Gl<'a> {
             return self.fail(gl::INVALID_VALUE);
         }
         // A grid's vertex is named by several triangles in a row, so it
-        // is worked out once and kept (#1624); what an earlier call kept
-        // is forgotten.
-        for slot in self.vcache.iter_mut() {
-            slot.0 = usize::MAX;
-        }
+        // is worked out once and kept for the call (#1624).
         let key = |k: usize| Some(indices[k] as usize);
         self.draw(mode, indices.len(), key, |k| {
             let i = indices[k] as usize;
@@ -2218,6 +2209,11 @@ impl<'a> Gl<'a> {
         // A triangle's vertex is placed in the window as it is worked
         // out, so that a cached one keeps its place (#1624).
         let view = self.view();
+        // The vertices this call has worked out, each with its index, in
+        // the slot the index picks (#1624). They are the call's own, so
+        // that a triangle borrows its corners from them while it is drawn
+        // into the context (#1750).
+        let mut cache = [(usize::MAX, Vert::default()); VCACHE];
         // A strip's or a loop's vertex ends one segment and starts the
         // next, so it is lit once and carried over.
         let mut last = None;
@@ -2238,20 +2234,36 @@ impl<'a> Gl<'a> {
                         gl::TRIANGLE_STRIP => (t, t + 1, t + 2),
                         _ => (0, t + 1, t + 2),
                     };
-                    // Each vertex made where the triangle holds it, rather
-                    // than through an array's map, which copies them.
-                    let mut get = |k: usize| match key(k) {
-                        Some(i) => {
-                            let slot = &mut self.vcache[i % VCACHE];
-                            if slot.0 != i {
-                                *slot = (i, view.placed(vert(k)));
+                    // A cached vertex is drawn from its slot, by reference,
+                    // unless two of the three take one slot (#1750).
+                    let apart =
+                        |x: usize, y: usize| x == y || x % VCACHE != y % VCACHE;
+                    match (key(a), key(b), key(c)) {
+                        (Some(i), Some(j), Some(l))
+                            if apart(i, j) && apart(j, l) && apart(i, l) =>
+                        {
+                            for (k, i) in [(a, i), (b, j), (c, l)] {
+                                let slot = &mut cache[i % VCACHE];
+                                if slot.0 != i {
+                                    slot.0 = i;
+                                    slot.1 = vert(k);
+                                    view.place_vert(&mut slot.1);
+                                }
                             }
-                            slot.1
+                            let at = |i: usize| &cache[i % VCACHE].1;
+                            self.triangle([at(i), at(j), at(l)]);
                         }
-                        None => view.placed(vert(k)),
-                    };
-                    let t = [get(a), get(b), get(c)];
-                    self.triangle(&t);
+                        _ => {
+                            // Each vertex made where the triangle holds it,
+                            // rather than through an array's map, which
+                            // copies them.
+                            let mut t = [vert(a), vert(b), vert(c)];
+                            for v in &mut t {
+                                view.place_vert(v);
+                            }
+                            self.triangle([&t[0], &t[1], &t[2]]);
+                        }
+                    }
                 }
             }
             if self.error == gl::OUT_OF_MEMORY {
@@ -2706,7 +2718,7 @@ impl<'a> Gl<'a> {
 
     /// One triangle through clipping, the window, culling and shading
     /// into the frame.
-    fn triangle(&mut self, tri: &[Vert; 3]) {
+    fn triangle(&mut self, tri: [&Vert; 3]) {
         // A triangle no plane cuts is drawn as it is, from where its
         // vertices were placed as they were worked out (#1624); clipping
         // it would keep the same three, in the same order. It needs none
@@ -2714,16 +2726,18 @@ impl<'a> Gl<'a> {
         if tri.iter().all(|v| v.inside) {
             let win = [tri[0].win, tri[1].win, tri[2].win];
             let zp = [tri[0].zw, tri[1].zw, tri[2].zw];
-            return self.fan(tri, &win, &zp, &tri[2]);
+            return self.fan(&tri, &win, &zp, tri[2]);
         }
         self.clipped(tri);
     }
 
     /// A triangle some plane cuts, clipped and drawn as a fan.
-    fn clipped(&mut self, tri: &[Vert; 3]) {
+    fn clipped(&mut self, tri: [&Vert; 3]) {
         let view = self.view();
         let mut poly = [Vert::default(); MAXV];
-        poly[..3].copy_from_slice(tri);
+        for (p, v) in poly.iter_mut().zip(tri) {
+            *p = *v;
+        }
         // Each vertex's clip coordinates kept in i128, far finer than the
         // window's sixteenth, as a point times a positive scale and the
         // scale, so that a vertex clipping makes, and one made from it,
@@ -2795,7 +2809,8 @@ impl<'a> Gl<'a> {
             };
             (win[k], zp[k]) = (at, z);
         }
-        self.fan(&poly[..n], &win[..n], &zp[..n], &tri[2]);
+        let at: [&Vert; MAXV] = core::array::from_fn(|k| &poly[k]);
+        self.fan(&at[..n], &win[..n], &zp[..n], tri[2]);
     }
 
     /// The polygon `poly`, placed in the window at `win` with window
@@ -2804,7 +2819,7 @@ impl<'a> Gl<'a> {
     /// is.
     fn fan(
         &mut self,
-        poly: &[Vert],
+        poly: &[&Vert],
         win: &[(i64, i64)],
         zp: &[u32],
         last: &Vert,
@@ -2853,7 +2868,7 @@ impl<'a> Gl<'a> {
             let (a, b, c) = (at(0), at(k), at(k + 1));
             // Each vertex's window depth, when the depth test wants it.
             let z = self.depth_test.then_some([zp[0], zp[k], zp[k + 1]]);
-            let s = [face(&poly[0]), face(&poly[k]), face(&poly[k + 1])]
+            let s = [face(poly[0]), face(poly[k]), face(poly[k + 1])]
                 .map(|c| colour_word(&c));
             let w = if self.smooth {
                 emit::triangle(s[0], a, b, c, Some(s), z, screen)
@@ -2861,7 +2876,7 @@ impl<'a> Gl<'a> {
                 emit::triangle(flat, a, b, c, None, z, screen)
             };
             let w = w.map(|(w, s)| (w, s.map(|s| self.offset_depth(s))));
-            let at3 = [&poly[0], &poly[k], &poly[k + 1]];
+            let at3 = [poly[0], poly[k], poly[k + 1]];
             let tex = texture.map(|t| {
                 t.and_then(|(u, lw, lh)| {
                     let t = uvq(at3, u, lw, lh)?;
@@ -2876,7 +2891,7 @@ impl<'a> Gl<'a> {
                 .all(|(t, s)| t.is_some() == s.is_some());
             let tex = if whole { tex } else { [None; UNITS] };
             if let Some((w, slot)) = w {
-                let at = [&poly[0], &poly[k], &poly[k + 1]];
+                let at = [poly[0], poly[k], poly[k + 1]];
                 let planes = Planes {
                     fog: self.fogged(&w, [a, b, c], at),
                     alpha: self.alpha_planed(&w, [a, b, c], s),

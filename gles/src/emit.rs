@@ -33,6 +33,49 @@ pub fn area2(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> i64 {
     bx * cy - by * cx
 }
 
+/// Twice a triangle's area, wound as the rasteriser wants and so above
+/// nought, with its reciprocal, which every plane of the triangle divides
+/// by (#1750). A 64-bit divide is a library call on the core, at least
+/// one a quotient and two for `div_euclid`; with the reciprocal a plane
+/// multiplies instead, and the triangle divides once.
+struct Area {
+    d: u64,
+    r: u64,
+}
+
+impl Area {
+    /// The area `a`, `b`, `c` make, which must be above nought.
+    fn of(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> Self {
+        let area = area2(a, b, c);
+        debug_assert!(area > 0, "a plane of a triangle wound backwards");
+        let d = area as u64;
+        Area { d, r: u64::MAX / d }
+    }
+
+    /// `x / d`, rounded down, for `x` under 2^63. The product with the
+    /// reciprocal, `floor((2^64 - 1) / d)`, is short of `x / d` by less
+    /// than two, so at most two steps make it exact.
+    fn quot(&self, x: u64) -> u64 {
+        let mut q = ((x as u128 * self.r as u128) >> 64) as u64;
+        let mut rem = x - q * self.d;
+        while rem >= self.d {
+            q += 1;
+            rem -= self.d;
+        }
+        q
+    }
+
+    /// `n.div_euclid(d)`, which for `d` above nought is `n / d` rounded
+    /// down, for `n` within 2^62 of nought.
+    fn floor(&self, n: i64) -> i64 {
+        if n >= 0 {
+            self.quot(n as u64) as i64
+        } else {
+            -(self.quot(n.unsigned_abs() + self.d - 1) as i64)
+        }
+    }
+}
+
 /// One channel's plane over a triangle wound as the rasteriser wants,
 /// with values `v` at its vertices: its value at `first`, and its two
 /// steps, each with `frac` bits of fraction, sixteen for a colour and
@@ -42,6 +85,7 @@ pub fn area2(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> i64 {
 /// depth's, under 2^16 at a vertex, fits 64 bits as a channel's does,
 /// since it has four bits fewer of fraction for its eight more of value.
 fn plane(
+    by: &Area,
     a: (i32, i32),
     b: (i32, i32),
     c: (i32, i32),
@@ -52,7 +96,6 @@ fn plane(
     let d =
         |p: (i32, i32), q: (i32, i32)| ((q.0 - p.0) as i64, (q.1 - p.1) as i64);
     let ((ux, uy), (vx, vy)) = (d(a, b), d(a, c));
-    let area = ux * vy - uy * vx;
     let (db, dc) = (v[1] - v[0], v[2] - v[0]);
     let nx = db * vy - dc * uy;
     let ny = dc * ux - db * vx;
@@ -60,8 +103,8 @@ fn plane(
     // Half the area, toward nought as `area / 2` is, worked out once and
     // by shifts: at the core's size optimisation the division by two is
     // a call to the 64-bit divide (#1624).
-    let half = if area < 0 { -(-area >> 1) } else { area >> 1 };
-    let round = |n: i64| (n + half).div_euclid(area);
+    let half = (by.d >> 1) as i64;
+    let round = |n: i64| by.floor(n + half);
     let (px, py) = d(a, first);
     let start = v[0] * one + one / 2 + round((nx * px + ny * py) * one);
     let word = |x: i64| x as i32 as u32;
@@ -176,7 +219,7 @@ pub fn fog(
         (w[1] & 0xffff) as i32 * 16 + 8,
         (w[1] >> 16) as i32 * 16 + 8,
     );
-    let (f0, dx, dy) = plane(a, b, c, f, first, 16);
+    let (f0, dx, dy) = plane(&Area::of(a, b, c), a, b, c, f, first, 16);
     [f0, dx, dy, 1 | (colour & 0xff_ffff) << 8]
 }
 
@@ -203,7 +246,7 @@ pub fn alpha_plane(
         (w[1] & 0xffff) as i32 * 16 + 8,
         (w[1] >> 16) as i32 * 16 + 8,
     );
-    let (a0, dx, dy) = plane(a, b, c, al, first, 16);
+    let (a0, dx, dy) = plane(&Area::of(a, b, c), a, b, c, al, first, 16);
     [a0, dx, dy, 1]
 }
 
@@ -306,18 +349,21 @@ pub fn triangle_wide(
     w[5] = pair(c);
     w[15] = colour >> 24;
     let first = (x0 as i32 * 16 + 8, y0 as i32 * 16 + 8);
+    // Every plane of the triangle divides by its area, so the reciprocal
+    // is taken once (#1750).
+    let by = Area::of(a, b, c);
     if let Some(s) = shades {
         w[0] = 3 | ((colour & 0xff_ffff) << 2);
         for k in 0..3 {
             let (s0, dx, dy) =
-                plane(a, b, c, [s[0][k], s[1][k], s[2][k]], first, 16);
+                plane(&by, a, b, c, [s[0][k], s[1][k], s[2][k]], first, 16);
             w[6 + 3 * k] = s0;
             w[7 + 3 * k] = dx;
             w[8 + 3 * k] = dy;
         }
     }
     let slot = zs.map(|v| {
-        let (z0, dx, dy) = plane(a, b, c, v, first, ZFRAC);
+        let (z0, dx, dy) = plane(&by, a, b, c, v, first, ZFRAC);
         let mut p = [0u32; WORDS];
         (p[0], p[1], p[2]) = (z0, dx, dy);
         p
@@ -474,4 +520,45 @@ fn shr(x: i128, k: u32) -> i128 {
 /// second slot and the two texture slots after that.
 pub fn textured_bit(w: &mut [u32; WORDS]) {
     w[15] |= razboj_tile::tex::TEXTURED;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A triangle's reciprocal divides as `div_euclid` does (#1750), for
+    /// areas from one to past 2^31 and numerators either side of nought
+    /// to past 2^60, the most a plane's products reach.
+    #[test]
+    fn the_reciprocal_divides_as_div_euclid_does() {
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        let areas: Vec<i64> = (0..2000)
+            .map(|k| match k {
+                0 => 1,
+                1 => 2,
+                2 => (1i64 << 31) + 1,
+                _ => (next() >> (33 + next() % 31)) as i64 + 1,
+            })
+            .collect();
+        for d in areas {
+            let by = Area {
+                d: d as u64,
+                r: u64::MAX / d as u64,
+            };
+            let mut ns = vec![0, 1, -1, d - 1, d, d + 1, -d, -d - 1, -d + 1];
+            for _ in 0..64 {
+                let n = (next() >> (3 + next() % 60)) as i64;
+                ns.extend([n, -n]);
+            }
+            for n in ns {
+                assert_eq!(by.floor(n), n.div_euclid(d), "{n} / {d}");
+            }
+        }
+    }
 }
