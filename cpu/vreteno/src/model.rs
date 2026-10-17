@@ -296,6 +296,9 @@ pub struct Icache {
     /// second one it does not, which is filled and kept, since only a
     /// flush, `fence.i` or a change of translation drops a fill.
     pub after: (u64, u64),
+    /// More a fill while the other hart runs, which shares the DDR3's path
+    /// with this one (#1752).
+    pub shared: u64,
 }
 
 /// What a step costs in the timing mode (issue 1392): a base an
@@ -425,10 +428,12 @@ impl Timing {
     /// is a taken jump or branch 10.0: a taken transfer is the 4 of
     /// `cpi.rs`'s loop, and 2 more when the word after it is in another
     /// line, which is looked up. A `jal` to the next instruction, which
-    /// the board charges as a jump, the model sees as running on. With
-    /// these the teapot's list on the model is 36.49M against the board's
-    /// 38.82M, 6.0% under, for what no block measures yet (#1752). A page
-    /// walk is two loads that miss.
+    /// the board charges as a jump, the model sees as running on. From the
+    /// GUESS and CONTEND blocks on the board (#1752, flagship f40c115d): a
+    /// backward branch that falls through 5 more, 4.92 a line of four, where
+    /// the core on its own memories takes 2, and a fill while the other hart
+    /// streams loads from the DDR3 2.57 more, charged as 3. A page walk is
+    /// two loads that miss.
     pub fn board_cached() -> Self {
         let mut t = Timing {
             hit: Some(2),
@@ -436,11 +441,15 @@ impl Timing {
             mul: 2,
             div: 34,
             load_use: 1,
+            // The board's GUESS block: 4.92 a line, 5.0 a round (#1752), where
+            // the core on its own memories takes 2.
+            guessed: 5,
             icache: Some(Icache {
                 jumped: 42,
                 ran_on: 45,
                 step: 3,
                 after: (2, 44),
+                shared: 3,
             }),
             walk: 86,
             fence: 14,
@@ -1284,6 +1293,7 @@ impl Model {
             ran_on,
             step,
             after,
+            shared,
         }) = t.icache
         {
             let line = pc >> 4;
@@ -1294,6 +1304,9 @@ impl Model {
                 let slot = (line & 1023) as usize;
                 if self.ic[slot] != line + 1 {
                     c += if self.fell { ran_on } else { jumped };
+                    if self.contended {
+                        c += shared;
+                    }
                     self.ic[slot] = line + 1;
                     self.ic_fills += 1;
                 } else if self.fell {
@@ -1311,6 +1324,9 @@ impl Model {
                     c += after.0;
                 } else {
                     c += after.1;
+                    if self.contended {
+                        c += shared;
+                    }
                     self.ic[slot] = next + 1;
                     self.ic_fills += 1;
                 }
@@ -2066,6 +2082,7 @@ mod tests {
             ran_on: 45,
             step: 3,
             after: (2, 40),
+            shared: 0,
         };
         let (with, without) = (run(Some(icache)), run(None));
         assert_eq!(with[0] - without[0], 84 + 40 + 84 + 45, "cold");
@@ -2104,6 +2121,7 @@ mod tests {
                 ran_on: 45,
                 step: 3,
                 after: (2, 40),
+                shared: 0,
             };
             run(Some(icache)) - run(None)
         };
