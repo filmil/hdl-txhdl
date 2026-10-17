@@ -47,28 +47,53 @@ pub struct Watch {
     pub differed: Reg<Bit>,
 }
 
+/// What `Watch` compares (issue 726): the reset, each core's halt,
+/// instruction and writeback, and the three checks' lines. Taken apart
+/// in `run`, so each port keeps its name.
+pub struct WatchIn {
+    pub rst: In<Bit>,
+    pub halt1: In<Bit>,
+    pub halt2: In<Bit>,
+    pub instr1: In<U<32>>,
+    pub instr2: In<U<32>>,
+    pub wb1: In<Writeback>,
+    pub wb2: In<Writeback>,
+    pub d1: In<Bit>,
+    pub d2: In<Bit>,
+    pub d3: In<Bit>,
+}
+
+/// What `Watch` passes on (issue 726): the first core's halt,
+/// instruction and writeback, and the line raised on a disagreement.
+pub struct WatchOut {
+    pub halt: Out<Bit>,
+    pub instr: Out<U<32>>,
+    pub wb: Out<Writeback>,
+    pub differs: Out<Bit>,
+}
+
 #[lower]
 impl Unit for Watch {
     async fn run(
         &mut self,
-        (rst, halt1, halt2, instr1, instr2, wb1, wb2, d1, d2, d3): (
-            In<Bit>,
-            In<Bit>,
-            In<Bit>,
-            In<U<32>>,
-            In<U<32>>,
-            In<Writeback>,
-            In<Writeback>,
-            In<Bit>,
-            In<Bit>,
-            In<Bit>,
-        ),
-        (halt, instr, wb, differs): (
-            Out<Bit>,
-            Out<U<32>>,
-            Out<Writeback>,
-            Out<Bit>,
-        ),
+        WatchIn {
+            rst,
+            halt1,
+            halt2,
+            instr1,
+            instr2,
+            wb1,
+            wb2,
+            d1,
+            d2,
+            d3,
+        }: WatchIn,
+        WatchOut {
+            halt,
+            instr,
+            wb,
+            differs,
+        }: WatchOut,
     ) {
         loop {
             DefaultClock::rising().await;
@@ -295,11 +320,24 @@ impl<const IW: usize> Unit for Pair<IW> {
                         self.check_release
                             .run((rst_r, rl1_rx, rl2_rx), (release, d3_o)),
                         self.watch.run(
-                            (
-                                rst, halt1_i, halt2_i, instr1_i, instr2_i,
-                                wb1_i, wb2_i, d1_i, d2_i, d3_i,
-                            ),
-                            (halt, instr, wb, differs),
+                            WatchIn {
+                                rst,
+                                halt1: halt1_i,
+                                halt2: halt2_i,
+                                instr1: instr1_i,
+                                instr2: instr2_i,
+                                wb1: wb1_i,
+                                wb2: wb2_i,
+                                d1: d1_i,
+                                d2: d2_i,
+                                d3: d3_i,
+                            },
+                            WatchOut {
+                                halt,
+                                instr,
+                                wb,
+                                differs,
+                            },
                         ),
                     ),
                 ),
