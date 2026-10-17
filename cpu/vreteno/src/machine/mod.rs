@@ -449,6 +449,14 @@ impl Machine {
             let mut d = self.board.0.borrow_mut();
             let before = d.steps;
             d.steps += d.elapsed;
+            // The serial port's queue drains at the line's rate in the
+            // timing mode (issue 1561); a byte leaving moves the transmit
+            // watermark, and with it the port's line.
+            d.uart.paced = self.model.timing.is_some();
+            let now = d.steps;
+            if d.uart.at(now) {
+                d.stale = true;
+            }
             // As each vertical blanking begins the scanout takes the base
             // it was last given, as the board's does at the blanking's
             // first row (`hdmi`'s frame pulse; #1639).
@@ -631,9 +639,10 @@ impl Machine {
         self.board.0.borrow_mut().uart.rx.extend(bytes);
     }
 
-    /// What the serial port has sent.
+    /// What the serial port has sent, with what still waits in its
+    /// transmit queue in the timing mode, since the line sends that too.
     pub fn sent(&self) -> Vec<u8> {
-        self.board.0.borrow().uart.sent.clone()
+        self.board.0.borrow().uart.written()
     }
 }
 
