@@ -177,11 +177,14 @@ for d in "${demos[@]}"; do
     if [[ "$extra" != - ]]; then files="$files $extra"; fi
     timeout 300 ssh -n -o BatchMode=yes "$server" \
       "cd $fbdir && ./fastboot -s tcp:192.168.1.50 boot $files" >>"$log" 2>&1 || true
-    start="$(grep -am1 'fastboot: booting' "$log" | cut -c1-13 || true)"
     for _ in $(seq 1 "$seconds"); do
       if [[ "$until" != - ]] && grep -aqF "$until" "$log"; then break; fi
       sleep 1
     done
+    # The board prints its booting line a moment after the host's
+    # fastboot returns, through the reader, so it is read once the
+    # demo has run rather than at once, which lost the race (#1774).
+    start="$(grep -am1 'fastboot: booting' "$log" | cut -c1-13 || true)"
     if [[ -n "$sender" ]]; then
       ssh -n -o BatchMode=yes "$server" "kill $sender" 2>/dev/null || true
     fi
@@ -192,7 +195,11 @@ for d in "${demos[@]}"; do
   fi
   release
   end="$(date -u +%T.%3N)Z"
-  last="$(grep -av '^\S* \[load\]' "$log" | tail -1 | cut -c15- | tr '\t' ' ' || true)"
+  # The demo's own last line: not the loader's, `[load]` or `load: `,
+  # which it prints when the script stops the sender, nor a blank one
+  # (#1774).
+  last="$(grep -avE '^\S* (\[load\]|load: )|^\S*\s*$' "$log" | tail -1 |
+    cut -c15- | tr -d '\r' | tr '\t' ' ' || true)"
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$target" "$sum" "${start:-?}" "$end" "$last" \
     >>"$dir/manifest.tsv"
   echo "  $name: from ${start:-?} to $end"
