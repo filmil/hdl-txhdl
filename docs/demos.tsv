@@ -12,8 +12,9 @@
 # rate with room; the teapot stops after 256 frames, about 77 s at
 # the 3.33 frames a second its two harts draw on the board (2026-10-10).
 # Steps 9 and 10 (the second texture unit, #1510, and GL_COMBINE, #1512)
-# draw two units a pixel, about twice the rasteriser's cycles of one, so
-# their seconds allow for a frame that waits on Razboj (2026-10-17).
+# draw two units a pixel: step 9's frame 40 takes Razboj 16.7M cycles in
+# the rasteriser's simulation (#1591), about ten refreshes, so about 6
+# frames a second and 1200 frames in about 200 s, with room (2026-10-17).
 #name	target	how	seconds	until	extra
 ico-1-flat	//cpu/vreteno/rust:demo_ico_1_flat_bin	serial	25	-	-
 ico-2-depth	//cpu/vreteno/rust:demo_ico_2_depth_bin	serial	45	-	-
@@ -23,8 +24,8 @@ ico-5-mipmapped	//cpu/vreteno/rust:demo_ico_5_mipmapped_bin	serial	110	-	-
 ico-6-fog	//cpu/vreteno/rust:demo_ico_6_fog_bin	serial	110	-	-
 ico-7-blend	//cpu/vreteno/rust:demo_ico_7_blend_bin	serial	110	-	-
 ico-8-mirror	//cpu/vreteno/rust:demo_ico_8_mirror_bin	serial	110	-	-
-ico-9-multitex	//cpu/vreteno/rust:demo_ico_9_multitex_bin	serial	180	-	-
-ico-10-combine	//cpu/vreteno/rust:demo_ico_10_combine_bin	serial	180	-	-
+ico-9-multitex	//cpu/vreteno/rust:demo_ico_9_multitex_bin	serial	250	-	-
+ico-10-combine	//cpu/vreteno/rust:demo_ico_10_combine_bin	serial	250	-	-
 teapot	//cpu/vreteno/rust:demo_teapot_1_utah_bin	serial	120	-	-
 linux-console	//linux:board_demo_boot	fastboot	120	txhdl: demo done	-
 doom	//demo/doom:doom	fastboot	60	-	freedoom1.wad
