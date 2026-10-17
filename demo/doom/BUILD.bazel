@@ -37,8 +37,8 @@ vreteno_c_program(
     ],
     hdrs = [
         "board.h",
-        "//zephyr:regs_scan",
-        "//zephyr:regs_uart",
+        "//zephyr:include/vreteno/regs/scan.h",
+        "//zephyr:include/vreteno/regs/uart.h",
         "@doomgeneric//:hdrs",
     ],
     copts = [
