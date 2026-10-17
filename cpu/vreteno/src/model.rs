@@ -432,8 +432,10 @@ impl Timing {
     /// GUESS and CONTEND blocks on the board (#1752, flagship f40c115d): a
     /// backward branch that falls through 5 more, 4.92 a line of four, where
     /// the core on its own memories takes 2, and a fill while the other hart
-    /// streams loads from the DDR3 2.57 more, charged as 3. A page walk is
-    /// two loads that miss.
+    /// streams loads from the DDR3 2.57 more, charged as 3. With these the
+    /// teapot's list on the model is 35.69M against the board's 37.18M, 4.0%
+    /// under, and linked hot first 30.34M against 30.36M (#1752). A page walk
+    /// is two loads that miss.
     pub fn board_cached() -> Self {
         let mut t = Timing {
             hit: Some(2),
@@ -2154,5 +2156,42 @@ mod tests {
         };
         let (with, without) = (run(bne(0, 0, -4)), run(addi(0, 0, 0)));
         assert_eq!(with - without, 10 * Timing::board().guessed);
+    }
+    /// A fill while the other hart runs costs `shared` more (#1752), every
+    /// fill and nothing else: a cold run whose `jal` fills its own line
+    /// and the line after it costs two `shared` more contended than not.
+    /// And the board's timing charges a wrong guess the board's 5, where
+    /// the core's own figure stays 2.
+    #[test]
+    fn a_fill_while_the_other_hart_runs_costs_shared() {
+        use crate::isa::jal;
+        let mut imem = vec![addi(1, 1, 1), addi(1, 1, 1), addi(1, 1, 1)];
+        imem.push(jal(0, 20 - 12)); // 12, line 0's last word, to 20
+        imem.resize(6, halt());
+        let run = |contended: bool| {
+            let icache = Icache {
+                jumped: 84,
+                ran_on: 45,
+                step: 3,
+                after: (2, 40),
+                shared: 7,
+            };
+            let timing = Timing {
+                icache: Some(icache),
+                ..Timing::board()
+            };
+            let mut m = Model {
+                timing: Some(timing),
+                contended,
+                ..Model::default()
+            };
+            while m.halted.is_none() {
+                m.step(&imem, None);
+            }
+            m.cycles
+        };
+        assert_eq!(run(true) - run(false), 2 * 7, "two fills, each shared");
+        assert_eq!(Timing::board_cached().guessed, 5);
+        assert_eq!(Timing::board().guessed, 2);
     }
 }
