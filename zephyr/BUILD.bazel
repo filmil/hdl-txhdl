@@ -407,6 +407,9 @@ sh_test(
 
 # The copy-and-jump `boot` ends in, for the core's model to run.
 exports_files([
+    # For an image built outside this package to be held to the same
+    # check (issue 1772).
+    "paths_test.sh",
     "fastboot/app/boards/ax7a200b.overlay",
     "fastboot/app/src/jump.S",
     "fastboot/app/src/main.c",

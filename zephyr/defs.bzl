@@ -43,12 +43,17 @@ def _zephyr_image_impl(ctx):
     # An application from a package of its own, in this repository or
     # in one that depends on it (issue 1772): its directory is the one
     # that holds its topmost CMakeLists.txt.
+    # Its files are under that directory, the package's root being `.`.
     app_dir = ""
     if ctx.files.app_srcs:
         lists = [f for f in ctx.files.app_srcs if f.basename == "CMakeLists.txt"]
         if not lists:
             fail("`app_srcs` holds no CMakeLists.txt")
-        app_dir = sorted(lists, key = lambda f: len(f.path))[0].dirname
+        depth = lambda f: 0 if not f.dirname else len(f.dirname.split("/"))
+        app_dir = sorted(lists, key = depth)[0].dirname or "."
+        for f in ctx.files.app_srcs:
+            if app_dir != "." and not f.path.startswith(app_dir + "/"):
+                fail("`app_srcs` file %s is not under %s" % (f.path, app_dir))
     elf = ctx.actions.declare_file(ctx.label.name + ".elf")
     binary = ctx.actions.declare_file(ctx.label.name + ".bin")
     config = ctx.actions.declare_file(ctx.label.name + ".config")
@@ -74,9 +79,8 @@ def _zephyr_image_impl(ctx):
 
     inputs = depset(
         ctx.files.module + ctx.files._cmake + ctx.files._ninja +
-        ctx.files._dtc + ctx.files._python + ctx.files._py_deps + extra +
-        ctx.files.app_srcs,
-        transitive = [
+        ctx.files._dtc + ctx.files._python + ctx.files._py_deps + extra,
+        transitive = [a.files for a in ctx.attr.app_srcs] + [
             depset(ctx.files._zephyr),
             depset(ctx.files._mbedtls),
             depset(ctx.files._gcc),
@@ -313,16 +317,20 @@ zephyr_image = rule(
         ),
         "app": attr.string(
             doc = "The application, as a path inside the module, for " +
-                  "one this repository writes (issue 143).",
+                  "one this repository writes (issue 143). Exactly " +
+                  "one of this, `sample` and `app_srcs`.",
         ),
         "app_srcs": attr.label_list(
             allow_files = True,
             doc = "The application as files of a package of its own: " +
                   "its CMakeLists.txt, prj.conf and sources, the " +
-                  "topmost CMakeLists.txt naming its directory. For " +
-                  "an application outside the module, in this " +
-                  "repository or in one that depends on it (issue " +
-                  "1772). Exactly one of this, `app` and `sample`.",
+                  "topmost CMakeLists.txt naming its directory, under " +
+                  "which every other file must be. For an application " +
+                  "outside the module, in this repository or in one " +
+                  "that depends on it (issue 1772). Source files: one " +
+                  "the build generates is not mapped to a path of the " +
+                  "tree in the image. Exactly one of this, `app` and " +
+                  "`sample`.",
         ),
         "extra": attr.label_list(
             doc = "What the application links that Bazel built: " +

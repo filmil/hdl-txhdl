@@ -28,6 +28,12 @@ filegroup(
     output_group = "config",
 )
 
+filegroup(
+    name = "zephyr_app_elf",
+    srcs = [":zephyr_app"],
+    output_group = "elf",
+)
+
 # The image is the port's, with the stack the application asked for:
 # the configuration it generated names the board, the TCP stack and
 # the Ethernet driver.
@@ -36,4 +42,20 @@ sh_test(
     srcs = ["zephyr_app_test.sh"],
     args = ["$(location :zephyr_app_config)"],
     data = [":zephyr_app_config"],
+)
+
+# The image names no path of the machine that built it, the
+# application's own real path among them: the port's paths test, on
+# this image.
+sh_test(
+    name = "zephyr_app_paths_test",
+    srcs = ["@txhdl//zephyr:paths_test.sh"],
+    args = [
+        "$(location :zephyr_app_elf)",
+        "$(location :zephyr_app_config)",
+    ],
+    data = [
+        ":zephyr_app_config",
+        ":zephyr_app_elf",
+    ],
 )
