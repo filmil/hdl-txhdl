@@ -439,4 +439,87 @@ mod tests {
             Err(Error::StoredLength)
         );
     }
+
+    /// A stream written by hand, a field at a time, least significant bit
+    /// first; a Huffman code goes most significant bit first.
+    #[derive(Default)]
+    struct W {
+        v: Vec<u8>,
+        acc: u32,
+        n: u32,
+    }
+
+    impl W {
+        fn put(&mut self, bits: u32, k: u32) -> &mut W {
+            self.acc |= bits << self.n;
+            self.n += k;
+            while self.n >= 8 {
+                self.v.push(self.acc as u8);
+                self.acc >>= 8;
+                self.n -= 8;
+            }
+            self
+        }
+
+        fn code(&mut self, c: u32, len: u32) -> &mut W {
+            self.put(c.reverse_bits() >> (32 - len), len)
+        }
+
+        /// To the next whole byte, as a stored block's header is.
+        fn align(&mut self) -> &mut W {
+            let pad = (8 - self.n % 8) % 8;
+            self.put(0, pad)
+        }
+    }
+
+    /// Code lengths that make no code, and a symbol no block has, are
+    /// refused too.
+    #[test]
+    fn bad_codes_and_lengths_are_refused() {
+        let mut out = vec![0u8; 16];
+        // A fixed block's literal/length code 286, `11000110`: the code
+        // exists, but names no length.
+        let mut w = W::default();
+        w.put(1, 1).put(1, 2).code(0b1100_0110, 8).put(0, 16);
+        assert_eq!(inflate(&w.v, &mut out), Err(Error::Code));
+        // A dynamic block whose nineteen code length codes are all one
+        // bit long: over-subscribed.
+        let mut w = W::default();
+        w.put(1, 1).put(2, 2).put(0, 5).put(0, 5).put(15, 4);
+        for _ in 0..19 {
+            w.put(1, 3);
+        }
+        w.put(0, 16);
+        assert_eq!(inflate(&w.v, &mut out), Err(Error::Lengths));
+        // A dynamic block whose first code length is a repeat of the one
+        // before it, which there is none of. The code length code has
+        // two codes of one bit, `0` for 0 and `1` for 16, the first four
+        // in ORDER being 16, 17, 18 and 0.
+        let mut w = W::default();
+        w.put(1, 1).put(2, 2).put(0, 5).put(0, 5).put(0, 4);
+        w.put(1, 3).put(0, 3).put(0, 3).put(1, 3);
+        w.code(1, 1).put(0, 16);
+        assert_eq!(inflate(&w.v, &mut out), Err(Error::Lengths));
+    }
+
+    /// A stored block after a Huffman block starts at the next whole
+    /// byte, whatever the reader had read ahead: the bits left of the
+    /// byte the header ended in are dropped and the whole bytes are
+    /// given back.
+    #[test]
+    fn a_stored_block_after_a_huffman_block_starts_on_its_byte() {
+        // A fixed block, not the last: `A`, whose code is 0x30 + 0x41 in
+        // eight bits, then the end code 256, seven zeros. Then the last
+        // block, stored: twenty-one bits in, so three are dropped.
+        let mut w = W::default();
+        w.put(0, 1).put(1, 2).code(0x30 + 0x41, 8).code(0, 7);
+        w.put(1, 1).put(0, 2).align();
+        w.put(3, 16).put(!3 & 0xffff, 16);
+        for &c in b"xyz" {
+            w.put(c as u32, 8);
+        }
+        let mut out = vec![0u8; 4];
+        assert_eq!(inflate(&w.v, &mut out), Ok(4));
+        assert_eq!(&out, b"Axyz");
+    }
 }

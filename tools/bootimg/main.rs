@@ -895,4 +895,46 @@ mod tests {
             m.model.pc
         );
     }
+
+    /// A stream that inflates cleanly to fewer bytes than the kernel's
+    /// length is refused as well: the inflater answers 1, and the shim
+    /// stops rather than start a kernel with its end missing.
+    #[test]
+    fn a_kernel_that_inflates_short_stops_the_shim() {
+        let mhalt =
+            ((0x7c0u32 << 20) | (1 << 15) | (5 << 12) | 0x73).to_le_bytes();
+        let kernel = vec![0x4bu8; 0x1000];
+        let l = layout(&map(0x2_0000), 0x200).unwrap();
+        let code = inflater();
+        let mut img = pack_with(
+            &mhalt,
+            &[0xd0; 4],
+            &kernel,
+            &[0x1a; 0x200],
+            &l,
+            None,
+            Some(&code),
+        )
+        .unwrap();
+        // The deflated kernel is the image's last part: put a whole
+        // stream of the kernel's first half in its place, zeros after it.
+        let z = miniz_oxide::deflate::compress_to_vec(&kernel, 9);
+        let short = miniz_oxide::deflate::compress_to_vec(&kernel[..0x800], 9);
+        assert!(short.len() <= z.len(), "the short stream fits");
+        let n = img.len();
+        let at = n - z.len().div_ceil(4) * 4;
+        img[at..n].fill(0);
+        img[at..at + short.len()].copy_from_slice(&short);
+        let mut m = Machine::new();
+        m.load(BASE, &img);
+        m.boot(BASE, DTB);
+        m.run(2_000_000);
+        assert!(m.model.halted.is_none(), "OpenSBI's stand-in never ran");
+        assert!(
+            m.model.pc < INFLATER,
+            "stopped in the shim, at {:#x}",
+            m.model.pc
+        );
+        assert_eq!(m.model.x[10], 1, "the inflater's answer: a short kernel");
+    }
 }
