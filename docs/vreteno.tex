@@ -179,8 +179,9 @@ The instruction cache counts its work as well (issue 1752):
 count lookups, hits, fills started, fills kept and fills dropped. A
 program reads them to learn how many lines a stretch of its code
 filled, which the cycles alone do not say. They are machine mode's
-only, written as \code{mcycle} is, and a core without the cache reads
-them as zero. The model has no cache, so they are checked as the
+only, written as \code{mcycle} is and read again as
+\code{hpmcounter3} to \code{hpmcounter7}, and a core without the cache
+neither counts nor keeps a write, so it reads them as zero. The model has no cache, so they are checked as the
 other counters are, by a run of their own in
 \code{//cpu/vreteno:icache\_test}.
 
