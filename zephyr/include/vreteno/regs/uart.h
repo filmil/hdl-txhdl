@@ -67,5 +67,10 @@
 #define UART_DIV_DIV_MASK 0xffff
 #define UART_DIV_DIV_WIDTH 16
 #define UART_DIV_DIV_RESET 0x363
+#define UART_TXDROP 0x1c /* read only: bytes written to a full transmit queue */
+#define UART_TXDROP_COUNT_SHIFT 0 /* read only: dropped since the last reset, wrapping */
+#define UART_TXDROP_COUNT_MASK 0xffff
+#define UART_TXDROP_COUNT_WIDTH 16
+#define UART_TXDROP_COUNT_RESET 0x0
 
 #endif

@@ -12,8 +12,10 @@
 //! start bit, eight data bits least significant first and one stop bit,
 //! or two with `nstop`, each `div` plus one cycles long. A write while
 //! the queue is full is dropped, and a read of `txdata` says so in its
-//! bit 31. A frame coming in on the other line while `rxen` is set,
-//! sampled in the middle of each bit, lands in a queue of sixty-four
+//! bit 31; `txdrop`, this port's own word after SiFive's seven, counts
+//! the bytes so dropped since the last reset (issue 1779). A frame
+//! coming in on the other line while `rxen` is set, sampled in the
+//! middle of each bit, lands in a queue of sixty-four
 //! behind `rxdata`, whose read takes the oldest and says in bit 31 when
 //! there was none; a byte that finds the queue full is dropped and
 //! counted.
@@ -74,7 +76,8 @@ fn taken_in(shift: U<8>, line: Bit) -> U<8> {
 
 // begin{map}
 // The map: SiFive's seven words, three address bits above the byte
-// bits selecting one, and the eighth reads zero (issue 1011).
+// bits selecting one (issue 1011), and an eighth of this port's own,
+// the count of bytes dropped from a full transmit queue (issue 1779).
 regmap! { serial (serial_read, serial_we, serial_re), 3: [
     (0, txdata, rw, "a byte to send, and whether the queue is full", [
         (data, 0, 8, wo, 0, "the byte to send"),
@@ -103,6 +106,9 @@ regmap! { serial (serial_read, serial_we, serial_re), 3: [
     ]),
     (6, div, rw, "the bit period in cycles, less one", [
         (div, 0, 16, rw, 867, "the divider; 867 for 115200 at 100 MHz"),
+    ]),
+    (7, txdrop, ro, "bytes written to a full transmit queue", [
+        (count, 0, 16, ro, 0, "dropped since the last reset, wrapping"),
     ]),
 ] }
 // end{map}
@@ -142,6 +148,9 @@ pub struct Uart<const DIV: u32> {
     pub count: Reg<U<7>>,
     pub received: Reg<U<8>>,
     pub dropped: Reg<U<8>>,
+    /// The bytes written to `txdata` while its queue was full, and so
+    /// dropped, since the last reset: `txdrop` (issue 1779).
+    pub txdrop: Reg<U<16>>,
     /// The controls, as `txctrl`, `rxctrl`, `ie` and `div` hold them.
     pub txen: Reg<Bit>,
     pub nstop: Reg<Bit>,
@@ -175,6 +184,7 @@ impl<const DIV: u32> Default for Uart<DIV> {
             count: Reg::default(),
             received: Reg::default(),
             dropped: Reg::default(),
+            txdrop: Reg::default(),
             txen: Reg::new(Bit::One),
             nstop: Reg::default(),
             txcnt: Reg::default(),
@@ -255,6 +265,11 @@ impl<const DIV: u32> Unit for Uart<DIV> {
                 }
             }
             let tx_tail = self.tx_head + self.tx_count.get().slice::<0, 3>();
+            if rst {
+                self.txdrop.set(0);
+            } else if we.bit(0).to_bool() & tx_full {
+                self.txdrop.set(self.txdrop + 1);
+            }
             if push_tx & !rst {
                 let written = serial_txdata_data(wh.data);
                 self.txq.at(tx_tail).set(written);
@@ -324,6 +339,7 @@ impl<const DIV: u32> Unit for Uart<DIV> {
                         serial_ie_pack(self.ie_txwm.get(), self.ie_rxwm.get()),
                         serial_ip_pack(Bit::from(txwm), Bit::from(rxwm)),
                         serial_div_pack(div),
+                        serial_txdrop_pack(self.txdrop.get()),
                     ),
                     resp: Resp::Okay,
                 });

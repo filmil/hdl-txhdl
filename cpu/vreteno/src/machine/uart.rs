@@ -4,7 +4,8 @@
 //! (issue 1016).
 //!
 //! The model sends a byte the moment it is written, so the transmit
-//! queue is always empty and `txdata` never reads full. Received bytes
+//! queue is always empty, `txdata` never reads full, and `txdrop`, the
+//! bytes dropped from a full queue (issue 1779), is always zero. Received bytes
 //! wait in a queue the machine fills, from a file or a test.
 //!
 //! The controls reset to what the hardware's map declares, so a
@@ -21,6 +22,7 @@ pub const RXCTRL: u32 = 0x0c;
 pub const IE: u32 = 0x10;
 pub const IP: u32 = 0x14;
 pub const DIV: u32 = 0x18;
+pub const TXDROP: u32 = 0x1c;
 
 /// `rxdata`'s empty bit, and `txdata`'s full bit.
 const EMPTY: u32 = 1 << 31;
@@ -98,6 +100,8 @@ impl Uart {
             IE => self.ie,
             IP => self.ip(),
             DIV => self.div,
+            // Nothing is ever dropped here (issue 1779).
+            TXDROP => 0,
             _ => 0,
         }
     }
@@ -131,6 +135,7 @@ mod tests {
         u.store(TXDATA, b'O' as u32);
         u.store(TXDATA, 0x100 | b'K' as u32);
         assert_eq!(u.sent, b"OK", "the low byte of each write");
+        assert_eq!(u.load(TXDROP), 0, "none dropped");
         assert_eq!(u.load(RXDATA), EMPTY, "nothing received");
         u.rx.push_back(b'x');
         assert_eq!(u.load(RXDATA), b'x' as u32);
@@ -157,7 +162,7 @@ mod tests {
     fn the_controls_reset_as_the_hardware_s_do() {
         let hw = crate::uart::Uart::<868>::default();
         let bit = |b: txhdl::types::Bit| b.to_bool() as u32;
-        let u = Uart::default();
+        let mut u = Uart::default();
         let txctrl = serial::txctrl_txen.with(bit(hw.txen.get()))
             | serial::txctrl_nstop.with(bit(hw.nstop.get()))
             | serial::txctrl_txcnt.with(hw.txcnt.get().raw() as u32);
@@ -169,12 +174,12 @@ mod tests {
         assert_eq!(u.rxctrl, rxctrl, "rxctrl");
         assert_eq!(u.ie, ie, "ie");
         assert_eq!(u.div, hw.div.get().raw() as u32, "div");
+        assert_eq!(u.load(TXDROP), hw.txdrop.get().raw() as u32, "txdrop");
         // Both directions enabled from reset, and `ie` clear, as SiFive's
         // and Linux's driver have it: a byte waiting raises nothing until
         // a program enables the watermark.
         assert_eq!(serial::txctrl_txen.get(u.txctrl), 1, "sending on");
         assert_eq!(serial::rxctrl_rxen.get(u.rxctrl), 1, "receiving on");
-        let mut u = u;
         u.rx.push_back(b'x');
         assert!(!u.irq(), "no interrupt before ie is written");
         u.store(IE, serial::ie_rxwm.with(1));

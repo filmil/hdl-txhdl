@@ -118,6 +118,7 @@ impl Uart {
     const RX_EMPTY: u32 = uart::RXDATA_EMPTY_MASK;
     const RX_WAITING: u32 = uart::IP_RXWM_MASK;
     const IE: usize = map::UART + uart::IE;
+    const TXDROP: usize = map::UART + uart::TXDROP;
 
     /// Let a received byte raise the port's interrupt line, or stop it:
     /// `ie`'s receive bit, which a reset clears, as SiFive's does
@@ -131,6 +132,14 @@ impl Uart {
     pub fn put(byte: u8) {
         while rd(Self::TXDATA) & Self::TX_FULL != 0 {}
         wr(Self::TXDATA, byte as u32);
+    }
+
+    /// How many bytes the port dropped from a full transmit queue since
+    /// its last reset, wrapping at 65536 (issue 1779): what a write in
+    /// `put` would cost if a read of `txdata` ever found room the queue
+    /// did not have.
+    pub fn tx_dropped() -> u32 {
+        rd(Self::TXDROP) & 0xffff
     }
 
     /// Send every byte of `text`.
