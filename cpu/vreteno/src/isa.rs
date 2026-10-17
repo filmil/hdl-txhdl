@@ -157,8 +157,9 @@ pub const CSR_MINSTRETH: u32 = 0xb82;
 /// The instruction cache's counters, `mhpmcounter3` to `7` and their
 /// upper halves (#1752): lookups, hits, fills started, fills kept and
 /// fills dropped. Machine mode reads and writes them as it does
-/// `mcycle`; `mcounteren` has no bits for them, so user mode does not.
-/// A core without the cache reads them as zero.
+/// `mcycle`, and reads them as `hpmcounter3` to `7` as well;
+/// `mcounteren` has no bits for them, so user mode does not. A core
+/// without the cache reads them as zero.
 pub const CSR_IC_LOOKUPS: u32 = 0xb03;
 pub const CSR_IC_HITS: u32 = 0xb04;
 pub const CSR_IC_FILLS: u32 = 0xb05;

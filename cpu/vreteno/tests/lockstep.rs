@@ -1767,7 +1767,7 @@ fn the_counters_that_count_nothing_read_zero() {
         a.wide(csrrw(0, *csr, 5));
         a.wide(csrrs(10 + i as u32, *csr, 0));
     }
-    a.wide(csrrs(17, 0xc03, 0));
+    a.wide(csrrs(17, 0xc08, 0));
     a.wide(csrrs(18, 0xc9f, 0));
     a.wide(csrrwi(0, CSR_MCOUNTEREN, 7)); // every bit that holds anything
     a.wide(csrrw(0, CSR_MSTATUS, 0)); // MPP = user
