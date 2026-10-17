@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # The boot image: the shim, OpenSBI, the device tree, the kernel and the
 # initramfs as one blob for fastboot (issue 1019).
-load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -9,6 +9,25 @@ rust_binary(
     name = "bootimg",
     srcs = ["main.rs"],
     edition = "2021",
+)
+
+# Raw DEFLATE inflated into a slice, with no allocation (issue 1229):
+# the inflater runs it on the core to unpack the kernel, and its tests
+# hold it against miniz_oxide, which the packer compresses with.
+# Optimised wherever it is built, since the core runs it over the whole
+# kernel before Linux starts.
+rust_library(
+    name = "inflate",
+    srcs = ["inflate.rs"],
+    edition = "2021",
+    rustc_flags = ["-Copt-level=2"],
+)
+
+rust_test(
+    name = "inflate_test",
+    crate = ":inflate",
+    edition = "2021",
+    deps = ["@crates//:miniz_oxide"],
 )
 
 # The layout's rules, and the image booting in the machine model.
