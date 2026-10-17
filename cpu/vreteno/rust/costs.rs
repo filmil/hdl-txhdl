@@ -389,6 +389,96 @@ fn icache_guess_contend() {
     say_line(b"contend-warm", c_warm, 1);
 }
 
+/// Four more blocks for #1752, each against one it differs from in one
+/// thing:
+///
+/// * `FWD` and `JMP`: `LOOP` with its second word skipping its third,
+///   by a forward branch taken, `beq zero, zero, 8`, which the core
+///   guesses not taken, or by `jal zero, 8`. Their difference is a wrong
+///   forward guess.
+/// * `GUESS2`: `GUESS` with its branch's target a line back, the
+///   header's, which is held, where `GUESS`'s is its own line. Their
+///   difference is what the wrong path's lookup of another line costs.
+/// * `SCATTER`: `HELD`'s 64 lines, each `jal` its line's third word,
+///   with the lines 16 KiB and 128 bytes apart, so that each is in a
+///   DDR3 row of its own, where `HELD`'s 64 share two. Their difference,
+///   cold, is what a fill costs when it opens a row.
+const FWD: usize = map::DDR3 + 0x36_2000;
+const JMP: usize = map::DDR3 + 0x37_2000;
+const GUESS2: usize = map::DDR3 + 0x38_2000;
+const SCATTER: usize = map::DDR3 + 0x40_2000;
+const SCATTER_STEP: usize = 0x4080;
+const _: () = assert!((FWD - map::DDR3) % 0x4000 == 0x2000);
+const _: () = assert!((JMP - map::DDR3) % 0x4000 == 0x2000);
+const _: () = assert!((GUESS2 - map::DDR3) % 0x4000 == 0x2000);
+const _: () = assert!((SCATTER - map::DDR3) % 0x4000 == 0x2000);
+/// `beq zero, zero, 8`; `jal zero, 8`; `bne zero, zero, -20`.
+const BEQ_SKIP: u32 = 0x0000_0463;
+const JAL_SKIP: u32 = 0x0080_006f;
+const BNE_LINE_BACK: u32 = 0xfe00_16e3;
+
+/// `SCATTER`'s header and last line: in the 128 bytes past its first
+/// line, on lines none of its 64 use.
+const SCATTER_HEAD: usize = SCATTER + 64;
+const SCATTER_END: usize = SCATTER_HEAD + 16;
+
+fn icache4_blocks() {
+    for (at, w1) in [(FWD, BEQ_SKIP), (JMP, JAL_SKIP), (GUESS2, BNE_LINE_BACK)]
+    {
+        put(at, [CSRR_T0, LI_T2, NOP, NOP]);
+        put(at + 16, [DEC_T2, w1, NOP, BNE_T2]);
+        put(at + 32, [CSRR_T1, SUB_A0, RET, NOP]);
+    }
+    let line = |k: usize| SCATTER + SCATTER_STEP * k;
+    let hop = |from: usize, to: usize| jal(to as i32 - (from + 8) as i32);
+    put(
+        SCATTER_HEAD,
+        [CSRR_T0, NOP, hop(SCATTER_HEAD, line(0)), NOP],
+    );
+    for k in 0..64 {
+        let next = if k == 63 { SCATTER_END } else { line(k + 1) };
+        put(line(k), [NOP, NOP, hop(line(k), next), NOP]);
+    }
+    put(SCATTER_END, [CSRR_T1, SUB_A0, RET, NOP]);
+}
+
+/// The four, each cold after `fence.i` and then warm: `icache4 fwd <cold>
+/// <warm> jmp <cold> <warm> guess2 <cold> <warm> scatter <cold> <warm>`,
+/// then `costs icache-<kind>` a line.
+fn icache4() {
+    icache4_blocks();
+    fence_i();
+    let ends = [FWD + 32, JMP + 32, GUESS2 + 32, SCATTER_END];
+    for end in ends {
+        let ret = (end as *const u32).wrapping_add(2);
+        if unsafe { core::ptr::read_volatile(ret) != RET } {
+            Uart::say(b"costs icache4 blocks not written\n");
+            return;
+        }
+    }
+    let mut cold = [0i32; 4];
+    let mut warm = [0i32; 4];
+    for (i, at) in [FWD, JMP, GUESS2, SCATTER_HEAD].into_iter().enumerate() {
+        fence_i();
+        cold[i] = run(at) as i32;
+        warm[i] = run(at) as i32;
+    }
+    Uart::say(b"icache4");
+    let names = [&b" fwd "[..], b" jmp ", b" guess2 ", b" scatter "];
+    for (i, name) in names.iter().enumerate() {
+        Uart::say(name);
+        Uart::put_decimal(cold[i] as u32);
+        Uart::put(b' ');
+        Uart::put_decimal(warm[i] as u32);
+    }
+    Uart::put(b'\n');
+    say_line(b"fwd-warm", warm[0], 1);
+    say_line(b"jmp-warm", warm[1], 1);
+    say_line(b"guess2-warm", warm[2], 1);
+    say_line(b"scatter-miss", cold[3] - warm[3], 1);
+    say_line(b"scatter-warm", warm[3], 1);
+}
+
 fn mcycle() -> u32 {
     let c: u32;
     unsafe { asm!("csrr {0}, mcycle", out(reg) c) };
@@ -458,6 +548,7 @@ fn main() -> ! {
     icache();
     icache_jumps();
     icache_guess_contend();
+    icache4();
     Uart::say(b"costs done\n");
     halt()
 }
