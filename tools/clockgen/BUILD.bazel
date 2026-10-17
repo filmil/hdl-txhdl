@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+# Clocks from a clock (issue 304): the settings of a 7-series MMCM or PLL
+# that make the clocks asked for from an input clock, and the Verilog
+# module that instantiates it. `//lib/board:clock_gen.bzl` runs it at
+# build time for a top that wants one.
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "clockgen_lib",
+    srcs = ["lib.rs"],
+    crate_name = "clockgen",
+    edition = "2021",
+)
+
+rust_test(
+    name = "clockgen_test",
+    crate = ":clockgen_lib",
+    edition = "2021",
+)
+
+rust_binary(
+    name = "clockgen",
+    srcs = ["main.rs"],
+    edition = "2021",
+    deps = [":clockgen_lib"],
+)
