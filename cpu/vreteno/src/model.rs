@@ -257,8 +257,10 @@ pub struct Model {
     pub fell: bool,
     /// What the step was for the timing mode: a multiply 1 or a division
     /// 2; the registers it reads; the register a load of it wrote; the
-    /// page walks it made; whether it was `fence.i` (issue 1561).
+    /// page walks it made; whether it was `fence.i` (issue 1561); its
+    /// length in bytes (#1679).
     pub mkind: std::cell::Cell<u8>,
+    pub ilen: std::cell::Cell<u32>,
     pub reads: std::cell::Cell<(u32, u32)>,
     pub loaded: std::cell::Cell<u32>,
     pub prev_loaded: u32,
@@ -268,6 +270,26 @@ pub struct Model {
     /// store into the DDR3 (issue 1561).
     pub fenced: std::cell::Cell<bool>,
     pub stored_at: u64,
+}
+
+/// What the instruction cache costs in the timing mode, in cycles more
+/// than a step (#1679).
+#[derive(Clone, Copy, Debug)]
+pub struct Icache {
+    /// A line the cache does not hold, which a jump or a taken branch
+    /// went to.
+    pub jumped: u64,
+    /// A line it does not hold, which the line before ran on into.
+    pub ran_on: u64,
+    /// Running on into a line it holds.
+    pub step: u64,
+    /// The word after a jump or a taken branch, when it lies in another
+    /// line than the jump's: the core fetches it as the jump executes and
+    /// redirects a cycle later, so the line is looked up, and the target's
+    /// fetch waits behind it. The first is a line the cache holds; the
+    /// second one it does not, which is filled and kept, since only a
+    /// flush, `fence.i` or a change of translation drops a fill.
+    pub after: (u64, u64),
 }
 
 /// What a step costs in the timing mode (issue 1392): a base an
@@ -304,11 +326,9 @@ pub struct Timing {
     pub div: u64,
     pub load_use: u64,
     /// The instruction cache (issue 1561): the core's, direct-mapped,
-    /// 1024 lines of 16 bytes. A line it does not hold costs the first
-    /// when a jump or a branch went to it and the second when the line
-    /// before ran on into it (#1679), and running on into a line it holds
-    /// costs the third. None models no cache, as `taken` alone did.
-    pub icache: Option<(u64, u64, u64)>,
+    /// 1024 lines of 16 bytes. None models no cache, as `taken` alone
+    /// did.
+    pub icache: Option<Icache>,
     /// A translation the TLB does not hold: the page walk's two reads of
     /// the DDR3 (issue 1561).
     pub walk: u64,
@@ -376,18 +396,23 @@ impl Timing {
     /// `core_costs_for_the_machine`, which the board has not measured: a
     /// load's word used at once 1 more. From `costs.rs`'s instruction-cache
     /// blocks on the board (#1679, flagships 6238e0c8 and 63ba1e5f), in
-    /// cycles a line of four instructions: a line not held that a jump went
-    /// to 83.95 more than one held, one the line before ran on into 42.1
-    /// more (41.6 after a `jal` to the next line), running on into a line
-    /// held 3 more than four steps (straight lines 7.0). A line the line
+    /// cycles a line: a line not held that a jump went to 83.96 more than
+    /// one held when the word after the jump starts a line not held, and
+    /// 42.16 when that word is in the jump's own line; one the line before
+    /// ran on into 42.0 more (41.4 after a `jal` to the next line);
+    /// running on into a line held 3 more than four steps (straight lines
+    /// 7.0). So a jumped-to line is 42, and the word after the jump costs
+    /// its line's fill, 42, when that line is not held. A line the line
     /// before ran on into is charged its miss in place of the running on,
-    /// so its figure is 42 and 3. A taken jump or branch stays the 4 of
-    /// `cpi.rs`'s loop: the blocks' loop says 6, 10.0 a line, but with 6
-    /// the teapot's list on the model is 5.7% over the board's, and with 4
-    /// it is 0.6% under (main 146138b8: 38.57M against 38.82M, where it
-    /// was 33.43M before these figures). A `jal` to the next instruction,
-    /// which the board charges as a jump, the model sees as running on. A
-    /// page walk is two loads that miss.
+    /// so its figure is 42 and 3. Warm, a line of three steps whose `jal`
+    /// is not its last word costs 7.0, and a line of four whose last word
+    /// is a taken jump or branch 10.0: a taken transfer is the 4 of
+    /// `cpi.rs`'s loop, and 2 more when the word after it is in another
+    /// line, which is looked up. A `jal` to the next instruction, which
+    /// the board charges as a jump, the model sees as running on. With
+    /// these the teapot's list on the model is 36.49M against the board's
+    /// 38.82M, 6.0% under, for what no block measures yet (#1752). A page
+    /// walk is two loads that miss.
     pub fn board_cached() -> Self {
         let mut t = Timing {
             hit: Some(2),
@@ -395,7 +420,12 @@ impl Timing {
             mul: 2,
             div: 34,
             load_use: 1,
-            icache: Some((84, 45, 3)),
+            icache: Some(Icache {
+                jumped: 42,
+                ran_on: 45,
+                step: 3,
+                after: (2, 44),
+            }),
             walk: 86,
             fence: 14,
             fence_alone: 1,
@@ -464,6 +494,7 @@ impl Default for Model {
             last_line: u32::MAX,
             fell: false,
             mkind: std::cell::Cell::new(0),
+            ilen: std::cell::Cell::new(4),
             reads: std::cell::Cell::new((0, 0)),
             loaded: std::cell::Cell::new(0),
             prev_loaded: 0,
@@ -1206,6 +1237,7 @@ impl Model {
         self.excl.set(None);
         self.wfi_now.set(false);
         self.mkind.set(0);
+        self.ilen.set(4);
         self.reads.set((0, 0));
         self.loaded.set(0);
         self.walks.set(0);
@@ -1221,12 +1253,18 @@ impl Model {
             c += t.taken;
         }
         // The instruction cache, by the instruction's line (issue 1561).
-        if let Some((jumped, ran_on, step)) = t.icache {
+        if let Some(Icache {
+            jumped,
+            ran_on,
+            step,
+            after,
+        }) = t.icache
+        {
             let line = pc >> 4;
+            if self.ic.len() != 1024 {
+                self.ic = vec![0; 1024];
+            }
             if line != self.last_line {
-                if self.ic.len() != 1024 {
-                    self.ic = vec![0; 1024];
-                }
                 let slot = (line & 1023) as usize;
                 if self.ic[slot] != line + 1 {
                     c += if self.fell { ran_on } else { jumped };
@@ -1235,6 +1273,19 @@ impl Model {
                     c += step;
                 }
                 self.last_line = line;
+            }
+            // The word after a jump, fetched as it executes (#1679): its
+            // line is looked up when it is not the jump's, and filled, and
+            // kept, when it is a line not held.
+            let next = pc.wrapping_add(self.ilen.get()) >> 4;
+            let slot = (next & 1023) as usize;
+            if taken && next != line {
+                if self.ic[slot] == next + 1 {
+                    c += after.0;
+                } else {
+                    c += after.1;
+                    self.ic[slot] = next + 1;
+                }
             }
         }
         self.fell = !taken;
@@ -1352,6 +1403,7 @@ impl Model {
         }
         let d = decode(w);
         if self.timing.is_some() {
+            self.ilen.set(len);
             self.reads.set((d.rs1, d.rs2));
             self.mkind.set(match d.kind {
                 Kind::Mul | Kind::Mulh | Kind::Mulhsu | Kind::Mulhu => 1,
@@ -1932,8 +1984,9 @@ mod tests {
 
     /// A line of the instruction cache costs by how it was reached (#1679),
     /// against no cache: cold, the first line and a line a `jal` went to
-    /// each cost a jumped-to miss, and the line the second ran on into a
-    /// ran-on miss; warm, only the line run on into costs, its running on.
+    /// each cost a jumped-to miss, the line after the `jal`'s its fill,
+    /// and the line the second ran on into a ran-on miss; warm, only the
+    /// line run on into costs, its running on.
     #[test]
     fn a_line_costs_by_how_it_was_reached() {
         use crate::isa::jal;
@@ -1942,7 +1995,7 @@ mod tests {
         imem.resize(16, halt());
         imem.extend([addi(1, 1, 1); 5]); // 64 to 80: lines 4 and 5
         imem.push(halt());
-        let run = |icache: Option<(u64, u64, u64)>| {
+        let run = |icache: Option<Icache>| {
             let timing = Timing {
                 icache,
                 ..Timing::board()
@@ -1963,8 +2016,14 @@ mod tests {
             }
             cycles
         };
-        let (with, without) = (run(Some((84, 45, 3))), run(None));
-        assert_eq!(with[0] - without[0], 84 + 84 + 45, "cold");
-        assert_eq!(with[1] - without[1], 3, "warm");
+        let icache = Icache {
+            jumped: 84,
+            ran_on: 45,
+            step: 3,
+            after: (2, 40),
+        };
+        let (with, without) = (run(Some(icache)), run(None));
+        assert_eq!(with[0] - without[0], 84 + 40 + 84 + 45, "cold");
+        assert_eq!(with[1] - without[1], 2 + 3, "warm");
     }
 }
