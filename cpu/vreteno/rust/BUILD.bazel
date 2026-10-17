@@ -1259,6 +1259,51 @@ rust_binary(
     ],
 )
 
+# The mipmapped frame with a light map on the second texture unit, as
+# #1592's step 9 draws it.
+rust_binary(
+    name = "ico_multitex_frame",
+    srcs = [
+        "ico_gl.rs",
+        "ico_list.rs",
+        "ico_tex_frame.rs",
+    ],
+    crate_root = "ico_tex_frame.rs",
+    edition = "2021",
+    rustc_flags = [
+        "--cfg=mip",
+        "--cfg=multitex",
+    ],
+    deps = [
+        "//gles",
+        "//gpu/razboj",
+        "//lib/logo:txhdl_logo",
+    ],
+)
+
+# The same with the second unit under GL_COMBINE's INTERPOLATE, as
+# #1592's step 10 draws it.
+rust_binary(
+    name = "ico_combine_frame",
+    srcs = [
+        "ico_gl.rs",
+        "ico_list.rs",
+        "ico_tex_frame.rs",
+    ],
+    crate_root = "ico_tex_frame.rs",
+    edition = "2021",
+    rustc_flags = [
+        "--cfg=combine",
+        "--cfg=mip",
+        "--cfg=multitex",
+    ],
+    deps = [
+        "//gles",
+        "//gpu/razboj",
+        "//lib/logo:txhdl_logo",
+    ],
+)
+
 # One frame of the canonical teapot (#1592) on the host, as a PNG.
 rust_binary(
     name = "teapot_frame",
@@ -1905,6 +1950,28 @@ _DEMO_ICO = [
         "8",
         "mirror",
         ["--cfg=gl", "--cfg=smooth", "--cfg=mirror"],
+        ["//gles", "//gpu/razboj:tile"],
+    ),
+    # The second texture unit (#1510): step 5 with a light map modulated
+    # over the checker through unit 1.
+    (
+        "9",
+        "multitex",
+        ["--cfg=gl", "--cfg=tex", "--cfg=mip", "--cfg=multitex"],
+        ["//gles", "//gpu/razboj:tile"],
+    ),
+    # GL_COMBINE (#1512): step 9 with unit 1 mixing the light map and the
+    # lit checker by the map's alpha, INTERPOLATE.
+    (
+        "10",
+        "combine",
+        [
+            "--cfg=gl",
+            "--cfg=tex",
+            "--cfg=mip",
+            "--cfg=multitex",
+            "--cfg=combine",
+        ],
         ["//gles", "//gpu/razboj:tile"],
     ),
 ]
