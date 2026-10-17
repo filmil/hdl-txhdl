@@ -177,11 +177,19 @@ for d in "${demos[@]}"; do
     if [[ "$extra" != - ]]; then files="$files $extra"; fi
     timeout 300 ssh -n -o BatchMode=yes "$server" \
       "cd $fbdir && ./fastboot -s tcp:192.168.1.50 boot $files" >>"$log" 2>&1 || true
-    start="$(grep -am1 'fastboot: booting' "$log" | cut -c1-13 || true)"
     for _ in $(seq 1 "$seconds"); do
       if [[ "$until" != - ]] && grep -aqF "$until" "$log"; then break; fi
       sleep 1
     done
+    # The board prints its booting line a moment after the host's
+    # fastboot returns, through the reader, so it is read once the
+    # demo has run rather than at once, which lost the race (#1774),
+    # and waited for a little longer if it is not there yet.
+    for _ in $(seq 1 10); do
+      if grep -aq 'fastboot: booting' "$log"; then break; fi
+      sleep 1
+    done
+    start="$(grep -am1 'fastboot: booting' "$log" | cut -c1-13 || true)"
     if [[ -n "$sender" ]]; then
       ssh -n -o BatchMode=yes "$server" "kill $sender" 2>/dev/null || true
     fi
@@ -192,7 +200,13 @@ for d in "${demos[@]}"; do
   fi
   release
   end="$(date -u +%T.%3N)Z"
-  last="$(grep -av '^\S* \[load\]' "$log" | tail -1 | cut -c15- | tr '\t' ' ' || true)"
+  # The demo's own last line (#1774): a line the reader stamped, so
+  # not the host fastboot's own output; not the loader's, `[load]` or
+  # `load: `, which it prints when the script stops the sender; and not
+  # a blank one once its stamp and carriage return are gone.
+  last="$(grep -aE '^[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z ' "$log" |
+    grep -avE '^\S+ (\[load\]|load: )' | cut -c15- | tr -d '\r' |
+    grep -av '^[[:space:]]*$' | tail -1 | tr '\t' ' ' || true)"
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$target" "$sum" "${start:-?}" "$end" "$last" \
     >>"$dir/manifest.tsv"
   echo "  $name: from ${start:-?} to $end"
