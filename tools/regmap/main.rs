@@ -7,6 +7,7 @@
 //! regmap sd c                                  # the header
 //! regmap sd rs                                 # a Rust module
 //! regmap all rs                                # every map, one crate
+//! regmap all c <dir>                           # every header, in <dir>
 //! regmap sd dts 0x3600 hdlfactory,vreteno-sd   # the node
 //! regmap list                                  # the maps there are
 //! ```
@@ -106,6 +107,7 @@ fn usage() -> ! {
     eprintln!("usage: regmap <map> c");
     eprintln!("       regmap <map> rs");
     eprintln!("       regmap all rs");
+    eprintln!("       regmap all c <dir>");
     eprintln!("       regmap <map> dts <base> <compatible>");
     eprintln!("       regmap list");
     exit(2)
@@ -123,6 +125,25 @@ fn main() {
         && args.get(1).map(String::as_str) == Some("rs")
     {
         print!("{}", rust_all());
+        return;
+    }
+    // Every header, one file a map, into a directory: what
+    // //zephyr:regs_update keeps, so that a map declared in `maps` has
+    // its header with no list in the build to edit (issue 1191).
+    if args.first().map(String::as_str) == Some("all")
+        && args.get(1).map(String::as_str) == Some("c")
+    {
+        let Some(dir) = args.get(2) else { usage() };
+        let dir = std::path::Path::new(dir);
+        let made = std::fs::create_dir_all(dir).and_then(|()| {
+            maps().into_iter().try_for_each(|(n, m)| {
+                std::fs::write(dir.join(format!("{n}.h")), m.c_header(n))
+            })
+        });
+        if let Err(e) = made {
+            eprintln!("regmap: writing into {}: {e}", dir.display());
+            exit(1)
+        }
         return;
     }
     let (Some(name), Some(what)) = (args.first(), args.get(1)) else {

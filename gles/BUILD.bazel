@@ -456,7 +456,7 @@ vreteno_c_program(
     hdrs = [
         "conform/conform.h",
         "conform/piglit/piglit-util-gl.h",
-        "//zephyr:regs_uart",
+        "//zephyr:include/vreteno/regs/uart.h",
     ],
     copts = [
         "-std=gnu11",
