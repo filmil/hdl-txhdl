@@ -521,3 +521,44 @@ fn shr(x: i128, k: u32) -> i128 {
 pub fn textured_bit(w: &mut [u32; WORDS]) {
     w[15] |= razboj_tile::tex::TEXTURED;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A triangle's reciprocal divides as `div_euclid` does (#1750), for
+    /// areas from one to past 2^31 and numerators either side of nought
+    /// to past 2^60, the most a plane's products reach.
+    #[test]
+    fn the_reciprocal_divides_as_div_euclid_does() {
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        let areas: Vec<i64> = (0..2000)
+            .map(|k| match k {
+                0 => 1,
+                1 => 2,
+                2 => (1i64 << 31) + 1,
+                _ => (next() >> (33 + next() % 31)) as i64 + 1,
+            })
+            .collect();
+        for d in areas {
+            let by = Area {
+                d: d as u64,
+                r: u64::MAX / d as u64,
+            };
+            let mut ns = vec![0, 1, -1, d - 1, d, d + 1, -d, -d - 1, -d + 1];
+            for _ in 0..64 {
+                let n = (next() >> (3 + next() % 60)) as i64;
+                ns.extend([n, -n]);
+            }
+            for n in ns {
+                assert_eq!(by.floor(n), n.div_euclid(d), "{n} / {d}");
+            }
+        }
+    }
+}
