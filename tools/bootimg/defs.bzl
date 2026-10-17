@@ -31,12 +31,18 @@ def boot_image(
         model = False,
         framebuffer = None,
         harts = 2,
+        inflate = False,
         **kwargs):
     """A boot image. `framebuffer`, an address in the DDR3 as hex text,
     puts a simple-framebuffer node over the scanout's frame there in the
     tree and has the shim show it, for a console on HDMI (issue 1440).
     `harts` is how many harts the tree names, the board's two or one
-    (issue 1408)."""
+    (issue 1408). With `inflate`, the kernel goes in deflated, a third
+    of the image less, and the shim has the inflater make it at its
+    address before OpenSBI starts (issue 1229). It is off unless asked
+    for: at fastboot's 1 MB/s the two megabytes saved are about two
+    seconds, and inflating costs the core about four, so it pays only
+    for an image that would not fit otherwise."""
     if model:
         bootargs = bootargs + " mem=64M"
     # Every step carries the image's tags, so that an image of manual
@@ -84,9 +90,14 @@ def boot_image(
         tools = ["@dtc//:dtc"],
         tags = tags,
     )
+    inflater = ["//tools/bootimg:inflater_bin"] if inflate else []
+    inflate_arg = (
+        " --inflater $(location //tools/bootimg:inflater_bin)" if inflate else ""
+    )
     native.genrule(
         name = name,
-        srcs = [opensbi, kernel, system_map, initramfs, name + ".dtb"],
+        srcs = [opensbi, kernel, system_map, initramfs, name + ".dtb"] +
+               inflater,
         outs = [name + ".bin"],
         cmd = "$(location //tools/bootimg) pack" +
               " --opensbi $(location " + opensbi + ")" +
@@ -95,6 +106,7 @@ def boot_image(
               " --system-map $(location " + system_map + ")" +
               " --initramfs $(location " + initramfs + ")" +
               (" --scanout " + framebuffer if framebuffer else "") +
+              inflate_arg +
               " -o $@",
         tools = ["//tools/bootimg"],
         **kwargs

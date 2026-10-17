@@ -409,13 +409,26 @@ device tree at \code{0x4030\_0000}, the kernel at \code{0x4040\_0000},
 where OpenSBI jumps, and the initramfs past the kernel's \code{\_end},
 taken from its \code{System.map}, so that the kernel's BSS is clear of
 it. The image does not hold them there, though. Placed at those
-addresses it was half zeros, and fastboot sends every byte at about
-26\,KB/s, so the parts are packed one after another and the initramfs
-gzipped, which the kernel unpacks itself (issue~\#1201). A few
+addresses it was half zeros, and fastboot sends every byte, at about
+1\,MB/s over the board's Ethernet, so the parts are packed one after
+another and the initramfs
+gzipped, which the kernel unpacks itself (issue~\#1201). The kernel
+can go deflated as well (issue~\#1229), which takes over a third off
+the image: the model's is 3.40\,MB where it was 5.38\,MB. At
+fastboot's 1\,MB/s it does not pay. The two megabytes saved are about two seconds
+of sending, and inflating takes the core about four, so
+\code{boot\_image} deflates the kernel only when asked, for an image
+that would not fit otherwise. Such an image carries its own inflater,
+8\,KB at \code{0x4000\_1000} that allocates nothing, and the deflated
+kernel goes last. A few
 instructions at the front stand in for a bootloader. First they move
 each part to its address, the last part first and each a word at a
 time from its top down: no part is packed above its address, so no
-word is overwritten before it is copied. Then \code{a0} is zero,
+word is overwritten before it is copied. A deflated kernel's address
+is a staging range above every other part, and once all are moved
+the instructions call the inflater, which writes the kernel at
+\code{0x4040\_0000}; an answer other than zero stops them where they
+are rather than jumping into a kernel half written. Then \code{a0} is zero,
 \code{a1} the tree, and a jump to OpenSBI. Before the jump
 they leave the serial port and the interrupt controller as SiFive's
 parts leave them at reset, as Linux's drivers expect
