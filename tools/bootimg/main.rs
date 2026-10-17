@@ -82,6 +82,23 @@ const _: () = assert!((LIMIT - BASE).is_multiple_of(HEADER));
 /// The initramfs's alignment.
 const ALIGN: u32 = 0x1_0000;
 
+/// Where the inflater is packed and runs (issue 1229): past the shim and
+/// below `OPENSBI`, the lowest address any part is moved to, so that no
+/// move writes over it. `inflater.ld` links it here.
+pub const INFLATER: u32 = 0x4000_1000;
+/// The top of the core's data memory, the inflater's stack.
+pub const STACK: u32 = 0x0002_0000;
+
+/// The kernel deflated (issue 1229): `len` bytes at `from`, where a move
+/// put them past every other part, which the inflater makes into `out`
+/// bytes at `KERNEL`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Inflate {
+    pub from: u32,
+    pub len: u32,
+    pub out: u32,
+}
+
 /// The serial port's page, and its `ie` word in it.
 pub const UART: u32 = 0x3000;
 pub const UART_IE: u32 = 0x10;
@@ -117,9 +134,15 @@ pub const SCAN_BASE: u32 = 0;
 pub const SCAN_CTRL: u32 = 4;
 
 /// Words the shim takes for `moves` parts: twelve a part, and the rest,
-/// which is the same with a scanout to start or without.
-pub fn shim_words(moves: usize) -> usize {
-    12 * moves + shim(&[], None).len()
+/// which is the same with a scanout to start or without, and with the
+/// kernel to inflate fourteen more.
+pub fn shim_words(moves: usize, inflate: bool) -> usize {
+    let none = Inflate {
+        from: 0,
+        len: 0,
+        out: 0,
+    };
+    12 * moves + shim(&[], None, inflate.then_some(none)).len()
 }
 
 /// The shim's instructions. First each part of the packed image is
@@ -131,7 +154,10 @@ pub fn shim_words(moves: usize) -> usize {
 /// and the controller drained: each source at priority one and
 /// enabled, the threshold zero, then a claim read and written back
 /// until one reads zero, then each source disabled and at priority
-/// zero again. With `scanout`, the scanout's base is written that
+/// zero again. With `inflate`, before any of that the inflater is called
+/// with its stack, the deflated kernel and `KERNEL`, and the shim stops
+/// there, for ever, if it answers anything but nought, rather than start a
+/// broken kernel. With `scanout`, the scanout's base is written that
 /// address and its control bit set, so the screen shows the frame there
 /// before Linux starts, as a simple-framebuffer console expects of the
 /// firmware (issue 1440); without, the same six words do nothing, so the
@@ -142,7 +168,11 @@ pub fn shim_words(moves: usize) -> usize {
 /// `t0 = OPENSBI`, and a jump to `t0`. Every address it names has low
 /// twelve bits of zero, or is within twelve bits of one that has, so a
 /// `lui` loads each.
-pub fn shim(moves: &[Move], scanout: Option<u32>) -> Vec<u32> {
+pub fn shim(
+    moves: &[Move],
+    scanout: Option<u32>,
+    inflate: Option<Inflate>,
+) -> Vec<u32> {
     let lui = |rd: u32, imm: u32| (imm & 0xffff_f000) | (rd << 7) | 0x37;
     let addi = |rd: u32, rs: u32, imm: i32| {
         ((imm as u32 & 0xfff) << 20) | (rs << 15) | (rd << 7) | 0x13
@@ -196,6 +226,20 @@ pub fn shim(moves: &[Move], scanout: Option<u32>) -> Vec<u32> {
             lw(t3, t0, 0),
             sw(t3, t1, 0),
             jal0(-20),
+        ]);
+    }
+    if let Some(z) = inflate {
+        let (sp, ra, a0, a1, a2, a3) = (2, 1, 10, 11, 12, 13);
+        w.extend(li(sp, STACK));
+        w.extend(li(a0, z.from)); // the stream
+        w.extend(li(a1, z.len)); //  its length
+        w.extend(li(a2, KERNEL)); // where the kernel goes
+        w.extend(li(a3, z.out)); //  and how long it is
+        w.extend([
+            lui(t0, INFLATER),
+            (t0 << 15) | (ra << 7) | 0x67, // jalr ra, 0(t0)
+            beq(a0, 0, 8),                 // nought: go on
+            jal0(0),                       // anything else: stop here
         ]);
     }
     let enable_all: u32 = ((1 << (PLIC_SOURCES + 1)) - 1) & !1;
@@ -309,6 +353,24 @@ pub fn pack(
     layout: &Layout,
     scanout: Option<u32>,
 ) -> Result<Vec<u8>, String> {
+    pack_with(opensbi, dtb, kernel, initramfs, layout, scanout, None)
+}
+
+/// [`pack`], and with `inflater`, the inflater's flat image, the kernel
+/// deflated (issue 1229). The inflater is packed at `INFLATER`, right
+/// after the shim, and never moved. The deflated kernel is the last part,
+/// so it is moved first, to a staging range past the initramfs's end,
+/// above every other part's; the shim then calls the inflater to make
+/// the kernel at `KERNEL` from it.
+pub fn pack_with(
+    opensbi: &[u8],
+    dtb: &[u8],
+    kernel: &[u8],
+    initramfs: &[u8],
+    layout: &Layout,
+    scanout: Option<u32>,
+    inflater: Option<&[u8]>,
+) -> Result<Vec<u8>, String> {
     let words = |len: usize| len.div_ceil(4) * 4;
     let fits = |what: &str, at: u32, len: usize, next: u32| {
         if at + words(len) as u32 > next {
@@ -322,26 +384,56 @@ pub fn pack(
     fits("fw_jump", OPENSBI, opensbi.len(), DTB)?;
     fits("the device tree", DTB, dtb.len(), KERNEL)?;
     fits("the kernel", KERNEL, kernel.len(), layout.initrd.0)?;
-    let parts = [
-        ("fw_jump", opensbi, OPENSBI),
-        ("the device tree", dtb, DTB),
-        ("the kernel", kernel, KERNEL),
-        ("the initramfs", initramfs, layout.initrd.0),
-    ];
-    let mut at = BASE + 4 * shim_words(parts.len()) as u32;
+    let deflated =
+        inflater.map(|_| miniz_oxide::deflate::compress_to_vec(kernel, 9));
+    let stage = layout.end.div_ceil(ALIGN) * ALIGN;
+    let mut parts =
+        vec![("fw_jump", opensbi, OPENSBI), ("the device tree", dtb, DTB)];
+    match &deflated {
+        None => parts.extend([
+            ("the kernel", kernel, KERNEL),
+            ("the initramfs", initramfs, layout.initrd.0),
+        ]),
+        Some(z) => {
+            fits("the deflated kernel", stage, z.len(), LIMIT)?;
+            parts.extend([
+                ("the initramfs", initramfs, layout.initrd.0),
+                ("the deflated kernel", z.as_slice(), stage),
+            ])
+        }
+    }
+    let shim_len = 4 * shim_words(parts.len(), inflater.is_some()) as u32;
+    let mut at = BASE + shim_len;
+    if let Some(code) = inflater {
+        if at > INFLATER {
+            return Err(format!("the shim runs past {INFLATER:#x}"));
+        }
+        at = INFLATER + words(code.len()) as u32;
+        if at > OPENSBI {
+            return Err(format!(
+                "the inflater is {:#x} bytes at {INFLATER:#x}, past \
+                 {OPENSBI:#x}",
+                code.len()
+            ));
+        }
+    }
     let mut moves = Vec::new();
-    for (what, bytes, to) in parts {
+    for (what, bytes, to) in parts.iter() {
         // Cannot happen while each part fits before the next one's
         // address, since the shim is far smaller than the 512 KiB below
         // OpenSBI's; kept so that a layout change cannot make it happen
         // quietly.
-        if at > to {
+        if at > *to {
             return Err(format!(
                 "{what} packs at {at:#x}, above its load address {to:#x}"
             ));
         }
         let len = words(bytes.len()) as u32;
-        moves.push(Move { from: at, to, len });
+        moves.push(Move {
+            from: at,
+            to: *to,
+            len,
+        });
         at += len;
     }
     if at > LIMIT {
@@ -349,13 +441,23 @@ pub fn pack(
             "the packed image ends at {at:#x}, past {LIMIT:#x}"
         ));
     }
+    let inflate = deflated.as_ref().map(|z| Inflate {
+        from: stage,
+        len: z.len() as u32,
+        out: kernel.len() as u32,
+    });
     // The last part first, so that no part is moved over one still to
     // move.
     let order: Vec<Move> = moves.iter().rev().copied().collect();
-    let mut img: Vec<u8> = shim(&order, scanout)
+    let mut img: Vec<u8> = shim(&order, scanout, inflate)
         .iter()
         .flat_map(|w| w.to_le_bytes())
         .collect();
+    if let Some(code) = inflater {
+        img.resize((INFLATER - BASE) as usize, 0);
+        img.extend_from_slice(code);
+        img.resize(img.len().div_ceil(4) * 4, 0);
+    }
     for ((_, bytes, _), m) in parts.iter().zip(&moves) {
         assert_eq!(BASE + img.len() as u32, m.from, "packed in order");
         img.extend_from_slice(bytes);
@@ -391,7 +493,13 @@ fn main() {
             println!("{:#010x} {:#010x}", lay.initrd.0, lay.initrd.1)
         }
         Some("pack") => {
-            let img = pack(
+            // `--inflater FILE`: the kernel deflated, for the inflater in
+            // FILE to make (issue 1229).
+            let inflater = args
+                .iter()
+                .position(|a| a == "--inflater")
+                .map(|_| read(&get("--inflater")));
+            let img = pack_with(
                 &read(&get("--opensbi")),
                 &read(&get("--dtb")),
                 &read(&get("--kernel")),
@@ -407,6 +515,7 @@ fn main() {
                     )
                     .unwrap_or_else(|_| panic!("not hex: {h}"))
                 }),
+                inflater.as_deref(),
             )
             .unwrap_or_else(|e| {
                 eprintln!("bootimg: {e}");
@@ -593,7 +702,7 @@ mod tests {
         let img = pack(&opensbi, &dtb, &kernel, &initramfs, &l, None).unwrap();
         let parts = opensbi.len() + dtb.len() + kernel.len() + initramfs.len();
         assert!(
-            img.len() < parts + 4 * shim_words(4) + 16,
+            img.len() < parts + 4 * shim_words(4, false) + 16,
             "{:#x} bytes for {parts:#x} of parts",
             img.len()
         );
@@ -672,5 +781,118 @@ mod tests {
         assert_eq!(d.plic.enable, [0; 4], "every source disabled");
         assert!(d.plic.prio.iter().all(|&p| p == 0), "priorities zero");
         assert_eq!(d.uart.rx.len(), 1, "the byte is still to be read");
+    }
+    /// The inflater's flat image, built for the core (issue 1229).
+    fn inflater() -> Vec<u8> {
+        let r = std::env::var("TEST_SRCDIR").unwrap();
+        let p = format!("{r}/_main/tools/bootimg/inflater_bin.bin");
+        std::fs::read(&p).unwrap_or_else(|e| panic!("{p}: {e}"))
+    }
+
+    /// A kernel deflated in the image lands at `KERNEL` byte for byte once
+    /// the shim has moved it to its staging range and the inflater has run
+    /// on the core in the machine model, with every other part where it
+    /// was, and the image is smaller than the same image plain (issue
+    /// 1229). The kernel is of an odd length and compresses as code does.
+    #[test]
+    fn a_deflated_kernel_lands_byte_for_byte() {
+        let mut x = 0x9e37_79b9u32;
+        let mut next = move || {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x
+        };
+        let mut kernel = Vec::new();
+        while kernel.len() < 0x3_1003 {
+            match next() % 4 {
+                0 => kernel.extend((0..next() % 32).map(|_| next() as u8)),
+                1 => kernel.extend([0x13, 0, 0, 0]),
+                _ => kernel.extend(b"\x97\x02\0\0\x93\x82\x02\0"),
+            }
+        }
+        kernel.truncate(0x3_1003);
+        let mhalt =
+            ((0x7c0u32 << 20) | (1 << 15) | (5 << 12) | 0x73).to_le_bytes();
+        let mut opensbi = mhalt.to_vec();
+        opensbi.extend((0..0x4001).map(|i| i as u8));
+        let dtb: Vec<u8> = (0..0x7f5).map(|i| (i * 7) as u8).collect();
+        let initramfs: Vec<u8> =
+            (0..0x1_0102).map(|i| (i * 13) as u8).collect();
+        let l = layout(&map(0x30_0000), initramfs.len() as u32).unwrap();
+        let code = inflater();
+        let img = pack_with(
+            &opensbi,
+            &dtb,
+            &kernel,
+            &initramfs,
+            &l,
+            None,
+            Some(&code),
+        )
+        .unwrap();
+        let plain =
+            pack(&opensbi, &dtb, &kernel, &initramfs, &l, None).unwrap();
+        assert!(
+            img.len() < plain.len(),
+            "{} against {}",
+            img.len(),
+            plain.len()
+        );
+        let mut m = Machine::new();
+        m.load(BASE, &img);
+        m.boot(BASE, DTB);
+        m.run(40_000_000);
+        assert_eq!(m.model.pc, OPENSBI + 4, "at OpenSBI, past its halt");
+        use vreteno32::model::Bus;
+        let b = &m.board;
+        for (what, part, at) in [
+            ("fw_jump", &opensbi, OPENSBI),
+            ("the tree", &dtb, DTB),
+            ("the kernel", &kernel, KERNEL),
+            ("the initramfs", &initramfs, l.initrd.0),
+        ] {
+            for (i, want) in part.iter().enumerate() {
+                let a = at + i as u32;
+                let word = b.load(a & !3).expect("memory");
+                let got = (word >> (8 * (a & 3))) as u8;
+                assert_eq!(got, *want, "{what}, byte {i:#x}");
+            }
+        }
+    }
+
+    /// A deflated kernel that does not inflate leaves the shim stopped
+    /// before OpenSBI, rather than starting a broken kernel (issue 1229).
+    #[test]
+    fn a_kernel_that_does_not_inflate_stops_the_shim() {
+        let mhalt =
+            ((0x7c0u32 << 20) | (1 << 15) | (5 << 12) | 0x73).to_le_bytes();
+        let kernel = vec![0x4bu8; 0x1000];
+        let l = layout(&map(0x2_0000), 0x200).unwrap();
+        let code = inflater();
+        let mut img = pack_with(
+            &mhalt,
+            &[0xd0; 4],
+            &kernel,
+            &[0x1a; 0x200],
+            &l,
+            None,
+            Some(&code),
+        )
+        .unwrap();
+        // The deflated kernel is the image's last part: cut its stream.
+        let n = img.len();
+        img[n - 8..].fill(0xff);
+        img[n - 16..n - 8].fill(0);
+        let mut m = Machine::new();
+        m.load(BASE, &img);
+        m.boot(BASE, DTB);
+        m.run(2_000_000);
+        assert!(m.model.halted.is_none(), "OpenSBI's stand-in never ran");
+        assert!(
+            m.model.pc < INFLATER,
+            "stopped in the shim, at {:#x}",
+            m.model.pc
+        );
     }
 }

@@ -10,6 +10,7 @@ rust_binary(
     name = "bootimg",
     srcs = ["main.rs"],
     edition = "2021",
+    deps = ["@crates//:miniz_oxide"],
 )
 
 # Raw DEFLATE inflated into a slice, with no allocation (issue 1229):
@@ -65,11 +66,15 @@ rust_test(
     # The fastboot server's sources, which the test reads the download
     # limit from, so that the packer's copy of it cannot drift.
     data = [
+        ":inflater_bin",
         "//zephyr:fastboot/app/boards/ax7a200b.overlay",
         "//zephyr:fastboot/app/src/main.c",
     ],
     edition = "2021",
-    deps = ["//cpu/vreteno:vreteno32"],
+    deps = [
+        "//cpu/vreteno:vreteno32",
+        "@crates//:miniz_oxide",
+    ],
 )
 
 load(":defs.bzl", "boot_image")
