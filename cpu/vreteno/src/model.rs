@@ -918,7 +918,9 @@ impl Model {
     /// all the same: `mcountinhibit`, `mhpmevent3` to `mhpmevent31`,
     /// `mhpmcounter3` to `mhpmcounter31` with their upper halves, and
     /// the user's copies. Each reads as zero and a write changes
-    /// nothing (issue 1460).
+    /// nothing (issue 1460). In the core, `mhpmcounter3` to `7` count
+    /// the instruction cache's events (#1752); this model has no cache,
+    /// so for it they stay here.
     fn hpm_zero(addr: u32) -> bool {
         matches!(
             addr,
@@ -963,7 +965,10 @@ impl Model {
             // and answers zero for the cycles. A lockstep program must
             // therefore not read `mcycle` into a register, and the
             // counters are checked by a directed run instead, without
-            // a model beside it.
+            // a model beside it. The same holds for the instruction
+            // cache's counters, `mhpmcounter3` to `7` (#1752): this
+            // model has no cache, and they read zero here as the ones
+            // that count nothing do.
             CSR_MINSTRET => self.minstret as u32,
             CSR_MINSTRETH => (self.minstret >> 32) as u32,
             // In the timing mode, the cycles it has charged (issue

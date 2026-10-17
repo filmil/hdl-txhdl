@@ -1762,7 +1762,7 @@ fn the_counters_that_count_nothing_read_zero() {
     a.abs(mh, |h| addi(31, 0, h as i32));
     a.wide(csrrw(0, CSR_MTVEC, 31));
     a.wide(addi(5, 0, -1));
-    let csrs = [0x320, 0x323, 0x33f, 0xb03, 0xb1f, 0xb83, 0xb9f];
+    let csrs = [0x320, 0x323, 0x33f, 0xb08, 0xb1f, 0xb88, 0xb9f];
     for (i, csr) in csrs.iter().enumerate() {
         a.wide(csrrw(0, *csr, 5));
         a.wide(csrrs(10 + i as u32, *csr, 0));
