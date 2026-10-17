@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: Apache-2.0
+# A Zephyr application in a package of its own, built against the
+# AX7A200B port the way a repository that depends on TxHDL builds one
+# (issue 1772). Every label is written as such a repository writes it,
+# through `@txhdl`.
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("@txhdl//zephyr:defs.bzl", "zephyr_image")
+
+filegroup(
+    name = "app",
+    srcs = [
+        "CMakeLists.txt",
+        "prj.conf",
+        "src/main.c",
+    ],
+)
+
+zephyr_image(
+    name = "zephyr_app",
+    app_srcs = [":app"],
+    board = "ax7a200b",
+    module = "@txhdl//zephyr:module",
+)
+
+filegroup(
+    name = "zephyr_app_config",
+    srcs = [":zephyr_app"],
+    output_group = "config",
+)
+
+# The image is the port's, with the stack the application asked for:
+# the configuration it generated names the board, the TCP stack and
+# the Ethernet driver.
+sh_test(
+    name = "zephyr_app_test",
+    srcs = ["zephyr_app_test.sh"],
+    args = ["$(location :zephyr_app_config)"],
+    data = [":zephyr_app_config"],
+)
