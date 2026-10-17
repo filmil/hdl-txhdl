@@ -212,14 +212,16 @@ map, and the drivers include `<vreteno/regs/<map>.h>` rather than
 naming an offset (issue 709).
 The headers are committed, since a reader's `west build` of this module
 runs no Bazel.
-`REG_MAPS` in `BUILD.bazel` names every map, and `write_source_files`
-keeps each committed header equal to what its map writes (issue 1179):
-a header that differs fails `//zephyr:regs_update`'s test for it,
-and `bazel run //zephyr:regs_update` writes them all again after a map
-changes.
-`//zephyr:regs_maps_test` holds `REG_MAPS` to the maps `//tools/regmap`
-lists and to the headers committed, so a map added to the parts and not
-to the list, or a header missing, fails and names the fix.
+`regmap all c` writes the header of every map `//tools/regmap`
+declares into one directory, and `write_source_files` keeps the
+committed directory equal to it (issues 1179 and 1191): a header that
+differs, is missing, or names a map no longer declared fails
+`//zephyr:regs_update_test`, and `bazel run //zephyr:regs_update`
+writes the directory again after a map changes.
+No list in the build names the maps, so a map added to the parts needs
+only that one run.
+`//zephyr:regs_maps_test` is the backstop: every map declared has its
+header, and every header is a map declared.
 
 ## What has run
 
