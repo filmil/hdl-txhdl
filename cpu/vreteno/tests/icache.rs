@@ -11,8 +11,7 @@
 //! the data memory, a word over the bus for every instruction.
 use vreteno32::isa::{
     addi, bne, csrrs, csrrw, fence_i, halt, jalr, lui, sw, CSR_IC_DROPPED,
-    CSR_IC_FILLS, CSR_IC_HITS, CSR_IC_HITSH, CSR_IC_KEPT, CSR_IC_LOOKUPS,
-    CSR_IC_LOOKUPSH,
+    CSR_IC_FILLS, CSR_IC_HITS, CSR_IC_KEPT, CSR_IC_LOOKUPS,
 };
 use vreteno32::run::run;
 
@@ -152,26 +151,33 @@ fn the_counters_count_the_loops_lookups_hits_and_fills() {
 }
 
 /// A program that never leaves the boot memory, which is not cached,
-/// leaves the counters at zero, and a write to one sets it as a write
-/// to `mcycle` does, a half at a time.
+/// counts nothing, so each of the ten halves reads back what was
+/// written to it, and machine mode reads the low halves again as
+/// `hpmcounter3` to `7`.
 #[test]
 fn the_counters_read_what_was_written_and_count_no_boot_fetch() {
-    let mut text = vec![
-        lui(6, 1),        // x6 = 0x1000, where the counts go
-        addi(7, 0, 1234), // the value to write
-        csrrw(0, CSR_IC_HITS, 7),
-        csrrw(0, CSR_IC_HITSH, 7),
-        csrrw(0, CSR_IC_LOOKUPSH, 7),
-        csrrw(0, CSR_IC_LOOKUPSH, 0),
-    ];
-    for (i, csr) in COUNTERS.iter().enumerate() {
+    let mut text = vec![lui(6, 1)]; // x6 = 0x1000, where the counts go
+    let halves: Vec<u32> = COUNTERS
+        .iter()
+        .copied()
+        .chain(COUNTERS.iter().map(|c| c + 0x80))
+        .collect();
+    for (i, csr) in halves.iter().enumerate() {
+        text.push(addi(7, 0, 100 + i as i32));
+        text.push(csrrw(0, *csr, 7));
+    }
+    for (i, csr) in halves.iter().enumerate() {
         text.push(csrrs(10, *csr, 0));
         text.push(sw(10, 6, 4 * i as i32));
     }
-    text.push(csrrs(10, CSR_IC_HITSH, 0));
-    text.push(sw(10, 6, 20));
+    for (i, csr) in COUNTERS.iter().enumerate() {
+        text.push(csrrs(10, csr + 0x100, 0)); // 0xc03 up
+        text.push(sw(10, 6, 40 + 4 * i as i32));
+    }
     text.push(halt());
     let ran = run(&text, &[], 20_000);
     assert!(ran.halted_at.is_some(), "the program halts");
-    assert_eq!(&ran.mem[0..6], &[0, 1234, 0, 0, 0, 1234]);
+    let written: Vec<u32> = (100..110).collect();
+    assert_eq!(&ran.mem[0..10], &written[..], "each half as written");
+    assert_eq!(&ran.mem[10..15], &written[0..5], "the user's copies");
 }
