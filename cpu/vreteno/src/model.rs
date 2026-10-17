@@ -255,6 +255,10 @@ pub struct Model {
     pub ic: Vec<u32>,
     pub last_line: u32,
     pub fell: bool,
+    /// The lines the timing mode filled, each one it charged a miss or
+    /// the word after a jump's fill for: what the core's
+    /// `mhpmcounter6`, its fills kept, counts (#1760).
+    pub ic_fills: u64,
     /// What the step was for the timing mode: a multiply 1 or a division
     /// 2; the registers it reads; the register a load of it wrote; the
     /// page walks it made; whether it was `fence.i` (issue 1561); its
@@ -494,6 +498,7 @@ impl Default for Model {
             ic: Vec::new(),
             last_line: u32::MAX,
             fell: false,
+            ic_fills: 0,
             mkind: std::cell::Cell::new(0),
             ilen: std::cell::Cell::new(4),
             reads: std::cell::Cell::new((0, 0)),
@@ -1275,6 +1280,7 @@ impl Model {
                 if self.ic[slot] != line + 1 {
                     c += if self.fell { ran_on } else { jumped };
                     self.ic[slot] = line + 1;
+                    self.ic_fills += 1;
                 } else if self.fell {
                     c += step;
                 }
@@ -1291,6 +1297,7 @@ impl Model {
                 } else {
                     c += after.1;
                     self.ic[slot] = next + 1;
+                    self.ic_fills += 1;
                 }
             }
         }
@@ -2025,6 +2032,7 @@ mod tests {
                 }
                 cycles.push(m.cycles - before);
             }
+            cycles.push(m.ic_fills);
             cycles
         };
         let icache = Icache {
@@ -2035,6 +2043,8 @@ mod tests {
         };
         let (with, without) = (run(Some(icache)), run(None));
         assert_eq!(with[0] - without[0], 84 + 40 + 84 + 45, "cold");
+        // Four fills, the same four lines' costs, and none warm (#1760).
+        assert_eq!(with[2], 4, "lines filled");
         assert_eq!(with[1] - without[1], 2 + 3, "warm");
     }
 
