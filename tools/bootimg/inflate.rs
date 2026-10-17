@@ -43,6 +43,7 @@ struct Bits<'a> {
 
 impl Bits<'_> {
     /// Whole bytes into the buffer while it has room for one.
+    #[inline(always)]
     fn fill(&mut self) {
         while self.n <= 24 {
             let Some(&b) = self.src.get(self.at) else {
@@ -54,6 +55,7 @@ impl Bits<'_> {
         }
     }
 
+    #[inline(always)]
     fn bits(&mut self, k: u32) -> Result<u32, Error> {
         while self.n < k {
             let b = *self.src.get(self.at).ok_or(Error::Truncated)?;
@@ -138,6 +140,7 @@ impl Huff {
 
     /// The next symbol, its code read a bit at a time, most significant
     /// first.
+    #[inline(always)]
     fn decode(&self, b: &mut Bits) -> Result<usize, Error> {
         b.fill();
         if b.n >= FAST {
@@ -327,9 +330,14 @@ fn codes(
         if out + len > dst.len() {
             return Err(Error::Overflow);
         }
-        // A byte at a time: the copy may overlap what it is writing.
-        for k in out..out + len {
-            dst[k] = dst[k - dist];
+        if dist >= len {
+            dst.copy_within(out - dist..out - dist + len, out);
+        } else {
+            // A byte at a time: the copy overlaps what it is writing, and
+            // repeats it.
+            for k in out..out + len {
+                dst[k] = dst[k - dist];
+            }
         }
         out += len;
     }
