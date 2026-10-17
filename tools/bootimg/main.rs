@@ -165,9 +165,11 @@ pub fn shim_words(moves: usize, inflate: bool) -> usize {
 /// with the tree, as the board's `park` starts it: the mailbox written,
 /// a fence, and its `msip` raised (issue 1408). The tree says hart 0
 /// boots cold, so hart 1 waits in OpenSBI for the kernel. Then `a0 = 0`, `a1 = DTB`,
-/// `t0 = OPENSBI`, and a jump to `t0`. Every address it names has low
-/// twelve bits of zero, or is within twelve bits of one that has, so a
-/// `lui` loads each.
+/// `t0 = OPENSBI`, and a jump to `t0`. A device's or a part's fixed
+/// address has low twelve bits of zero, or is within twelve bits of one
+/// that has, so a `lui` loads each; a move's addresses and the
+/// inflater's arguments are a `lui` and an `addi` whatever their value,
+/// so the shim's length does not depend on the layout.
 pub fn shim(
     moves: &[Move],
     scanout: Option<u32>,
