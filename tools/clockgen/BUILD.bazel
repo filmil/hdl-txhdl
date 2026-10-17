@@ -4,6 +4,9 @@
 # module that instantiates it. `//lib/board:clock_gen.bzl` runs it at
 # build time for a top that wants one.
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+load("@rules_vivado//build/vivado:rules.bzl", "vivado_library", "vivado_test")
+load("//lib/board:clock_gen.bzl", "clock_gen")
+load(":drc.bzl", "clock_drc_case")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -25,4 +28,143 @@ rust_binary(
     srcs = ["main.rs"],
     edition = "2021",
     deps = [":clockgen_lib"],
+)
+
+# The oscillator's limits checked against Vivado (manual; one at a time,
+# under the Vivado lock): each edge just inside, whose bitstream must be
+# written, and just outside, whose bitstream must be refused. Vivado
+# checks the oscillator's range among a bitstream's checks and nothing
+# else of the table (a phase detector or an output outside its range is
+# written all the same), so only the oscillator is tested here; lib.rs
+# says where the rest of the table was checked. The settings are
+# "D,M8,O8", the multiplier and divider in eighths, M at most 64.
+#
+#   bazel build //tools/clockgen:drc_test
+DRC_CASES = [
+    # MMCM: 600 to 1440 MHz.
+    ("mmcm_vco_min_in", "mmcm", 200000000, "5,120,64", True),
+    ("mmcm_vco_min_out", "mmcm", 200000000, "5,119,64", False),
+    ("mmcm_vco_max_in", "mmcm", 200000000, "5,288,64", True),
+    ("mmcm_vco_max_out", "mmcm", 200000000, "5,289,64", False),
+    # PLL: 800 to 1866 MHz, the maximum reached by the input's frequency.
+    ("pll_vco_min_in", "pll", 200000000, "1,32,64", True),
+    ("pll_vco_min_out", "pll", 199000000, "1,32,64", False),
+    ("pll_vco_max_in", "pll", 186600000, "1,80,64", True),
+    # Vivado lets 1867 MHz through; 1880 MHz is refused.
+    ("pll_vco_max_out", "pll", 188000000, "1,80,64", False),
+]
+
+[
+    clock_drc_case(
+        name = name,
+        accepted = accepted,
+        input_hz = input_hz,
+        primitive = primitive,
+        settings = settings,
+    )
+    for (name, primitive, input_hz, settings, accepted) in DRC_CASES
+]
+
+filegroup(
+    name = "drc_test",
+    srcs = [":" + c[0] for c in DRC_CASES],
+    tags = ["manual"],
+)
+
+# The generated modules simulated with AMD's models of the primitives
+# (manual; under the Vivado lock): each output's period after `locked`,
+# measured over 64 cycles, held to the plan's within 200 ppm and 2 ps.
+# The flagship's two clocks, seven outputs from one MMCM, and a PLL.
+#
+#   bazel test //tools/clockgen:sim_test
+
+vivado_library(
+    name = "glbl",
+    srcs = [],
+    tags = ["manual"],
+    use_glbl = True,
+)
+
+SIM_CASES = [
+    ("clk_eth", "mmcm", ["125000000:0"]),
+    ("clk_pix", "mmcm", ["25175000:1000"]),
+    (
+        "clk_seven",
+        "mmcm",
+        [
+            "200000000:0",
+            "100000000:0",
+            "50000000:0",
+            "25000000:0",
+            "40000000:0",
+            "125000000:0",
+            "250000000:0",
+        ],
+    ),
+    ("clk_pll", "pll", ["25000000:0", "33333000:1000"]),
+]
+
+[
+    clock_gen(
+        name = name,
+        input_hz = 200000000,
+        outputs = outputs,
+        primitive = primitive,
+        tags = ["manual"],
+        testbench = True,
+    )
+    for (name, primitive, outputs) in SIM_CASES
+]
+
+[
+    genrule(
+        name = name + "_verdict",
+        outs = [name + "_verdict.tcl"],
+        cmd = ("printf 'run -all\\nset ok [get_value /%s_tb/ok]\\n" +
+               "puts \"verdict: $$ok\"\\nif {$$ok != 1} { exit 1 }\\n" +
+               "exit 0\\n' > $@") % name,
+        tags = ["manual"],
+    )
+    for (name, _, _) in SIM_CASES
+]
+
+[
+    vivado_library(
+        name = name + "_lib",
+        srcs = [
+            name + ".v",
+            name + "_tb.v",
+        ],
+        tags = ["manual"],
+        deps = [":glbl"],
+    )
+    for (name, _, _) in SIM_CASES
+]
+
+[
+    vivado_test(
+        name = name + "_sim_test",
+        custom_tcl_script = name + "_verdict.tcl",
+        extra_modules = ["glbl.glbl"],
+        library = ":" + name + "_lib",
+        tags = ["manual"],
+        timeout = "long",
+        top = name + "_tb",
+        xelab_args = [
+            "--debug",
+            "typical",
+            "-L",
+            "unisims_ver",
+            "-L",
+            "secureip",
+        ],
+        xelab_relaxed = True,
+    )
+    for (name, _, _) in SIM_CASES
+]
+
+test_suite(
+    name = "sim_test",
+    tags = ["manual"],
+    tests = [":" + c[0] + "_sim_test" for c in SIM_CASES],
 )
