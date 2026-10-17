@@ -518,6 +518,11 @@ fn store_lanes(f3: U<3>, lane: U<2>) -> U<4> {
 pub struct Csrs {
     pub mcycle: U<64>,
     pub minstret: U<64>,
+    pub ic_lookups: U<64>,
+    pub ic_hits: U<64>,
+    pub ic_fills: U<64>,
+    pub ic_kept: U<64>,
+    pub ic_dropped: U<64>,
     pub mstatus: U<32>,
     pub mtvec: U<32>,
     pub mscratch: U<32>,
@@ -594,6 +599,17 @@ fn csr_index(f12: U<12>) -> U<6> {
         0x30a => U::<6>::from(36u8),
         0x10a => U::<6>::from(37u8),
         0xf14 => U::<6>::from(38u8),
+        // The instruction cache's counters (#1752).
+        0xb03 => U::<6>::from(39u8),
+        0xb04 => U::<6>::from(40u8),
+        0xb05 => U::<6>::from(41u8),
+        0xb06 => U::<6>::from(42u8),
+        0xb07 => U::<6>::from(43u8),
+        0xb83 => U::<6>::from(44u8),
+        0xb84 => U::<6>::from(45u8),
+        0xb85 => U::<6>::from(46u8),
+        0xb86 => U::<6>::from(47u8),
+        0xb87 => U::<6>::from(48u8),
         _ => U::<6>::from(0u8),
     })
 }
@@ -642,6 +658,16 @@ fn csr_read_at(at: U<6>, c: Csrs) -> U<32> {
         36 => c.menv_fiom.zext::<32>(),
         37 => c.senv_fiom.zext::<32>(),
         38 => c.hartid,
+        39 => c.ic_lookups.slice::<0, 32>(),
+        40 => c.ic_hits.slice::<0, 32>(),
+        41 => c.ic_fills.slice::<0, 32>(),
+        42 => c.ic_kept.slice::<0, 32>(),
+        43 => c.ic_dropped.slice::<0, 32>(),
+        44 => c.ic_lookups.slice::<32, 32>(),
+        45 => c.ic_hits.slice::<32, 32>(),
+        46 => c.ic_fills.slice::<32, 32>(),
+        47 => c.ic_kept.slice::<32, 32>(),
+        48 => c.ic_dropped.slice::<32, 32>(),
         _ => U::<32>::from(0u32),
     })
 }
@@ -664,8 +690,10 @@ fn csr_known(f12: U<12>) -> Bit {
         // The counters that count nothing here, which the privileged
         // specification has a hart hold all the same, each reading as
         // zero (issue 1460): `mcountinhibit`, `mhpmevent3` to `31`,
-        // `mhpmcounter3` to `31` and their upper halves, and the
-        // user's copies.
+        // `mhpmcounter8` to `31` and their upper halves, and the
+        // user's copies. `mhpmcounter3` to `7` count the instruction
+        // cache's lookups, hits, fills started, fills kept and fills
+        // dropped (#1752), and read zero in a core without one (IC=0).
         0x320 | 0x323..=0x33f | 0xb03..=0xb1f | 0xb83..=0xb9f
         | 0xc03..=0xc1f | 0xc83..=0xc9f => Bit::One,
         _ => Bit::Zero,
@@ -1020,6 +1048,22 @@ pub struct Vreteno<
     /// (issue 299).
     pub mcycle: Reg<U<64>>,
     pub minstret: Reg<U<64>>,
+    /// The instruction cache's counters, `mhpmcounter3` to `7` (#1752):
+    /// cached fetches looked up, lookups that hit, fills started, fills
+    /// whose four beats came back and wrote the tag, and fills whose
+    /// last beat came after the fetch was dropped. A fill the bus refused
+    /// is started and neither kept nor dropped. Each counts one wire of
+    /// the cache's state machine, `c_go`, `l_hit`, `r_go`, `r_ok` and
+    /// `r_last` with `f_drop`, so that a program on the board can say
+    /// how many lines a frame fills. A core without the cache (IC=0)
+    /// never sees one, and they read zero. The model reads them as zero
+    /// too, so a lockstep program reads them only into `x0`, as it does
+    /// `mcycle`.
+    pub ic_lookups: Reg<U<64>>,
+    pub ic_hits: Reg<U<64>>,
+    pub ic_fills: Reg<U<64>>,
+    pub ic_kept: Reg<U<64>>,
+    pub ic_dropped: Reg<U<64>>,
     /// Waiting for an interrupt, which `wfi` asks for: the core
     /// fetches nothing until one is pending and enabled (issue 275).
     pub waiting: Reg<Bit>,
@@ -1903,6 +1947,11 @@ impl<
                 Csrs {
                     mcycle: self.mcycle.get(),
                     minstret: self.minstret.get(),
+                    ic_lookups: self.ic_lookups.get(),
+                    ic_hits: self.ic_hits.get(),
+                    ic_fills: self.ic_fills.get(),
+                    ic_kept: self.ic_kept.get(),
+                    ic_dropped: self.ic_dropped.get(),
                     mstatus,
                     mtvec,
                     mscratch: self.mscratch.get(),
@@ -3228,6 +3277,55 @@ impl<
                     minstret: (self.minstret.get()
                         & U::<64>::from(0xffff_ffffu64))
                         | (csr_new.zext::<64>() << 32),
+                // The instruction cache's counters (#1752), each one
+                // event of its state machine; a write lands after the
+                // count, as for `mcycle`.
+                ic_on & c_go ? ic_lookups: self.ic_lookups.get() + 1,
+                csr_write & (f12 == isa::CSR_IC_LOOKUPS) ?
+                    ic_lookups: (self.ic_lookups.get()
+                        & U::<64>::from(0xffff_ffff_0000_0000u64))
+                        | csr_new.zext::<64>(),
+                csr_write & (f12 == isa::CSR_IC_LOOKUPSH) ?
+                    ic_lookups: (self.ic_lookups.get()
+                        & U::<64>::from(0xffff_ffffu64))
+                        | (csr_new.zext::<64>() << 32),
+                ic_on & l_hit ? ic_hits: self.ic_hits.get() + 1,
+                csr_write & (f12 == isa::CSR_IC_HITS) ?
+                    ic_hits: (self.ic_hits.get()
+                        & U::<64>::from(0xffff_ffff_0000_0000u64))
+                        | csr_new.zext::<64>(),
+                csr_write & (f12 == isa::CSR_IC_HITSH) ?
+                    ic_hits: (self.ic_hits.get()
+                        & U::<64>::from(0xffff_ffffu64))
+                        | (csr_new.zext::<64>() << 32),
+                ic_on & r_go ? ic_fills: self.ic_fills.get() + 1,
+                csr_write & (f12 == isa::CSR_IC_FILLS) ?
+                    ic_fills: (self.ic_fills.get()
+                        & U::<64>::from(0xffff_ffff_0000_0000u64))
+                        | csr_new.zext::<64>(),
+                csr_write & (f12 == isa::CSR_IC_FILLSH) ?
+                    ic_fills: (self.ic_fills.get()
+                        & U::<64>::from(0xffff_ffffu64))
+                        | (csr_new.zext::<64>() << 32),
+                ic_on & r_ok ? ic_kept: self.ic_kept.get() + 1,
+                csr_write & (f12 == isa::CSR_IC_KEPT) ?
+                    ic_kept: (self.ic_kept.get()
+                        & U::<64>::from(0xffff_ffff_0000_0000u64))
+                        | csr_new.zext::<64>(),
+                csr_write & (f12 == isa::CSR_IC_KEPTH) ?
+                    ic_kept: (self.ic_kept.get()
+                        & U::<64>::from(0xffff_ffffu64))
+                        | (csr_new.zext::<64>() << 32),
+                ic_on & r_last & self.f_drop ?
+                    ic_dropped: self.ic_dropped.get() + 1,
+                csr_write & (f12 == isa::CSR_IC_DROPPED) ?
+                    ic_dropped: (self.ic_dropped.get()
+                        & U::<64>::from(0xffff_ffff_0000_0000u64))
+                        | csr_new.zext::<64>(),
+                csr_write & (f12 == isa::CSR_IC_DROPPEDH) ?
+                    ic_dropped: (self.ic_dropped.get()
+                        & U::<64>::from(0xffff_ffffu64))
+                        | (csr_new.zext::<64>() << 32),
                 // Only a `wfi` that is legal waits: in user mode it traps
                 // instead (issue 1012).
                 run & is_wfi & (prv != 0) & !tw ? waiting: Bit::One,
@@ -3312,6 +3410,11 @@ impl<
                     mtval: U::<32>::from(0u32),
                     mcycle: U::<64>::from(0u64),
                     minstret: U::<64>::from(0u64),
+                    ic_lookups: U::<64>::from(0u64),
+                    ic_hits: U::<64>::from(0u64),
+                    ic_fills: U::<64>::from(0u64),
+                    ic_kept: U::<64>::from(0u64),
+                    ic_dropped: U::<64>::from(0u64),
                     debug: Bit::Zero,
                     stepped: Bit::Zero,
                     step_armed: Bit::Zero,

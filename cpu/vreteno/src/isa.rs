@@ -154,6 +154,22 @@ pub const CSR_MINSTRET: u32 = 0xb02;
 pub const CSR_MCYCLEH: u32 = 0xb80;
 pub const CSR_MINSTRETH: u32 = 0xb82;
 
+/// The instruction cache's counters, `mhpmcounter3` to `7` and their
+/// upper halves (#1752): lookups, hits, fills started, fills kept and
+/// fills dropped. Machine mode reads and writes them as it does
+/// `mcycle`; `mcounteren` has no bits for them, so user mode does not.
+/// A core without the cache reads them as zero.
+pub const CSR_IC_LOOKUPS: u32 = 0xb03;
+pub const CSR_IC_HITS: u32 = 0xb04;
+pub const CSR_IC_FILLS: u32 = 0xb05;
+pub const CSR_IC_KEPT: u32 = 0xb06;
+pub const CSR_IC_DROPPED: u32 = 0xb07;
+pub const CSR_IC_LOOKUPSH: u32 = 0xb83;
+pub const CSR_IC_HITSH: u32 = 0xb84;
+pub const CSR_IC_FILLSH: u32 = 0xb85;
+pub const CSR_IC_KEPTH: u32 = 0xb86;
+pub const CSR_IC_DROPPEDH: u32 = 0xb87;
+
 /// The machine information registers. All four read as zero: a vendor
 /// of zero means unassigned, an architecture and an implementation of
 /// zero mean unspecified, and this machine has one hart, whose index

@@ -173,6 +173,17 @@ their own, \code{//cpu/vreteno:counters\_test}, where a program reads
 both around a division and finds the cycles many more than the
 instructions.
 
+The instruction cache counts its work as well (issue 1752):
+\code{mhpmcounter3} to \code{mhpmcounter7}, at \code{0xb03} to
+\code{0xb07} with their upper halves at \code{0xb83} to \code{0xb87},
+count lookups, hits, fills started, fills kept and fills dropped. A
+program reads them to learn how many lines a stretch of its code
+filled, which the cycles alone do not say. They are machine mode's
+only, written as \code{mcycle} is, and a core without the cache reads
+them as zero. The model has no cache, so they are checked as the
+other counters are, by a run of their own in
+\code{//cpu/vreteno:icache\_test}.
+
 \code{wfi} is there as well, and it waits rather than spinning. The
 specification allows either, and a core that returned at once would be
 correct; this one stops fetching until an interrupt is pending and
