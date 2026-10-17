@@ -2254,13 +2254,29 @@ impl<'a> Gl<'a> {
                             self.triangle([at(i), at(j), at(l)]);
                         }
                         _ => {
-                            // Each vertex made where the triangle holds it,
-                            // rather than through an array's map, which
-                            // copies them.
-                            let mut t = [vert(a), vert(b), vert(c)];
-                            for v in &mut t {
-                                view.place_vert(v);
-                            }
+                            // Two corners on one slot, or no cache: each
+                            // corner is copied out, from its slot when it is
+                            // cached, so that a grid whose rows are sixteen
+                            // apart, every one of whose triangles has two
+                            // corners on a slot, still finds its vertices
+                            // cached (#1750).
+                            let mut get = |k: usize| match key(k) {
+                                Some(i) => {
+                                    let slot = &mut cache[i % VCACHE];
+                                    if slot.0 != i {
+                                        slot.0 = i;
+                                        slot.1 = vert(k);
+                                        view.place_vert(&mut slot.1);
+                                    }
+                                    slot.1
+                                }
+                                None => {
+                                    let mut v = vert(k);
+                                    view.place_vert(&mut v);
+                                    v
+                                }
+                            };
+                            let t = [get(a), get(b), get(c)];
                             self.triangle([&t[0], &t[1], &t[2]]);
                         }
                     }
