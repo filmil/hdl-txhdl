@@ -36,8 +36,24 @@ _python_312 = transition(
 )
 
 def _zephyr_image_impl(ctx):
-    if bool(ctx.attr.sample) == bool(ctx.attr.app):
-        fail("give exactly one of `sample` and `app`")
+    given = [a for a in ["sample", "app", "app_srcs"] if getattr(ctx.attr, a)]
+    if len(given) != 1:
+        fail("give exactly one of `sample`, `app` and `app_srcs`")
+
+    # An application from a package of its own, in this repository or
+    # in one that depends on it (issue 1772): its directory is the one
+    # that holds its topmost CMakeLists.txt.
+    # Its files are under that directory, the package's root being `.`.
+    app_dir = ""
+    if ctx.files.app_srcs:
+        lists = [f for f in ctx.files.app_srcs if f.basename == "CMakeLists.txt"]
+        if not lists:
+            fail("`app_srcs` holds no CMakeLists.txt")
+        depth = lambda f: 0 if not f.dirname else len(f.dirname.split("/"))
+        app_dir = sorted(lists, key = depth)[0].dirname or "."
+        for f in ctx.files.app_srcs:
+            if app_dir != "." and not f.path.startswith(app_dir + "/"):
+                fail("`app_srcs` file %s is not under %s" % (f.path, app_dir))
     elf = ctx.actions.declare_file(ctx.label.name + ".elf")
     binary = ctx.actions.declare_file(ctx.label.name + ".bin")
     config = ctx.actions.declare_file(ctx.label.name + ".config")
@@ -45,7 +61,13 @@ def _zephyr_image_impl(ctx):
     # The module's root is the package the port lives in, which is
     # what CMake wants; a file's dirname would be whichever file the
     # glob happened to put first.
-    module = ctx.attr.module.label.package
+    # From a repository that depends on this one, the module is under
+    # that repository's root in the execution root, `external/...`
+    # (issue 1772).
+    label = ctx.attr.module.label
+    module = label.package
+    if label.workspace_root:
+        module = label.workspace_root + "/" + label.package
 
     # What an application links that Bazel built: static libraries, C
     # sources and headers, each handed to CMake as a list of its own
@@ -64,7 +86,7 @@ def _zephyr_image_impl(ctx):
     inputs = depset(
         ctx.files.module + ctx.files._cmake + ctx.files._ninja +
         ctx.files._dtc + ctx.files._python + ctx.files._py_deps + extra,
-        transitive = [
+        transitive = [a.files for a in ctx.attr.app_srcs] + [
             depset(ctx.files._zephyr),
             depset(ctx.files._mbedtls),
             depset(ctx.files._gcc),
@@ -104,6 +126,7 @@ def _zephyr_image_impl(ctx):
             "BOARD": ctx.attr.board,
             "SAMPLE": ctx.attr.sample,
             "APP": ctx.attr.app,
+            "APP_DIR": app_dir,
             "EXTRA_CONF": (
                 ctx.file.conf.path if ctx.file.conf else ""
             ),
@@ -116,7 +139,7 @@ def _zephyr_image_impl(ctx):
         },
         mnemonic = "ZephyrImage",
         progress_message = "Building Zephyr %s for %s" % (
-            ctx.attr.sample or ctx.attr.app,
+            ctx.attr.sample or ctx.attr.app or app_dir,
             ctx.attr.board,
         ),
     )
@@ -206,6 +229,10 @@ src="$zbase/$SAMPLE"
 if [ -n "$APP" ]; then
   src="$root/$MODULE_DIR/$APP"
 fi
+# And one from a package of its own (issue 1772).
+if [ -n "$APP_DIR" ]; then
+  src="$root/$APP_DIR"
+fi
 
 # The build runs in a sandbox whose path changes on every run, and the
 # compiler writes the paths it was given into the debug information and
@@ -228,6 +255,12 @@ remap="$remap -ffile-prefix-map=$zreal=./$ZEPHYR_ROOT"
 remap="$remap -ffile-prefix-map=$mreal=./$MODULE_DIR"
 breal=$(dirname "$(dirname "$(readlink -f "$root/$MBEDTLS_ROOT/zephyr/module.yml")")")
 remap="$remap -ffile-prefix-map=$breal=./$MBEDTLS_ROOT"
+# An application of its own package is reached through its real path
+# too, wherever its workspace is.
+if [ -n "$APP_DIR" ]; then
+  areal=$(dirname "$(readlink -f "$root/$APP_DIR/CMakeLists.txt")")
+  remap="$remap -ffile-prefix-map=$areal=./$APP_DIR"
+fi
 
 # Zephyr keeps a cache of what the compiler can do, and looks for a
 # writable place for it in XDG_CACHE_HOME, then HOME, then its own tree.
@@ -286,11 +319,24 @@ zephyr_image = rule(
         ),
         "sample": attr.string(
             doc = "The application, as a path inside Zephyr's tree. " +
-                  "Exactly one of this and `app`.",
+                  "Exactly one of this, `app` and `app_srcs`.",
         ),
         "app": attr.string(
             doc = "The application, as a path inside the module, for " +
-                  "one this repository writes (issue 143).",
+                  "one this repository writes (issue 143). Exactly " +
+                  "one of this, `sample` and `app_srcs`.",
+        ),
+        "app_srcs": attr.label_list(
+            allow_files = True,
+            doc = "The application as files of a package of its own: " +
+                  "its CMakeLists.txt, prj.conf and sources, the " +
+                  "topmost CMakeLists.txt naming its directory, under " +
+                  "which every other file must be. For an application " +
+                  "outside the module, in this repository or in one " +
+                  "that depends on it (issue 1772). Source files: one " +
+                  "the build generates is not mapped to a path of the " +
+                  "tree in the image. Exactly one of this, `app` and " +
+                  "`sample`.",
         ),
         "extra": attr.label_list(
             doc = "What the application links that Bazel built: " +

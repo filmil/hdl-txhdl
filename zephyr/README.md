@@ -290,8 +290,27 @@ the raw image and the generated configuration out.
 | `//zephyr:hello_world` | Zephyr's `samples/hello_world` for `ax7a200b` | `//zephyr:config_test` |
 | `//zephyr:hello_world_net` | the same with `net.conf`, a network stack | `//zephyr:eth_config_test` |
 | `//zephyr:fastboot` | the fastboot server, an application in `fastboot/app` | the fastboot tests above |
+| `//tutorial/zephyr_app:zephyr_app` | an application in a package of its own, outside this module, with TCP | `//tutorial/zephyr_app:zephyr_app_test`, and `zephyr_app_paths_test` for its paths |
 
-The two configuration tests read the `.config` each build generated,
+An application is given to `zephyr_image` in one of three ways.
+`sample` names one of Zephyr's own, a path inside Zephyr's tree.
+`app` names one of this module's, a path inside it, as `fastboot/app` is.
+`app_srcs` takes one from a package of its own, as the files of that package, and the directory of its topmost `CMakeLists.txt` is the application's (issue 1772).
+That is the way for a repository that depends on TxHDL, which cannot put files inside this module.
+`tutorial/zephyr_app` is written as such a repository writes it, every label through `@txhdl`:
+
+```starlark
+load("@txhdl//zephyr:defs.bzl", "zephyr_image")
+
+zephyr_image(
+    name = "zephyr_app",
+    app_srcs = [":app"],  # CMakeLists.txt, prj.conf, src/main.c
+    board = "ax7a200b",
+    module = "@txhdl//zephyr:module",
+)
+```
+
+The three configuration tests read the `.config` each build generated,
 because an ELF existing proves very little, as this port showed four
 separate times: each built an ELF that would not have printed.
 `config_test` wants the serial driver, the console, the SoC, the board
