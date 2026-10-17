@@ -15,8 +15,10 @@ load(
     "vivado_program_flash",
     "vivado_repl",
 )
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//tools/vivado:defs.bzl", "vivado_place_and_route2", "vivado_synthesis2")
+load("//tools/vivado:given.bzl", "vivado_given_bitstream")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -78,6 +80,36 @@ vivado_program_device(
     name = "flagship_prog",
     prog_daemon = "//cpu/vreteno/board/remote:hw_server",
     deps = [":flagship_pnr"],
+    tags = ["manual"],
+)
+
+# Write a bitstream another session built into the FPGA, once its
+# sha256 is the one given, rather than placing and routing again
+# (#1784). The programming script is generated against a placeholder,
+# given.bit, so building it needs no place and route; prog_given.sh puts
+# the checked file in its place and runs it.
+#
+#   bazel run //flagship:flagship_prog_given -- --bit=PATH --sha256=HEX \
+#       --hostport localhost:3122 --device '*/xilinx_tcf/Digilent/*'
+vivado_given_bitstream(
+    name = "given_bit",
+    src = "given.bit",
+)
+
+vivado_program_device(
+    name = "flagship_prog_given_base",
+    prog_daemon = "//cpu/vreteno/board/remote:hw_server",
+    deps = [":given_bit"],
+    tags = ["manual"],
+)
+
+sh_binary(
+    name = "flagship_prog_given",
+    srcs = ["prog_given.sh"],
+    data = [
+        ":flagship_prog_given_base",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
     tags = ["manual"],
 )
 
