@@ -554,7 +554,7 @@ mod tests {
             let mut ns = vec![0, 1, -1, d - 1, d, d + 1, -d, -d - 1, -d + 1];
             // The top of the range, where the product falls furthest short,
             // and the multiples of the area there.
-            let top = (1i64 << 62) / d * d;
+            let top = ((1i64 << 62) - 1) / d * d;
             ns.extend([(1 << 62) - 1, top - 1, top, top - d + 1]);
             ns.extend([-(1 << 62) + 1, -top, -top + 1, -top - 1]);
             for _ in 0..64 {
