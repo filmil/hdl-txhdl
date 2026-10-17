@@ -113,6 +113,16 @@ sh_binary(
     tags = ["manual"],
 )
 
+# Its refusals and its dry run, which touch no board.
+sh_test(
+    name = "prog_given_test",
+    size = "small",
+    srcs = ["prog_given_test.sh"],
+    args = ["$(rootpath :flagship_prog_given)"],
+    data = [":flagship_prog_given"],
+    tags = ["manual"],
+)
+
 # Write the flagship into the board's QSPI flash, a Micron MT25QL128
 # over a 4-bit bus, which is where a flagship belongs: the board then
 # comes up as itself with nothing attached. The part is the one this
