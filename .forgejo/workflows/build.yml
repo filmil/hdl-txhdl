@@ -20,12 +20,17 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Which of dev and main to build this hour, as a JSON list for the
-  # matrix below: a branch is listed when its tip's commit is under an
-  # hour old (a merge commit is dated when it is made), or always when the
-  # run was started by hand. Not run for pull requests.
+  # What to build, as a JSON list for the matrix below. For a pull
+  # request it is ["pr"], the pull request itself, and the job ends there.
+  # Otherwise it is which of dev and main to build this hour: a branch is
+  # listed when its tip's commit is under an hour old (a merge commit is
+  # dated when it is made), or always when the run was started by hand.
+  #
+  # It runs for pull requests too because `build` needs it, and Forgejo
+  # skips a job whose need was skipped, whatever the job's own `if` says:
+  # with `pushed` skipped on pull requests, every pull request's build was
+  # skipped from 10-06 (#1749).
   pushed:
-    if: github.event_name != 'pull_request'
     runs-on: docker
     outputs:
       branches: ${{ steps.which.outputs.branches }}
@@ -36,6 +41,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eu
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            echo 'branches=["pr"]' >> "$GITHUB_OUTPUT"
+            echo "building: the pull request"
+            exit 0
+          fi
           command -v git >/dev/null 2>&1 || {
             export DEBIAN_FRONTEND=noninteractive
             apt-get update
@@ -63,14 +73,13 @@ jobs:
 
   build:
     needs: pushed
-    # Runs for a pull request (where `pushed` is skipped), and on the
+    # Runs for a pull request, which `pushed` lists as "pr", and on the
     # hourly or hand-started run when a branch is listed.
-    if: ${{ !cancelled() && (github.event_name == 'pull_request' || (needs.pushed.result == 'success' && needs.pushed.outputs.branches != '[]')) }}
+    if: ${{ !cancelled() && needs.pushed.result == 'success' && needs.pushed.outputs.branches != '[]' }}
     strategy:
       fail-fast: false
       matrix:
-        # The empty ref checks out what the pull request names.
-        branch: ${{ fromJSON(github.event_name == 'pull_request' && '[""]' || needs.pushed.outputs.branches) }}
+        branch: ${{ fromJSON(needs.pushed.outputs.branches) }}
     runs-on: docker
     steps:
       # Every run records how long its steps took and how much Bazel ran
@@ -80,17 +89,19 @@ jobs:
       - name: Mark the start
         run: echo "start $(date +%s)" > /tmp/ci-times
 
+      # For "pr" the ref is empty, which checks out what the pull request
+      # names.
       - name: Checkout
         uses: https://code.forgejo.org/actions/checkout@v4
         with:
-          ref: ${{ matrix.branch }}
+          ref: ${{ matrix.branch != 'pr' && matrix.branch || '' }}
 
       # On the hourly run GITHUB_SHA and GITHUB_REF_NAME name the default
       # branch, not the one checked out, so the log and the record below
       # name what was built from these.
       - name: Mark the checkout
         run: |
-          if [ -n "${{ matrix.branch }}" ]; then
+          if [ "${{ matrix.branch }}" != pr ]; then
             echo "BUILD_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
             echo "BUILD_REF=${{ matrix.branch }}" >> "$GITHUB_ENV"
           fi
