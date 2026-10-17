@@ -5238,6 +5238,106 @@ fn core_costs_for_the_machine() {
     assert!(cold > warm, "the cold run missed");
 }
 
+/// The cache's fill counters against the model's count (#1760): a cold
+/// run of each of two blocks in the DDR3, read around by `mhpmcounter5`
+/// to `7`, keeps as many fills as the timing mode's model makes for the
+/// same block, starts none it does not keep, and drops none. The first
+/// block is 256 instructions in a line; the second jumps from the last
+/// word of every other line over the line after, which is filled only
+/// as the word after the jump, the model's other fill. Each run is a
+/// `jalr` from the boot memory, which is not cached, so the block's
+/// lines are the only ones filled.
+#[test]
+fn the_fills_kept_are_the_models() {
+    use vreteno32::isa::{
+        addi, beq, bne, csrrs, fence, fence_i, halt, jal, jalr, lw, sub, sw,
+        CSR_IC_DROPPED, CSR_IC_FILLS, CSR_IC_KEPT,
+    };
+    use vreteno32::model::{Model, Timing};
+    const BLOCKS: [u32; 2] = [0x4006_0000, 0x4006_4000];
+    const T: u32 = 0x4000_0700;
+    const RELEASE: u32 = 0x4000_0900;
+    const CSRS: [u32; 3] = [CSR_IC_FILLS, CSR_IC_KEPT, CSR_IC_DROPPED];
+    let nop = addi(0, 0, 0);
+    let straight = vec![nop; 256];
+    // Lines 0, 2, 4 and on: three steps and a `jal` to the start of
+    // the line after next, 20 bytes on from the line's last word.
+    let mut jumps = vec![];
+    for _ in 0..32 {
+        jumps.extend([nop, nop, nop, jal(0, 20), nop, nop, nop, nop]);
+    }
+    let mut blocks = [straight, jumps];
+    for b in blocks.iter_mut() {
+        b.push(jalr(0, 1, 0));
+    }
+    // Each block is 32 rounds of eight words, written by a loop: the
+    // boot memory's 4 KiB would not hold both written a word at a time.
+    let mut c = Checked::new();
+    c.li(12, nop).li(13, jal(0, 20)).li(14, jalr(0, 1, 0));
+    for (n, at) in BLOCKS.iter().enumerate() {
+        let third = if n == 0 { 12 } else { 13 };
+        c.li(8, *at).li(10, 32);
+        for w in 0..8 {
+            c.op(sw(if w == 3 { third } else { 12 }, 8, 4 * w));
+        }
+        c.op(addi(8, 8, 32))
+            .op(addi(10, 10, -1))
+            .op(bne(10, 0, -40));
+        c.op(sw(14, 8, 0));
+    }
+    c.op(fence()).op(fence_i());
+    for (n, at) in BLOCKS.iter().enumerate() {
+        let n = n as u32;
+        c.li(8, *at);
+        for (k, csr) in CSRS.iter().enumerate() {
+            c.op(csrrs(20 + k as u32, *csr, 0));
+        }
+        c.op(jalr(1, 8, 0));
+        for (k, csr) in CSRS.iter().enumerate() {
+            c.op(csrrs(23 + k as u32, *csr, 0));
+        }
+        for k in 0..3u32 {
+            c.op(sub(23 + k, 23 + k, 20 + k));
+            c.li(27, T + 12 * n + 4 * k).op(sw(23 + k, 27, 0));
+        }
+    }
+    c.op(fence());
+    c.li(27, RELEASE).op(lw(29, 27, 0)).op(beq(29, 0, -4));
+    let mut plan = vec![Op::Wait(120_000)];
+    for k in 0..6 {
+        plan.push(Op::Read(T + 4 * k));
+    }
+    plan.push(Op::Write(RELEASE, 1));
+    let ran = run_debugged(&c.done(), &[], 400_000, &plan);
+    assert!(ran.halted_at.is_some(), "the run did not finish");
+
+    for (n, b) in blocks.iter().enumerate() {
+        let got = &ran.got[3 * n..3 * n + 3];
+        let (started, kept, dropped) = (got[0], got[1], got[2]);
+        // The same block on the model in the timing mode with the
+        // caches, cold, a halt for the return. It runs from 0 rather
+        // than the block's address, which is in the same slots: both
+        // are a multiple of the cache's 16 KiB.
+        let mut imem = b.clone();
+        *imem.last_mut().unwrap() = halt();
+        let mut m = Model {
+            timing: Some(Timing::board_cached()),
+            ..Model::default()
+        };
+        while m.halted.is_none() {
+            m.step(&imem, None);
+        }
+        println!(
+            "block {n}: {started} fills started, {kept} kept, {dropped} \
+             dropped; the model {}",
+            m.ic_fills
+        );
+        assert_eq!(kept as u64, m.ic_fills, "block {n}: kept, the model's");
+        assert_eq!(started, kept, "block {n}: a fill started, not kept");
+        assert_eq!(dropped, 0, "block {n}: a fill dropped");
+    }
+}
+
 /// A waiting hart is told nothing and forgets its cache as it wakes
 /// (issue 1408). Hart 1's first job reads a word, so its line is
 /// cached, and goes back to wait; hart 0 then writes the word and wakes
