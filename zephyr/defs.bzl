@@ -36,8 +36,19 @@ _python_312 = transition(
 )
 
 def _zephyr_image_impl(ctx):
-    if bool(ctx.attr.sample) == bool(ctx.attr.app):
-        fail("give exactly one of `sample` and `app`")
+    given = [a for a in ["sample", "app", "app_srcs"] if getattr(ctx.attr, a)]
+    if len(given) != 1:
+        fail("give exactly one of `sample`, `app` and `app_srcs`")
+
+    # An application from a package of its own, in this repository or
+    # in one that depends on it (issue 1772): its directory is the one
+    # that holds its topmost CMakeLists.txt.
+    app_dir = ""
+    if ctx.files.app_srcs:
+        lists = [f for f in ctx.files.app_srcs if f.basename == "CMakeLists.txt"]
+        if not lists:
+            fail("`app_srcs` holds no CMakeLists.txt")
+        app_dir = sorted(lists, key = lambda f: len(f.path))[0].dirname
     elf = ctx.actions.declare_file(ctx.label.name + ".elf")
     binary = ctx.actions.declare_file(ctx.label.name + ".bin")
     config = ctx.actions.declare_file(ctx.label.name + ".config")
@@ -63,7 +74,8 @@ def _zephyr_image_impl(ctx):
 
     inputs = depset(
         ctx.files.module + ctx.files._cmake + ctx.files._ninja +
-        ctx.files._dtc + ctx.files._python + ctx.files._py_deps + extra,
+        ctx.files._dtc + ctx.files._python + ctx.files._py_deps + extra +
+        ctx.files.app_srcs,
         transitive = [
             depset(ctx.files._zephyr),
             depset(ctx.files._mbedtls),
@@ -104,6 +116,7 @@ def _zephyr_image_impl(ctx):
             "BOARD": ctx.attr.board,
             "SAMPLE": ctx.attr.sample,
             "APP": ctx.attr.app,
+            "APP_DIR": app_dir,
             "EXTRA_CONF": (
                 ctx.file.conf.path if ctx.file.conf else ""
             ),
@@ -116,7 +129,7 @@ def _zephyr_image_impl(ctx):
         },
         mnemonic = "ZephyrImage",
         progress_message = "Building Zephyr %s for %s" % (
-            ctx.attr.sample or ctx.attr.app,
+            ctx.attr.sample or ctx.attr.app or app_dir,
             ctx.attr.board,
         ),
     )
@@ -206,6 +219,10 @@ src="$zbase/$SAMPLE"
 if [ -n "$APP" ]; then
   src="$root/$MODULE_DIR/$APP"
 fi
+# And one from a package of its own (issue 1772).
+if [ -n "$APP_DIR" ]; then
+  src="$root/$APP_DIR"
+fi
 
 # The build runs in a sandbox whose path changes on every run, and the
 # compiler writes the paths it was given into the debug information and
@@ -228,6 +245,12 @@ remap="$remap -ffile-prefix-map=$zreal=./$ZEPHYR_ROOT"
 remap="$remap -ffile-prefix-map=$mreal=./$MODULE_DIR"
 breal=$(dirname "$(dirname "$(readlink -f "$root/$MBEDTLS_ROOT/zephyr/module.yml")")")
 remap="$remap -ffile-prefix-map=$breal=./$MBEDTLS_ROOT"
+# An application of its own package is reached through its real path
+# too, wherever its workspace is.
+if [ -n "$APP_DIR" ]; then
+  areal=$(dirname "$(readlink -f "$root/$APP_DIR/CMakeLists.txt")")
+  remap="$remap -ffile-prefix-map=$areal=./$APP_DIR"
+fi
 
 # Zephyr keeps a cache of what the compiler can do, and looks for a
 # writable place for it in XDG_CACHE_HOME, then HOME, then its own tree.
@@ -286,11 +309,20 @@ zephyr_image = rule(
         ),
         "sample": attr.string(
             doc = "The application, as a path inside Zephyr's tree. " +
-                  "Exactly one of this and `app`.",
+                  "Exactly one of this, `app` and `app_srcs`.",
         ),
         "app": attr.string(
             doc = "The application, as a path inside the module, for " +
                   "one this repository writes (issue 143).",
+        ),
+        "app_srcs": attr.label_list(
+            allow_files = True,
+            doc = "The application as files of a package of its own: " +
+                  "its CMakeLists.txt, prj.conf and sources, the " +
+                  "topmost CMakeLists.txt naming its directory. For " +
+                  "an application outside the module, in this " +
+                  "repository or in one that depends on it (issue " +
+                  "1772). Exactly one of this, `app` and `sample`.",
         ),
         "extra": attr.label_list(
             doc = "What the application links that Bazel built: " +
