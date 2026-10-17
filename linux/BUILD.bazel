@@ -373,6 +373,38 @@ sh_test(
     tags = ["manual"],
 )
 
+# The model's image with the kernel deflated, which the shim has the
+# inflater unpack before OpenSBI starts (issue 1229), and the boot on it
+# to the prompt: the inflating is about 160M steps more. No image is
+# built this way by default; this one keeps the path booting Linux.
+boot_image(
+    name = "model_deflated_boot",
+    bootargs = "earlycon console=ttySIF0",
+    inflate = True,
+    initramfs = "initramfs.cpio",
+    kernel = "Image",
+    model = True,
+    opensbi = "fw_jump.bin",
+    system_map = "System.map",
+    tags = ["manual"],
+)
+
+sh_test(
+    name = "boot_deflated_test",
+    size = "large",
+    srcs = ["boot_test.sh"],
+    args = [
+        "$(rootpath //cpu/vreteno:machine)",
+        "$(rootpath :model_deflated_boot)",
+    ],
+    data = [
+        ":model_deflated_boot",
+        "//cpu/vreteno:machine",
+    ],
+    env = {"STEPS": "450000000"},
+    tags = ["manual"],
+)
+
 # The network on the machine model (issue 1203): the model image with
 # txhdl.net on its command line, so /init sets up eth0 and pings the
 # peer the machine's --eth-peer puts on the cable. A reply is Linux's
