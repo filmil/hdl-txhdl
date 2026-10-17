@@ -5,9 +5,11 @@
 //! inflater runs this on the core to unpack the kernel; the host's
 //! tests hold it against `miniz_oxide`, which `bootimg` compresses with.
 //!
-//! The decoder is the canonical one of zlib's `puff`: a code's length
-//! counts and its symbols in order, read a bit at a time. It is slower
-//! than a table, and needs no table built per block.
+//! The decoder is the canonical one of zlib's `puff`, a code's length
+//! counts and its symbols in order, with a table of every code of nine
+//! bits or fewer in front of it, so that most symbols are one lookup:
+//! a bit at a time, the core took about 80 instructions a byte of the
+//! kernel.
 #![no_std]
 
 /// Why a stream did not inflate.
@@ -29,9 +31,9 @@ pub enum Error {
     Overflow,
 }
 
-/// The input, a bit at a time, least significant bit first. Fewer than
-/// eight bits are held between calls, so a stored block's start is the
-/// next whole byte.
+/// The input, least significant bit first, read ahead into `buf` as far
+/// as it holds whole bytes, so that a table lookup sees nine bits at
+/// once. A stored block gives the whole bytes read ahead back.
 struct Bits<'a> {
     src: &'a [u8],
     at: usize,
@@ -40,6 +42,18 @@ struct Bits<'a> {
 }
 
 impl Bits<'_> {
+    /// Whole bytes into the buffer while it has room for one.
+    fn fill(&mut self) {
+        while self.n <= 24 {
+            let Some(&b) = self.src.get(self.at) else {
+                return;
+            };
+            self.at += 1;
+            self.buf |= (b as u32) << self.n;
+            self.n += 8;
+        }
+    }
+
     fn bits(&mut self, k: u32) -> Result<u32, Error> {
         while self.n < k {
             let b = *self.src.get(self.at).ok_or(Error::Truncated)?;
@@ -54,11 +68,18 @@ impl Bits<'_> {
     }
 }
 
-/// A canonical code: how many codes there are of each length, and the
-/// symbols in the order of their codes.
+/// The bits a table lookup takes.
+const FAST: u32 = 9;
+
+/// A canonical code: how many codes there are of each length, the
+/// symbols in the order of their codes, and the table: for every nine
+/// bits as they come, least significant first, the symbol of the code
+/// they start with and its length above bit 12, or nought when that
+/// code is longer than nine bits.
 struct Huff {
     count: [u16; 16],
     sym: [u16; 288],
+    fast: [u16; 1 << FAST],
 }
 
 impl Huff {
@@ -70,6 +91,7 @@ impl Huff {
         let mut h = Huff {
             count: [0; 16],
             sym: [0; 288],
+            fast: [0; 1 << FAST],
         };
         for &l in lens {
             h.count[l as usize] += 1;
@@ -92,12 +114,41 @@ impl Huff {
                 offs[l as usize] += 1;
             }
         }
+        // Each short code's first code is the last's plus one, shifted
+        // as the length grows; the table is indexed by the code's bits
+        // reversed, the order the stream gives them in.
+        let (mut code, mut index) = (0u32, 0usize);
+        for len in 1..=FAST {
+            for _ in 0..h.count[len as usize] {
+                let s = h.sym[index];
+                index += 1;
+                let rev = code.reverse_bits() >> (32 - len);
+                let e = (len as u16) << 12 | s;
+                let mut i = rev as usize;
+                while i < 1 << FAST {
+                    h.fast[i] = e;
+                    i += 1 << len;
+                }
+                code += 1;
+            }
+            code <<= 1;
+        }
         Ok(h)
     }
 
     /// The next symbol, its code read a bit at a time, most significant
     /// first.
     fn decode(&self, b: &mut Bits) -> Result<usize, Error> {
+        b.fill();
+        if b.n >= FAST {
+            let e = self.fast[(b.buf & ((1 << FAST) - 1)) as usize];
+            if e != 0 {
+                let len = (e >> 12) as u32;
+                b.buf >>= len;
+                b.n -= len;
+                return Ok((e & 0xfff) as usize);
+            }
+        }
         let (mut code, mut first, mut index) = (0i32, 0i32, 0i32);
         for len in 1..16 {
             code |= b.bits(1)? as i32;
@@ -175,6 +226,9 @@ pub fn inflate(src: &[u8], dst: &mut [u8]) -> Result<usize, Error> {
 /// A stored block: from the next whole byte, its length, the length's
 /// complement, and that many bytes as they are.
 fn stored(b: &mut Bits, dst: &mut [u8], out: usize) -> Result<usize, Error> {
+    // The bits left of the byte the block's header ended in, and back
+    // over the whole bytes read ahead.
+    b.at -= (b.n / 8) as usize;
     b.buf = 0;
     b.n = 0;
     let head = b.src.get(b.at..b.at + 4).ok_or(Error::Truncated)?;
