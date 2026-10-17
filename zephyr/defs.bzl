@@ -61,7 +61,13 @@ def _zephyr_image_impl(ctx):
     # The module's root is the package the port lives in, which is
     # what CMake wants; a file's dirname would be whichever file the
     # glob happened to put first.
-    module = ctx.attr.module.label.package
+    # From a repository that depends on this one, the module is under
+    # that repository's root in the execution root, `external/...`
+    # (issue 1772).
+    label = ctx.attr.module.label
+    module = label.package
+    if label.workspace_root:
+        module = label.workspace_root + "/" + label.package
 
     # What an application links that Bazel built: static libraries, C
     # sources and headers, each handed to CMake as a list of its own
