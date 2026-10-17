@@ -126,6 +126,25 @@ const TEX: u32 = Razboj::LIST + 0x20_0000;
 /// Words from one row of the frame to the next.
 const ROW: u32 = Scan::STRIDE / 4;
 
+/// The instruction cache's counters' low words (#1752): its lookups,
+/// its hits and the fills it started. The board counts them; the
+/// machine reads them as nought.
+#[cfg(gl)]
+fn ic_counts() -> [u32; 3] {
+    let (l, h, f): (u32, u32, u32);
+    unsafe {
+        core::arch::asm!(
+            "csrr {0}, 0xb03",
+            "csrr {1}, 0xb04",
+            "csrr {2}, 0xb05",
+            out(reg) l,
+            out(reg) h,
+            out(reg) f,
+        )
+    };
+    [l, h, f]
+}
+
 /// The cycle counter's low word.
 fn mcycle() -> u32 {
     let c: u32;
@@ -742,6 +761,7 @@ fn main() -> ! {
     #[cfg(gl)]
     loop {
         let start = mcycle();
+        let ic_at = ic_counts();
         let dy = which as i32 * SECOND;
         let binned = {
             // The first frame uploads the texture, and every frame after
@@ -769,6 +789,7 @@ fn main() -> ! {
         };
         let binned = &binned;
         let listed = mcycle();
+        let ic_by = ic_counts();
         // The frame before, hart 1's with two harts, once rung: drawn,
         // then shown from the next blanking, paced.
         if two && frames != 0 {
@@ -832,6 +853,14 @@ fn main() -> ! {
                 Uart::put(b'-');
             }
             Uart::put_decimal(margin.unsigned_abs());
+            // What the list took of the instruction cache: its fills,
+            // lookups and hits while the frame was worked out (#1752).
+            for (name, k) in
+                [(&b" fills "[..], 2), (b" lookups ", 0), (b" hits ", 1)]
+            {
+                Uart::say(name);
+                Uart::put_decimal(ic_by[k].wrapping_sub(ic_at[k]));
+            }
             Scan::clear();
             Uart::put(b'\n');
         }
