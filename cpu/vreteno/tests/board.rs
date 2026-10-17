@@ -4975,6 +4975,29 @@ fn two_harts_lose_no_count() {
     assert_eq!(ran.htimeouts, 0, "no hold ran out");
 }
 
+/// The serial port counts what it drops (issue 1779): with the
+/// transmitter off, nine bytes written straight to `txdata` meet a queue
+/// of eight, so the ninth is dropped and `txdrop` reads one; with the
+/// transmitter on again the eight go out, and a reset of the core would
+/// clear the count.
+#[test]
+fn the_serial_port_counts_a_byte_it_drops() {
+    use vreteno32::isa::{addi, andi, beq, bne, fence, lw, sw, UART_BASE};
+    let mut c = Checked::new();
+    c.li(5, UART_BASE).li(6, b'q' as u32).li(10, 9);
+    c.op(lw(7, 5, 0x1c)).eq(7, 0); // none dropped yet
+    c.op(sw(0, 5, 8)); // the transmitter off
+    c.op(sw(6, 5, 0)).op(addi(10, 10, -1)).op(bne(10, 0, -8));
+    c.op(fence()).op(lw(7, 5, 0x1c)).eq(7, 1);
+    // The transmitter on with txcnt 1, until the queue is empty.
+    c.li(24, 1 | 1 << 16).op(sw(24, 5, 8));
+    c.op(lw(7, 5, 0x14)).op(andi(7, 7, 1)).op(beq(7, 0, -8));
+    c.op(lw(7, 5, 0x1c)).eq(7, 1); // a count is kept, not cleared
+    let ran = run_debugged(&c.done(), &[], 20_000, &[]);
+    assert!(ran.halted_at.is_some(), "a count was wrong");
+    assert_eq!(ran.said, "qqqqqqqq", "the eight the queue held");
+}
+
 /// Both harts store into the DDR3 at once (issue 1408): two hundred
 /// words each, each hart timing its own loop with `mcycle`, against
 /// hart 0's loop alone. Every word lands. The three times go to memory,
