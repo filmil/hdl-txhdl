@@ -877,9 +877,12 @@ Its 32 patches are each cut three by three, 564 triangles once the squares that 
 It is smooth shaded, lit from the eye diffusely and specularly, leans 20 degrees towards the eye, and turns about its axis once in 128 frames.
 It prints `demo teapot 1: utah`, then `teapot 564 triangles`, and after 256 frames, two turns, `demo teapot 1 done:` with its rate.
 Its tessellation, view, light and frames do not change, so that its rate measures the system; a finer teapot would be a demo of its own.
-On the machine model with the board's timing, a frame's list takes 26.7 million cycles on one hart, and with both harts two frames take 26.8 million, 7.5 frames a second.
-It took 68.2 million, 2.9 frames a second, before `draw_elements` kept the vertices it had worked out (#1624); 50.5 million, 4.0 a second, before a triangle no plane cuts was drawn from its vertices' places; and 35.0 million, 5.7 a second, before such a triangle skipped clipping's arrays and a plane and a square root stopped dividing.
-What is left is mostly each triangle's own setup and its binning, which #1624 says how to take next.
+On the machine model with the board's timing as #1679 measured it, a frame's list takes 35.7 million cycles on one hart, and with both harts two frames take 36.2 million, 5.5 frames a second.
+About half of that is the instruction cache's misses, and how many there are moves with where the linker puts the frame's code: changes that did not touch the frame's code have moved it by 4%.
+Without the cache's misses, `Timing::board_cached` with its `icache` off, the list takes 17.0 million, and linked hot first (`--//cpu/vreteno/rust:hot_first`) 32.9 million, where they took 19.1 million and 36.3 million before a cached vertex was drawn from its slot and a triangle's planes divided once (#1750); the plain figure, at main's layout then, rose from 35.0 million.
+On the board at 146138b8 the list took 38.8 million cycles and both harts drew 5.0 frames a second, so the model reads about 6% fast there, which #1752 is about.
+At the timing the model had before #1679, the list took 68.2 million, 2.9 frames a second, before `draw_elements` kept the vertices it had worked out (#1624); 50.5 million, 4.0 a second, before a triangle no plane cuts was drawn from its vertices' places; 35.0 million, 5.7 a second, before such a triangle skipped clipping's arrays and a plane and a square root stopped dividing; and 26.7 million, 7.5 a second, after that.
+What is left is mostly each triangle's own setup and its binning.
 
 ```sh
 bazel build //demo/canon:teapot
