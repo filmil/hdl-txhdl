@@ -28,7 +28,7 @@ use txhdl::Trace;
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::eth::gray16;
-use txhdl_parts::ethslots::{regs, EthSlots};
+use txhdl_parts::ethslots::{regs, EthSlots, SlotsMac};
 
 /// Where the four buffers begin: sixteen megabytes into the board's
 /// memory, clear of where a program loads.
@@ -379,10 +379,20 @@ fn main() {
                 ),
                 slots.run(
                     bus,
-                    (
-                        tx_busy, rx_busy, rx_len, rx_which, rx_drops, rx_mac,
-                        txb_o, txn_o, txs_o, rxb_o, irq_o, full_o,
-                    ),
+                    SlotsMac {
+                        tx_busy,
+                        rx_busy,
+                        rx_len,
+                        rx_which,
+                        rx_drops,
+                        rx_mac,
+                        tx_base: txb_o,
+                        tx_bytes: txn_o,
+                        tx_start: txs_o,
+                        rx_base: rxb_o,
+                        irq: irq_o,
+                        rx_full: full_o,
+                    },
                 ),
             ),
             client,
