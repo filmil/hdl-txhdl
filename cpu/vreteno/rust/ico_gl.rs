@@ -82,16 +82,26 @@ const SHININESS: Fx = 57114;
 /// Vertices drawn: three a face.
 pub const VERTS: usize = 3 * FACES;
 
+/// The slots a textured triangle takes: its entry, its second slot and
+/// two texture slots, and under `multitex` (steps 9 and 10) the second
+/// unit's two more.
+const TRI_SLOTS: usize = if cfg!(multitex) { 6 } else { 4 };
+
+/// The bit of an entry's word 15 that says it has a second texture unit,
+/// `razboj_tile::tex::TWO_UNITS`.
+const TWO_UNITS: u32 = 1 << 15;
+
 /// The most a frame's list holds: the backdrop's rectangle, and every
 /// face with its second slot when the depth test is on and its two
 /// texture slots when it is textured. Under `mirror` (#1592's step 8),
 /// the reflection's faces as well, and the mirror's two triangles twice.
 /// Under `blend` (step 7), the faces drawn twice, back then front, and
-/// the stripes' triangles.
+/// the stripes' triangles. Under `multitex` (steps 9 and 10), a face and
+/// a floor triangle take two texture slots more, the second unit's.
 #[cfg(not(teapot))]
 pub const MOST: usize = 1
-    + 4 * FACES
-    + 4 * FLOOR_TRIS
+    + TRI_SLOTS * FACES
+    + TRI_SLOTS * FLOOR_TRIS
     + if cfg!(mirror) { 2 * FACES + 8 } else { 0 }
     + if cfg!(blend) {
         2 * FACES + 4 * STRIPES
@@ -141,6 +151,40 @@ const fn checker() -> [u8; (TEX_SIDE * TEX_SIDE * 4) as usize] {
 
 /// The checker's texels.
 static CHECKER: [u8; (TEX_SIDE * TEX_SIDE * 4) as usize] = checker();
+
+/// The light map (steps 9 and 10), RGBA bytes: a warm spot, brightest
+/// and opaque at the centre, falling off to a dim blue and clear at the
+/// corners, by the squared distance from the centre.
+#[cfg(multitex)]
+const fn light() -> [u8; (TEX_SIDE * TEX_SIDE * 4) as usize] {
+    let mut p = [0u8; (TEX_SIDE * TEX_SIDE * 4) as usize];
+    let half = (TEX_SIDE / 2) as i32;
+    let far = 2 * half * half;
+    let mut k = 0;
+    while k < (TEX_SIDE * TEX_SIDE) as usize {
+        let (i, j) =
+            ((k as u32 % TEX_SIDE) as i32, (k as u32 / TEX_SIDE) as i32);
+        let (di, dj) = (i - half, j - half);
+        // 255 at the centre, 0 at the corners.
+        let near = 255 - 255 * (di * di + dj * dj) / far;
+        let c: [u8; 4] = [
+            (64 + 191 * near / 255) as u8,
+            (48 + 160 * near / 255) as u8,
+            (96 + 32 * near / 255) as u8,
+            near as u8,
+        ];
+        p[4 * k] = c[0];
+        p[4 * k + 1] = c[1];
+        p[4 * k + 2] = c[2];
+        p[4 * k + 3] = c[3];
+        k += 1;
+    }
+    p
+}
+
+/// The light map's texels.
+#[cfg(multitex)]
+static LIGHT: [u8; (TEX_SIDE * TEX_SIDE * 4) as usize] = light();
 
 /// The solid as GL takes it: each face's three corners, each with the
 /// face's normal, and the indices that draw them.
@@ -336,7 +380,13 @@ pub fn frame<'a>(
             colour: None,
             normal: Some(model.normals[k]),
             tex: Some(model.texcoords[k]),
-            tex1: None,
+            // The second unit's coordinates (steps 9 and 10): the face's
+            // own, which the unit's texture matrix scales.
+            tex1: if cfg!(multitex) {
+                Some(model.texcoords[k])
+            } else {
+                None
+            },
             point_size: None,
         });
     } else if cfg!(blend) {
@@ -370,7 +420,8 @@ pub fn frame<'a>(
         b.x1 = b.x1.max((w[2] & 0xffff) as i32);
         b.y1 = b.y1.max((w[2] >> 16) as i32 - dy);
         let second = ((w[15] >> 8) | (w[15] >> 13) | (w[15] >> 14)) & 1;
-        let texture = 2 * ((w[15] >> 14) & 1);
+        let texture =
+            2 * ((w[15] >> 14) & 1) + 2 * ((w[15] & TWO_UNITS != 0) as u32);
         k += 1 + (second + texture) as usize;
     }
     (1 + drawn.len(), b)
@@ -403,16 +454,73 @@ pub fn texture<'a>(g: &mut Gl<'a>, room: &'a mut [u32], bus: u32) {
     let modulate = gl::MODULATE as Fx;
     g.tex_env(gl::TEXTURE_ENV, gl::TEXTURE_ENV_MODE, &[modulate]);
     g.enable(gl::TEXTURE_2D);
+    // The light map on the second unit (steps 9 and 10), its levels made
+    // as it is uploaded, as the checker's are.
+    #[cfg(multitex)]
+    {
+        let mut second = [0u32];
+        g.gen_textures(&mut second);
+        g.active_texture(gl::TEXTURE1);
+        g.bind_texture(t2, second[0]);
+        let lml = gl::LINEAR_MIPMAP_LINEAR;
+        g.tex_parameter(t2, gl::GENERATE_MIPMAP, 1);
+        g.tex_parameter(t2, gl::TEXTURE_MIN_FILTER, lml);
+        g.tex_parameter(t2, gl::TEXTURE_MAG_FILTER, gl::LINEAR);
+        g.tex_image_2d(t2, 0, rgba, s, s, 0, rgba, ub, &LIGHT);
+        second_unit(g);
+    }
 }
 
 /// The checker as an earlier frame left it in `room` (#1433), bound as
 /// `g`'s texture with nothing uploaded: the lighting modulating it, on.
+/// Under `multitex`, the light map as well, on the second unit.
 pub fn kept<'a>(g: &mut Gl<'a>, room: &'a mut [u32], bus: u32) {
     g.texture_room_kept(room, bus);
     g.bind_texture(gl::TEXTURE_2D, 1);
     let modulate = gl::MODULATE as Fx;
     g.tex_env(gl::TEXTURE_ENV, gl::TEXTURE_ENV_MODE, &[modulate]);
     g.enable(gl::TEXTURE_2D);
+    #[cfg(multitex)]
+    {
+        g.active_texture(gl::TEXTURE1);
+        g.bind_texture(gl::TEXTURE_2D, 2);
+        second_unit(g);
+    }
+}
+
+/// The second unit's environment, with its texture bound (steps 9 and
+/// 10), and the first unit made active again. Step 9 modulates the lit
+/// checker by the light map. Step 10, under `combine`, mixes the two
+/// instead, `GL_COMBINE`'s `INTERPOLATE` of the light map and the lit
+/// checker by the light map's alpha, so the checker shows through where
+/// the map is clear and the map where it is not: what `MODULATE` and
+/// `REPLACE` cannot draw. Its texture matrix doubles the coordinates, so
+/// the map repeats twice across a face.
+#[cfg(multitex)]
+fn second_unit(g: &mut Gl<'_>) {
+    let env = gl::TEXTURE_ENV;
+    if cfg!(combine) {
+        g.tex_env(env, gl::TEXTURE_ENV_MODE, &[gl::COMBINE as Fx]);
+        for (pname, v) in [
+            (gl::COMBINE_RGB, gl::INTERPOLATE),
+            (gl::SRC0_RGB, gl::TEXTURE),
+            (gl::SRC1_RGB, gl::PREVIOUS),
+            (gl::SRC2_RGB, gl::TEXTURE),
+            (gl::OPERAND2_RGB, gl::SRC_ALPHA),
+            (gl::COMBINE_ALPHA, gl::REPLACE),
+            (gl::SRC0_ALPHA, gl::PREVIOUS),
+        ] {
+            g.tex_env(env, pname, &[v as Fx]);
+        }
+    } else {
+        g.tex_env(env, gl::TEXTURE_ENV_MODE, &[gl::MODULATE as Fx]);
+    }
+    g.matrix_mode(gl::TEXTURE);
+    g.load_identity();
+    g.scale(2 * ONE, 2 * ONE, ONE);
+    g.matrix_mode(gl::MODELVIEW);
+    g.enable(gl::TEXTURE_2D);
+    g.active_texture(gl::TEXTURE0);
 }
 
 /// Under `mirror` (#1592's step 8): the view tilted down about the
@@ -607,7 +715,11 @@ fn floor(g: &mut Gl<'_>) {
             colour: None,
             normal: Some([0, ONE, 0]),
             tex: Some([s, t, 0, ONE]),
-            tex1: None,
+            tex1: if cfg!(multitex) {
+                Some([s, t, 0, ONE])
+            } else {
+                None
+            },
             point_size: None,
         }
     });
