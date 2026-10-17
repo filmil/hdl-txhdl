@@ -2031,8 +2031,8 @@ mod tests {
                     m.step(&imem, None);
                 }
                 cycles.push(m.cycles - before);
+                cycles.push(m.ic_fills);
             }
-            cycles.push(m.ic_fills);
             cycles
         };
         let icache = Icache {
@@ -2043,9 +2043,11 @@ mod tests {
         };
         let (with, without) = (run(Some(icache)), run(None));
         assert_eq!(with[0] - without[0], 84 + 40 + 84 + 45, "cold");
-        // Four fills, the same four lines' costs, and none warm (#1760).
-        assert_eq!(with[2], 4, "lines filled");
-        assert_eq!(with[1] - without[1], 2 + 3, "warm");
+        // Four fills cold, the same four lines' costs, none warm, and
+        // none without the cache (#1760).
+        assert_eq!([with[1], with[3]], [4, 4], "lines filled");
+        assert_eq!([without[1], without[3]], [0, 0], "no cache, no fill");
+        assert_eq!(with[2] - without[2], 2 + 3, "warm");
     }
 
     /// The line the word after a jump fills is the next one's to find
