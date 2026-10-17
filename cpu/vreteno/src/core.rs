@@ -599,17 +599,18 @@ fn csr_index(f12: U<12>) -> U<6> {
         0x30a => U::<6>::from(36u8),
         0x10a => U::<6>::from(37u8),
         0xf14 => U::<6>::from(38u8),
-        // The instruction cache's counters (#1752).
-        0xb03 => U::<6>::from(39u8),
-        0xb04 => U::<6>::from(40u8),
-        0xb05 => U::<6>::from(41u8),
-        0xb06 => U::<6>::from(42u8),
-        0xb07 => U::<6>::from(43u8),
-        0xb83 => U::<6>::from(44u8),
-        0xb84 => U::<6>::from(45u8),
-        0xb85 => U::<6>::from(46u8),
-        0xb86 => U::<6>::from(47u8),
-        0xb87 => U::<6>::from(48u8),
+        // The instruction cache's counters (#1752), and the user's
+        // read-only copies of them, which only machine mode reaches.
+        0xb03 | 0xc03 => U::<6>::from(39u8),
+        0xb04 | 0xc04 => U::<6>::from(40u8),
+        0xb05 | 0xc05 => U::<6>::from(41u8),
+        0xb06 | 0xc06 => U::<6>::from(42u8),
+        0xb07 | 0xc07 => U::<6>::from(43u8),
+        0xb83 | 0xc83 => U::<6>::from(44u8),
+        0xb84 | 0xc84 => U::<6>::from(45u8),
+        0xb85 | 0xc85 => U::<6>::from(46u8),
+        0xb86 | 0xc86 => U::<6>::from(47u8),
+        0xb87 | 0xc87 => U::<6>::from(48u8),
         _ => U::<6>::from(0u8),
     })
 }
@@ -691,9 +692,11 @@ fn csr_known(f12: U<12>) -> Bit {
         // specification has a hart hold all the same, each reading as
         // zero (issue 1460): `mcountinhibit`, `mhpmevent3` to `31`,
         // `mhpmcounter8` to `31` and their upper halves, and the
-        // user's copies. `mhpmcounter3` to `7` count the instruction
-        // cache's lookups, hits, fills started, fills kept and fills
-        // dropped (#1752), and read zero in a core without one (IC=0).
+        // user's copies of those. `mhpmcounter3` to `7` count the
+        // instruction cache's lookups, hits, fills started, fills kept
+        // and fills dropped (#1752), and `hpmcounter3` to `7` read them
+        // in machine mode; all read zero in a core without the cache
+        // (IC=0), which neither counts nor keeps a write.
         0x320 | 0x323..=0x33f | 0xb03..=0xb1f | 0xb83..=0xb9f
         | 0xc03..=0xc1f | 0xc83..=0xc9f => Bit::One,
         _ => Bit::Zero,
@@ -3279,50 +3282,51 @@ impl<
                         | (csr_new.zext::<64>() << 32),
                 // The instruction cache's counters (#1752), each one
                 // event of its state machine; a write lands after the
-                // count, as for `mcycle`.
+                // count, as for `mcycle`. Without the cache (IC=0) they
+                // keep no write either, so they read zero.
                 ic_on & c_go ? ic_lookups: self.ic_lookups.get() + 1,
-                csr_write & (f12 == isa::CSR_IC_LOOKUPS) ?
+                ic_on & csr_write & (f12 == isa::CSR_IC_LOOKUPS) ?
                     ic_lookups: (self.ic_lookups.get()
                         & U::<64>::from(0xffff_ffff_0000_0000u64))
                         | csr_new.zext::<64>(),
-                csr_write & (f12 == isa::CSR_IC_LOOKUPSH) ?
+                ic_on & csr_write & (f12 == isa::CSR_IC_LOOKUPSH) ?
                     ic_lookups: (self.ic_lookups.get()
                         & U::<64>::from(0xffff_ffffu64))
                         | (csr_new.zext::<64>() << 32),
                 ic_on & l_hit ? ic_hits: self.ic_hits.get() + 1,
-                csr_write & (f12 == isa::CSR_IC_HITS) ?
+                ic_on & csr_write & (f12 == isa::CSR_IC_HITS) ?
                     ic_hits: (self.ic_hits.get()
                         & U::<64>::from(0xffff_ffff_0000_0000u64))
                         | csr_new.zext::<64>(),
-                csr_write & (f12 == isa::CSR_IC_HITSH) ?
+                ic_on & csr_write & (f12 == isa::CSR_IC_HITSH) ?
                     ic_hits: (self.ic_hits.get()
                         & U::<64>::from(0xffff_ffffu64))
                         | (csr_new.zext::<64>() << 32),
                 ic_on & r_go ? ic_fills: self.ic_fills.get() + 1,
-                csr_write & (f12 == isa::CSR_IC_FILLS) ?
+                ic_on & csr_write & (f12 == isa::CSR_IC_FILLS) ?
                     ic_fills: (self.ic_fills.get()
                         & U::<64>::from(0xffff_ffff_0000_0000u64))
                         | csr_new.zext::<64>(),
-                csr_write & (f12 == isa::CSR_IC_FILLSH) ?
+                ic_on & csr_write & (f12 == isa::CSR_IC_FILLSH) ?
                     ic_fills: (self.ic_fills.get()
                         & U::<64>::from(0xffff_ffffu64))
                         | (csr_new.zext::<64>() << 32),
                 ic_on & r_ok ? ic_kept: self.ic_kept.get() + 1,
-                csr_write & (f12 == isa::CSR_IC_KEPT) ?
+                ic_on & csr_write & (f12 == isa::CSR_IC_KEPT) ?
                     ic_kept: (self.ic_kept.get()
                         & U::<64>::from(0xffff_ffff_0000_0000u64))
                         | csr_new.zext::<64>(),
-                csr_write & (f12 == isa::CSR_IC_KEPTH) ?
+                ic_on & csr_write & (f12 == isa::CSR_IC_KEPTH) ?
                     ic_kept: (self.ic_kept.get()
                         & U::<64>::from(0xffff_ffffu64))
                         | (csr_new.zext::<64>() << 32),
                 ic_on & r_last & self.f_drop ?
                     ic_dropped: self.ic_dropped.get() + 1,
-                csr_write & (f12 == isa::CSR_IC_DROPPED) ?
+                ic_on & csr_write & (f12 == isa::CSR_IC_DROPPED) ?
                     ic_dropped: (self.ic_dropped.get()
                         & U::<64>::from(0xffff_ffff_0000_0000u64))
                         | csr_new.zext::<64>(),
-                csr_write & (f12 == isa::CSR_IC_DROPPEDH) ?
+                ic_on & csr_write & (f12 == isa::CSR_IC_DROPPEDH) ?
                     ic_dropped: (self.ic_dropped.get()
                         & U::<64>::from(0xffff_ffffu64))
                         | (csr_new.zext::<64>() << 32),
