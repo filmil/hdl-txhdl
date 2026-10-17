@@ -402,7 +402,8 @@ impl Timing {
     /// ran on into 42.0 more (41.4 after a `jal` to the next line);
     /// running on into a line held 3 more than four steps (straight lines
     /// 7.0). So a jumped-to line is 42, and the word after the jump costs
-    /// its line's fill, 42, when that line is not held. A line the line
+    /// its line's fill, 42, when that line is not held; that is charged
+    /// with the line's lookup, 2 (below), so its figure is 44. A line the line
     /// before ran on into is charged its miss in place of the running on,
     /// so its figure is 42 and 3. Warm, a line of three steps whose `jal`
     /// is not its last word costs 7.0, and a line of four whose last word
@@ -1384,6 +1385,11 @@ impl Model {
         // core takes one instead of the instruction in execute,
         // whatever its fetch said.
         let fetched = self.fetch_vm(imem, self.pc);
+        // Its length, for the timing mode's word after it (#1679), also
+        // when an interrupt is taken in its place.
+        if let Ok((_, len)) = fetched {
+            self.ilen.set(len);
+        }
         if let Some(cause) = interrupt {
             self.trap(cause, 0);
             return;
@@ -1403,7 +1409,6 @@ impl Model {
         }
         let d = decode(w);
         if self.timing.is_some() {
-            self.ilen.set(len);
             self.reads.set((d.rs1, d.rs2));
             self.mkind.set(match d.kind {
                 Kind::Mul | Kind::Mulh | Kind::Mulhsu | Kind::Mulhu => 1,
@@ -1985,8 +1990,9 @@ mod tests {
     /// A line of the instruction cache costs by how it was reached (#1679),
     /// against no cache: cold, the first line and a line a `jal` went to
     /// each cost a jumped-to miss, the line after the `jal`'s its fill,
-    /// and the line the second ran on into a ran-on miss; warm, only the
-    /// line run on into costs, its running on.
+    /// and the line the second ran on into a ran-on miss; warm, the line
+    /// after the `jal`'s its lookup, and the line run on into its running
+    /// on.
     #[test]
     fn a_line_costs_by_how_it_was_reached() {
         use crate::isa::jal;
@@ -2025,5 +2031,40 @@ mod tests {
         let (with, without) = (run(Some(icache)), run(None));
         assert_eq!(with[0] - without[0], 84 + 40 + 84 + 45, "cold");
         assert_eq!(with[1] - without[1], 2 + 3, "warm");
+    }
+
+    /// The line the word after a jump fills is the next one's to find
+    /// (#1679): a jump into it finds it held.
+    #[test]
+    fn the_word_after_a_jump_fills_its_line() {
+        use crate::isa::jal;
+        let cold = |target: u32| {
+            let mut imem = vec![addi(1, 1, 1), addi(1, 1, 1), addi(1, 1, 1)];
+            imem.push(jal(0, target as i32 - 12)); // 12, line 0's last word
+            imem.resize(target as usize / 4 + 1, halt());
+            let run = |icache: Option<Icache>| {
+                let timing = Timing {
+                    icache,
+                    ..Timing::board()
+                };
+                let mut m = Model {
+                    timing: Some(timing),
+                    ..Model::default()
+                };
+                while m.halted.is_none() {
+                    m.step(&imem, None);
+                }
+                m.cycles
+            };
+            let icache = Icache {
+                jumped: 84,
+                ran_on: 45,
+                step: 3,
+                after: (2, 40),
+            };
+            run(Some(icache)) - run(None)
+        };
+        // To line 1's second word: line 1 is filled after the jump.
+        assert_eq!(cold(20), 84 + 40, "into the line after");
     }
 }
