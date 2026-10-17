@@ -191,11 +191,18 @@ retired-instruction counter, writable a half at a time. \\
 \code{cycle}, \code{time}, \code{instret} and their halves & Read
 only: \code{mcycle}, the input \code{time} and \code{minstret}, below
 machine mode as \code{mcounteren} and \code{scounteren} allow. \\
-\code{0x320}, \code{0x323} to \code{0x33f}, \code{0xb03} to
-\code{0xb1f}, \code{0xb83} to \code{0xb9f}, \code{0xc03} to
-\code{0xc1f}, \code{0xc83} to \code{0xc9f} & \code{mcountinhibit},
+\code{0xb03} to \code{0xb07}, \code{0xb83} to \code{0xb87} &
+\code{mhpmcounter3} to \code{mhpmcounter7} and their halves & The
+instruction cache's lookups, hits, fills started, fills kept and fills
+dropped (issue 1752), writable a half at a time; zero with \code{IC}
+of 0, which neither counts nor keeps a write. Their copies,
+\code{0xc03} to \code{0xc07} and \code{0xc83} to \code{0xc87}, read
+them in machine mode only (issue 1766). \\
+\code{0x320}, \code{0x323} to \code{0x33f}, \code{0xb08} to
+\code{0xb1f}, \code{0xb88} to \code{0xb9f}, \code{0xc08} to
+\code{0xc1f}, \code{0xc88} to \code{0xc9f} & \code{mcountinhibit},
 the event selectors and the counters that count nothing & Nothing:
-zero (issue 1460); the user's copies, \code{0xc03} up, in machine
+zero (issue 1460); the user's copies, \code{0xc08} up, in machine
 mode only. \\
 \code{0x7b0} & \code{dcsr} & In debug mode only: \code{ebreakm}, bit
 15, and \code{step}, bit 2, as written; the cause and the mode kept;
