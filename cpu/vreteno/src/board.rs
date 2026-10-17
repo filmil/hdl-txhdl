@@ -26,7 +26,7 @@
 //! port's clock divider.
 use crate::core::Writeback;
 use crate::dcsnoop::DcSnoop;
-use crate::debug::Dm;
+use crate::debug::{Dm, DmCore};
 use crate::dmem::Dmem;
 use crate::hart::Hart;
 use crate::isa;
@@ -1266,15 +1266,15 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                             b: db_tx,
                                             r: dr_tx,
                                         },
-                                        (
-                                            debug_i,
-                                            dbg_rdata_i,
+                                        DmCore {
+                                            halted: debug_i,
+                                            rdata: dbg_rdata_i,
                                             haltreq_o,
                                             resumereq_o,
-                                            dbg_regno_o,
-                                            dbg_wdata_o,
-                                            dbg_we_o,
-                                        ),
+                                            regno_o: dbg_regno_o,
+                                            wdata_o: dbg_wdata_o,
+                                            we_o: dbg_we_o,
+                                        },
                                     ),
                                     self.pdm.run(
                                         (
