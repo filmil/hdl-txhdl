@@ -19,7 +19,8 @@
 #![no_main]
 
 use core::arch::asm;
-use vreteno_hal::{entry, halt, map, Uart};
+use core::sync::atomic::{AtomicU32, Ordering};
+use vreteno_hal::{entry, halt, map, Hart1, Uart};
 
 entry!(main);
 
@@ -317,6 +318,77 @@ fn icache_jumps() {
     say_line(b"held-warm", warm[3], 1);
 }
 
+/// `GUESS` (#1752): `LOOP` with its second word a backward branch never
+/// taken, `bne zero, zero, -4`. The core guesses a backward branch taken
+/// and corrects the guess a cycle later, so each round pays for a wrong
+/// guess that `LOOP`'s round does not.
+const GUESS: usize = map::DDR3 + 0x35_2000;
+const _: () = assert!((GUESS - map::DDR3) % 0x4000 == 0x2000);
+const BNE_NEVER: u32 = 0xfe00_1ee3;
+
+fn guess_loop() {
+    put(GUESS, [CSRR_T0, LI_T2, NOP, NOP]);
+    put(GUESS + 16, [DEC_T2, BNE_NEVER, NOP, BNE_T2]);
+    put(GUESS + 32, [CSRR_T1, SUB_A0, RET, NOP]);
+}
+
+/// Whether hart 1 streams its loads, and whether it has stopped: 0 not
+/// started, 1 streaming, 2 told to stop, 3 stopped.
+static STREAM: AtomicU32 = AtomicU32::new(0);
+
+/// Hart 1's loads for `icache_contend`: one a line over the 64 KiB
+/// stretch, every one a miss in its data cache of 4 KiB, until hart 0
+/// says stop.
+extern "C" fn stream(_: u32, _: u32) -> ! {
+    STREAM.store(1, Ordering::Release);
+    while STREAM.load(Ordering::Acquire) == 1 {
+        let mut at = STRETCH;
+        while at < STRETCH + 0x1_0000 {
+            let _ = unsafe { core::ptr::read_volatile(at as *const u32) };
+            at += 16;
+        }
+    }
+    STREAM.store(3, Ordering::Release);
+    Hart1::park()
+}
+
+/// A branch guessed wrong, and a line not held while the other hart
+/// reads the DDR3 (#1752): `icache3 guess <cold> <warm> contend <cold>
+/// <warm>`, then `costs icache-guess-warm`, and `costs
+/// icache-contend-miss` beside `icache-miss`.
+fn icache_guess_contend() {
+    guess_loop();
+    block(A);
+    fence_i();
+    let ret = (GUESS + 32 + 8) as *const u32;
+    if unsafe { core::ptr::read_volatile(ret) != RET } || !written(A) {
+        Uart::say(b"costs icache guess blocks not written\n");
+        return;
+    }
+    fence_i();
+    let g_cold = run(GUESS) as i32;
+    let g_warm = run(GUESS) as i32;
+    Hart1::start(stream, 0);
+    while STREAM.load(Ordering::Acquire) != 1 {}
+    fence_i();
+    let c_cold = run(A) as i32;
+    let c_warm = run(A) as i32;
+    STREAM.store(2, Ordering::Release);
+    while STREAM.load(Ordering::Acquire) != 3 {}
+    Uart::say(b"icache3 guess ");
+    Uart::put_decimal(g_cold as u32);
+    Uart::put(b' ');
+    Uart::put_decimal(g_warm as u32);
+    Uart::say(b" contend ");
+    Uart::put_decimal(c_cold as u32);
+    Uart::put(b' ');
+    Uart::put_decimal(c_warm as u32);
+    Uart::put(b'\n');
+    say_line(b"guess-warm", g_warm, 1);
+    say_line(b"contend-miss", c_cold - c_warm, 1);
+    say_line(b"contend-warm", c_warm, 1);
+}
+
 fn mcycle() -> u32 {
     let c: u32;
     unsafe { asm!("csrr {0}, mcycle", out(reg) c) };
@@ -385,6 +457,7 @@ fn main() -> ! {
     say(b"divu", timed!("lw a3, 0(a0)", "divu a2, a2, a3"), empty);
     icache();
     icache_jumps();
+    icache_guess_contend();
     Uart::say(b"costs done\n");
     halt()
 }

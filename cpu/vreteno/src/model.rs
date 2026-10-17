@@ -261,6 +261,8 @@ pub struct Model {
     /// length in bytes (#1679).
     pub mkind: std::cell::Cell<u8>,
     pub ilen: std::cell::Cell<u32>,
+    /// Whether the step was a backward branch (#1752).
+    pub back: std::cell::Cell<bool>,
     pub reads: std::cell::Cell<(u32, u32)>,
     pub loaded: std::cell::Cell<u32>,
     pub prev_loaded: u32,
@@ -303,6 +305,11 @@ pub struct Timing {
     pub base: u64,
     /// More when control goes anywhere but the next instruction.
     pub taken: u64,
+    /// More for a backward branch that falls through (#1752): the core
+    /// guesses a backward branch taken, and a wrong guess is corrected a
+    /// cycle later (issue 1300). A forward branch taken, the other wrong
+    /// guess, costs what a jump does from the cache, which `taken` is.
+    pub guessed: u64,
     /// A data access's extra cycles by region: from, to, load, store.
     pub regions: Vec<(u32, u32, u64, u64)>,
     /// A load or a store anywhere else, the peripherals among it.
@@ -354,6 +361,10 @@ impl Timing {
         Timing {
             base: 1,
             taken: 4,
+            // The core on its own memories (`icache_test`'s loop with a
+            // backward branch never taken), from the boot memory and from
+            // the cache alike.
+            guessed: 2,
             regions: vec![
                 // The boot memory and the data memory, on the bus.
                 (0x0000_0000, 0x0000_2000, 9, 2),
@@ -496,6 +507,7 @@ impl Default for Model {
             fell: false,
             mkind: std::cell::Cell::new(0),
             ilen: std::cell::Cell::new(4),
+            back: std::cell::Cell::new(false),
             reads: std::cell::Cell::new((0, 0)),
             loaded: std::cell::Cell::new(0),
             prev_loaded: 0,
@@ -1244,6 +1256,7 @@ impl Model {
         self.wfi_now.set(false);
         self.mkind.set(0);
         self.ilen.set(4);
+        self.back.set(false);
         self.reads.set((0, 0));
         self.loaded.set(0);
         self.walks.set(0);
@@ -1257,6 +1270,8 @@ impl Model {
             self.pc != pc.wrapping_add(4) && self.pc != pc.wrapping_add(2);
         if taken {
             c += t.taken;
+        } else if self.back.get() {
+            c += t.guessed;
         }
         // The instruction cache, by the instruction's line (issue 1561).
         if let Some(Icache {
@@ -1415,6 +1430,17 @@ impl Model {
         let d = decode(w);
         if self.timing.is_some() {
             self.reads.set((d.rs1, d.rs2));
+            self.back.set(
+                matches!(
+                    d.kind,
+                    Kind::Beq
+                        | Kind::Bne
+                        | Kind::Blt
+                        | Kind::Bge
+                        | Kind::Bltu
+                        | Kind::Bgeu
+                ) && d.imm < 0,
+            );
             self.mkind.set(match d.kind {
                 Kind::Mul | Kind::Mulh | Kind::Mulhsu | Kind::Mulhu => 1,
                 Kind::Div | Kind::Divu | Kind::Rem | Kind::Remu => 2,
@@ -2071,5 +2097,32 @@ mod tests {
         };
         // To line 1's second word: line 1 is filled after the jump.
         assert_eq!(cold(20), 84 + 40, "into the line after");
+    }
+    /// A backward branch that falls through costs its wrong guess (#1752):
+    /// a round of a loop with one costs `guessed` more than a round with
+    /// a no-op in its place.
+    #[test]
+    fn a_backward_branch_not_taken_costs_its_guess() {
+        use crate::isa::bne;
+        let run = |w: u32| {
+            let imem = vec![
+                addi(2, 0, 10),
+                addi(1, 1, 1),
+                w,
+                addi(2, 2, -1),
+                bne(2, 0, -12),
+                halt(),
+            ];
+            let mut m = Model {
+                timing: Some(Timing::board()),
+                ..Model::default()
+            };
+            while m.halted.is_none() {
+                m.step(&imem, None);
+            }
+            m.cycles
+        };
+        let (with, without) = (run(bne(0, 0, -4)), run(addi(0, 0, 0)));
+        assert_eq!(with - without, 10 * Timing::board().guessed);
     }
 }
