@@ -812,8 +812,12 @@ impl Model {
         // second's unless the first is a leaf or a fault; and the leaf it
         // keeps, which it keeps whether or not the access is then
         // allowed, since the buffers check that on every hit.
-        let miss =
-            self.timing.is_some() && !self.hw_tlb.borrow().holds(va, access);
+        // Nothing is walked where translation is off: `satp` bare, or
+        // machine mode as `MPRV` leaves it.
+        let on = m.satp >> 31 != 0 && m.prv != 3;
+        let miss = self.timing.is_some()
+            && on
+            && !self.hw_tlb.borrow().holds(va, access);
         if miss {
             let leaf = |p: u32| p & 0xa != 0;
             // Not valid, writable but not readable, a pointer at the
@@ -2120,6 +2124,13 @@ mod tests {
         m.walks.set(0);
         let _ = m.fetch_vm(&[], mega + 4);
         assert_eq!(m.walks.get(), 0, "the fetch's entry held");
+        // Nor in machine mode, where nothing is translated, whatever
+        // the page or how many there are.
+        m.prv = 3;
+        for k in 0..12 {
+            assert_eq!(reads(&m, 0x4000_0000 + k * 0x1000, false), 0, "M");
+        }
+        m.prv = 1;
         // Outside the timing mode nothing is counted.
         m.timing = None;
         m.csr_write(CSR_SATP, 1 << 31 | root >> 12);
