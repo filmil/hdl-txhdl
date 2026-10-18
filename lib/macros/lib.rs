@@ -7015,6 +7015,27 @@ fn lower_structural(
                                     continue;
                                 }
                             }
+                            // A field held at a constant, `f: tie(v)`, is a
+                            // tie as a tuple's element is: a wire of the
+                            // parent driven by `lit(v)`, joined to the
+                            // field's port (issue 1802).
+                            if let (Some(TokenTree::Ident(f)), true) =
+                                (e.first(), punct_at(&e, 1, ':'))
+                            {
+                                if let Some(v) = tied(&e[2..]) {
+                                    let net =
+                                        format!("{field}_tie{}", ties.len());
+                                    ties.push(format!(
+                                        "(\"{net}\".to_string(), \
+                                         ::txhdl::netlist::lit({v}))"
+                                    ));
+                                    names.push((
+                                        format!("{si}.{f}"),
+                                        format!("@tie {net}"),
+                                    ));
+                                    continue;
+                                }
+                            }
                             let (port, net) = match e.as_slice() {
                                 [TokenTree::Ident(f)] => (f, f),
                                 [TokenTree::Ident(f), _, TokenTree::Ident(n)]
