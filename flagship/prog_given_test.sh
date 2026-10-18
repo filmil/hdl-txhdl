@@ -59,4 +59,22 @@ expect 0 "programming $bit, sha256 $sum" \
   --bit "$bit" --sha256 "$sum" --dry-run
 BUILD_WORKING_DIRECTORY="$dir" expect 0 "programming $dir/good.bit" \
   --bit=good.bit --sha256="$sum" --dry-run
+# As `bazel run` starts it (#1797): the binary beside its runfiles tree
+# and its manifest, which the runfiles library prefers, so rlocation
+# names each file's real place rather than its place in the tree.
+run="$dir/run"
+mkdir -p "$run"
+cp -- "$prog" "$run/w"
+tree="${RUNFILES_DIR:-$TEST_SRCDIR}"
+ln -s "$tree" "$run/w.runfiles"
+(cd "$tree" && find -L . -type f | sed 's|^\./||' | while read -r f; do
+  printf '%s %s\n' "$f" "$(readlink -f "$f")"
+done) >"$run/w.runfiles_manifest"
+out="$(env -u RUNFILES_DIR -u RUNFILES_MANIFEST_FILE -u TEST_SRCDIR \
+  "$run/w" --bit="$bit" --sha256="$sum" --dry-run 2>&1)"
+if [[ $? != 0 || "$out" != *"dry run: nothing programmed"* ]]; then
+  echo "FAIL: as bazel run starts it:"
+  echo "$out"
+  fail=1
+fi
 exit "$fail"
