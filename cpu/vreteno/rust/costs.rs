@@ -15,6 +15,13 @@
 //! block of straight-line code written into the DDR3 that times itself,
 //! so that no fetch of this program's own is counted. The cache is
 //! direct-mapped, 1024 lines of sixteen bytes.
+//!
+//! The bulk kinds are a megabyte read, set to zero and copied, a word at
+//! a time as Linux's `memset` and `memcpy` go, from memory no cache
+//! holds: `costs bulk-<kind> <hundredths of a cycle a word>`. Linux's
+//! boot on the board spends its early part setting memory and its
+//! framebuffer console copying it, and the model is wrong in opposite
+//! directions there (issue 1561).
 #![no_std]
 #![no_main]
 
@@ -479,6 +486,82 @@ fn icache4() {
     say_line(b"scatter-warm", warm[3], 1);
 }
 
+/// The bulk blocks' two megabytes: a read and a set walk `FROM`, and a
+/// copy moves it to `TO`, a word at a time, four words a round, as the
+/// kernel's `memset` and `memcpy` do (issue 1561).
+const FROM: usize = map::DDR3 + 0x40_0000;
+const TO: usize = map::DDR3 + 0x60_0000;
+const BULK: usize = 0x10_0000;
+
+/// The cycles of one pass of `$body`, four words a round from `a0` up
+/// to `a1`, with `a2` the copy's target, and a fence after.
+macro_rules! bulk {
+    ($($body:literal),*) => {{
+        let t0 = mcycle();
+        unsafe {
+            asm!(
+                "1:",
+                $($body,)*
+                "addi a0, a0, 16",
+                "bne a0, a1, 1b",
+                "fence",
+                inout("a0") FROM => _,
+                in("a1") FROM + BULK,
+                inout("a2") TO => _,
+                out("t0") _,
+                out("t1") _,
+                out("t2") _,
+                out("t3") _,
+            )
+        };
+        mcycle().wrapping_sub(t0)
+    }};
+}
+
+/// A megabyte read, set and copied, each from memory the data cache
+/// does not hold: `bulk read <c> set <c> copy <c>`, the cycles of each,
+/// then `costs bulk-<kind> <hundredths of a cycle a word>`.
+fn bulk() {
+    let read = bulk!(
+        "lw t0, 0(a0)",
+        "lw t1, 4(a0)",
+        "lw t2, 8(a0)",
+        "lw t3, 12(a0)"
+    );
+    let set = bulk!(
+        "sw x0, 0(a0)",
+        "sw x0, 4(a0)",
+        "sw x0, 8(a0)",
+        "sw x0, 12(a0)"
+    );
+    let copy = bulk!(
+        "lw t0, 0(a0)",
+        "lw t1, 4(a0)",
+        "lw t2, 8(a0)",
+        "lw t3, 12(a0)",
+        "sw t0, 0(a2)",
+        "sw t1, 4(a2)",
+        "sw t2, 8(a2)",
+        "sw t3, 12(a2)",
+        "addi a2, a2, 16"
+    );
+    Uart::say(b"bulk read ");
+    Uart::put_decimal(read);
+    Uart::say(b" set ");
+    Uart::put_decimal(set);
+    Uart::say(b" copy ");
+    Uart::put_decimal(copy);
+    Uart::put(b'\n');
+    let words = (BULK / 4) as u64;
+    for (name, c) in [(&b"read"[..], read), (b"set", set), (b"copy", copy)] {
+        Uart::say(b"costs bulk-");
+        Uart::say(name);
+        Uart::put(b' ');
+        Uart::put_decimal((c as u64 * 100 / words) as u32);
+        Uart::put(b'\n');
+    }
+}
+
 fn mcycle() -> u32 {
     let c: u32;
     unsafe { asm!("csrr {0}, mcycle", out(reg) c) };
@@ -554,6 +637,7 @@ fn main() -> ! {
     // goes around it every time. The `lui` is a cycle the row carries on
     // every board alike, so two boards compare.
     say(b"dmem-load", timed!("lui a3, 1", "lw a2, 0(a3)"), empty);
+    bulk();
     Uart::say(b"costs done\n");
     halt()
 }
