@@ -562,6 +562,106 @@ fn bulk() {
     }
 }
 
+/// The page walk's blocks: an Sv32 root table at `PT` and a second-level
+/// table after it, mapping the 4 KiB page at `VA_PAGE` and the 4 MiB
+/// megapage at `VA_MEGA` both onto `WORD`'s.
+const PT: usize = map::DDR3 + 0x70_0000;
+const VA_PAGE: usize = 0x0040_0000;
+const VA_MEGA: usize = 0x0080_0000;
+/// Valid, readable, writable, accessed and dirty.
+const LEAF: u32 = 0xc7;
+
+/// `mstatus`'s `MPRV`, with `MPP` supervisor: a load in machine mode is
+/// translated as the supervisor's, while fetches are not.
+const MPRV_S: usize = (1 << 17) | (1 << 11);
+
+/// The cycles of `N` rounds of `$body` with `MPRV` set, loads at `a3`;
+/// `MPRV` is cleared again inside the same block, so nothing the
+/// compiler writes runs translated.
+macro_rules! walked {
+    ($at:expr, $($body:literal),*) => {{
+        let c: u32;
+        unsafe {
+            asm!(
+                "csrc mstatus, {mpp}",
+                "csrs mstatus, {mprv}",
+                "csrr {t0}, mcycle",
+                "1:",
+                $($body,)*
+                "addi {n}, {n}, -1",
+                "bnez {n}, 1b",
+                "csrr {c}, mcycle",
+                "csrc mstatus, {mprv}",
+                "sub {c}, {c}, {t0}",
+                mpp = in(reg) 3usize << 11,
+                mprv = in(reg) MPRV_S,
+                t0 = out(reg) _,
+                c = out(reg) c,
+                n = inout(reg) N => _,
+                in("a3") $at,
+                out("a2") _,
+            )
+        };
+        c
+    }};
+}
+
+/// A data walk after `sfence.vma`, through a page and through a
+/// megapage, with the tables in a DDR3 row the walks keep open: `walk
+/// page <c> mega <c> sfence <c> hit <c> empty <c>`, the cycles of `N`
+/// rounds of each, then `costs walk-page` and `costs walk-mega`, a
+/// walk's cycles in hundredths: the round less `sfence.vma` alone and a
+/// load the TLB holds, with the loop counted once.
+fn walk() {
+    let root = PT as *mut u32;
+    let second = (PT + 0x1000) as *mut u32;
+    let ppn = |at: usize| (at >> 12) as u32;
+    unsafe {
+        core::ptr::write_volatile(
+            root.add(VA_PAGE >> 22),
+            ppn(PT + 0x1000) << 10 | 1,
+        );
+        core::ptr::write_volatile(
+            root.add(VA_MEGA >> 22),
+            ppn(map::DDR3) << 10 | LEAF,
+        );
+        core::ptr::write_volatile(
+            second.add((VA_PAGE >> 12) & 0x3ff),
+            ppn(WORD) << 10 | LEAF,
+        );
+        asm!("fence", "csrw satp, {0}", "sfence.vma", in(reg) (1 << 31) | ppn(PT));
+    }
+    let page = VA_PAGE + (WORD & 0xfff);
+    let mega = VA_MEGA + (WORD - map::DDR3);
+    let p = walked!(page, "sfence.vma", "lw a2, 0(a3)");
+    let m = walked!(mega, "sfence.vma", "lw a2, 0(a3)");
+    let s = walked!(page, "sfence.vma");
+    let h = walked!(page, "lw a2, 0(a3)");
+    let e = walked!(page,);
+    unsafe { asm!("csrw satp, x0", "sfence.vma") };
+    Uart::say(b"walk page ");
+    for (i, c) in [p, m, s, h, e].into_iter().enumerate() {
+        if i > 0 {
+            Uart::say(
+                [&b" mega "[..], b" sfence ", b" hit ", b" empty "][i - 1],
+            );
+        }
+        Uart::put_decimal(c);
+    }
+    Uart::put(b'\n');
+    for (name, c) in [(&b"page"[..], p), (b"mega", m)] {
+        let per = (c as i32 - s as i32 - h as i32 + e as i32) * 100 / N as i32;
+        Uart::say(b"costs walk-");
+        Uart::say(name);
+        Uart::put(b' ');
+        if per < 0 {
+            Uart::put(b'-');
+        }
+        Uart::put_decimal(per.unsigned_abs());
+        Uart::put(b'\n');
+    }
+}
+
 fn mcycle() -> u32 {
     let c: u32;
     unsafe { asm!("csrr {0}, mcycle", out(reg) c) };
@@ -638,6 +738,7 @@ fn main() -> ! {
     // every board alike, so two boards compare.
     say(b"dmem-load", timed!("lui a3, 1", "lw a2, 0(a3)"), empty);
     bulk();
+    walk();
     Uart::say(b"costs done\n");
     halt()
 }
