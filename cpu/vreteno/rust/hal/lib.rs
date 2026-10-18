@@ -129,9 +129,16 @@ impl Uart {
 
     /// Send one byte, once the queue has room for it. A byte written
     /// while the queue is full is dropped, so the wait is not optional.
+    /// The `fence` (`fence iorw, iorw`) after the write keeps the next
+    /// byte's read of `txdata` from reaching the port before this byte
+    /// does: without it, the read can find room this byte is about to
+    /// take, and the board dropped 61 and 72 bytes of the GL demo's
+    /// output that way, none with the fence (#1778, #1815).
     pub fn put(byte: u8) {
         while rd(Self::TXDATA) & Self::TX_FULL != 0 {}
         wr(Self::TXDATA, byte as u32);
+        // SAFETY: a fence has no operands and touches no memory.
+        unsafe { core::arch::asm!("fence") };
     }
 
     /// How many bytes the port dropped from a full transmit queue since

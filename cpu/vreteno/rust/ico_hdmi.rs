@@ -660,6 +660,17 @@ fn demo_end(frames: u32) {
             Uart::say(b" shown, fps x10 ");
             Uart::put_decimal(frames * 600 / shown.max(1));
             Uart::put(b'\n');
+            // The bytes the port dropped from a full queue, counted once
+            // the line above and this line's words went in (#1778): a
+            // letter missing from the host's copy, with this at 0, was
+            // lost after it left.
+            Uart::say(b"demo ");
+            Uart::say(SERIES);
+            Uart::put(b' ');
+            Uart::say(step.as_bytes());
+            Uart::say(b" tx_dropped ");
+            Uart::put_decimal(Uart::tx_dropped());
+            Uart::put(b'\n');
             vreteno_hal::halt();
         }
     }
