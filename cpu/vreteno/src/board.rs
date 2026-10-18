@@ -60,7 +60,7 @@ use txhdl_parts::dtm::{Dtm, DtmBridge, Tck};
 use txhdl_parts::eth::EthByte;
 use txhdl_parts::ethdma::{FrameIn, FrameLen, FrameOut};
 use txhdl_parts::ethshare::EthShare;
-use txhdl_parts::ethslots::EthSlots;
+use txhdl_parts::ethslots::{EthSlots, SlotsMac};
 use txhdl_parts::flashwin::FlashWin;
 use txhdl_parts::mdio::{Mdio, MdioLines};
 use txhdl_parts::plic::Plic3;
@@ -1364,20 +1364,20 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                             b: pb_eth_tx,
                                             r: pr_eth_tx,
                                         },
-                                        (
-                                            eth_tx_busy_i,
-                                            eth_rx_busy_i,
-                                            eth_rx_len_i,
-                                            eth_rx_which_i,
-                                            eth_rx_drops_i,
-                                            mac_drops,
-                                            eth_tx_base_o,
-                                            eth_tx_bytes_o,
-                                            eth_tx_start_o,
-                                            eth_rx_base_o,
-                                            eth_irq_o,
-                                            eth_rx_full_o,
-                                        ),
+                                        SlotsMac {
+                                            tx_busy: eth_tx_busy_i,
+                                            rx_busy: eth_rx_busy_i,
+                                            rx_len: eth_rx_len_i,
+                                            rx_which: eth_rx_which_i,
+                                            rx_drops: eth_rx_drops_i,
+                                            rx_mac: mac_drops,
+                                            tx_base: eth_tx_base_o,
+                                            tx_bytes: eth_tx_bytes_o,
+                                            tx_start: eth_tx_start_o,
+                                            rx_base: eth_rx_base_o,
+                                            irq: eth_irq_o,
+                                            rx_full: eth_rx_full_o,
+                                        },
                                     ),
                                 ),
                             ),
