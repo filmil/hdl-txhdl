@@ -4998,6 +4998,112 @@ fn the_serial_port_counts_a_byte_it_drops() {
     assert_eq!(ran.said, "qqqqqqqq", "the eight the queue held");
 }
 
+/// What hart 1 does while hart 0 prints (#1778).
+#[derive(Clone, Copy, Debug)]
+enum Beside {
+    Idle,
+    Ddr3Stores,
+    PeriphReads,
+    PeriphWrites,
+}
+
+/// Bytes the serial port drops under another hart's traffic (#1778).
+/// The transmitter is held off, so the queue stays full as a board's
+/// slow line keeps it; each of fifty rounds tries nine bytes the way
+/// the HAL's `Uart::put` does, reading `txdata` for room before each
+/// write and giving up after 200 reads, and the eighth fills the queue,
+/// so a ninth is written only if a read missed the store before it.
+/// Hart 1 meanwhile idles, stores into the DDR3, or reads or writes the
+/// pulse width modulator at 0x3100, behind the same AXI-Lite bridge as
+/// the serial port. Hart 0 stores the bytes it believed it wrote and
+/// the port's own drop count, `txdrop`.
+fn serial_beside(beside: Beside) -> (u32, u32, usize) {
+    use vreteno32::isa::{addi, andi, beq, bge, bne, jal, lw, sw, UART_BASE};
+    const CODE: u32 = 0x4002_0000;
+    const A: u32 = 0x4004_0000;
+    const PWM: u32 = 0x3100;
+    const FLAG: u32 = 0x4000_0800;
+    const WROTE: u32 = 0x4000_0700;
+    const DROPPED: u32 = 0x4000_0704;
+    const RELEASE: u32 = 0x4000_0900;
+    // Hart 1, round and round until the run ends.
+    let mut j = Checked::new();
+    match beside {
+        Beside::Idle => {
+            j.op(jal(0, 0));
+        }
+        Beside::Ddr3Stores => {
+            j.li(5, A).op(sw(5, 5, 0)).op(jal(0, -4));
+        }
+        Beside::PeriphReads => {
+            j.li(5, PWM).op(lw(6, 5, 0)).op(jal(0, -4));
+        }
+        Beside::PeriphWrites => {
+            j.li(5, PWM).op(sw(0, 5, 0)).op(jal(0, -4));
+        }
+    }
+    let job = j.p.clone();
+    let mut c = Checked::new();
+    c.li(8, CODE).li(12, FLAG).op(sw(0, 12, 0));
+    place(&mut c, 8, &job);
+    start_hart1(&mut c, 8, 12);
+    // x5 the port, x6 the byte, x22 the bytes written, x20 the rounds,
+    // x24 txctrl with the transmitter on and txcnt 1.
+    c.li(5, UART_BASE).li(6, b'x' as u32).li(22, 0).li(20, 50);
+    c.li(24, 1 | 1 << 16);
+    c.op(sw(0, 5, 8)) // round: the transmitter off
+        .op(addi(10, 0, 9));
+    c.op(addi(21, 0, 200)) // attempt: at most 200 reads
+        .op(lw(7, 5, 0))
+        .op(bge(7, 0, 16)) // room: write
+        .op(addi(21, 21, -1))
+        .op(bne(21, 0, -12))
+        .op(jal(0, 12)) // no room: the next attempt
+        .op(sw(6, 5, 0))
+        .op(addi(22, 22, 1))
+        .op(addi(10, 10, -1))
+        .op(bne(10, 0, -36));
+    c.op(sw(24, 5, 8)) // the transmitter on, until the queue is empty
+        .op(lw(7, 5, 0x14))
+        .op(andi(7, 7, 1))
+        .op(beq(7, 0, -8))
+        .op(addi(20, 20, -1))
+        .op(bne(20, 0, -68));
+    c.li(27, WROTE).op(sw(22, 27, 0));
+    c.op(lw(7, 5, 0x1c)).li(27, DROPPED).op(sw(7, 27, 0));
+    c.li(27, RELEASE).op(lw(29, 27, 0)).op(beq(29, 0, -4));
+    let plan = [
+        Op::Wait(800_000),
+        Op::Read(WROTE),
+        Op::Read(DROPPED),
+        Op::Write(RELEASE, 1),
+    ];
+    let ran = run_debugged(&c.done(), &[], 2_000_000, &plan);
+    assert!(ran.halted_at.is_some(), "the run did not finish");
+    (ran.got[0], ran.got[1], ran.said.len())
+}
+
+#[test]
+fn serial_output_loses_no_byte_beside_another_hart() {
+    let mut lost = vec![];
+    for beside in [
+        Beside::Idle,
+        Beside::Ddr3Stores,
+        Beside::PeriphReads,
+        Beside::PeriphWrites,
+    ] {
+        let (wrote, dropped, said) = serial_beside(beside);
+        println!(
+            "hart 1 {beside:?}: wrote {wrote}, txdrop {dropped}, \
+             {said} arrived"
+        );
+        if wrote != 400 || dropped != 0 || said != 400 {
+            lost.push(beside);
+        }
+    }
+    assert!(lost.is_empty(), "bytes dropped beside {lost:?}");
+}
+
 /// Both harts store into the DDR3 at once (issue 1408): two hundred
 /// words each, each hart timing its own loop with `mcycle`, against
 /// hart 0's loop alone. Every word lands. The three times go to memory,
