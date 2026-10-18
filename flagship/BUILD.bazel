@@ -15,7 +15,6 @@ load(
     "vivado_program_flash",
     "vivado_repl",
 )
-load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//tools/vivado:defs.bzl", "vivado_place_and_route2", "vivado_synthesis2")
 
@@ -86,8 +85,9 @@ vivado_program_device(
 # sha256 is the one given, rather than placing and routing again
 # (#1784). With no bitstream of its own, building it runs no place and
 # route, and its script programs the file --bitfile names, refused when
-# --sha256 differs or the file is no bitstream (rules_vivado 4.1.0,
-# #1803).
+# the file is no bitstream or --sha256 differs (rules_vivado 4.1.0,
+# #1803). The rule takes --sha256 as optional; pass it every time, since
+# without it any bitstream at that path is programmed.
 #
 #   bazel run //flagship:flagship_prog_given -- --bitfile=PATH \
 #       --sha256=HEX --hostport localhost:3122 \

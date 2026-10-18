@@ -3,8 +3,10 @@
 #
 # flagship_prog_given refuses what it should before it reaches a board
 # (#1784, #1803): a file whose sum is not the one given, a file that is
-# no bitstream, and a missing file are each refused before the script
-# starts hw_server, so no run here touches a board.
+# no bitstream or is empty, and a missing file are each refused before
+# the script starts hw_server, so no run here touches a board. A sum in
+# capitals is the same sum, and a relative --bitfile is taken from where
+# `bazel run` was started.
 #
 # The script is run as `bazel run` lays it out: beside its runfiles tree
 # and a manifest of every runfile's real place, which the runfiles
@@ -29,6 +31,9 @@ sum="$(sha256sum "$bit" | cut -d' ' -f1)"
 junk="$dir/junk.bit"
 printf 'not a bitstream' >"$junk"
 jsum="$(sha256sum "$junk" | cut -d' ' -f1)"
+empty="$dir/empty.bit"
+: >"$empty"
+esum="$(sha256sum "$empty" | cut -d' ' -f1)"
 zero="$(printf '0%.0s' $(seq 64))"
 fail=0
 
@@ -44,13 +49,20 @@ refused() { # refused <text> <args...>
     echo "$out"
     fail=1
   fi
-  if [[ "$out" == *"hw_server"* && "$out" == *"Running programmer"* ]]; then
-    echo "FAIL: $* started hw_server before refusing"
+  # The script says this once the file has passed its checks, before it
+  # starts hw_server.
+  if [[ "$out" == *"Programming the --bitfile"* ]]; then
+    echo "FAIL: $* passed the checks and went on to program"
     fail=1
   fi
 }
 
 refused "has SHA-256 $sum, not $zero" --bitfile="$bit" --sha256="$zero"
 refused "not a bitstream" --bitfile="$junk" --sha256="$jsum"
-refused "$dir/none.bit" --bitfile="$dir/none.bit" --sha256="$sum"
+refused "not a bitstream" --bitfile="$junk" --sha256="${jsum^^}"
+refused "not a bitstream" --bitfile="$empty" --sha256="$esum"
+refused "no such file: $dir/none.bit" \
+  --bitfile="$dir/none.bit" --sha256="$sum"
+BUILD_WORKING_DIRECTORY="$dir" \
+  refused "has SHA-256 $sum, not $zero" --bitfile=good.bit --sha256="$zero"
 exit "$fail"
