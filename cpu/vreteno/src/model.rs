@@ -148,6 +148,52 @@ impl Tlb {
     }
 }
 
+/// The hart's own translation buffers as the timing mode counts them
+/// (issue 1561): the RTL's `Mmu8` (`txhdl_parts::mmu`), one for fetches
+/// and one for loads and stores, each of [`HwTlb::ENTRIES`] entries,
+/// fully associative and filled in turn, an entry a 4 KiB page or a 4
+/// MiB megapage. [`Tlb`] answers the translations and is far larger, so
+/// a walk the hart makes is one these miss, not one it misses. They
+/// keep where a page is, not what it allows, since the RTL checks that
+/// on every hit.
+#[derive(Clone, Debug, Default)]
+pub struct HwTlb {
+    /// Per port, fetches first: each entry's page or megapage number,
+    /// and whether it is a megapage.
+    entries: [[Option<(u32, bool)>; HwTlb::ENTRIES]; 2],
+    /// Per port, the entry to fill next.
+    next: [usize; 2],
+}
+
+impl HwTlb {
+    pub const ENTRIES: usize = 8;
+
+    fn port(access: Access) -> usize {
+        !matches!(access, Access::Fetch) as usize
+    }
+
+    /// Whether the buffer for `access` holds `va`'s page.
+    pub fn holds(&self, va: u32, access: Access) -> bool {
+        self.entries[Self::port(access)]
+            .iter()
+            .flatten()
+            .any(|&(n, mega)| n == if mega { va >> 22 } else { va >> 12 })
+    }
+
+    /// `va`'s page, or its megapage, into the next entry for `access`.
+    pub fn fill(&mut self, va: u32, mega: bool, access: Access) {
+        let p = Self::port(access);
+        let n = if mega { va >> 22 } else { va >> 12 };
+        self.entries[p][self.next[p]] = Some((n, mega));
+        self.next[p] = (self.next[p] + 1) % Self::ENTRIES;
+    }
+
+    /// Both emptied, as a write of `satp` or an `sfence.vma` empties them.
+    pub fn flush(&mut self) {
+        *self = HwTlb::default();
+    }
+}
+
 /// The architectural state, and only that.
 #[derive(Clone, Debug)]
 pub struct Model {
@@ -157,6 +203,9 @@ pub struct Model {
     pub bus: Option<std::rc::Rc<dyn Bus>>,
     /// The fast machine's translations; empty and unused without a bus.
     pub tlb: std::cell::RefCell<Tlb>,
+    /// The hart's translation buffers, which say what the timing mode
+    /// charges for walks.
+    pub hw_tlb: std::cell::RefCell<HwTlb>,
     pub pc: u32,
     pub x: [u32; 32],
     pub mem: Vec<u32>,
@@ -261,7 +310,7 @@ pub struct Model {
     pub ic_fills: u64,
     /// What the step was for the timing mode: a multiply 1 or a division
     /// 2; the registers it reads; the register a load of it wrote; the
-    /// page walks it made; whether it was `fence.i` (issue 1561); its
+    /// page table entries its walks read; whether it was `fence.i` (issue 1561); its
     /// length in bytes (#1679).
     pub mkind: std::cell::Cell<u8>,
     pub ilen: std::cell::Cell<u32>,
@@ -343,8 +392,11 @@ pub struct Timing {
     /// 1024 lines of 16 bytes. None models no cache, as `taken` alone
     /// did.
     pub icache: Option<Icache>,
-    /// A translation the TLB does not hold: the page walk's two reads of
-    /// the DDR3 (issue 1561).
+    /// A translation the hart's buffers do not hold: a page's walk, two
+    /// reads of the DDR3 (issue 1561). A megapage's walk reads one entry
+    /// and is charged half, as is an entry that is not valid. The 86 is
+    /// from the `board_test` netlist's simulation until the board's
+    /// `costs walk-page` and `walk-mega` say otherwise.
     pub walk: u64,
     /// What a `fence` waits, at most, for a store into the DDR3 still on
     /// its way (issue 1561): the most, right after the store, less the
@@ -487,6 +539,7 @@ impl Default for Model {
         Model {
             bus: None,
             tlb: Default::default(),
+            hw_tlb: Default::default(),
             pc: 0,
             x: [0; 32],
             mem: vec![0; DATA_BYTES as usize / 4],
@@ -754,13 +807,32 @@ impl Model {
         if self.bus.is_none() {
             return translate(read, m, va, access);
         }
-        let vpn = va >> 12;
-        if let Some(ppn) = self.tlb.borrow().get(vpn, &m, access) {
-            return Ok(ppn << 12 | (va & 0xfff));
+        // What the hart's walker reads when its buffers miss (issue
+        // 1561): the first level's entry, and the second's unless the
+        // first is a megapage's leaf or not valid at all.
+        let miss =
+            self.timing.is_some() && !self.hw_tlb.borrow().holds(va, access);
+        let mut mega = false;
+        if miss {
+            let root = (m.satp & 0x3f_ffff) << 12;
+            let first = read(root | (va >> 22) << 2).unwrap_or(0);
+            mega = first & 1 != 0 && first & 0xa != 0;
+            let reads = if mega || first & 1 == 0 { 1 } else { 2 };
+            self.walks.set(self.walks.get() + reads);
         }
-        let pa = translate(read, m, va, access)?;
-        self.walks.set(self.walks.get() + 1);
-        self.tlb.borrow_mut().put(vpn, &m, access, pa >> 12);
+        let vpn = va >> 12;
+        let held = self.tlb.borrow().get(vpn, &m, access);
+        let pa = match held {
+            Some(ppn) => ppn << 12 | (va & 0xfff),
+            None => {
+                let pa = translate(read, m, va, access)?;
+                self.tlb.borrow_mut().put(vpn, &m, access, pa >> 12);
+                pa
+            }
+        };
+        if miss {
+            self.hw_tlb.borrow_mut().fill(va, mega, access);
+        }
         Ok(pa)
     }
 
@@ -1093,6 +1165,7 @@ impl Model {
             CSR_SATP => {
                 self.csr.satp = v;
                 self.tlb.borrow_mut().flush();
+                self.hw_tlb.borrow_mut().flush();
             }
             CSR_MTVAL => self.csr.mtval = v,
             CSR_MBUSQUIET => self.csr.busquiet = v & 1 != 0,
@@ -1222,6 +1295,7 @@ impl Model {
     pub fn reset(&mut self) {
         self.pc = 0;
         self.tlb.borrow_mut().flush();
+        self.hw_tlb.borrow_mut().flush();
         self.csr = Csr::default();
         self.minstret = 0;
         self.mtimecmp = u64::MAX;
@@ -1347,7 +1421,7 @@ impl Model {
             c += t.load_use;
         }
         self.prev_loaded = self.loaded.get();
-        c += self.walks.get() as u64 * t.walk;
+        c += self.walks.get() as u64 * t.walk / 2;
         if self.ifence.get() {
             self.ic.clear();
             self.last_line = u32::MAX;
@@ -1787,6 +1861,7 @@ impl Model {
                     return;
                 }
                 self.tlb.borrow_mut().flush();
+                self.hw_tlb.borrow_mut().flush();
             }
             Wfi => {
                 if self.prv == 0 || self.s_trapped(TW) {
@@ -1953,6 +2028,65 @@ mod tests {
         assert_eq!(m.data_pa(&[], va, true), Err((CAUSE_STORE_PAGE, va)));
         assert_eq!(m.data_pa(&[], va, true), Err((CAUSE_STORE_PAGE, va)));
         assert_eq!(m.data_pa(&[], va, false), Ok(0x6000_0234));
+    }
+
+    /// The timing mode charges the walks the hart's own buffers make, as
+    /// `Mmu8` has them (issue 1561), not the fast TLB's: eight data
+    /// entries filled in turn, a load and a store sharing one, a
+    /// megapage one entry for its 4 MiB and one table read, a page two,
+    /// a first-level entry not valid one, fetches apart, and a write of
+    /// `satp` emptying them.
+    #[test]
+    fn the_timing_mode_charges_the_walks_the_harts_buffers_make() {
+        use txhdl_parts::mmu::pte::{to, A, D, R, V, W, X};
+        let root = 0x8000_0000u32;
+        let l0 = 0x8000_1000u32;
+        let words = std::rc::Rc::new(Words::default());
+        let put = |a: u32, v: u32| assert!(words.store(a, v, u32::MAX));
+        let page = |k: u32| 0x0040_0000 + k * 0x1000;
+        put(root + 4, to(l0, V));
+        for k in 0..16 {
+            put(l0 + k * 4, to(0x5000_0000 + k * 0x1000, V | R | W | A | D));
+        }
+        let mega = 0x0080_0000u32;
+        put(root + 8, to(0x4000_0000, V | R | W | X | A | D));
+        let mut m = Model {
+            bus: Some(words.clone() as std::rc::Rc<dyn Bus>),
+            timing: Some(Timing::board_cached()),
+            ..Model::default()
+        };
+        m.prv = 1;
+        m.csr_write(CSR_SATP, 1 << 31 | root >> 12);
+        // The table entries read for one access.
+        let reads = |m: &Model, va: u32, store: bool| {
+            m.walks.set(0);
+            let _ = m.data_pa(&[], va, store);
+            m.walks.get()
+        };
+        assert_eq!(reads(&m, page(0), false), 2, "a page: two levels");
+        assert_eq!(reads(&m, page(0) + 8, false), 0, "held");
+        assert_eq!(reads(&m, page(0), true), 0, "a store shares the load's");
+        assert_eq!(reads(&m, mega + 0x12_3450, false), 1, "a megapage: one");
+        assert_eq!(reads(&m, mega + 0x3f_fffc, true), 0, "all 4 MiB of it");
+        // Seven more pages fill the eight; the next takes the oldest
+        // entry, page 0's, and leaves the rest.
+        for k in 1..8 {
+            assert_eq!(reads(&m, page(k), false), 2, "page {k}");
+        }
+        assert_eq!(reads(&m, page(0), false), 2, "page 0 was replaced");
+        assert_eq!(reads(&m, page(3), false), 0, "page 3 was not");
+        // Fetches have buffers of their own.
+        assert!(!m.hw_tlb.borrow().holds(page(3), Access::Fetch));
+        // Nothing mapped at the first level: one read, and the fault.
+        assert_eq!(reads(&m, 0x0140_0000, false), 1, "one read, no leaf");
+        assert!(m.data_pa(&[], 0x0140_0000, false).is_err());
+        // A write of `satp` empties them.
+        m.csr_write(CSR_SATP, 1 << 31 | root >> 12);
+        assert_eq!(reads(&m, page(3), false), 2, "flushed");
+        // Outside the timing mode nothing is counted.
+        m.timing = None;
+        m.csr_write(CSR_SATP, 1 << 31 | root >> 12);
+        assert_eq!(reads(&m, page(5), false), 0, "not timed");
     }
 
     use super::*;
