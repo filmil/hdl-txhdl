@@ -687,6 +687,155 @@ fn walk() {
     }
 }
 
+/// One of the translation blocks' loops, 32 rounds of `$body` twice and
+/// the second kept, timed with `rdcycle`, its cycles stored at `$off`
+/// from `a1`. A round's far side, for the jumps, is placed after the
+/// loop, past `$gap` bytes, and jumps back to the round's end.
+macro_rules! xloop {
+    ($body:literal, $gap:literal, $off:literal) => {
+        concat!(
+            "li t1, 2\n",
+            "30: li t0, 32\n",
+            "rdcycle t2\n",
+            "31: ",
+            $body,
+            "\n",
+            "32: addi t0, t0, -1\n",
+            "bnez t0, 31b\n",
+            "rdcycle t3\n",
+            "addi t1, t1, -1\n",
+            "bnez t1, 30b\n",
+            "sub t3, t3, t2\n",
+            "sw t3, ",
+            $off,
+            "(a1)\n",
+            "j 34f\n",
+            ".skip ",
+            $gap,
+            "\n",
+            "33: j 32b\n",
+            "34:\n",
+        )
+    };
+}
+
+/// The five loops: a load, the empty loop, a store, a jump to a label in
+/// the same page, and one to a label on the next page.
+macro_rules! xloops {
+    ($a:literal, $b:literal, $c:literal, $d:literal, $e:literal) => {
+        concat!(
+            xloop!("lw t4, 0(a0)", "0", $a),
+            xloop!("addi t4, t4, 1", "0", $b),
+            xloop!("sw t4, 0(a0)", "0", $c),
+            xloop!("j 33f", "0", $d),
+            xloop!("j 33f", "4096", $e),
+        )
+    };
+}
+
+/// The cycles of the translation blocks: supervisor mode's five, then
+/// machine mode's.
+static mut XLATE: [u32; 10] = [0; 10];
+
+/// What translation costs the core (issue 1561): the same five loops in
+/// supervisor mode, with this program's own 4 MiB of the DDR3 mapped to
+/// itself by a megapage, and in machine mode, untranslated. Under
+/// translation the core waits for the unit's answer on each load and
+/// store, and each time the fetch moves to another page, which machine
+/// mode never does; the model charges that as `Timing::xlate`, 4 from
+/// the RTL. `smode s <load> <alu> <store> <near> <far> m <...>`, the
+/// cycles of 32 rounds each, then `costs xlate-load`, `xlate-store` and
+/// `xlate-move` in hundredths of a cycle: a load's or a store's round
+/// beyond the empty loop's, and half the far jump's beyond the near
+/// one's, each supervisor mode's less machine mode's.
+fn smode() {
+    let root = (PT + 0x2000) as *mut u32;
+    let ppn = |at: usize| (at >> 12) as u32;
+    unsafe {
+        for i in 0..1024 {
+            core::ptr::write_volatile(root.add(i), 0);
+        }
+        // Valid, readable, writable, runnable, accessed and dirty.
+        core::ptr::write_volatile(
+            root.add(map::DDR3 >> 22),
+            ppn(map::DDR3) << 10 | LEAF | 8,
+        );
+        asm!(
+            "fence",
+            "csrw satp, {0}",
+            "sfence.vma",
+            in(reg) (1 << 31) | ppn(PT + 0x2000)
+        );
+    }
+    let out = core::ptr::addr_of_mut!(XLATE) as usize;
+    unsafe {
+        asm!(
+            // No interrupt while out of machine mode, and the trap that
+            // brings it back to the label after supervisor mode's loops.
+            "csrrw {mie}, mie, x0",
+            "la t0, 5f",
+            "csrrw {mtvec}, mtvec, t0",
+            "csrwi mcounteren, 1",
+            "li t0, 0x1800",
+            "csrc mstatus, t0",
+            "li t0, 0x800",
+            "csrs mstatus, t0",
+            "la t0, 2f",
+            "csrw mepc, t0",
+            "mret",
+            // Each mode's copy of the loops starts a page, so that each
+            // round's lines lie the same for both.
+            ".balign 4096",
+            "2:",
+            xloops!("0", "4", "8", "12", "16"),
+            "ecall",
+            ".balign 4096",
+            "5:",
+            xloops!("20", "24", "28", "32", "36"),
+            "csrw mtvec, {mtvec}",
+            "csrw mie, {mie}",
+            "csrw satp, x0",
+            "sfence.vma",
+            mie = out(reg) _,
+            mtvec = out(reg) _,
+            in("a0") WORD,
+            in("a1") out,
+            out("t0") _,
+            out("t1") _,
+            out("t2") _,
+            out("t3") _,
+            out("t4") _,
+        );
+    }
+    let c: [u32; 10] =
+        unsafe { core::ptr::read_volatile(core::ptr::addr_of!(XLATE)) };
+    Uart::say(b"smode s");
+    for (i, v) in c.iter().enumerate() {
+        if i == 5 {
+            Uart::say(b" m");
+        }
+        Uart::put(b' ');
+        Uart::put_decimal(*v);
+    }
+    Uart::put(b'\n');
+    let d = |k: usize| c[k] as i32 - c[5 + k] as i32;
+    let kinds = [
+        (&b"load"[..], (d(0) - d(1)) * 100 / 32),
+        (b"store", (d(2) - d(1)) * 100 / 32),
+        (b"move", (d(4) - d(3)) * 100 / 64),
+    ];
+    for (name, per) in kinds {
+        Uart::say(b"costs xlate-");
+        Uart::say(name);
+        Uart::put(b' ');
+        if per < 0 {
+            Uart::put(b'-');
+        }
+        Uart::put_decimal(per.unsigned_abs());
+        Uart::put(b'\n');
+    }
+}
+
 fn mcycle() -> u32 {
     let c: u32;
     unsafe { asm!("csrr {0}, mcycle", out(reg) c) };
@@ -764,6 +913,7 @@ fn main() -> ! {
     say(b"dmem-load", timed!("lui a3, 1", "lw a2, 0(a3)"), empty);
     bulk(b"bulk");
     walk();
+    smode();
     scanned();
     Uart::say(b"costs done\n");
     halt()
