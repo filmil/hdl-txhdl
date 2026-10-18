@@ -25,7 +25,7 @@ const CTRL: usize = 0x4400;
 
 fn main() {
     let ops = scene::house();
-    let run = sim::run::<LOGW, H, N, DL, CTRL>(&ops, false, false);
+    let run = sim::run::<LOGW, H, N, DL, CTRL>(&ops, false);
     let want = model::render(&op::assemble(&ops, W, H), W, H);
     let wrong = run.fb.iter().zip(&want).filter(|(a, b)| a != b).count();
     assert_eq!(wrong, 0, "{wrong} pixels differ from the model");

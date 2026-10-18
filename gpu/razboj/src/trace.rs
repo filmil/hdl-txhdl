@@ -23,7 +23,7 @@ const CTRL: usize = 0x600;
 
 fn main() {
     let ops = scene::small();
-    let run = sim::run::<LOGW, H, N, DL, CTRL>(&ops, true, true);
+    let run = sim::run_netlists::<LOGW, H, N, DL, CTRL>(&ops, true);
     let want = model::render(&op::assemble(&ops, W, H), W, H);
     assert_eq!(run.fb, want, "the hardware and the model differ");
     print!("{}", image::ascii(&run.fb, W, H));

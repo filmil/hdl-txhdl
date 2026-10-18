@@ -62,9 +62,8 @@ fn main() {
     // rasteriser alone on a link with its framebuffer behind it. The
     // picture has to be the same one, and the cycles are the ones to
     // hold the lattice's against, counted from the list being ready.
-    let alone = run_list::<LOGW, H, LINK_WORDS, LINK_DL, LINK_CTRL>(
-        &ran.list, false, false,
-    );
+    let alone =
+        run_list::<LOGW, H, LINK_WORDS, LINK_DL, LINK_CTRL>(&ran.list, false);
     assert_eq!(alone.fb, ran.fb, "the same list drew a different picture");
     if let (Some(l), Some(d)) = (ran.listed_at, ran.drawn_at) {
         println!(

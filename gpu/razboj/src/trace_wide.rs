@@ -42,7 +42,6 @@ fn main() {
     let runs = sim::run_lists_at::<A, LOGW, H, N, DL, CTRL>(
         std::slice::from_ref(&insns),
         true,
-        false,
     );
     // The rasteriser's netlist under a name of its own, since the
     // sixteen-pixel trace's is `raster` and the two are checked side by
