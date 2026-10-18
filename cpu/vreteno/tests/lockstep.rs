@@ -2301,7 +2301,11 @@ fn sv32_translates_and_faults_where_the_tables_say() {
 /// move between two pages twice. Beyond the empty loop's difference, what
 /// the modes differ by is the waits for the unit's answer that the core
 /// makes under translation (`stall_mem`'s `dvm & !x_done`, and the
-/// fetch's `i_need`), which the timing mode charges as `Timing::xlate`.
+/// fetch's `i_need`), which the timing mode charges as `Timing::xlate`:
+/// a page move's exactly, from the boot memory over the bus and from
+/// the instruction cache, and a load's and a store's within a cycle each,
+/// twice it together, since the fetch's overlap moves a cycle between
+/// them with where the loop lies on its lines.
 #[test]
 fn translation_costs_the_core_what_the_timing_mode_charges() {
     use txhdl_parts::mmu::pte::{to, A, D, R, V, W, X};
@@ -2409,8 +2413,13 @@ fn translation_costs_the_core_what_the_timing_mode_charges() {
     // which the fetch takes through the instruction cache as it takes
     // the DDR3, and run from there in both modes, so that the fetch's
     // path is the same and only the data's translation differs.
+    // First, for supervisor mode alone, the jump to the alias page, the
+    // data memory's second mapping at DATA + 0x1000; machine mode enters
+    // after it, so the loops both run lie at the same addresses.
     let mut b = Asm::default();
-    for k in 0..3 {
+    timed(&mut b, CSR_CYCLE, 4, 0x1000);
+    let m_entry = 4 * b.words().len() as u32;
+    for k in 0..4 {
         timed(&mut b, CSR_CYCLE, k, 0);
     }
     b.wide(ecall());
@@ -2425,6 +2434,7 @@ fn translation_costs_the_core_what_the_timing_mode_charges() {
     };
     entry(&mut a, 0x300, to(0x1000, V));
     entry(&mut a, 0x210, to(0x1000, V | R | W | X | A | D));
+    entry(&mut a, 0x211, to(0x1000, V | R | W | X | A | D));
     for (i, w) in block.iter().enumerate() {
         li(&mut a, 5, *w);
         a.wide(sw(5, 3, 0x80 - 0x800 + 4 * i as i32));
@@ -2449,8 +2459,8 @@ fn translation_costs_the_core_what_the_timing_mode_charges() {
     la(&mut a, 31, after_m, 0);
     a.wide(csrrw(0, CSR_MTVEC, 31));
     li(&mut a, 10, 0x1000);
-    li(&mut a, 11, 0x1010);
-    li(&mut a, 5, 0x1080);
+    li(&mut a, 11, 0x1020);
+    li(&mut a, 5, 0x1080 + m_entry);
     a.wide(jalr(0, 5, 0));
     a.align();
     a.place(after_m);
@@ -2461,17 +2471,31 @@ fn translation_costs_the_core_what_the_timing_mode_charges() {
         "the second program ran to its halt"
     );
     let round = |w: usize| ran.mem[w] as f64 / ROUNDS as f64;
-    let (s_ld, s_alu, s_st) = (round(0), round(1), round(2));
-    let (m_ld, m_alu, m_st) = (round(4), round(5), round(6));
+    let (s_ld, s_alu, s_st, s_near, s_far) =
+        (round(0), round(1), round(2), round(3), round(4));
+    let (m_ld, m_alu, m_st) = (round(8), round(9), round(10));
     eprintln!(
-        "from the cache: supervisor load {s_ld} alu {s_alu} store {s_st}; \
-         machine load {m_ld} alu {m_alu} store {m_st}"
+        "from the cache: supervisor load {s_ld} alu {s_alu} store {s_st} \
+         near {s_near} far {s_far}; machine load {m_ld} alu {m_alu} \
+         store {m_st}"
     );
-    let load = (s_ld - s_alu) - (m_ld - m_alu);
-    let store = (s_st - s_alu) - (m_st - m_alu);
+    let cached_load = (s_ld - s_alu) - (m_ld - m_alu);
+    let cached_store = (s_st - s_alu) - (m_st - m_alu);
+    let cached_moves = (s_far - s_near) / 2.0;
     eprintln!(
-        "under translation, from the cache: a load {load}, a store {store}"
+        "under translation, from the cache: a load {cached_load}, a store \
+         {cached_store}, a page move {cached_moves}"
     );
+    // What the timing mode charges for each, the RTL's. A load's and a
+    // store's wait overlap the fetch by a cycle one way or the other with
+    // where the loop lies on its lines, so each is within one of it and
+    // the two together are twice it; a page move's is it.
+    let xlate = vreteno32::model::Timing::board_cached().xlate as f64;
+    assert!((cached_load - xlate).abs() <= 1.0, "a load's wait");
+    assert!((cached_store - xlate).abs() <= 1.0, "a store's");
+    assert_eq!(cached_load + cached_store, 2.0 * xlate, "the two");
+    assert_eq!(cached_moves, xlate, "a page move's, from the cache");
+    assert_eq!(moves, xlate, "and from the boot memory over the bus");
 }
 
 /// A load that traps in execute traps once, for its own cause, whatever
