@@ -21,13 +21,15 @@
 //! holds: `costs bulk-<kind> <hundredths of a cycle a word>`. Linux's
 //! boot on the board spends its early part setting memory and its
 //! framebuffer console copying it, and the model is wrong in opposite
-//! directions there (issue 1561).
+//! directions there (issue 1561). The `scan-bulk` kinds are the same
+//! with the scanout reading a frame from the DDR3 beside them, as it
+//! does through Linux's boot on the board.
 #![no_std]
 #![no_main]
 
 use core::arch::asm;
 use core::sync::atomic::{AtomicU32, Ordering};
-use vreteno_hal::{entry, halt, map, Hart1, Uart};
+use vreteno_hal::{entry, halt, map, Hart1, Scan, Uart};
 
 entry!(main);
 
@@ -519,9 +521,9 @@ macro_rules! bulk {
 }
 
 /// A megabyte read, set and copied, each from memory the data cache
-/// does not hold: `bulk read <c> set <c> copy <c>`, the cycles of each,
-/// then `costs bulk-<kind> <hundredths of a cycle a word>`.
-fn bulk() {
+/// does not hold: `<tag> read <c> set <c> copy <c>`, the cycles of each,
+/// then `costs <tag>-<kind> <hundredths of a cycle a word>`.
+fn bulk(tag: &[u8]) {
     let read = bulk!(
         "lw t0, 0(a0)",
         "lw t1, 4(a0)",
@@ -545,7 +547,8 @@ fn bulk() {
         "sw t3, 12(a2)",
         "addi a2, a2, 16"
     );
-    Uart::say(b"bulk read ");
+    Uart::say(tag);
+    Uart::say(b" read ");
     Uart::put_decimal(read);
     Uart::say(b" set ");
     Uart::put_decimal(set);
@@ -554,12 +557,34 @@ fn bulk() {
     Uart::put(b'\n');
     let words = (BULK / 4) as u64;
     for (name, c) in [(&b"read"[..], read), (b"set", set), (b"copy", copy)] {
-        Uart::say(b"costs bulk-");
+        Uart::say(b"costs ");
+        Uart::say(tag);
+        Uart::put(b'-');
         Uart::say(name);
         Uart::put(b' ');
         Uart::put_decimal((c as u64 * 100 / words) as u32);
         Uart::put(b'\n');
     }
+}
+
+/// Where the scanned pass shows from: a frame of the DDR3 clear of the
+/// blocks', which the scanout reads whatever it holds.
+const FRAME: u32 = (map::DDR3 + 0x200_0000) as u32;
+
+/// The bulk blocks again with the scanout showing a frame from the DDR3,
+/// as Linux's boot on the board has it from the shim on (issue 1561):
+/// `costs scan-bulk-<kind>`. The scanout reads 640 by 480 words sixty
+/// times a second from the same controller, which the model does not
+/// charge, so the model gives the same figures as `bulk`'s and the board
+/// says what the scanout costs a stream. The scanout takes the frame at
+/// the next vertical blanking, so the pass waits two frames first.
+fn scanned() {
+    Scan::base(FRAME);
+    Scan::show(true);
+    let t0 = mcycle();
+    while mcycle().wrapping_sub(t0) < 2 * 1_668_321 {}
+    bulk(b"scan-bulk");
+    Scan::show(false);
 }
 
 /// The page walk's blocks: an Sv32 root table at `PT` and a second-level
@@ -737,8 +762,9 @@ fn main() -> ! {
     // goes around it every time. The `lui` is a cycle the row carries on
     // every board alike, so two boards compare.
     say(b"dmem-load", timed!("lui a3, 1", "lw a2, 0(a3)"), empty);
-    bulk();
+    bulk(b"bulk");
     walk();
+    scanned();
     Uart::say(b"costs done\n");
     halt()
 }
