@@ -3,7 +3,6 @@
 # writes pixels into memory over AXI, the framebuffer behind the bus,
 # and the demonstration that renders a scene and shows it.
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
-load("//tools:netlist_tool.bzl", "NETLIST_TOOL_RUSTC_FLAGS")
 load("//tools/vivado:defs.bzl", "vivado_place_and_route2", "vivado_synthesis2")
 
 package(default_visibility = ["//visibility:public"])
@@ -79,7 +78,6 @@ rust_binary(
     name = "trace",
     srcs = ["src/trace.rs"],
     edition = "2021",
-    rustc_flags = NETLIST_TOOL_RUSTC_FLAGS,
     deps = [
         ":razboj",
         "//lib:txhdl",
@@ -93,7 +91,6 @@ rust_binary(
     name = "trace_lists",
     srcs = ["src/trace_lists.rs"],
     edition = "2021",
-    rustc_flags = NETLIST_TOOL_RUSTC_FLAGS,
     deps = [
         ":razboj",
         "//lib:txhdl",
@@ -107,7 +104,6 @@ rust_binary(
     name = "trace_wide",
     srcs = ["src/trace_wide.rs"],
     edition = "2021",
-    rustc_flags = NETLIST_TOOL_RUSTC_FLAGS,
     deps = [
         ":razboj",
         "//lib:txhdl",
@@ -121,7 +117,6 @@ rust_binary(
     name = "trace_tiles",
     srcs = ["src/trace_tiles.rs"],
     edition = "2021",
-    rustc_flags = NETLIST_TOOL_RUSTC_FLAGS,
     deps = [
         ":razboj",
         "//lib:txhdl",
@@ -134,7 +129,6 @@ rust_binary(
     name = "trace_depth",
     srcs = ["src/trace_depth.rs"],
     edition = "2021",
-    rustc_flags = NETLIST_TOOL_RUSTC_FLAGS,
     deps = [
         ":razboj",
         "//lib:txhdl",
@@ -148,7 +142,6 @@ rust_binary(
     name = "trace_fresh",
     srcs = ["src/trace_fresh.rs"],
     edition = "2021",
-    rustc_flags = NETLIST_TOOL_RUSTC_FLAGS,
     deps = [
         ":razboj",
         "//lib:txhdl",
@@ -162,7 +155,6 @@ rust_binary(
     name = "trace_tex",
     srcs = ["src/trace_tex.rs"],
     edition = "2021",
-    rustc_flags = NETLIST_TOOL_RUSTC_FLAGS,
     deps = [
         ":razboj",
         ":tile",
@@ -177,7 +169,6 @@ rust_binary(
     name = "trace_blend",
     srcs = ["src/trace_blend.rs"],
     edition = "2021",
-    rustc_flags = NETLIST_TOOL_RUSTC_FLAGS,
     deps = [
         ":razboj",
         ":tile",
@@ -199,7 +190,6 @@ rust_binary(
     name = "netlist",
     srcs = ["src/bin/netlist.rs"],
     edition = "2021",
-    rustc_flags = NETLIST_TOOL_RUSTC_FLAGS,
     deps = [":razboj"],
 )
 

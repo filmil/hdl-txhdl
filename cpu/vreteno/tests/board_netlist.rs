@@ -3,8 +3,8 @@
 //! module. A test crate of its own and not one of `board.rs`'s tests:
 //! that crate is built at opt-level 3 for its simulations, and with
 //! this test in it LLVM optimised the board's netlist generator too,
-//! for 77 minutes and 9 GiB (#1792, #1807). Here it is built at the
-//! default opt-level 0, which the generator needs.
+//! which took 77 minutes and 9 GiB before #1807 split `lowered()`.
+//! Here it is built at the default opt-level 0 (#1812).
 use vreteno32::board::Board;
 
 /// One module holds the rest, and the controller is an instance of its
