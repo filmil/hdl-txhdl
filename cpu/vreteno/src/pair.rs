@@ -137,12 +137,42 @@ pub struct Pair<const IW: usize> {
 }
 // end{state}
 
+/// What the pair takes in (issue 726): the reset, the interrupt lines
+/// and the time, the data cache's snoop, the fault to inject, and the
+/// bus's answers. Taken apart in `run`, so each port keeps its name.
+pub struct PairIn<const IW: usize> {
+    pub rst: In<Bit>,
+    pub irq: In<Bit>,
+    pub tirq: In<Bit>,
+    pub sirq: In<Bit>,
+    pub time: In<U<64>>,
+    pub seirq: In<Bit>,
+    pub dc_snoop: In<U<9>>,
+    pub fault: In<Bit>,
+    pub rdata: Rx<R<32, IW>>,
+    pub done: Rx<Done<IW>>,
+    pub grant: Rx<Grant<IW>>,
+}
+
+/// What the pair gives out (issue 726): the first core's halt,
+/// instruction and writeback, its requests on the bus, and the line
+/// raised when the two cores disagree.
+pub struct PairOut<const IW: usize> {
+    pub halt: Out<Bit>,
+    pub instr: Out<U<32>>,
+    pub wb: Out<Writeback>,
+    pub issue: Tx<Issue<32>>,
+    pub wbeat: Tx<W<32, 4>>,
+    pub release: Tx<Grant<IW>>,
+    pub differs: Out<Bit>,
+}
+
 // begin{run}
 #[lower]
 impl<const IW: usize> Unit for Pair<IW> {
     async fn run(
         &mut self,
-        (
+        PairIn {
             rst,
             irq,
             tirq,
@@ -154,28 +184,16 @@ impl<const IW: usize> Unit for Pair<IW> {
             rdata,
             done,
             grant,
-        ): (
-            In<Bit>,
-            In<Bit>,
-            In<Bit>,
-            In<Bit>,
-            In<U<64>>,
-            In<Bit>,
-            In<U<9>>,
-            In<Bit>,
-            Rx<R<32, IW>>,
-            Rx<Done<IW>>,
-            Rx<Grant<IW>>,
-        ),
-        (halt, instr, wb, issue, wbeat, release, differs): (
-            Out<Bit>,
-            Out<U<32>>,
-            Out<Writeback>,
-            Tx<Issue<32>>,
-            Tx<W<32, 4>>,
-            Tx<Grant<IW>>,
-            Out<Bit>,
-        ),
+        }: PairIn<IW>,
+        PairOut {
+            halt,
+            instr,
+            wb,
+            issue,
+            wbeat,
+            release,
+            differs,
+        }: PairOut<IW>,
     ) {
         // The reset and the two lines, read by more than one child.
         let rst_one = rst.clone();
