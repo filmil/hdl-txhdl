@@ -4989,6 +4989,7 @@ enum Beside {
     Ddr3Stores,
     PeriphReads,
     PeriphWrites,
+    RazbojFills,
 }
 
 /// Bytes the serial port drops under another hart's traffic (#1778).
@@ -5001,8 +5002,10 @@ enum Beside {
 /// bytes on the board; the simulation has never lost one (#1815).
 /// Hart 1 meanwhile idles, stores into the DDR3, or reads or writes the
 /// pulse width modulator at 0x3100, behind the same AXI-Lite bridge as
-/// the serial port. Hart 0 stores the bytes it believed it wrote and
-/// the port's own drop count, `txdrop`.
+/// the serial port; or, with hart 1 idle, Razboj fills the screen
+/// twice, its rows written as bursts of sixteen into the DDR3 (#1815).
+/// Hart 0 stores the bytes it believed it wrote and the port's own drop
+/// count, `txdrop`.
 fn serial_beside(beside: Beside) -> (u32, u32, usize) {
     use vreteno32::isa::{addi, andi, beq, bge, bne, jal, lw, sw, UART_BASE};
     const CODE: u32 = 0x4002_0000;
@@ -5015,7 +5018,7 @@ fn serial_beside(beside: Beside) -> (u32, u32, usize) {
     // Hart 1, round and round until the run ends.
     let mut j = Checked::new();
     match beside {
-        Beside::Idle => {
+        Beside::Idle | Beside::RazbojFills => {
             j.op(jal(0, 0));
         }
         Beside::Ddr3Stores => {
@@ -5033,6 +5036,28 @@ fn serial_beside(beside: Beside) -> (u32, u32, usize) {
     c.li(8, CODE).li(12, FLAG).op(sw(0, 12, 0));
     place(&mut c, 8, &job);
     start_hart1(&mut c, 8, 12);
+    if let Beside::RazbojFills = beside {
+        // Two entries, each the whole screen, so that Razboj's write
+        // bursts go on through every round.
+        use razboj::dl::encode;
+        use razboj::op::{Insn, Kind};
+        use vreteno32::board::{RAZBOJ_DL, RAZBOJ_DOORBELL};
+        let words = encode(&Insn {
+            kind: Kind::Rect,
+            colour: U::from(0x12_3456u32),
+            alpha: U::from(0xffu8),
+            x0: U::from(0u32),
+            y0: U::from(0u32),
+            x1: U::from(639u32),
+            y1: U::from(479u32),
+            ..Insn::default()
+        });
+        c.li(10, RAZBOJ_DL as u32);
+        for (i, w) in words.iter().chain(words.iter()).enumerate() {
+            c.li(4, *w).op(sw(4, 10, 4 * i as i32));
+        }
+        c.li(15, RAZBOJ_DOORBELL as u32).li(4, 2).op(sw(4, 15, 0));
+    }
     // x5 the port, x6 the byte, x22 the bytes written, x20 the rounds,
     // x24 txctrl with the transmitter on and txcnt 1.
     c.li(5, UART_BASE).li(6, b'x' as u32).li(22, 0).li(20, 50);
@@ -5077,6 +5102,7 @@ fn serial_output_loses_no_byte_beside_another_hart() {
         Beside::Ddr3Stores,
         Beside::PeriphReads,
         Beside::PeriphWrites,
+        Beside::RazbojFills,
     ] {
         let (wrote, dropped, said) = serial_beside(beside);
         println!(
