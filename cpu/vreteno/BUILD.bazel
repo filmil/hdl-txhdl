@@ -5,6 +5,7 @@
 # against the model in lockstep.
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//tools:netlist_tool.bzl", "NETLIST_TOOL_RUSTC_FLAGS")
 load("//tools:opt_test.bzl", "opt_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -227,6 +228,7 @@ rust_binary(
     name = "board_netlist",
     srcs = ["src/bin/board_netlist.rs"],
     edition = "2021",
+    rustc_flags = NETLIST_TOOL_RUSTC_FLAGS,
     deps = [
         ":vreteno32",
         "//cpu/vreteno/rust:boot_program",
