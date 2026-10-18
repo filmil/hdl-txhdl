@@ -2012,6 +2012,44 @@ _DEMO_ICO = [
     for (step, name, _, _) in _DEMO_ICO
 ]
 
+# ico 3 with a fence after each byte the HAL sends, for #1778's board
+# check: the same demo, its last line saying `tx_dropped fenced`.
+rust_binary(
+    name = "demo_ico_3_smooth_fenced",
+    srcs = [
+        "ico_gl.rs",
+        "ico_hdmi.rs",
+        "ico_list.rs",
+    ],
+    compile_data = [":vreteno_ram_ld"],
+    crate_root = "ico_hdmi.rs",
+    edition = "2021",
+    rustc_env = {
+        "DEMO_NAME": "smooth",
+        "DEMO_STEP": "3",
+    },
+    rustc_flags = VRETENO_RAM_FLAGS + [
+        "--cfg=gl",
+        "--cfg=smooth",
+        "--cfg=uart_fence",
+    ],
+    tags = ["manual"],
+    target_compatible_with = CORE_ONLY,
+    deps = [
+        "//cpu/vreteno/rust/hal:vreteno_hal",
+        "//cpu/vreteno/rust/regs:vreteno_regs",
+        "//lib/logo:txhdl_logo",
+        "//gles",
+        "//gpu/razboj:tile",
+    ],
+)
+
+vreteno_flat(
+    name = "demo_ico_3_smooth_fenced_bin",
+    platform = ":vreteno",
+    program = ":demo_ico_3_smooth_fenced",
+)
+
 # The canonical teapot (#1592): Newell's teapot, its 32 patches cut into
 # three by three squares each, smooth shaded under the icosahedron's
 # light, turning about its axis once in 128 frames. Its tessellation,
