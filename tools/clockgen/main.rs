@@ -20,6 +20,7 @@ fn main() {
     let (mut wants, mut vpath, mut rpath) = (Vec::new(), None, None);
     let mut settings: Option<Vec<u32>> = None;
     let mut tbpath: Option<String> = None;
+    let mut whole = false;
     while let Some(a) = args.next() {
         let mut val =
             || args.next().unwrap_or_else(|| panic!("{a} wants a value"));
@@ -44,6 +45,8 @@ fn main() {
             "--verilog" => vpath = Some(val()),
             "--report" => rpath = Some(val()),
             "--testbench" => tbpath = Some(val()),
+            // Whole numbers only, an MMCM as a PLL divides (#1820).
+            "--whole" => whole = true,
             // Given settings, `D,M8,O8[,O8...]`, written as they are with
             // nothing checked: a limit's test breaks it on purpose.
             "--settings" => {
@@ -73,7 +76,8 @@ fn main() {
         }
         return;
     }
-    let limits = Limits::artix7_2(prim);
+    let mut limits = Limits::artix7_2(prim);
+    limits.fractional &= !whole;
     match plan(prim, &limits, input, &wants) {
         Ok(p) => {
             let v = verilog(&name, &p, &wants);
