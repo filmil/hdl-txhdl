@@ -109,6 +109,10 @@ fn wr(at: usize, v: u32) {
 /// the receive watermark is zero, as it is after a reset.
 pub struct Uart;
 
+/// `Uart::set_fence`'s switch (#1778).
+static UART_FENCE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
 impl Uart {
     // The port's words and bits, as its map declares them (issue 709).
     const TXDATA: usize = map::UART + uart::TXDATA;
@@ -129,9 +133,22 @@ impl Uart {
 
     /// Send one byte, once the queue has room for it. A byte written
     /// while the queue is full is dropped, so the wait is not optional.
+    /// With `set_fence(true)` a `fence` follows the write, so the next
+    /// byte's read of `txdata` cannot reach the port before this byte
+    /// does (#1778).
     pub fn put(byte: u8) {
         while rd(Self::TXDATA) & Self::TX_FULL != 0 {}
         wr(Self::TXDATA, byte as u32);
+        if UART_FENCE.load(core::sync::atomic::Ordering::Relaxed) {
+            // SAFETY: a fence has no operands and touches no memory.
+            unsafe { core::arch::asm!("fence") };
+        }
+    }
+
+    /// Whether `put` fences after each byte it writes (#1778): off
+    /// until a program turns it on.
+    pub fn set_fence(on: bool) {
+        UART_FENCE.store(on, core::sync::atomic::Ordering::Relaxed);
     }
 
     /// How many bytes the port dropped from a full transmit queue since
