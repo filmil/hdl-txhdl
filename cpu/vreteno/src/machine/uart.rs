@@ -128,7 +128,7 @@ impl Uart {
         if !self.paced || self.tx.is_empty() {
             return false;
         }
-        let txen = serial::txctrl_txen.get(self.txctrl) == 1;
+        let txen = self.txen();
         let was = self.tx.len();
         // The queue has not been empty since the line last freed, so each
         // byte starts as the one before it ends.
@@ -141,17 +141,28 @@ impl Uart {
     }
 
     /// Everything the program wrote that the line sends: what has gone
-    /// out and what still waits, which the board's port goes on sending
-    /// after its hart stops.
+    /// out and, while `txen` is set, what still waits, which the board's
+    /// port goes on sending after its hart stops.
     pub fn written(&self) -> Vec<u8> {
-        self.sent.iter().chain(self.tx.iter()).copied().collect()
+        let mut all = self.sent.clone();
+        if self.txen() {
+            all.extend(self.tx.iter());
+        }
+        all
     }
 
     /// What still waits sent at once, as the line sends it once the
-    /// machine has stopped running the hart.
+    /// machine has stopped running the hart; nothing while `txen` is
+    /// clear, since the port holds it then.
     pub fn drain(&mut self) {
-        let waiting = std::mem::take(&mut self.tx);
-        self.sent.extend(waiting);
+        if self.txen() {
+            let waiting = std::mem::take(&mut self.tx);
+            self.sent.extend(waiting);
+        }
+    }
+
+    fn txen(&self) -> bool {
+        serial::txctrl_txen.get(self.txctrl) == 1
     }
 
     /// A word read at `off`. Reading `rxdata` takes a byte.
@@ -205,7 +216,8 @@ impl Uart {
             }
             RXCTRL => self.rxctrl = v,
             IE => self.ie = v & 3,
-            DIV => self.div = v,
+            // The divider is sixteen bits, as the hardware's is.
+            DIV => self.div = v & 0xffff,
             _ => {}
         }
     }
@@ -305,6 +317,53 @@ mod tests {
         u.drain();
         assert_eq!(&u.sent[9..], b"ABCD", "drained");
         assert!(u.tx.is_empty());
+    }
+
+    /// `txen` cleared with a byte on the line: the byte finishes, as the
+    /// RTL's shifter does whatever `txen` says, the next waits, and is
+    /// neither written nor drained while it waits; set again, the next
+    /// starts then, or when the line frees if that is later. The
+    /// transmit watermark rises as the queue empties.
+    #[test]
+    fn txen_cleared_mid_byte_holds_the_next() {
+        let mut u = Uart {
+            paced: true,
+            ..Uart::default()
+        };
+        u.store(DIV, 9); // ten cycles a bit, a hundred a byte
+        let on = serial::txctrl_txen.with(1) | serial::txctrl_txcnt.with(1);
+        u.store(TXCTRL, on);
+        u.store(TXDATA, b'a' as u32);
+        u.store(TXDATA, b'b' as u32);
+        assert_eq!(u.load(IP) & 1, 0, "one waits: not below a mark of 1");
+        u.at(50);
+        u.store(TXCTRL, serial::txctrl_txcnt.with(1));
+        u.at(150);
+        assert_eq!(u.sent, b"a", "a finished, b held");
+        assert_eq!(u.written(), b"a", "nothing held is written");
+        u.drain();
+        assert_eq!(u.tx.len(), 1, "nor drained");
+        u.at(300);
+        u.store(TXCTRL, on);
+        assert_eq!(u.sent, b"ab", "b starts as txen is set");
+        assert_eq!(u.load(IP) & 1, 1, "the queue empty: below the mark");
+        // Set again while a byte is still on the line, the next waits for
+        // the line.
+        u.store(TXDATA, b'c' as u32);
+        u.store(TXDATA, b'd' as u32);
+        u.store(TXCTRL, serial::txctrl_txcnt.with(1));
+        u.at(350);
+        u.store(TXCTRL, on);
+        assert_eq!(u.sent, b"ab", "c waits for b to finish at 400");
+        u.at(400);
+        assert_eq!(u.sent, b"abc", "c as the line frees");
+        u.at(499);
+        assert_eq!(u.sent, b"abc");
+        u.at(500);
+        assert_eq!(u.sent, b"abcd", "d as the line frees");
+        // The divider is sixteen bits.
+        u.store(DIV, 0x1_0003);
+        assert_eq!(u.load(DIV), 3);
     }
 
     /// A port held with `txen` clear keeps its queue, and sends it from
