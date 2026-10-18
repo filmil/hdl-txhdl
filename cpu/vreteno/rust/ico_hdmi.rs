@@ -660,6 +660,20 @@ fn demo_end(frames: u32) {
             Uart::say(b" shown, fps x10 ");
             Uart::put_decimal(frames * 600 / shown.max(1));
             Uart::put(b'\n');
+            // The bytes the port dropped from a full queue, after the
+            // line above went in (#1778): a letter missing from the
+            // host's copy, with this at 0, was lost after it left.
+            Uart::say(b"demo ");
+            Uart::say(SERIES);
+            Uart::put(b' ');
+            Uart::say(step.as_bytes());
+            Uart::say(if cfg!(uart_fence) {
+                b" tx_dropped fenced "
+            } else {
+                b" tx_dropped "
+            });
+            Uart::put_decimal(Uart::tx_dropped());
+            Uart::put(b'\n');
             vreteno_hal::halt();
         }
     }
@@ -676,6 +690,9 @@ fn main() -> ! {
     // A fault says where it was and what it read, rather than leaving
     // the loader only the cause and the instruction (#1214).
     trap::say_faults();
+    // The board check of #1778: a fence after every byte sent.
+    #[cfg(uart_fence)]
+    Uart::set_fence(true);
     let solid = Solid::new();
     Uart::say(b"ico ");
     Uart::put_decimal(solid.found as u32);
