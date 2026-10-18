@@ -5085,6 +5085,125 @@ fn stmts_code(items: &[String]) -> String {
     )
 }
 
+/// The most generated text `lowered` keeps in one function before it
+/// moves the rest into helpers of its own (#1807). LLVM's time on a
+/// function grows faster than the function: `Raster::lowered`, 2.48 MB
+/// expanded and one function, took 1373 s at opt-level 3. The 21
+/// genrules that run the netlist tools, built at opt-level 3, took
+/// 363 s at 64 KB, 329 s at 32 KB, 272 s at 16 KB, 237 s at 8 KB and
+/// 224 s at 4 KB, so 8 KB, where it levels off.
+/// `TXHDL_LOWER_PIECE` sets it for a measurement.
+fn piece_budget() -> usize {
+    std::env::var("TXHDL_LOWER_PIECE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8 * 1024)
+}
+
+/// Whether `code` names `id` as an identifier, outside a longer one.
+fn names_ident(code: &str, id: &str) -> bool {
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    code.match_indices(id).any(|(i, _)| {
+        let before = code[..i].chars().next_back();
+        let after = code[i + id.len()..].chars().next();
+        !before.is_some_and(ident) && !after.is_some_and(ident)
+    })
+}
+
+/// Whether a piece of `lowered`'s code can move into a helper of its
+/// own: it reads none of `lowered`'s locals but the three a helper is
+/// given, `__b`, `__dynw` and `__wn`.
+fn movable(code: &str) -> bool {
+    !code.starts_with(RAW)
+        && !["me", "name", "__ins", "__procs"]
+            .iter()
+            .any(|id| names_ident(code, id))
+        && !code.contains("__l_")
+}
+
+/// The pieces, in order, each at most `budget` bytes unless one item is
+/// larger alone.
+fn pieces(items: &[String], budget: usize) -> Vec<Vec<String>> {
+    let mut out: Vec<Vec<String>> = Vec::new();
+    let mut size = 0;
+    for s in items {
+        if out.is_empty() || (size > 0 && size + s.len() > budget) {
+            out.push(Vec::new());
+            size = 0;
+        }
+        out.last_mut().unwrap().push(s.clone());
+        size += s.len();
+    }
+    out
+}
+
+/// A process's body, as [`stmts_code`] writes it, or, past the budget,
+/// as calls to helpers that each push a piece of it onto `__b`, in
+/// order (#1807). A helper is given `__b`, `__dynw` and `__wn` and
+/// hands them back, so the statements inside it are the same text they
+/// would be inline, and the dynamic wires and the inlining state move
+/// on exactly as they did. A body with any raw code, or that reads
+/// another local of `lowered`, stays one block.
+fn body_code(items: &[String], helpers: &mut Vec<String>) -> String {
+    let budget = piece_budget();
+    let total: usize = items.iter().map(|s| s.len()).sum();
+    if total <= budget || !items.iter().all(|s| movable(s)) {
+        return stmts_code(items);
+    }
+    let mut calls = String::new();
+    for piece in pieces(items, budget) {
+        let k = helpers.len();
+        helpers.push(format!(
+            "#[doc(hidden)] #[inline(never)]\n\
+             #[allow(unused_variables, unused_mut, unused_imports, clippy::all)]\n\
+             fn __txhdl_lower_{k}(mut __b: Vec<::txhdl::netlist::Stmt>, \
+             mut __dynw: Vec<(String, ::txhdl::netlist::Expr)>, \
+             mut __wn: usize) -> (Vec<::txhdl::netlist::Stmt>, \
+             Vec<(String, ::txhdl::netlist::Expr)>, usize) {{\n\
+             use ::txhdl::netlist::{{Expr as NlE, Stmt as NlS, Target as NlT}};\n\
+             {}\n(__b, __dynw, __wn) }}",
+            items_code(&piece)
+        ));
+        calls.push_str(&format!(
+            "let __r = Self::__txhdl_lower_{k}(__b, __dynw, __wn); \
+             __b = __r.0; __dynw = __r.1; __wn = __r.2;\n"
+        ));
+    }
+    format!(
+        "{{ #[allow(unused_mut)] let mut __b: Vec<NlS> = Vec::new(); {calls} __b }}"
+    )
+}
+
+/// The wires' vector as `let mut __w = ..;`, at once or, past the
+/// budget, as helpers that each return a piece of it, in order (#1807).
+fn wires_code(wires: &[String], helpers: &mut Vec<String>) -> String {
+    let budget = piece_budget();
+    let total: usize = wires.iter().map(|s| s.len()).sum();
+    let all = wires.join(",\n");
+    if total <= budget
+        || !wires.iter().all(|s| movable(s))
+        || names_ident(&all, "__dynw")
+        || names_ident(&all, "__wn")
+    {
+        return format!("let mut __w = vec![{all}];");
+    }
+    let mut code =
+        String::from("let mut __w: Vec<(String, NlE)> = Vec::new();\n");
+    for piece in pieces(wires, budget) {
+        let k = helpers.len();
+        helpers.push(format!(
+            "#[doc(hidden)] #[inline(never)]\n\
+             #[allow(unused_variables, unused_imports, clippy::all)]\n\
+             fn __txhdl_lower_{k}() -> Vec<(String, ::txhdl::netlist::Expr)> {{\n\
+             use ::txhdl::netlist::{{Expr as NlE, Stmt as NlS, Target as NlT}};\n\
+             vec![{}] }}",
+            piece.join(",\n")
+        ));
+        code.push_str(&format!("__w.extend(Self::__txhdl_lower_{k}());\n"));
+    }
+    code
+}
+
 /// The statements of a block, split on `;` at depth zero, and after
 /// the last brace of an `if` chain, which Rust ends without one.
 fn stmts_of(ts: &[TokenTree]) -> Vec<Vec<TokenTree>> {
@@ -7770,6 +7889,9 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut wire_alts: Vec<(String, String)> = Vec::new();
     let mut named: Vec<(String, String, Span)> = Vec::new();
     let mut procs: Vec<String> = Vec::new();
+    // The helpers `lowered` calls for a body or wires past the budget
+    // (#1807).
+    let mut helpers: Vec<String> = Vec::new();
     // The hidden registers of the processes of several waits: the
     // name and the width of each (issue 501).
     let mut hidden: Vec<(String, String, Span)> = Vec::new();
@@ -7834,7 +7956,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         procs.push(format!(
             "::txhdl::netlist::Process {{ clock: {clock}, falling: {falling}, \
          body: {} }}",
-            stmts_code(&stmts)
+            body_code(&stmts, &mut helpers)
         ));
     }
     // A `let` whose name a target reserves is not refused: the wire
@@ -7931,6 +8053,12 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     } else {
         "let me = Self::default();\n"
     };
+    let wire_items: Vec<String> = wires
+        .iter()
+        .enumerate()
+        .map(|(k, (_, e))| format!("(Self::__TXHDL_WIRE_{k}.to_string(), {e})"))
+        .chain(ties)
+        .collect();
     let generated_text = format!(
         "impl{generics} {unit} {{\n\
          /// This unit as `#[lower]` read it from `run`; `.verilog()` and\n\
@@ -7954,7 +8082,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          fields: {{ let mut f = <Self as ::txhdl::netlist::Fields>::fields();\n\
          {hidden_fields} f }},\n\
          ports: {{ let mut p = Vec::new(); {ports} p }},\n\
-         wires: {{ let mut __w = vec![{wires}]; __w.extend(__dynw); __w }},\n\
+         wires: {{ {wires} __w.extend(__dynw); __w }},\n\
          wire_names: vec![{wire_names}],\n\
          procs: __procs,\n\
          init: Vec::new(),\n\
@@ -7987,6 +8115,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          Self::lowered(name).verilog() }}\n\
          /// The VHDL of this unit.\n\
          pub fn vhdl(name: &str) -> String {{ Self::lowered(name).vhdl() }}\n\
+         {helpers}\n\
          }}\n\
          impl{generics} ::txhdl::netlist::Lower for {unit} {{\n\
          fn lowered_as(name: &str) -> ::txhdl::netlist::Lowered {{\n\
@@ -8033,15 +8162,8 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             })
             .collect::<Vec<_>>()
             .join("\n"),
-        wires = wires
-            .iter()
-            .enumerate()
-            .map(|(k, (_, e))| {
-                format!("(Self::__TXHDL_WIRE_{k}.to_string(), {e})")
-            })
-            .chain(ties)
-            .collect::<Vec<_>>()
-            .join(",\n"),
+        wires = wires_code(&wire_items, &mut helpers),
+        helpers = helpers.join("\n"),
         // Each `let` with the constant of the wire it became, found by the
         // wire's name: the constants number every wire, and an inlined
         // helper adds wires no `let` named, so a `let`'s place among the
