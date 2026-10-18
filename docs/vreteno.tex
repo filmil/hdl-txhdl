@@ -177,6 +177,9 @@ The instruction cache counts its work as well (issue 1752):
 \code{mhpmcounter3} to \code{mhpmcounter7}, at \code{0xb03} to
 \code{0xb07} with their upper halves at \code{0xb83} to \code{0xb87},
 count lookups, hits, fills started, fills kept and fills dropped. A
+hit is a lookup that found its line at the first look, so the lookups
+less the hits are the misses: the fills started, and the lookups whose
+fetch was dropped before either (issue 1781). A
 program reads them to learn how many lines a stretch of its code
 filled, which the cycles alone do not say. They are machine mode's
 only, written as \code{mcycle} is and read again as
