@@ -80,7 +80,9 @@ jobs:
       fail-fast: false
       matrix:
         branch: ${{ fromJSON(needs.pushed.outputs.branches) }}
-    runs-on: docker
+    # The big runners only, eph2 and eph4 (serving#135): one build of the
+    # tree peaks at about 30 GiB, more than eph1's runner has (#1792).
+    runs-on: big
     steps:
       # Every run records how long its steps took and how much Bazel ran
       # (#940): each step below writes the time it ended, and the last

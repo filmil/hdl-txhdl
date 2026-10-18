@@ -23,7 +23,9 @@ on:
 
 jobs:
   boot:
-    runs-on: docker
+    # The big runners only, eph2 and eph4 (serving#135): one build of the
+    # tree peaks at about 30 GiB, more than eph1's runner has (#1792).
+    runs-on: big
     steps:
       - name: Checkout
         uses: https://code.forgejo.org/actions/checkout@v4
