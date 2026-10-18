@@ -346,26 +346,15 @@ module flagship (
   // The Ethernet port.
   // --------------------------------------------------------------
 
-  wire eth_fb, eth_fb_buf, eth_locked, mmcm125, clk125;
-  MMCME2_BASE #(
-    .CLKIN1_PERIOD(5.0),
-    .DIVCLK_DIVIDE(1),
-    .CLKFBOUT_MULT_F(5.0),
-    .CLKOUT0_DIVIDE_F(8.0)
-  ) eth_mmcm (
-    .CLKIN1(clk200_in),
-    .CLKFBIN(eth_fb_buf),
-    .CLKFBOUT(eth_fb),
-    .CLKOUT0(mmcm125),
-    .CLKOUT1(),
-    .CLKOUT0B(), .CLKOUT1B(), .CLKOUT2(), .CLKOUT2B(), .CLKOUT3(),
-    .CLKOUT3B(), .CLKOUT4(), .CLKOUT5(), .CLKOUT6(), .CLKFBOUTB(),
-    .LOCKED(eth_locked),
-    .PWRDWN(1'b0),
-    .RST(1'b0)
+  // The transmit clock, 125 MHz from the board's 200, planned by
+  // //tools/clockgen (`//flagship:clk_eth`, #1820).
+  wire eth_locked, clk125;
+  clk_eth eth_mmcm (
+    .clk_in(clk200_in),
+    .rst(1'b0),
+    .clk_0(clk125),
+    .locked(eth_locked)
   );
-  BUFG eth_fb_bufg (.I(eth_fb), .O(eth_fb_buf));
-  BUFG clk125_bufg (.I(mmcm125), .O(clk125));
 
   wire rx_clk;
   wire [7:0] txd, rxd;
@@ -474,26 +463,15 @@ module flagship (
   // The HDMI output.
   // --------------------------------------------------------------
 
-  wire vid_fb, vid_fb_buf, vid_locked, mmcm25, pixclk;
-  MMCME2_BASE #(
-    .CLKIN1_PERIOD(5.0),
-    .DIVCLK_DIVIDE(10),
-    .CLKFBOUT_MULT_F(63.0),
-    .CLKOUT0_DIVIDE_F(50.0)
-  ) vid_mmcm (
-    .CLKIN1(clk200_in),
-    .CLKFBIN(vid_fb_buf),
-    .CLKFBOUT(vid_fb),
-    .CLKOUT0(mmcm25),
-    .CLKOUT0B(), .CLKOUT1(), .CLKOUT1B(), .CLKOUT2(), .CLKOUT2B(),
-    .CLKOUT3(), .CLKOUT3B(), .CLKOUT4(), .CLKOUT5(), .CLKOUT6(),
-    .CLKFBOUTB(),
-    .LOCKED(vid_locked),
-    .PWRDWN(1'b0),
-    .RST(1'b0)
+  // The pixel clock, VGA's 25.175 MHz within 1000 ppm, planned by
+  // //tools/clockgen (`//flagship:clk_pix`, #1820).
+  wire vid_locked, pixclk;
+  clk_pix vid_mmcm (
+    .clk_in(clk200_in),
+    .rst(1'b0),
+    .clk_0(pixclk),
+    .locked(vid_locked)
   );
-  BUFG vid_fb_bufg (.I(vid_fb), .O(vid_fb_buf));
-  BUFG pixclk_bufg (.I(mmcm25), .O(pixclk));
 
   // The reset for the video peripheral and the I2C master, on the
   // pixel clock, asked for by the same things as the MAC's and by the

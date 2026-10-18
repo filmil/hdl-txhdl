@@ -30,9 +30,9 @@
 set core_clk [get_clocks -include_generated_clocks \
   -of_objects [get_nets clk]]
 set pixel_clk [get_clocks -include_generated_clocks \
-  -of_objects [get_pins vid_mmcm/CLKOUT0]]
+  -of_objects [get_nets pixclk]]
 set eth_tx_clk [get_clocks -include_generated_clocks \
-  -of_objects [get_pins eth_mmcm/CLKOUT0]]
+  -of_objects [get_nets clk125]]
 set_clock_groups -asynchronous \
   -group $core_clk -group $pixel_clk -group $eth_tx_clk
 

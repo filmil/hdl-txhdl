@@ -43,6 +43,8 @@ TOPS = [
             "//cpu/vreteno:board_boot_v",
             "//eth:mac_v",
             "//hdmi:demo_v",
+            "//flagship:clk_eth.v",
+            "//flagship:clk_pix.v",
         ],
     ),
     (
