@@ -17,7 +17,7 @@ use txhdl::{lower, Trace};
 use txhdl_parts::bus::axi::{Done, Grant, Issue, R, W};
 use txhdl_parts::mmu::{DReq, IReq, Mmu8, Pte, Res};
 
-use crate::core::{Vreteno, Writeback};
+use crate::core::{Vreteno, VretenoIn, VretenoOut, Writeback};
 
 /// The core and its unit, eight entries in each of the unit's two
 /// translation buffers.
@@ -132,16 +132,45 @@ impl<
                 (ires_o, dres_o, ptw_tx),
             ),
             self.core.run(
-                (
-                    rst, irq, tirq, sirq, rdata, done, grant, haltreq,
-                    resumereq, dbg_regno, dbg_wdata, dbg_we, time, seirq,
-                    dc_snoop, ires_i, dres_i, ptw_rx,
-                ),
-                (
-                    halt, instr, wb, issue, wbeat, release, dbg, dbg_rdata,
-                    asleep, satp_o, prv_o, sum_o, mxr_o, flush_o, ireq_o,
-                    dreq_o, pte_tx,
-                ),
+                VretenoIn {
+                    rst,
+                    irq,
+                    tirq,
+                    sirq,
+                    rdata,
+                    done,
+                    grant,
+                    haltreq,
+                    resumereq,
+                    dbg_regno,
+                    dbg_wdata,
+                    dbg_we,
+                    time,
+                    seirq,
+                    dc_snoop,
+                    ires: ires_i,
+                    dres: dres_i,
+                    ptw: ptw_rx,
+                },
+                VretenoOut {
+                    halt,
+                    instr,
+                    wb,
+                    issue,
+                    wbeat,
+                    release,
+                    dbg,
+                    dbg_rdata,
+                    asleep,
+                    mmu_satp: satp_o,
+                    mmu_prv: prv_o,
+                    mmu_sum: sum_o,
+                    mmu_mxr: mxr_o,
+                    mmu_flush: flush_o,
+                    ireq: ireq_o,
+                    dreq: dreq_o,
+                    pte: pte_tx,
+                },
             ),
         )
         .await;

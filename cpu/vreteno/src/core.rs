@@ -1293,6 +1293,68 @@ impl<
     }
 }
 
+/// What the core takes in (issue 726): the reset and the interrupt
+/// lines, the bus's answers, the debug module's requests and register
+/// access, the time, the supervisor's external line, the data cache's
+/// snoop, and the memory management unit's answers. Taken apart in
+/// `run`, so each port keeps its name.
+pub struct VretenoIn<const IW: usize> {
+    pub rst: In<Bit>,
+    pub irq: In<Bit>,
+    pub tirq: In<Bit>,
+    pub sirq: In<Bit>,
+    pub rdata: Rx<R<32, IW>>,
+    pub done: Rx<Done<IW>>,
+    pub grant: Rx<Grant<IW>>,
+    pub haltreq: In<Bit>,
+    pub resumereq: In<Bit>,
+    pub dbg_regno: In<U<16>>,
+    pub dbg_wdata: In<U<32>>,
+    pub dbg_we: In<Bit>,
+    // The timer's count, which `time` reads (issue 1012).
+    pub time: In<U<64>>,
+    // The interrupt controller's supervisor line, `mip.SEIP`'s
+    // (issue 1094).
+    pub seirq: In<Bit>,
+    // Another host's write into the DDR3, answered: the data
+    // cache's line to invalidate, bit 8 its valid (issue 1275).
+    pub dc_snoop: In<U<9>>,
+    // The memory management unit's answers, registers, to the
+    // fetch and to the data, and its walker's reads (issues
+    // 1014 and 1122).
+    pub ires: In<Res>,
+    pub dres: In<Res>,
+    pub ptw: Rx<U<32>>,
+}
+
+/// What the core gives out (issue 726): its halt, instruction and
+/// writeback, its requests on the bus, the debug state and the
+/// register read for the debug module, whether it waits in `wfi`, and
+/// what the memory management unit translates by, the requests to it,
+/// and the walker's reads.
+pub struct VretenoOut<const IW: usize> {
+    pub halt: Out<Bit>,
+    pub instr: Out<U<32>>,
+    pub wb: Out<Writeback>,
+    pub issue: Tx<Issue<32>>,
+    pub wbeat: Tx<W<32, 4>>,
+    pub release: Tx<Grant<IW>>,
+    pub dbg: Out<Bit>,
+    pub dbg_rdata: Out<U<32>>,
+    // Whether the core waits in `wfi` (issue 1408).
+    pub asleep: Out<Bit>,
+    // What the unit translates by, the requests, and the
+    // walker's answers (issue 1014).
+    pub mmu_satp: Out<U<32>>,
+    pub mmu_prv: Out<U<2>>,
+    pub mmu_sum: Out<Bit>,
+    pub mmu_mxr: Out<Bit>,
+    pub mmu_flush: Out<Bit>,
+    pub ireq: Out<IReq>,
+    pub dreq: Out<DReq>,
+    pub pte: Tx<Pte>,
+}
+
 #[lower]
 impl<
         const IW: usize,
@@ -1304,7 +1366,7 @@ impl<
 {
     async fn run(
         &mut self,
-        (
+        VretenoIn {
             rst,
             irq,
             tirq,
@@ -1323,35 +1385,8 @@ impl<
             ires,
             dres,
             ptw,
-        ): (
-            In<Bit>,
-            In<Bit>,
-            In<Bit>,
-            In<Bit>,
-            Rx<R<32, IW>>,
-            Rx<Done<IW>>,
-            Rx<Grant<IW>>,
-            In<Bit>,
-            In<Bit>,
-            In<U<16>>,
-            In<U<32>>,
-            In<Bit>,
-            // The timer's count, which `time` reads (issue 1012).
-            In<U<64>>,
-            // The interrupt controller's supervisor line, `mip.SEIP`'s
-            // (issue 1094).
-            In<Bit>,
-            // Another host's write into the DDR3, answered: the data
-            // cache's line to invalidate, bit 8 its valid (issue 1275).
-            In<U<9>>,
-            // The memory management unit's answers, registers, to the
-            // fetch and to the data, and its walker's reads (issues
-            // 1014 and 1122).
-            In<Res>,
-            In<Res>,
-            Rx<U<32>>,
-        ),
-        (
+        }: VretenoIn<IW>,
+        VretenoOut {
             halt,
             instr,
             wb,
@@ -1369,28 +1404,7 @@ impl<
             ireq,
             dreq,
             pte,
-        ): (
-            Out<Bit>,
-            Out<U<32>>,
-            Out<Writeback>,
-            Tx<Issue<32>>,
-            Tx<W<32, 4>>,
-            Tx<Grant<IW>>,
-            Out<Bit>,
-            Out<U<32>>,
-            // Whether the core waits in `wfi` (issue 1408).
-            Out<Bit>,
-            // What the unit translates by, the requests, and the
-            // walker's answers (issue 1014).
-            Out<U<32>>,
-            Out<U<2>>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<IReq>,
-            Out<DReq>,
-            Tx<Pte>,
-        ),
+        }: VretenoOut<IW>,
     ) {
         loop {
             DefaultClock::rising().await;
