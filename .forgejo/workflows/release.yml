@@ -27,7 +27,9 @@ permissions:
 
 jobs:
   release:
-    runs-on: docker
+    # The big runners only, eph2 and eph4 (serving#135): one build of the
+    # tree peaks at about 30 GiB, more than eph1's runner has (#1792).
+    runs-on: big
     steps:
       # fetch-depth 0, because the nightly skip below reads the commit dates.
       # A shallow clone shows one commit whatever actually happened.
