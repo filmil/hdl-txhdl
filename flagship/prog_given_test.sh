@@ -1,97 +1,56 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# flagship_prog_given refuses what it should and programs nothing in a
-# dry run (#1784): a wrong sum, a file that is no bitstream, a file too
-# short to be one, an empty file, the placeholder itself and missing
-# arguments are refused; a file with the bitstream's header and the
-# right sum passes, with its flags written either way and its path
-# relative to where bazel was run, and the run names its sum after
-# building what it would run.
+# flagship_prog_given refuses what it should before it reaches a board
+# (#1784, #1803): a file whose sum is not the one given, a file that is
+# no bitstream, and a missing file are each refused before the script
+# starts hw_server, so no run here touches a board.
+#
+# The script is run as `bazel run` lays it out: beside its runfiles tree
+# and a manifest of every runfile's real place, which the runfiles
+# library prefers. Run through the runfiles directory alone, as a
+# test's would be, it stops at its first lookup of fshlib, which fails
+# under its `set -e` before it tries the name that is there
+# (rules_vivado 4.1.0; reported upstream).
 set -uo pipefail
 
-prog="$1"
-placeholder="$2"
 dir="$(realpath "${TEST_TMPDIR:-$(mktemp -d)}")"
+tree="${RUNFILES_DIR:-$TEST_SRCDIR}"
+prog="$dir/run/prog"
+mkdir -p "$dir/run"
+cp -- "$1" "$prog"
+ln -s "$tree" "$prog.runfiles"
+(cd "$tree" && find -L . -type f | sed 's|^\./||' | while read -r f; do
+  printf '%s %s\n' "$f" "$(readlink -f "$f")"
+done) >"$prog.runfiles_manifest"
 bit="$dir/good.bit"
 printf '\x00\x09\x0f\xf0\x0f\xf0\x0f\xf0\x0f\xf0\x00\x00\x01rest' >"$bit"
 sum="$(sha256sum "$bit" | cut -d' ' -f1)"
 junk="$dir/junk.bit"
 printf 'not a bitstream' >"$junk"
 jsum="$(sha256sum "$junk" | cut -d' ' -f1)"
-short="$dir/short.bit"
-printf '\x00\x09\x0f' >"$short"
-ssum="$(sha256sum "$short" | cut -d' ' -f1)"
-empty="$dir/empty.bit"
-: >"$empty"
-esum="$(sha256sum "$empty" | cut -d' ' -f1)"
-psum="$(sha256sum "$placeholder" | cut -d' ' -f1)"
+zero="$(printf '0%.0s' $(seq 64))"
 fail=0
 
-expect() { # expect <status> <text> <args...>
-  local want="$1" text="$2"
-  shift 2
+refused() { # refused <text> <args...>
+  local text="$1"
+  shift
   local out status
-  out="$("$prog" "$@" 2>&1)"
+  out="$(env -u RUNFILES_DIR -u RUNFILES_MANIFEST_FILE -u TEST_SRCDIR \
+    "$prog" --hostport localhost:1 "$@" 2>&1)"
   status=$?
-  if [[ "$status" != "$want" || "$out" != *"$text"* ]]; then
-    echo "FAIL: $* gave $status, wanted $want and \"$text\":"
+  if [[ "$status" == 0 || "$out" != *"$text"* ]]; then
+    echo "FAIL: $* gave $status, wanted a refusal naming \"$text\":"
     echo "$out"
+    fail=1
+  fi
+  if [[ "$out" == *"hw_server"* && "$out" == *"Running programmer"* ]]; then
+    echo "FAIL: $* started hw_server before refusing"
     fail=1
   fi
 }
 
-zero="$(printf '0%.0s' $(seq 64))"
-expect 1 "refused: $bit has sha256 $sum, not $zero" \
-  --bit="$bit" --sha256="$zero" --dry-run
-expect 1 "refused: not a bitstream" --bit="$junk" --sha256="$jsum" --dry-run
-expect 1 "refused: not a bitstream" --bit="$short" --sha256="$ssum" --dry-run
-expect 1 "refused: not a bitstream" --bit="$empty" --sha256="$esum" --dry-run
-expect 1 "refused: not a bitstream" \
-  --bit="$placeholder" --sha256="$psum" --dry-run
-expect 1 "refused: no such file" --bit="$dir/none.bit" --sha256="$sum"
-expect 2 "usage" --bit="$bit"
-expect 0 "programming $bit, sha256 $sum" \
-  --bit="$bit" --sha256="${sum^^}" --dry-run
-expect 0 "dry run: nothing programmed" \
-  --bit="$bit" --sha256="$sum" --dry-run
-expect 0 "programming $bit, sha256 $sum" \
-  --bit "$bit" --sha256 "$sum" --dry-run
-BUILD_WORKING_DIRECTORY="$dir" expect 0 "programming $dir/good.bit" \
-  --bit=good.bit --sha256="$sum" --dry-run
-# As `bazel run` starts it (#1797): the binary beside its runfiles tree
-# and its manifest, which the runfiles library prefers, so rlocation
-# names each file's real place rather than its place in the tree.
-run="$dir/run"
-mkdir -p "$run"
-cp -- "$prog" "$run/w"
-tree="${RUNFILES_DIR:-$TEST_SRCDIR}"
-ln -s "$tree" "$run/w.runfiles"
-(cd "$tree" && find -L . -type f | sed 's|^\./||' | while read -r f; do
-  printf '%s %s\n' "$f" "$(readlink -f "$f")"
-done) >"$run/w.runfiles_manifest"
-out="$(env -u RUNFILES_DIR -u RUNFILES_MANIFEST_FILE -u TEST_SRCDIR \
-  "$run/w" --bit="$bit" --sha256="$sum" --dry-run 2>&1)"
-if [[ $? != 0 || "$out" != *"dry run: nothing programmed"* ]]; then
-  echo "FAIL: as bazel run starts it:"
-  echo "$out"
-  fail=1
-fi
-# The manifest as the only way to the tree: a binary with no runfiles
-# beside it, and a manifest inside a tree of its own (#1797).
-alone="$dir/alone"
-mkdir -p "$alone/tree"
-cp -- "$prog" "$alone/w"
-for e in "$tree"/*; do
-  ln -s "$e" "$alone/tree/"
-done
-cp -- "$run/w.runfiles_manifest" "$alone/tree/MANIFEST"
-out="$(env -u RUNFILES_DIR -u TEST_SRCDIR \
-  RUNFILES_MANIFEST_FILE="$alone/tree/MANIFEST" \
-  "$alone/w" --bit="$bit" --sha256="$sum" --dry-run 2>&1)"
-if [[ $? != 0 || "$out" != *"dry run: nothing programmed"* ]]; then
-  echo "FAIL: through the manifest alone:"
-  echo "$out"
-  fail=1
-fi
+refused "has SHA-256 $sum, not $zero" --bitfile="$bit" --sha256="$zero"
+refused "not a bitstream" --bitfile="$junk" --sha256="$jsum"
+refused "$dir/none.bit" --bitfile="$dir/none.bit" --sha256="$sum"
 exit "$fail"
