@@ -154,6 +154,16 @@ opt_test(
     test = ":board_test_rust",
 )
 
+# The board's netlist, checked at the default opt-level 0: the
+# generator `#[lower]` writes took LLVM 77 minutes and 9 GiB at
+# `board_test`'s opt-level 3 (#1792, #1807).
+rust_test(
+    name = "board_netlist_test",
+    srcs = ["tests/board_netlist.rs"],
+    edition = "2021",
+    deps = [":vreteno32"],
+)
+
 # The test itself, which `board_test` above builds optimised and runs.
 # Manual, so that it is not run a second time as it is.
 rust_test(
