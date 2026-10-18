@@ -146,12 +146,41 @@ pub struct EthSlots<const BASE: usize> {
 }
 // end{state}
 
+/// The slots' link to the MAC and the core (issue 726), taken apart in
+/// `run`, so each port keeps its name.
+pub struct SlotsMac {
+    /// The transmitter is sending a frame.
+    pub tx_busy: In<Bit>,
+    /// The receive store engine is storing a frame.
+    pub rx_busy: In<Bit>,
+    /// The length of the frame last stored.
+    pub rx_len: In<U<16>>,
+    /// The slot the frame last stored landed in.
+    pub rx_which: In<U<1>>,
+    /// The frames the store engine dropped.
+    pub rx_drops: In<U<32>>,
+    /// The MAC's own drop counts, by cause, packed.
+    pub rx_mac: In<U<48>>,
+    /// Where the frame to send starts.
+    pub tx_base: Out<U<32>>,
+    /// The length of the frame to send.
+    pub tx_bytes: Out<U<16>>,
+    /// Send it.
+    pub tx_start: Out<Bit>,
+    /// Where the next frame received is to land.
+    pub rx_base: Out<U<32>>,
+    /// The interrupt line to the core.
+    pub irq: Out<Bit>,
+    /// Every receive slot is full.
+    pub rx_full: Out<Bit>,
+}
+
 #[lower]
 impl<const BASE: usize> Unit for EthSlots<BASE> {
     async fn run(
         &mut self,
         bus: LitePort<32, 32, 4>,
-        (
+        SlotsMac {
             tx_busy,
             rx_busy,
             rx_len,
@@ -164,20 +193,7 @@ impl<const BASE: usize> Unit for EthSlots<BASE> {
             rx_base,
             irq,
             rx_full,
-        ): (
-            In<Bit>,
-            In<Bit>,
-            In<U<16>>,
-            In<U<1>>,
-            In<U<32>>,
-            In<U<48>>,
-            Out<U<32>>,
-            Out<U<16>>,
-            Out<Bit>,
-            Out<U<32>>,
-            Out<Bit>,
-            Out<Bit>,
-        ),
+        }: SlotsMac,
     ) {
         loop {
             DefaultClock::rising().await;
@@ -426,10 +442,20 @@ mod tests {
         let mut sim = Running::new(join2(
             slots.run(
                 bus,
-                (
-                    tx_busy, rx_busy, rx_len, rx_which, rx_drops, rx_mac,
-                    tx_base, tx_bytes, tx_start, rx_base, irq, rx_full,
-                ),
+                SlotsMac {
+                    tx_busy,
+                    rx_busy,
+                    rx_len,
+                    rx_which,
+                    rx_drops,
+                    rx_mac,
+                    tx_base,
+                    tx_bytes,
+                    tx_start,
+                    rx_base,
+                    irq,
+                    rx_full,
+                },
             ),
             client,
         ));

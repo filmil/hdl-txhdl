@@ -33,7 +33,7 @@ use crate::isa;
 use crate::rom::Rom;
 use crate::timer::Timer;
 use crate::uart::Uart;
-use ddr3::Ddr3Per;
+use ddr3::{Ddr3Per, Ddr3PerBus, Ddr3PerPins};
 use razboj::doorbell::Doorbell;
 use razboj::raster::Raster;
 use txhdl::comp::{
@@ -60,7 +60,7 @@ use txhdl_parts::dtm::{Dtm, DtmBridge, Tck};
 use txhdl_parts::eth::EthByte;
 use txhdl_parts::ethdma::{FrameIn, FrameLen, FrameOut};
 use txhdl_parts::ethshare::EthShare;
-use txhdl_parts::ethslots::EthSlots;
+use txhdl_parts::ethslots::{EthSlots, SlotsMac};
 use txhdl_parts::flashwin::FlashWin;
 use txhdl_parts::mdio::{Mdio, MdioLines};
 use txhdl_parts::plic::Plic3;
@@ -1364,20 +1364,20 @@ impl<const DIV: u32> Unit for Board<DIV> {
                                             b: pb_eth_tx,
                                             r: pr_eth_tx,
                                         },
-                                        (
-                                            eth_tx_busy_i,
-                                            eth_rx_busy_i,
-                                            eth_rx_len_i,
-                                            eth_rx_which_i,
-                                            eth_rx_drops_i,
-                                            mac_drops,
-                                            eth_tx_base_o,
-                                            eth_tx_bytes_o,
-                                            eth_tx_start_o,
-                                            eth_rx_base_o,
-                                            eth_irq_o,
-                                            eth_rx_full_o,
-                                        ),
+                                        SlotsMac {
+                                            tx_busy: eth_tx_busy_i,
+                                            rx_busy: eth_rx_busy_i,
+                                            rx_len: eth_rx_len_i,
+                                            rx_which: eth_rx_which_i,
+                                            rx_drops: eth_rx_drops_i,
+                                            rx_mac: mac_drops,
+                                            tx_base: eth_tx_base_o,
+                                            tx_bytes: eth_tx_bytes_o,
+                                            tx_start: eth_tx_start_o,
+                                            rx_base: eth_rx_base_o,
+                                            irq: eth_irq_o,
+                                            rx_full: eth_rx_full_o,
+                                        },
                                     ),
                                 ),
                             ),
@@ -1887,14 +1887,38 @@ join2(
                                 ),
                             ),
                             self.ddr3.run(
-                                (rst_ddr3, aw3_rx, ar3_rx, w3_rx, b3_tx, r3_tx, wide_ar,
-                                 wide_r),
-                                (
-                                    sys_clk, sys_rst, calib, ui_clk, ui_rst,
-                                    ck_p, ck_n, mem_rst_n, cke, cs_n, ras_n,
-                                    cas_n, we_n, row, bank, dm, odt, dq, dqs,
+                                Ddr3PerBus {
+                                    rst: rst_ddr3,
+                                    aw: aw3_rx,
+                                    ar: ar3_rx,
+                                    w: w3_rx,
+                                    b: b3_tx,
+                                    r: r3_tx,
+                                    xar: wide_ar,
+                                    xr: wide_r,
+                                },
+                                Ddr3PerPins {
+                                    sys_clk,
+                                    sys_rst,
+                                    calib,
+                                    ui_clk,
+                                    ui_rst,
+                                    ck_p,
+                                    ck_n,
+                                    mem_rst_n,
+                                    cke,
+                                    cs_n,
+                                    ras_n,
+                                    cas_n,
+                                    we_n,
+                                    row,
+                                    bank,
+                                    dm,
+                                    odt,
+                                    dq,
+                                    dqs,
                                     dqs_n,
-                                ),
+                                },
                             ),
                         ),
                     ),
