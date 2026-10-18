@@ -291,6 +291,9 @@ An input passed \code{tie(v)} is held at the constant \code{v}: in
 the run it is a wire \code{comp::tie} sets once, and in the netlist
 a wire of the parent, \code{FIELD\_tieK}, driven by \code{lit(v)},
 so \code{v} is evaluated when \code{lowered} runs and is a constant.
+A field of a struct of ports written where the child's side is
+passed, \code{field: tie(v)}, is tied the same way, the wire joined to
+that field's port (issue 1802).
 \code{Lowered::checked} refuses such a wire joined to anything but a
 child's input, which it would drive twice (issue 498). The
 parent's \code{lowered} reaches each child through a value of
