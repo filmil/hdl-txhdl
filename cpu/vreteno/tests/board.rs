@@ -4318,13 +4318,14 @@ fn a_base_outside_the_ddr3_keeps_the_order_inside_it() {
     }
 }
 
-/// A device's load does not wait for the stores the core has posted
-/// (issue 1463): only a DDR3 word can be one of them. A hundred rounds
-/// of a store to the timer's compare register and a load of its count
-/// take 1709 cycles; with the wait they took 2609, and before the data
-/// cache took every load 1609.
+/// A device's load waits for the stores the core has posted (#1815):
+/// nothing on the bus keeps a read behind a write, so a load that went
+/// on could reach a device ahead of the store before it. A hundred
+/// rounds of a store to the timer's compare register and a load of its
+/// count take 2609 cycles; without the wait (issue 1463) they took
+/// 1709, and before the data cache took every load 1609.
 #[test]
-fn a_device_load_does_not_wait_for_posted_stores() {
+fn a_device_load_waits_for_posted_stores() {
     use vreteno32::isa::{addi, bne, halt, lui, lw, sw};
     let mut p = vec![
         lui(6, 0x0200_c000 >> 12),
@@ -4336,7 +4337,7 @@ fn a_device_load_does_not_wait_for_posted_stores() {
     p.push(halt());
     let ran = run_debugged(&p, &[], 200_000, &[]);
     let took = ran.halted_at.expect("the loop halts");
-    assert!(took <= 1800, "a hundred device rounds took {took} cycles");
+    assert!(took <= 2700, "a hundred device rounds took {took} cycles");
 }
 
 /// A random mix of loads and stores of every width over two lines of
