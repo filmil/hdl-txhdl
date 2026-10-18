@@ -4992,10 +4992,12 @@ enum Beside {
 
 /// Bytes the serial port drops under another hart's traffic (#1778).
 /// The transmitter is held off, so the queue stays full as a board's
-/// slow line keeps it; each of fifty rounds tries nine bytes the way
-/// the HAL's `Uart::put` does, reading `txdata` for room before each
-/// write and giving up after 200 reads, and the eighth fills the queue,
-/// so a ninth is written only if a read missed the store before it.
+/// slow line keeps it; each of fifty rounds tries nine bytes, reading
+/// `txdata` for room before each write and giving up after 200 reads,
+/// and the eighth fills the queue, so a ninth is written only if a read
+/// missed the store before it. The loop has no `fence` after its write,
+/// unlike the HAL's `Uart::put` since #1778, so it is the loop that lost
+/// bytes on the board; the simulation has never lost one (#1815).
 /// Hart 1 meanwhile idles, stores into the DDR3, or reads or writes the
 /// pulse width modulator at 0x3100, behind the same AXI-Lite bridge as
 /// the serial port. Hart 0 stores the bytes it believed it wrote and
