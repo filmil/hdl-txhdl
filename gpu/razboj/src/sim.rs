@@ -126,7 +126,11 @@ pub fn run_lists_at<
     netlists: bool,
 ) -> Vec<Run> {
     let works: Vec<Work> = lists.iter().map(|l| Work::flat(l)).collect();
-    run_works_at::<A, LOGW, H, N, DL, CTRL>(&works, wave, netlists)
+    if netlists {
+        works_at::<A, LOGW, H, N, DL, CTRL, true>(&works, wave)
+    } else {
+        works_at::<A, LOGW, H, N, DL, CTRL, false>(&works, wave)
+    }
 }
 
 /// A list as the rasteriser finds it in memory: the words at `DL`, and
@@ -162,7 +166,7 @@ impl Work {
 }
 
 /// Render lists laid out in memory as [`Work`] says, flat or in tiles,
-/// one after another, as [`run_lists_at`] does.
+/// one after another, as [`run_lists_at`] does, with no netlists.
 pub fn run_works_at<
     const A: usize,
     const LOGW: usize,
@@ -173,7 +177,26 @@ pub fn run_works_at<
 >(
     lists: &[Work],
     wave: bool,
-    netlists: bool,
+) -> Vec<Run> {
+    works_at::<A, LOGW, H, N, DL, CTRL, false>(lists, wave)
+}
+
+/// The run itself, which writes the netlists when `NL` says. `NL` is a
+/// constant and not an argument so that a crate that never asks for
+/// them never compiles `Raster::lowered`: under a run-time flag it was
+/// compiled into every crate that rendered, and at opt-level 3 LLVM
+/// spent 23 minutes and 7 GiB on it in `ico_mip_test` (#1806).
+fn works_at<
+    const A: usize,
+    const LOGW: usize,
+    const H: usize,
+    const N: usize,
+    const DL: usize,
+    const CTRL: usize,
+    const NL: bool,
+>(
+    lists: &[Work],
+    wave: bool,
 ) -> Vec<Run> {
     let w = 1usize << LOGW;
     // The memory the rasteriser reads its work out of and writes its
@@ -295,12 +318,12 @@ pub fn run_works_at<
     if wave {
         stop();
     }
-    if netlists && lists.len() > 1 {
+    if NL && lists.len() > 1 {
         // A name of its own, since the one-list run's netlist is
         // `raster` and the two are checked side by side.
         let r = Raster::<A, IDB, LOGW, H, 0, DL, CTRL>::lowered("raster_lists");
         txhdl::netlist::write_netlists_from_env(&[&r]);
-    } else if netlists {
+    } else if NL {
         let r = Raster::<A, IDB, LOGW, H, 0, DL, CTRL>::lowered("raster");
         // The memory starts with the display list in it, which the
         // lowering cannot see: `Mem::with` gave it at run time. The
@@ -725,13 +748,11 @@ mod tests {
             let tiled = run_works_at::<A, LOGW, H, N, DL, CTRL>(
                 &[Work::tiled(&list, W, H)],
                 false,
-                false,
             );
             let at = want.iter().zip(&tiled[0].fb).position(|(p, q)| p != q);
             assert_eq!(at, None, "func {func}: the first pixel that differs");
             let flat = run_works_at::<A, LOGW, H, N, DL, CTRL>(
                 &[Work::flat(&list)],
-                false,
                 false,
             );
             let mut plain = list.clone();
@@ -852,11 +873,8 @@ mod tests {
             );
             assert!(loads(&w2) > 0, "round {round}: a blend over memory loads");
             assert_eq!(loads(&w3), 0, "round {round}: after a clear, none");
-            let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
-                &[w1, w2, w3],
-                false,
-                false,
-            );
+            let runs =
+                run_works_at::<A, LOGW, H, N, DL, CTRL>(&[w1, w2, w3], false);
             let base = model::render(&first, W, H);
             assert_eq!(runs[0].fb, base, "round {round}: the backdrop");
             let want = model::render_over(&over, W, H, base.clone());
@@ -962,7 +980,6 @@ mod tests {
             let over = assemble(&ops, W, H);
             let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
                 &[Work::tiled(&first, W, H), Work::tiled(&over, W, H)],
-                false,
                 false,
             );
             let base = model::render(&first, W, H);
@@ -1107,7 +1124,6 @@ mod tests {
             let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
                 &[Work::tiled(&first, W, H), Work::tiled(&over, W, H)],
                 false,
-                false,
             );
             let base = model::render(&first, W, H);
             let want = model::render_over(&over, W, H, base.clone());
@@ -1215,7 +1231,6 @@ mod tests {
             assert!(over.iter().any(|i| i.ashade.to_bool()));
             let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
                 &[Work::tiled(&first, W, H), Work::tiled(&over, W, H)],
-                false,
                 false,
             );
             let base = model::render(&first, W, H);
@@ -1382,7 +1397,6 @@ mod tests {
             assert!(list.iter().any(|i| i.sten.to_bool()));
             let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
                 &[Work::tiled(&list, W, H)],
-                false,
                 false,
             );
             let want = model::render(&list, W, H);
@@ -1607,11 +1621,8 @@ mod tests {
                 more,
                 ..Work::flat(&list)
             };
-            let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
-                &[tiled, plain],
-                false,
-                false,
-            );
+            let runs =
+                run_works_at::<A, LOGW, H, N, DL, CTRL>(&[tiled, plain], false);
             let read = |a: u32| *mem.get(&a).unwrap_or(&0);
             let t = Textures { mem: &read };
             let want = render_textured(&list, W, H, vec![0; W * H], Some(&t));
@@ -1722,7 +1733,6 @@ mod tests {
             let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
                 &[square(false, false, step, d), square(true, two, step, d)],
                 false,
-                false,
             );
             let px = (W * H) as u64;
             let cycles = runs[1].cycles - 2 * runs[0].cycles;
@@ -1802,10 +1812,8 @@ mod tests {
         for t in 0..tiles {
             plain.words[2 * t + 1] &= !LOAD;
         }
-        let with =
-            run_works_at::<A, LOGW, H, N, DL, CTRL>(&[loaded], false, false);
-        let without =
-            run_works_at::<A, LOGW, H, N, DL, CTRL>(&[plain], false, false);
+        let with = run_works_at::<A, LOGW, H, N, DL, CTRL>(&[loaded], false);
+        let without = run_works_at::<A, LOGW, H, N, DL, CTRL>(&[plain], false);
         let each = (with[0].cycles - without[0].cycles) / tiles as u64;
         println!("a load costs {each} cycles a tile, {tiles} tiles");
         let write_out = (razboj_tile::TILE * (razboj_tile::TILE + 1)) as u64;
@@ -1880,8 +1888,8 @@ mod tests {
             scenes.iter().map(|l| Work::tiled(l, W, H)).collect();
         let many = tiled.iter().filter(|t| t.count & 0xffff > 4).count();
         assert!(many >= 3, "scenes over many tiles: {many}");
-        let a = run_works_at::<A, LOGW, H, N, DL, CTRL>(&flat, false, false);
-        let b = run_works_at::<A, LOGW, H, N, DL, CTRL>(&tiled, false, false);
+        let a = run_works_at::<A, LOGW, H, N, DL, CTRL>(&flat, false);
+        let b = run_works_at::<A, LOGW, H, N, DL, CTRL>(&tiled, false);
         for (i, (f, t)) in a.iter().zip(&b).enumerate() {
             let first = f.fb.iter().zip(&t.fb).position(|(p, q)| p != q);
             assert_eq!(first, None, "scene {i}: the first pixel that differs");
