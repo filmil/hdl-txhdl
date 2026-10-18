@@ -29,13 +29,16 @@ pub struct Acc {
     pub total: Reg<U<8>>,
 }
 
+/// What the accumulator takes: the input, the step and the enable.
+pub struct AccIn {
+    pub x: In<U<8>>,
+    pub step: In<U<8>>,
+    pub en: In<Bit>,
+}
+
 #[lower]
 impl Unit for Acc {
-    async fn run(
-        &mut self,
-        (x, step, en): (In<U<8>>, In<U<8>>, In<Bit>),
-        y: Out<U<8>>,
-    ) {
+    async fn run(&mut self, AccIn { x, step, en }: AccIn, y: Out<U<8>>) {
         loop {
             DefaultClock::rising().await;
             let total = self.total.get();
@@ -47,7 +50,8 @@ impl Unit for Acc {
     }
 }
 
-/// The accumulator with its step held at three and its enable on.
+/// The accumulator with its step held at three and its enable on, two
+/// fields of its side tied where the side is written (issue 1802).
 #[derive(Trace, Default)]
 pub struct Stepped {
     pub acc: Acc,
@@ -57,7 +61,14 @@ pub struct Stepped {
 impl Unit for Stepped {
     async fn run(&mut self, x: In<U<8>>, y: Out<U<8>>) {
         self.acc
-            .run((x, tie(U::<8>::from(3u8)), tie(Bit::One)), y)
+            .run(
+                AccIn {
+                    x,
+                    step: tie(U::<8>::from(3u8)),
+                    en: tie(Bit::One),
+                },
+                y,
+            )
             .await;
     }
 }
