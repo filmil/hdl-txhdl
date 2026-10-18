@@ -73,11 +73,17 @@ fi
 # manifest, as `bazel run` resolves it, that is the script's place in
 # bazel-out, beside none of its runfiles (#1797). The tree is the
 # first of these that holds the script, under the main repository's
-# directory, whatever it is called.
+# directory, whatever it is called: RUNFILES_DIR; the tree a manifest
+# belongs to, `<tree>/MANIFEST` inside it or `<x>.runfiles_manifest`
+# beside `<x>.runfiles`; and this binary's own.
+manifest="${RUNFILES_MANIFEST_FILE:-}"
+case "$manifest" in
+  */MANIFEST) manifest="${manifest%/MANIFEST}" ;;
+  *.runfiles_manifest) manifest="${manifest%_manifest}" ;;
+  *) manifest="" ;;
+esac
 main=""
-for tree in "${RUNFILES_DIR:-}" \
-  "${RUNFILES_MANIFEST_FILE:+$(dirname "$RUNFILES_MANIFEST_FILE")}" \
-  "$0.runfiles"; do
+for tree in "${RUNFILES_DIR:-}" "$manifest" "$0.runfiles"; do
   [[ -n "$tree" && -d "$tree" ]] || continue
   for d in "$tree"/*/; do
     if [[ -e "${d}flagship/flagship_prog_given_base.sh" ]]; then

@@ -77,4 +77,21 @@ if [[ $? != 0 || "$out" != *"dry run: nothing programmed"* ]]; then
   echo "$out"
   fail=1
 fi
+# The manifest as the only way to the tree: a binary with no runfiles
+# beside it, and a manifest inside a tree of its own (#1797).
+alone="$dir/alone"
+mkdir -p "$alone/tree"
+cp -- "$prog" "$alone/w"
+for e in "$tree"/*; do
+  ln -s "$e" "$alone/tree/"
+done
+cp -- "$run/w.runfiles_manifest" "$alone/tree/MANIFEST"
+out="$(env -u RUNFILES_DIR -u TEST_SRCDIR \
+  RUNFILES_MANIFEST_FILE="$alone/tree/MANIFEST" \
+  "$alone/w" --bit="$bit" --sha256="$sum" --dry-run 2>&1)"
+if [[ $? != 0 || "$out" != *"dry run: nothing programmed"* ]]; then
+  echo "FAIL: through the manifest alone:"
+  echo "$out"
+  fail=1
+fi
 exit "$fail"
