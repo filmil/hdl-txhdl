@@ -6,25 +6,17 @@
 # no bitstream or is empty, and a missing file are each refused before
 # the script starts hw_server, so no run here touches a board. A sum in
 # capitals is the same sum, and a relative --bitfile is taken from where
-# `bazel run` was started.
+# `bazel run` was started, not from where the script runs.
 #
-# The script is run as `bazel run` lays it out: beside its runfiles tree
-# and a manifest of every runfile's real place, which the runfiles
-# library prefers. Run through the runfiles directory alone, as a
-# test's would be, it stops at its first lookup of fshlib, which fails
-# under its `set -e` before it tries the name that is there
-# (rules_vivado 4.1.0; reported upstream).
+# The script runs through this test's runfiles, which rules_vivado
+# 4.1.1 finds (#1821), in a directory of its own, where it copies the
+# file it checks.
 set -uo pipefail
 
 dir="$(realpath "${TEST_TMPDIR:-$(mktemp -d)}")"
-tree="${RUNFILES_DIR:-$TEST_SRCDIR}"
-prog="$dir/run/prog"
-mkdir -p "$dir/run"
-cp -- "$1" "$prog"
-ln -s "$tree" "$prog.runfiles"
-(cd "$tree" && find -L . -type f | sed 's|^\./||' | while read -r f; do
-  printf '%s %s\n' "$f" "$(readlink -f "$f")"
-done) >"$prog.runfiles_manifest"
+prog="$(realpath "$1")"
+export RUNFILES_DIR="${RUNFILES_DIR:-$TEST_SRCDIR}"
+mkdir -p "$dir/work"
 bit="$dir/good.bit"
 printf '\x00\x09\x0f\xf0\x0f\xf0\x0f\xf0\x0f\xf0\x00\x00\x01rest' >"$bit"
 sum="$(sha256sum "$bit" | cut -d' ' -f1)"
@@ -41,8 +33,7 @@ refused() { # refused <text> <args...>
   local text="$1"
   shift
   local out status
-  out="$(env -u RUNFILES_DIR -u RUNFILES_MANIFEST_FILE -u TEST_SRCDIR \
-    "$prog" --hostport localhost:1 "$@" 2>&1)"
+  out="$(cd "$dir/work" && "$prog" --hostport localhost:1 "$@" 2>&1)"
   status=$?
   if [[ "$status" == 0 || "$out" != *"$text"* ]]; then
     echo "FAIL: $* gave $status, wanted a refusal naming \"$text\":"
