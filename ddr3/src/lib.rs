@@ -472,21 +472,62 @@ pub struct Ddr3Per {
     pub wide: WidePins,
 }
 
+/// The controller's side towards the board (issue 726): the reset, the
+/// AXI4 link's five channels, and the wide read port's two. Taken apart
+/// in `run`, so each port keeps its name.
+pub struct Ddr3PerBus {
+    pub rst: In<Bit>,
+    pub aw: Rx<Aw<32, 5>>,
+    pub ar: Rx<Ar<32, 5>>,
+    pub w: Rx<W<32, 4>>,
+    pub b: Tx<B<5>>,
+    pub r: Tx<R<32, 5>>,
+    pub xar: Rx<Ar<32, 5>>,
+    pub xr: Tx<R<256, 5, 2>>,
+}
+
+/// The controller's side towards the memory (issue 726): its clock and
+/// reset in, calibration and the user interface's clock and reset out,
+/// the DDR3 command lines, the row and bank address, the data mask and
+/// termination, and the data and strobe pads.
+pub struct Ddr3PerPins {
+    pub sys_clk: In<Bit>,
+    pub sys_rst: In<Bit>,
+    pub calib: Out<Bit>,
+    pub ui_clk: Out<Bit>,
+    pub ui_rst: Out<Bit>,
+    pub ck_p: Out<Bit>,
+    pub ck_n: Out<Bit>,
+    pub mem_rst_n: Out<Bit>,
+    pub cke: Out<Bit>,
+    pub cs_n: Out<Bit>,
+    pub ras_n: Out<Bit>,
+    pub cas_n: Out<Bit>,
+    pub we_n: Out<Bit>,
+    pub row: Out<U<15>>,
+    pub bank: Out<U<3>>,
+    pub dm: Out<U<4>>,
+    pub odt: Out<Bit>,
+    pub dq: Pad<U<32>>,
+    pub dqs: Pad<U<4>>,
+    pub dqs_n: Pad<U<4>>,
+}
+
 #[lower]
 impl Unit for Ddr3Per {
     async fn run(
         &mut self,
-        (rst, aw, ar, w, b, r, xar, xr): (
-            In<Bit>,
-            Rx<Aw<32, 5>>,
-            Rx<Ar<32, 5>>,
-            Rx<W<32, 4>>,
-            Tx<B<5>>,
-            Tx<R<32, 5>>,
-            Rx<Ar<32, 5>>,
-            Tx<R<256, 5, 2>>,
-        ),
-        (
+        Ddr3PerBus {
+            rst,
+            aw,
+            ar,
+            w,
+            b,
+            r,
+            xar,
+            xr,
+        }: Ddr3PerBus,
+        Ddr3PerPins {
             sys_clk,
             sys_rst,
             calib,
@@ -507,28 +548,7 @@ impl Unit for Ddr3Per {
             dq,
             dqs,
             dqs_n,
-        ): (
-            In<Bit>,
-            In<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<Bit>,
-            Out<U<15>>,
-            Out<U<3>>,
-            Out<U<4>>,
-            Out<Bit>,
-            Pad<U<32>>,
-            Pad<U<4>>,
-            Pad<U<4>>,
-        ),
+        }: Ddr3PerPins,
     ) {
         // What the unit drives and the controller reads.
         let (awid_o, awid_i) = signal::<U<5>, DefaultClock>();
@@ -675,7 +695,7 @@ impl Unit for Ddr3Per {
 #[cfg(test)]
 mod tests {
     use super::sim::WideRead;
-    use super::{Ddr3Per, MODEL_WARMUP};
+    use super::{Ddr3Per, Ddr3PerBus, Ddr3PerPins, MODEL_WARMUP};
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
     use txhdl::comp::{chan, join2, pad, signal, DefaultClock, Running, Unit};
@@ -726,38 +746,38 @@ mod tests {
             h.run(host_in, host_out),
             join2(
                 mem.run(
-                    (
-                        signal::<Bit, DefaultClock>().1,
+                    Ddr3PerBus {
+                        rst: signal::<Bit, DefaultClock>().1,
                         aw,
                         ar,
                         w,
                         b,
                         r,
-                        chan::<Ar<32, 5>, DefaultClock>().1,
-                        chan::<R<256, 5, 2>, DefaultClock>().0,
-                    ),
-                    (
+                        xar: chan::<Ar<32, 5>, DefaultClock>().1,
+                        xr: chan::<R<256, 5, 2>, DefaultClock>().0,
+                    },
+                    Ddr3PerPins {
                         sys_clk,
                         sys_rst,
-                        calib_o,
-                        bits(),
-                        bits(),
-                        bits(),
-                        bits(),
-                        bits(),
-                        bits(),
-                        bits(),
-                        bits(),
-                        bits(),
-                        bits(),
-                        signal::<U<15>, DefaultClock>().0,
-                        signal::<U<3>, DefaultClock>().0,
-                        signal::<U<4>, DefaultClock>().0,
-                        bits(),
-                        pad::<U<32>, DefaultClock>(),
-                        pad::<U<4>, DefaultClock>(),
-                        pad::<U<4>, DefaultClock>(),
-                    ),
+                        calib: calib_o,
+                        ui_clk: bits(),
+                        ui_rst: bits(),
+                        ck_p: bits(),
+                        ck_n: bits(),
+                        mem_rst_n: bits(),
+                        cke: bits(),
+                        cs_n: bits(),
+                        ras_n: bits(),
+                        cas_n: bits(),
+                        we_n: bits(),
+                        row: signal::<U<15>, DefaultClock>().0,
+                        bank: signal::<U<3>, DefaultClock>().0,
+                        dm: signal::<U<4>, DefaultClock>().0,
+                        odt: bits(),
+                        dq: pad::<U<32>, DefaultClock>(),
+                        dqs: pad::<U<4>, DefaultClock>(),
+                        dqs_n: pad::<U<4>, DefaultClock>(),
+                    },
                 ),
                 client,
             ),
@@ -826,38 +846,38 @@ mod tests {
             h.run(host_in, host_out),
             join2(
                 mem.run(
-                    (
-                        signal::<Bit, DefaultClock>().1,
+                    Ddr3PerBus {
+                        rst: signal::<Bit, DefaultClock>().1,
                         aw,
                         ar,
                         w,
                         b,
                         r,
-                        chan::<Ar<32, 5>, DefaultClock>().1,
-                        chan::<R<256, 5, 2>, DefaultClock>().0,
-                    ),
-                    (
-                        signal::<Bit, DefaultClock>().1,
-                        signal::<Bit, DefaultClock>().1,
-                        bits(),
-                        bits(),
-                        bits(),
-                        bits(),
-                        bits(),
-                        bits(),
-                        bits(),
-                        bits(),
-                        bits(),
-                        bits(),
-                        bits(),
-                        signal::<U<15>, DefaultClock>().0,
-                        signal::<U<3>, DefaultClock>().0,
-                        signal::<U<4>, DefaultClock>().0,
-                        bits(),
-                        pad::<U<32>, DefaultClock>(),
-                        pad::<U<4>, DefaultClock>(),
-                        pad::<U<4>, DefaultClock>(),
-                    ),
+                        xar: chan::<Ar<32, 5>, DefaultClock>().1,
+                        xr: chan::<R<256, 5, 2>, DefaultClock>().0,
+                    },
+                    Ddr3PerPins {
+                        sys_clk: signal::<Bit, DefaultClock>().1,
+                        sys_rst: signal::<Bit, DefaultClock>().1,
+                        calib: bits(),
+                        ui_clk: bits(),
+                        ui_rst: bits(),
+                        ck_p: bits(),
+                        ck_n: bits(),
+                        mem_rst_n: bits(),
+                        cke: bits(),
+                        cs_n: bits(),
+                        ras_n: bits(),
+                        cas_n: bits(),
+                        we_n: bits(),
+                        row: signal::<U<15>, DefaultClock>().0,
+                        bank: signal::<U<3>, DefaultClock>().0,
+                        dm: signal::<U<4>, DefaultClock>().0,
+                        odt: bits(),
+                        dq: pad::<U<32>, DefaultClock>(),
+                        dqs: pad::<U<4>, DefaultClock>(),
+                        dqs_n: pad::<U<4>, DefaultClock>(),
+                    },
                 ),
                 join2(client, join2(wide.run(wide_ar_rx, wide_r_tx), sink)),
             ),

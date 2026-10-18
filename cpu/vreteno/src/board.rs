@@ -33,7 +33,7 @@ use crate::isa;
 use crate::rom::Rom;
 use crate::timer::Timer;
 use crate::uart::Uart;
-use ddr3::Ddr3Per;
+use ddr3::{Ddr3Per, Ddr3PerBus, Ddr3PerPins};
 use razboj::doorbell::Doorbell;
 use razboj::raster::Raster;
 use txhdl::comp::{
@@ -1887,14 +1887,38 @@ join2(
                                 ),
                             ),
                             self.ddr3.run(
-                                (rst_ddr3, aw3_rx, ar3_rx, w3_rx, b3_tx, r3_tx, wide_ar,
-                                 wide_r),
-                                (
-                                    sys_clk, sys_rst, calib, ui_clk, ui_rst,
-                                    ck_p, ck_n, mem_rst_n, cke, cs_n, ras_n,
-                                    cas_n, we_n, row, bank, dm, odt, dq, dqs,
+                                Ddr3PerBus {
+                                    rst: rst_ddr3,
+                                    aw: aw3_rx,
+                                    ar: ar3_rx,
+                                    w: w3_rx,
+                                    b: b3_tx,
+                                    r: r3_tx,
+                                    xar: wide_ar,
+                                    xr: wide_r,
+                                },
+                                Ddr3PerPins {
+                                    sys_clk,
+                                    sys_rst,
+                                    calib,
+                                    ui_clk,
+                                    ui_rst,
+                                    ck_p,
+                                    ck_n,
+                                    mem_rst_n,
+                                    cke,
+                                    cs_n,
+                                    ras_n,
+                                    cas_n,
+                                    we_n,
+                                    row,
+                                    bank,
+                                    dm,
+                                    odt,
+                                    dq,
+                                    dqs,
                                     dqs_n,
-                                ),
+                                },
                             ),
                         ),
                     ),
