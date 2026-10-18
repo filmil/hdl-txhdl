@@ -667,11 +667,7 @@ fn demo_end(frames: u32) {
             Uart::say(SERIES);
             Uart::put(b' ');
             Uart::say(step.as_bytes());
-            Uart::say(if cfg!(uart_fence) {
-                b" tx_dropped fenced "
-            } else {
-                b" tx_dropped "
-            });
+            Uart::say(b" tx_dropped ");
             Uart::put_decimal(Uart::tx_dropped());
             Uart::put(b'\n');
             vreteno_hal::halt();
@@ -690,9 +686,6 @@ fn main() -> ! {
     // A fault says where it was and what it read, rather than leaving
     // the loader only the cause and the instruction (#1214).
     trap::say_faults();
-    // The board check of #1778: a fence after every byte sent.
-    #[cfg(uart_fence)]
-    Uart::set_fence(true);
     let solid = Solid::new();
     Uart::say(b"ico ");
     Uart::put_decimal(solid.found as u32);
