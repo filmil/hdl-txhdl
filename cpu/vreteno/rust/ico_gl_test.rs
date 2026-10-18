@@ -248,7 +248,7 @@ fn the_textured_frame_on_the_rasteriser_is_the_models() {
         more,
         ..Work::tiled(&list, W as usize, RH)
     };
-    let runs = run_works_at::<A, LOGW, RH, N, DL, CTRL>(&[work], false, false);
+    let runs = run_works_at::<A, LOGW, RH, N, DL, CTRL>(&[work], false);
     let read = |a: u32| room[((a - TEX) / 4) as usize];
     let t = Textures { mem: &read };
     let want = render_textured(&list, FW, RH, vec![0; FW * RH], Some(&t));

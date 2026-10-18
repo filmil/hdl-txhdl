@@ -24,9 +24,8 @@ const CTRL: usize = 0x600;
 fn main() {
     let first = op::assemble(&scene::small(), W, H);
     let second = op::assemble(&scene::small_next(), W, H);
-    let runs = sim::run_lists::<LOGW, H, N, DL, CTRL>(
+    let runs = sim::run_lists_netlists::<LOGW, H, N, DL, CTRL>(
         &[first.clone(), second.clone()],
-        true,
         true,
     );
     let both: Vec<_> = first.iter().chain(&second).copied().collect();

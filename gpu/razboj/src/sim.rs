@@ -44,10 +44,8 @@ pub struct Run {
 /// are the host's work and not the rasteriser's, and then drawn as
 /// [`run_list`] draws it.
 ///
-/// `wave` writes the trace where `TXHDL_FST` says, and `netlists`
-/// writes the two units' VHDL and Verilog where `TXHDL_VHDL` and
-/// `TXHDL_VERILOG` say, so that the build can simulate the lowering
-/// against this very run.
+/// `wave` writes the trace where `TXHDL_FST` says. No netlist is
+/// written: [`run_netlists`] does that.
 pub fn run<
     const LOGW: usize,
     const H: usize,
@@ -57,10 +55,28 @@ pub fn run<
 >(
     ops: &[Op],
     wave: bool,
-    netlists: bool,
 ) -> Run {
     let insns = assemble(ops, 1usize << LOGW, H);
-    run_list::<LOGW, H, N, DL, CTRL>(&insns, wave, netlists)
+    run_list::<LOGW, H, N, DL, CTRL>(&insns, wave)
+}
+
+/// [`run`], and the two units' VHDL and Verilog written where
+/// `TXHDL_VHDL` and `TXHDL_VERILOG` say, so that the build can
+/// simulate the lowering against this very run.
+pub fn run_netlists<
+    const LOGW: usize,
+    const H: usize,
+    const N: usize,
+    const DL: usize,
+    const CTRL: usize,
+>(
+    ops: &[Op],
+    wave: bool,
+) -> Run {
+    let insns = assemble(ops, 1usize << LOGW, H);
+    let mut runs =
+        lists_at::<ADDR, LOGW, H, N, DL, CTRL, true>(&[insns.to_vec()], wave);
+    runs.pop().expect("one list, one run")
 }
 
 /// Render a display list that is already assembled, such as one a
@@ -77,10 +93,8 @@ pub fn run_list<
 >(
     insns: &[Insn],
     wave: bool,
-    netlists: bool,
 ) -> Run {
-    let mut runs =
-        run_lists::<LOGW, H, N, DL, CTRL>(&[insns.to_vec()], wave, netlists);
+    let mut runs = run_lists::<LOGW, H, N, DL, CTRL>(&[insns.to_vec()], wave);
     runs.pop().expect("one list, one run")
 }
 
@@ -91,11 +105,6 @@ pub fn run_list<
 /// which is what a program on the same memory would do. A [`Run`] per
 /// list: the framebuffer as that list left it, and the cycles until
 /// then.
-///
-/// With one list both units' netlists are written, and the build
-/// checks both against this run. With more, only the rasteriser's
-/// are, since the lists after the first reach the framebuffer's memory
-/// from here and not through its port, which its netlist cannot see.
 pub fn run_lists<
     const LOGW: usize,
     const H: usize,
@@ -105,9 +114,26 @@ pub fn run_lists<
 >(
     lists: &[Vec<Insn>],
     wave: bool,
-    netlists: bool,
 ) -> Vec<Run> {
-    run_lists_at::<ADDR, LOGW, H, N, DL, CTRL>(lists, wave, netlists)
+    lists_at::<ADDR, LOGW, H, N, DL, CTRL, false>(lists, wave)
+}
+
+/// [`run_lists`], and the netlists written as [`run_netlists`] writes
+/// them. With one list both units' netlists are written, and the build
+/// checks both against this run. With more, only the rasteriser's
+/// are, since the lists after the first reach the framebuffer's memory
+/// from here and not through its port, which its netlist cannot see.
+pub fn run_lists_netlists<
+    const LOGW: usize,
+    const H: usize,
+    const N: usize,
+    const DL: usize,
+    const CTRL: usize,
+>(
+    lists: &[Vec<Insn>],
+    wave: bool,
+) -> Vec<Run> {
+    lists_at::<ADDR, LOGW, H, N, DL, CTRL, true>(lists, wave)
 }
 
 /// The same on a link of `A` address bits rather than [`ADDR`], for a
@@ -123,10 +149,25 @@ pub fn run_lists_at<
 >(
     lists: &[Vec<Insn>],
     wave: bool,
-    netlists: bool,
+) -> Vec<Run> {
+    lists_at::<A, LOGW, H, N, DL, CTRL, false>(lists, wave)
+}
+
+/// Flat lists, as [`works_at`] runs them.
+fn lists_at<
+    const A: usize,
+    const LOGW: usize,
+    const H: usize,
+    const N: usize,
+    const DL: usize,
+    const CTRL: usize,
+    const NL: bool,
+>(
+    lists: &[Vec<Insn>],
+    wave: bool,
 ) -> Vec<Run> {
     let works: Vec<Work> = lists.iter().map(|l| Work::flat(l)).collect();
-    run_works_at::<A, LOGW, H, N, DL, CTRL>(&works, wave, netlists)
+    works_at::<A, LOGW, H, N, DL, CTRL, NL>(&works, wave)
 }
 
 /// A list as the rasteriser finds it in memory: the words at `DL`, and
@@ -162,7 +203,7 @@ impl Work {
 }
 
 /// Render lists laid out in memory as [`Work`] says, flat or in tiles,
-/// one after another, as [`run_lists_at`] does.
+/// one after another, as [`run_lists_at`] does, with no netlists.
 pub fn run_works_at<
     const A: usize,
     const LOGW: usize,
@@ -173,7 +214,30 @@ pub fn run_works_at<
 >(
     lists: &[Work],
     wave: bool,
-    netlists: bool,
+) -> Vec<Run> {
+    works_at::<A, LOGW, H, N, DL, CTRL, false>(lists, wave)
+}
+
+/// The run itself, which writes the netlists when `NL` says. `NL` is a
+/// constant and not an argument, and only [`run_netlists`] and
+/// [`run_lists_netlists`] set it, so that a crate which calls neither
+/// does not compile `Raster::lowered` through this module. Under a
+/// run-time flag it was compiled into every crate that rendered, and at
+/// opt-level 3 LLVM spent 23 minutes and 7 GiB on it in
+/// `ico_mip_test` (#1806). A false constant leaves it out because
+/// rustc does not instantiate what only a branch it has removed calls,
+/// which a probe with rustc 1.90 showed even at opt-level 0.
+fn works_at<
+    const A: usize,
+    const LOGW: usize,
+    const H: usize,
+    const N: usize,
+    const DL: usize,
+    const CTRL: usize,
+    const NL: bool,
+>(
+    lists: &[Work],
+    wave: bool,
 ) -> Vec<Run> {
     let w = 1usize << LOGW;
     // The memory the rasteriser reads its work out of and writes its
@@ -295,12 +359,12 @@ pub fn run_works_at<
     if wave {
         stop();
     }
-    if netlists && lists.len() > 1 {
+    if NL && lists.len() > 1 {
         // A name of its own, since the one-list run's netlist is
         // `raster` and the two are checked side by side.
         let r = Raster::<A, IDB, LOGW, H, 0, DL, CTRL>::lowered("raster_lists");
         txhdl::netlist::write_netlists_from_env(&[&r]);
-    } else if netlists {
+    } else if NL {
         let r = Raster::<A, IDB, LOGW, H, 0, DL, CTRL>::lowered("raster");
         // The memory starts with the display list in it, which the
         // lowering cannot see: `Mem::with` gave it at run time. The
@@ -354,7 +418,7 @@ mod tests {
 
     /// Render `ops` both ways and say where they differ.
     fn agree(ops: &[Op], what: &str) {
-        let got = run::<LOGW, H, N, DL, CTRL>(ops, false, false);
+        let got = run::<LOGW, H, N, DL, CTRL>(ops, false);
         let want = model::render(&assemble(ops, W, H), W, H);
         for y in 0..H {
             for x in 0..W {
@@ -401,7 +465,6 @@ mod tests {
         let runs = run_lists::<LOGW, H, N, DL, CTRL>(
             &[first.clone(), second.clone()],
             false,
-            false,
         );
         assert_eq!(runs.len(), 2, "two lists, two done");
         assert_eq!(runs[0].fb, model::render(&first, W, H), "the first");
@@ -429,7 +492,7 @@ mod tests {
             .collect();
         let insns = assemble(&ops, W, H);
         assert_eq!(insns.len(), 300);
-        let got = super::run::<LOGW, H, N, DL, CTRL>(&ops, false, false);
+        let got = super::run::<LOGW, H, N, DL, CTRL>(&ops, false);
         assert_eq!(got.fb, model::render(&insns, W, H), "300 entries");
     }
 
@@ -441,7 +504,7 @@ mod tests {
     fn an_entry_is_fetched_in_one_burst() {
         let ops = scene::small();
         let n = assemble(&ops, W, H).len() as u64;
-        let got = run::<LOGW, H, N, DL, CTRL>(&ops, false, false);
+        let got = run::<LOGW, H, N, DL, CTRL>(&ops, false);
         let (bursts, beats) = got.reads;
         assert_eq!(beats - bursts, 15 * n, "{bursts} bursts, {beats} beats");
     }
@@ -494,7 +557,7 @@ mod tests {
         const N: usize = 4096;
         const DL: usize = 0x1000;
         const CTRL: usize = 0x3800;
-        let got = run::<LOGW, H, N, DL, CTRL>(&ops, false, false);
+        let got = run::<LOGW, H, N, DL, CTRL>(&ops, false);
         assert_eq!(got.fb, model::render(&list, W, H), "the picture");
         // The clear writes every pixel, the mesh every pixel once more,
         // and the count is written back to zero at the end.
@@ -553,7 +616,7 @@ mod tests {
             },
         ];
         agree(&ops, "alpha");
-        let got = run::<LOGW, H, N, DL, CTRL>(&ops, false, false);
+        let got = run::<LOGW, H, N, DL, CTRL>(&ops, false);
         let alphas: BTreeSet<u32> = got.fb.iter().map(|p| p >> 24).collect();
         assert_eq!(alphas, BTreeSet::from([0x11, 0x22, 0x33, 0x44]));
     }
@@ -600,7 +663,7 @@ mod tests {
         };
         let ops = with(scissor);
         agree(&ops, "scissored");
-        let got = run::<LOGW, H, N, DL, CTRL>(&ops, false, false);
+        let got = run::<LOGW, H, N, DL, CTRL>(&ops, false);
         for y in 0..H as i32 {
             for x in 0..W as i32 {
                 let inside = (x0..=x1).contains(&x) && (y0..=y1).contains(&y);
@@ -725,13 +788,11 @@ mod tests {
             let tiled = run_works_at::<A, LOGW, H, N, DL, CTRL>(
                 &[Work::tiled(&list, W, H)],
                 false,
-                false,
             );
             let at = want.iter().zip(&tiled[0].fb).position(|(p, q)| p != q);
             assert_eq!(at, None, "func {func}: the first pixel that differs");
             let flat = run_works_at::<A, LOGW, H, N, DL, CTRL>(
                 &[Work::flat(&list)],
-                false,
                 false,
             );
             let mut plain = list.clone();
@@ -852,11 +913,8 @@ mod tests {
             );
             assert!(loads(&w2) > 0, "round {round}: a blend over memory loads");
             assert_eq!(loads(&w3), 0, "round {round}: after a clear, none");
-            let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
-                &[w1, w2, w3],
-                false,
-                false,
-            );
+            let runs =
+                run_works_at::<A, LOGW, H, N, DL, CTRL>(&[w1, w2, w3], false);
             let base = model::render(&first, W, H);
             assert_eq!(runs[0].fb, base, "round {round}: the backdrop");
             let want = model::render_over(&over, W, H, base.clone());
@@ -962,7 +1020,6 @@ mod tests {
             let over = assemble(&ops, W, H);
             let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
                 &[Work::tiled(&first, W, H), Work::tiled(&over, W, H)],
-                false,
                 false,
             );
             let base = model::render(&first, W, H);
@@ -1107,7 +1164,6 @@ mod tests {
             let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
                 &[Work::tiled(&first, W, H), Work::tiled(&over, W, H)],
                 false,
-                false,
             );
             let base = model::render(&first, W, H);
             let want = model::render_over(&over, W, H, base.clone());
@@ -1215,7 +1271,6 @@ mod tests {
             assert!(over.iter().any(|i| i.ashade.to_bool()));
             let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
                 &[Work::tiled(&first, W, H), Work::tiled(&over, W, H)],
-                false,
                 false,
             );
             let base = model::render(&first, W, H);
@@ -1382,7 +1437,6 @@ mod tests {
             assert!(list.iter().any(|i| i.sten.to_bool()));
             let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
                 &[Work::tiled(&list, W, H)],
-                false,
                 false,
             );
             let want = model::render(&list, W, H);
@@ -1607,11 +1661,8 @@ mod tests {
                 more,
                 ..Work::flat(&list)
             };
-            let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
-                &[tiled, plain],
-                false,
-                false,
-            );
+            let runs =
+                run_works_at::<A, LOGW, H, N, DL, CTRL>(&[tiled, plain], false);
             let read = |a: u32| *mem.get(&a).unwrap_or(&0);
             let t = Textures { mem: &read };
             let want = render_textured(&list, W, H, vec![0; W * H], Some(&t));
@@ -1722,7 +1773,6 @@ mod tests {
             let runs = run_works_at::<A, LOGW, H, N, DL, CTRL>(
                 &[square(false, false, step, d), square(true, two, step, d)],
                 false,
-                false,
             );
             let px = (W * H) as u64;
             let cycles = runs[1].cycles - 2 * runs[0].cycles;
@@ -1802,10 +1852,8 @@ mod tests {
         for t in 0..tiles {
             plain.words[2 * t + 1] &= !LOAD;
         }
-        let with =
-            run_works_at::<A, LOGW, H, N, DL, CTRL>(&[loaded], false, false);
-        let without =
-            run_works_at::<A, LOGW, H, N, DL, CTRL>(&[plain], false, false);
+        let with = run_works_at::<A, LOGW, H, N, DL, CTRL>(&[loaded], false);
+        let without = run_works_at::<A, LOGW, H, N, DL, CTRL>(&[plain], false);
         let each = (with[0].cycles - without[0].cycles) / tiles as u64;
         println!("a load costs {each} cycles a tile, {tiles} tiles");
         let write_out = (razboj_tile::TILE * (razboj_tile::TILE + 1)) as u64;
@@ -1880,8 +1928,8 @@ mod tests {
             scenes.iter().map(|l| Work::tiled(l, W, H)).collect();
         let many = tiled.iter().filter(|t| t.count & 0xffff > 4).count();
         assert!(many >= 3, "scenes over many tiles: {many}");
-        let a = run_works_at::<A, LOGW, H, N, DL, CTRL>(&flat, false, false);
-        let b = run_works_at::<A, LOGW, H, N, DL, CTRL>(&tiled, false, false);
+        let a = run_works_at::<A, LOGW, H, N, DL, CTRL>(&flat, false);
+        let b = run_works_at::<A, LOGW, H, N, DL, CTRL>(&tiled, false);
         for (i, (f, t)) in a.iter().zip(&b).enumerate() {
             let first = f.fb.iter().zip(&t.fb).position(|(p, q)| p != q);
             assert_eq!(first, None, "scene {i}: the first pixel that differs");
@@ -1910,7 +1958,7 @@ mod tests {
         const DL: usize = 0x1000;
         const CTRL: usize = 0x3800;
         let clear = [bg(0x0012_3456)];
-        let got = run::<LOGW, H, N, DL, CTRL>(&clear, false, false);
+        let got = run::<LOGW, H, N, DL, CTRL>(&clear, false);
         assert!(got.fb.iter().all(|&p| p == 0x0012_3456), "the clear");
         assert_eq!(got.bursts, (H * W / 16 + 1) as u64, "clear's bursts");
         assert_eq!(got.writes, (W * H + 1) as u64, "clear's pixels");
@@ -1921,7 +1969,7 @@ mod tests {
             c: (9, 15),
         }];
         let list = assemble(&tri, W, H);
-        let got = run::<LOGW, H, N, DL, CTRL>(&tri, false, false);
+        let got = run::<LOGW, H, N, DL, CTRL>(&tri, false);
         assert_eq!(got.fb, model::render(&list, W, H), "the triangle");
         let cover = model::coverage(&list, W, H);
         let runs: Vec<usize> = (0..H)
@@ -1947,7 +1995,7 @@ mod tests {
         assert_eq!(insn.x1.raw(), 0, "a clear carries no box");
         assert_eq!(insn.y1.raw(), 0, "a clear carries no box");
         assert_eq!(insn.ax.raw(), 0, "a clear carries no vertices");
-        let got = run::<LOGW, H, N, DL, CTRL>(&[bg(0x31_41_59)], false, false);
+        let got = run::<LOGW, H, N, DL, CTRL>(&[bg(0x31_41_59)], false);
         assert!(
             got.fb.iter().all(|&p| p == 0x31_41_59),
             "the clear did not reach every pixel"
@@ -2100,7 +2148,6 @@ mod tests {
         let want = model::render(&insns, 1 << LOGW, H);
         let runs = run_lists_at::<20, LOGW, H, 65536, 0x3_0000, 0x3_8000>(
             &[insns],
-            false,
             false,
         );
         let got = &runs[0].fb;
