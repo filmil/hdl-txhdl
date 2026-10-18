@@ -666,7 +666,7 @@ buffer is far larger, for speed, and charging its misses had the
 model walk on every 4\,KiB of Linux's megapages and too seldom once
 more than eight pages were in use. From OpenSBI's banner to Linux's
 \code{/init}, a boot comes out 28 per cent under the board's for the
-uniprocessor kernel and 24 per cent under for the SMP one on two
+uniprocessor kernel and 25 per cent under for the SMP one on two
 harts. About 0.9\,s of each is the serial port's wait, which the model
 does not have, and most of the rest is in the kernel's initcalls,
 which no single loop shows, so it is not the default.
