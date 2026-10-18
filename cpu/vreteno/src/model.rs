@@ -812,8 +812,10 @@ impl Model {
         // second's unless the first is a leaf or a fault; and the leaf it
         // keeps, which it keeps whether or not the access is then
         // allowed, since the buffers check that on every hit.
-        // Nothing is walked where translation is off: `satp` bare, or
-        // machine mode as `MPRV` leaves it.
+        // Nothing is walked where translation is off: `satp` bare, or the
+        // access's mode machine. `m.prv` is that mode, which for a load
+        // or a store in machine mode with `MPRV` set is `MPP`'s, as
+        // `data_pa` gives it, so such an access is walked as `MPP`'s.
         let on = m.satp >> 31 != 0 && m.prv != 3;
         let miss = self.timing.is_some()
             && on
@@ -2130,7 +2132,27 @@ mod tests {
         for k in 0..12 {
             assert_eq!(reads(&m, 0x4000_0000 + k * 0x1000, false), 0, "M");
         }
+        // Unless `MPRV` sends a load through the supervisor's tables.
+        m.csr.mstatus |= MPRV | 1 << 11;
+        assert_eq!(reads(&m, page(9), false), 2, "MPRV, MPP supervisor");
+        m.csr.mstatus &= !(MPRV | MPP);
         m.prv = 1;
+        // Nor with `satp` bare.
+        m.csr_write(CSR_SATP, 0);
+        assert_eq!(reads(&m, page(10), false), 0, "satp bare");
+        m.csr_write(CSR_SATP, 1 << 31 | root >> 12);
+        // The other faults the walker stops at: a pointer at the second
+        // level, a megapage not aligned, and an entry past 32 bits, each
+        // read and never kept.
+        put(l0 + 4 * 21, to(l0, V));
+        assert_eq!(reads(&m, page(21), false), 2, "a pointer at level 0");
+        assert_eq!(reads(&m, page(21), false), 2, "not kept");
+        put(root + 28, to(0x4000_1000, V | R | W | A | D));
+        assert_eq!(reads(&m, 0x01c0_0000, false), 1, "megapage not aligned");
+        assert_eq!(reads(&m, 0x01c0_0000, false), 1, "not kept");
+        put(root + 32, 1 << 30 | V | R | W | A | D);
+        assert_eq!(reads(&m, 0x0200_0000, false), 1, "past 32 bits");
+        assert_eq!(reads(&m, 0x0200_0000, false), 1, "not kept");
         // Outside the timing mode nothing is counted.
         m.timing = None;
         m.csr_write(CSR_SATP, 1 << 31 | root >> 12);
