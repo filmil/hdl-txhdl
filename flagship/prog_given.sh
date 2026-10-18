@@ -69,8 +69,28 @@ fi
 # bitstream's place. The file is copied before it is checked, and the
 # copy is what is checked and programmed, so that a file on a shared
 # disk changing meanwhile cannot slip past the check.
-base="$(rlocation txhdl/flagship/flagship_prog_given_base.sh)"
-main="$(dirname "$(dirname "$base")")"
+# The runfiles tree, not the file `rlocation` would name: through a
+# manifest, as `bazel run` resolves it, that is the script's place in
+# bazel-out, beside none of its runfiles (#1797). The tree is the
+# first of these that holds the script, under the main repository's
+# directory, whatever it is called.
+main=""
+for tree in "${RUNFILES_DIR:-}" \
+  "${RUNFILES_MANIFEST_FILE:+$(dirname "$RUNFILES_MANIFEST_FILE")}" \
+  "$0.runfiles"; do
+  [[ -n "$tree" && -d "$tree" ]] || continue
+  for d in "$tree"/*/; do
+    if [[ -e "${d}flagship/flagship_prog_given_base.sh" ]]; then
+      main="${d%/}"
+      break 2
+    fi
+  done
+done
+if [[ -z "$main" ]]; then
+  echo "no runfiles tree holding the programming script" >&2
+  exit 1
+fi
+base="$main/flagship/flagship_prog_given_base.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 for e in "$main"/*; do
@@ -108,6 +128,7 @@ fi
 
 export RUNFILES_DIR
 RUNFILES_DIR="$(dirname "$main")"
+unset RUNFILES_MANIFEST_FILE
 cd "$tmp"
 "$base" "${rest[@]}"
 echo "programmed $bit, sha256 $got"
