@@ -28,7 +28,7 @@ use txhdl_parts::bus::axi::{
 use txhdl_parts::bus::axi_per_pins::sim::pins as pin_ram;
 use txhdl_parts::bus::axi_per_pins::AxiPerPins;
 
-use crate::Ddr3Per;
+use crate::{Ddr3Per, Ddr3PerBus, Ddr3PerPins};
 
 /// What a run moved, and in how many cycles.
 #[derive(Clone, Copy, Debug)]
@@ -156,38 +156,38 @@ pub fn ddr3_per(beats: usize, bursts: usize, write: bool) -> Measured {
         h.run(host_in, host_out),
         join2(
             mem.run(
-                (
-                    signal::<Bit, DefaultClock>().1,
+                Ddr3PerBus {
+                    rst: signal::<Bit, DefaultClock>().1,
                     aw,
                     ar,
                     w,
                     b,
                     r,
-                    chan::<Ar<32, 5>, DefaultClock>().1,
-                    chan::<R<256, 5, 2>, DefaultClock>().0,
-                ),
-                (
+                    xar: chan::<Ar<32, 5>, DefaultClock>().1,
+                    xr: chan::<R<256, 5, 2>, DefaultClock>().0,
+                },
+                Ddr3PerPins {
                     sys_clk,
                     sys_rst,
-                    calib_o,
-                    bits(),
-                    bits(),
-                    bits(),
-                    bits(),
-                    bits(),
-                    bits(),
-                    bits(),
-                    bits(),
-                    bits(),
-                    bits(),
-                    signal::<U<15>, DefaultClock>().0,
-                    signal::<U<3>, DefaultClock>().0,
-                    signal::<U<4>, DefaultClock>().0,
-                    bits(),
-                    pad::<U<32>, DefaultClock>(),
-                    pad::<U<4>, DefaultClock>(),
-                    pad::<U<4>, DefaultClock>(),
-                ),
+                    calib: calib_o,
+                    ui_clk: bits(),
+                    ui_rst: bits(),
+                    ck_p: bits(),
+                    ck_n: bits(),
+                    mem_rst_n: bits(),
+                    cke: bits(),
+                    cs_n: bits(),
+                    ras_n: bits(),
+                    cas_n: bits(),
+                    we_n: bits(),
+                    row: signal::<U<15>, DefaultClock>().0,
+                    bank: signal::<U<3>, DefaultClock>().0,
+                    dm: signal::<U<4>, DefaultClock>().0,
+                    odt: bits(),
+                    dq: pad::<U<32>, DefaultClock>(),
+                    dqs: pad::<U<4>, DefaultClock>(),
+                    dqs_n: pad::<U<4>, DefaultClock>(),
+                },
             ),
             client(host, beats, bursts, write, done),
         ),
