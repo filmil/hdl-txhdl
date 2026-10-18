@@ -2292,6 +2292,188 @@ fn sv32_translates_and_faults_where_the_tables_say() {
     assert_eq!(m.x[20], 0, "sc.w stored where it may");
 }
 
+/// What translation costs the core (issue 1561), timed on the RTL: short
+/// loops in supervisor mode under translation and in machine mode
+/// without it, each 32 rounds and warm. A load's round and a store's,
+/// less the empty loop's, are the access; a round that jumps to a label
+/// and back is the fetch's redirect, and the same round with the label
+/// on another page, an alias of the same boot memory, makes the fetch
+/// move between two pages twice. Beyond the empty loop's difference, what
+/// the modes differ by is the waits for the unit's answer that the core
+/// makes under translation (`stall_mem`'s `dvm & !x_done`, and the
+/// fetch's `i_need`), which the timing mode charges as `Timing::xlate`.
+#[test]
+fn translation_costs_the_core_what_the_timing_mode_charges() {
+    use txhdl_parts::mmu::pte::{to, A, D, R, V, W, X};
+    use vreteno32::isa::*;
+    use vreteno32::program::Asm;
+    // The boot memory as two pages, an alias each of the same 4 KiB,
+    // and the data memory a page.
+    const CODE: u32 = 0x8010_0000;
+    const DATA: u32 = 0xc021_0000;
+    const ROUNDS: i32 = 32;
+    let mut a = Asm::default();
+    let (mh, s_code) = (a.label(), a.label());
+    // The tables, the root and the second level both the data memory:
+    // the root's entries at 0x200 and 0x300, the second level's at
+    // 0x100, 0x101 and 0x210, the cycles below 0x40.
+    a.wide(lui(3, 2));
+    a.wide(addi(3, 3, -0x800));
+    let entry = |a: &mut Asm, idx: u32, v: u32| {
+        li(a, 5, v);
+        a.wide(sw(5, 3, (4 * idx) as i32 - 0x800));
+    };
+    entry(&mut a, 0x200, to(0x1000, V));
+    entry(&mut a, 0x100, to(0, V | R | X | A));
+    entry(&mut a, 0x101, to(0, V | R | X | A));
+    entry(&mut a, 0x300, to(0x1000, V));
+    entry(&mut a, 0x210, to(0x1000, V | R | W | A | D));
+    a.wide(csrrwi(0, CSR_MCOUNTEREN, 1));
+    li(&mut a, 5, txhdl_parts::mmu::satp(0x1000));
+    a.wide(csrrw(0, CSR_SATP, 5));
+    la(&mut a, 31, mh, 0);
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    li(&mut a, 5, 0x800); // MPP = supervisor
+    a.wide(csrrw(0, CSR_MSTATUS, 5));
+    la(&mut a, 31, s_code, CODE);
+    a.wide(csrrw(0, CSR_MEPC, 31));
+    a.wide(mret());
+    // A loop, timed by `csr`, the data at x10, run twice and the second
+    // kept, its cycles stored at x11 + 4k. `page` is 0 for a jump to a
+    // label in the same page, 0x1000 for one on the alias page.
+    let timed = |a: &mut Asm, csr: u32, k: i32, page: i32| {
+        for pass in 0..2 {
+            a.wide(addi(7, 0, ROUNDS));
+            a.wide(csrrs(8, csr, 0));
+            let (top, back, far, over) =
+                (a.label(), a.label(), a.label(), a.label());
+            a.place(top);
+            match k {
+                0 => a.wide(lw(12, 10, 0x40)),
+                1 => a.wide(addi(12, 12, 1)),
+                2 => a.wide(sw(12, 10, 0x44)),
+                _ => a.to(far, move |off| jal(0, off + page)),
+            }
+            a.place(back);
+            a.wide(addi(7, 7, -1));
+            a.to(top, |off| bne(7, 0, off));
+            a.wide(csrrs(9, csr, 0));
+            if pass == 1 {
+                a.wide(sub(9, 9, 8));
+                a.wide(sw(9, 11, 4 * k));
+            }
+            a.to(over, |off| jal(0, off));
+            a.place(far);
+            a.to(back, move |off| jal(0, off - page));
+            a.place(over);
+        }
+    };
+    // Supervisor mode: words 0 to 4.
+    a.place(s_code);
+    li(&mut a, 10, DATA);
+    li(&mut a, 11, DATA);
+    for k in 0..4 {
+        timed(&mut a, CSR_CYCLE, k, 0);
+    }
+    a.wide(addi(11, 11, 4));
+    timed(&mut a, CSR_CYCLE, 3, 0x1000);
+    a.wide(ecall());
+    // Machine mode, untranslated: words 8 to 11.
+    a.align();
+    a.place(mh);
+    li(&mut a, 10, 0x1000);
+    li(&mut a, 11, 0x1020);
+    for k in 0..4 {
+        timed(&mut a, CSR_MCYCLE, k, 0);
+    }
+    a.wide(halt());
+    assert!(a.here() < 0x1000, "the code in one page of boot memory");
+    let ran = vreteno32::run::run(&a.words(), &[], 400_000);
+    assert!(ran.halted_at.is_some(), "the program ran to its halt");
+    let round = |w: usize| ran.mem[w] as f64 / ROUNDS as f64;
+    let (s_ld, s_alu, s_st, s_near, s_far) =
+        (round(0), round(1), round(2), round(3), round(4));
+    let (m_ld, m_alu, m_st, m_near) =
+        (round(8), round(9), round(10), round(11));
+    eprintln!(
+        "supervisor: load {s_ld} alu {s_alu} store {s_st} near {s_near} \
+         far {s_far}; machine: load {m_ld} alu {m_alu} store {m_st} \
+         near {m_near}"
+    );
+    let load = (s_ld - s_alu) - (m_ld - m_alu);
+    let store = (s_st - s_alu) - (m_st - m_alu);
+    let moves = (s_far - s_near) / 2.0;
+    eprintln!("under translation: a load {load}, a store {store}, a page move {moves}");
+
+    // The same load, store and empty loops copied into the data memory,
+    // which the fetch takes through the instruction cache as it takes
+    // the DDR3, and run from there in both modes, so that the fetch's
+    // path is the same and only the data's translation differs.
+    let mut b = Asm::default();
+    for k in 0..3 {
+        timed(&mut b, CSR_CYCLE, k, 0);
+    }
+    b.wide(ecall());
+    let block = b.words();
+    let mut a = Asm::default();
+    let (after_s, after_m) = (a.label(), a.label());
+    a.wide(lui(3, 2));
+    a.wide(addi(3, 3, -0x800));
+    let entry = |a: &mut Asm, idx: u32, v: u32| {
+        li(a, 5, v);
+        a.wide(sw(5, 3, (4 * idx) as i32 - 0x800));
+    };
+    entry(&mut a, 0x300, to(0x1000, V));
+    entry(&mut a, 0x210, to(0x1000, V | R | W | X | A | D));
+    for (i, w) in block.iter().enumerate() {
+        li(&mut a, 5, *w);
+        a.wide(sw(5, 3, 0x80 - 0x800 + 4 * i as i32));
+    }
+    assert!(0x80 + 4 * block.len() < 0x400, "the block below the tables");
+    a.wide(fence_i());
+    a.wide(csrrwi(0, CSR_MCOUNTEREN, 1));
+    li(&mut a, 5, txhdl_parts::mmu::satp(0x1000));
+    a.wide(csrrw(0, CSR_SATP, 5));
+    la(&mut a, 31, after_s, 0);
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    li(&mut a, 5, 0x800); // MPP = supervisor
+    a.wide(csrrw(0, CSR_MSTATUS, 5));
+    li(&mut a, 31, DATA + 0x80);
+    a.wide(csrrw(0, CSR_MEPC, 31));
+    li(&mut a, 10, DATA);
+    li(&mut a, 11, DATA);
+    a.wide(mret());
+    // Back in machine mode: the same block at its physical address.
+    a.align();
+    a.place(after_s);
+    la(&mut a, 31, after_m, 0);
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    li(&mut a, 10, 0x1000);
+    li(&mut a, 11, 0x1010);
+    li(&mut a, 5, 0x1080);
+    a.wide(jalr(0, 5, 0));
+    a.align();
+    a.place(after_m);
+    a.wide(halt());
+    let ran = vreteno32::run::run(&a.words(), &[], 400_000);
+    assert!(
+        ran.halted_at.is_some(),
+        "the second program ran to its halt"
+    );
+    let round = |w: usize| ran.mem[w] as f64 / ROUNDS as f64;
+    let (s_ld, s_alu, s_st) = (round(0), round(1), round(2));
+    let (m_ld, m_alu, m_st) = (round(4), round(5), round(6));
+    eprintln!(
+        "from the cache: supervisor load {s_ld} alu {s_alu} store {s_st}; \
+         machine load {m_ld} alu {m_alu} store {m_st}"
+    );
+    let load = (s_ld - s_alu) - (m_ld - m_alu);
+    let store = (s_st - s_alu) - (m_st - m_alu);
+    eprintln!(
+        "under translation, from the cache: a load {load}, a store {store}"
+    );
+}
+
 /// A load that traps in execute traps once, for its own cause, whatever
 /// the bus said about the load before it: a misaligned load right after
 /// a refused one is a misaligned load and nothing more.
