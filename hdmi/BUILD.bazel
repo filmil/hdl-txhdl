@@ -7,7 +7,6 @@ load(
     "@rules_vivado//build/vivado:rules.bzl",
     "vivado_program_device",
 )
-load("//tools:netlist_tool.bzl", "NETLIST_TOOL_RUSTC_FLAGS")
 load("//tools/vivado:defs.bzl", "vivado_place_and_route2", "vivado_synthesis2")
 
 package(default_visibility = ["//visibility:public"])
@@ -20,7 +19,6 @@ rust_binary(
     name = "netlist",
     srcs = ["src/netlist.rs"],
     edition = "2021",
-    rustc_flags = NETLIST_TOOL_RUSTC_FLAGS,
     deps = ["//lib/parts:txhdl_parts"],
 )
 
