@@ -71,8 +71,9 @@ build:ci --remote_download_minimal
 # (release.yml, no --config=ci) stamps.
 build:ci --//docs:stamp=off
 
-# CI compiles the tools a genrule runs with less memory (#1792). Those are
-# built in the exec configuration, which is `-c opt`, so at opt-level 3,
+# CI compiles Rust in the exec configuration with less memory (#1792):
+# the tools a genrule runs, build scripts and proc macros, and the
+# libraries under them. That configuration is `-c opt`, so opt-level 3,
 # and rustc's default within a crate is thin LTO across its codegen units.
 # The worst step, `board_netlist` with the core monomorphised inside it,
 # peaked at 6.05 GiB, and a runner's sidecar was killed for memory on
