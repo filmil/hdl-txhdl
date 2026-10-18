@@ -16,6 +16,7 @@ load(
     "vivado_repl",
 )
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//lib/board:clock_gen.bzl", "clock_gen")
 load("//tools/vivado:defs.bzl", "vivado_place_and_route2", "vivado_synthesis2")
 
 package(default_visibility = ["//visibility:public"])
@@ -37,6 +38,23 @@ filegroup(
     ],
 )
 
+# The two clocks the flagship makes from the board's 200 MHz, planned by
+# //tools/clockgen (#1820): the Ethernet transmit clock, exactly, and
+# the pixel clock, VGA's 25.175 MHz within 1000 ppm.
+clock_gen(
+    name = "clk_eth",
+    input_hz = 200000000,
+    outputs = ["125000000:0"],
+    primitive = "mmcm",
+)
+
+clock_gen(
+    name = "clk_pix",
+    input_hz = 200000000,
+    outputs = ["25175000:1000"],
+    primitive = "mmcm",
+)
+
 # Manual, as every Vivado target is:
 #
 #   bazel build //flagship:flagship_synth
@@ -51,6 +69,8 @@ vivado_synthesis2(
         "//lib/board:bscan_user4",
         "//eth:eth_rgmii",
         "board/flagship.v",
+        ":clk_eth.v",
+        ":clk_pix.v",
         "//ddr3:hdl",
         "//lib/parts:hdl",
     ],
