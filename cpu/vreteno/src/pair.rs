@@ -33,7 +33,7 @@ use txhdl_parts::bus::axi::{Done, Grant, Issue, R, W};
 use txhdl_parts::redundant::{Check, Tee};
 
 use crate::core::Writeback;
-use crate::hart::Hart;
+use crate::hart::{Hart, HartIn, HartOut};
 
 // begin{watch}
 /// The three wires a core drives, from both cores, and the three lines
@@ -293,38 +293,64 @@ impl<const IW: usize> Unit for Pair<IW> {
             join2(
                 join2(
                     self.one.run(
-                        (
-                            rst_one, irq_one, tirq, sirq, rd1_rx, dn1_rx,
-                            gr1_rx, hr1_i, rr1_i, rn1_i, wd1_i, we1_i, time,
-                            seirq, dc_snoop,
-                        ),
-                        (
-                            halt1_o, instr1_o, wb1_o, is1_tx, beat1_tx, rl1_tx,
-                            dbg1_o, rd1_o, sl1_o,
-                        ),
+                        HartIn {
+                            rst: rst_one,
+                            irq: irq_one,
+                            tirq,
+                            sirq,
+                            rdata: rd1_rx,
+                            done: dn1_rx,
+                            grant: gr1_rx,
+                            haltreq: hr1_i,
+                            resumereq: rr1_i,
+                            dbg_regno: rn1_i,
+                            dbg_wdata: wd1_i,
+                            dbg_we: we1_i,
+                            time,
+                            seirq,
+                            dc_snoop,
+                        },
+                        HartOut {
+                            halt: halt1_o,
+                            instr: instr1_o,
+                            wb: wb1_o,
+                            issue: is1_tx,
+                            wbeat: beat1_tx,
+                            release: rl1_tx,
+                            dbg: dbg1_o,
+                            dbg_rdata: rd1_o,
+                            asleep: sl1_o,
+                        },
                     ),
                     self.two.run(
-                        (
-                            rst2_i,
-                            irq2,
-                            tirq_two,
-                            sirq_two,
-                            rd2_rx,
-                            dn2_rx,
-                            gr2_rx,
-                            hr2_i,
-                            rr2_i,
-                            rn2_i,
-                            wd2_i,
-                            we2_i,
-                            time_two,
-                            seirq_two,
-                            dc_snoop_two,
-                        ),
-                        (
-                            halt2_o, instr2_o, wb2_o, is2_tx, beat2_tx, rl2_tx,
-                            dbg2_o, rd2_o, sl2_o,
-                        ),
+                        HartIn {
+                            rst: rst2_i,
+                            irq: irq2,
+                            tirq: tirq_two,
+                            sirq: sirq_two,
+                            rdata: rd2_rx,
+                            done: dn2_rx,
+                            grant: gr2_rx,
+                            haltreq: hr2_i,
+                            resumereq: rr2_i,
+                            dbg_regno: rn2_i,
+                            dbg_wdata: wd2_i,
+                            dbg_we: we2_i,
+                            time: time_two,
+                            seirq: seirq_two,
+                            dc_snoop: dc_snoop_two,
+                        },
+                        HartOut {
+                            halt: halt2_o,
+                            instr: instr2_o,
+                            wb: wb2_o,
+                            issue: is2_tx,
+                            wbeat: beat2_tx,
+                            release: rl2_tx,
+                            dbg: dbg2_o,
+                            dbg_rdata: rd2_o,
+                            asleep: sl2_o,
+                        },
                     ),
                 ),
                 join2(

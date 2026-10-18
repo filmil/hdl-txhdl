@@ -50,6 +50,41 @@ impl<
     }
 }
 
+/// What a hart takes in (issue 1800): the core's inputs but for the
+/// memory management unit's answers, which the hart makes inside.
+/// Taken apart in `run`, so each port keeps its name.
+pub struct HartIn<const IW: usize> {
+    pub rst: In<Bit>,
+    pub irq: In<Bit>,
+    pub tirq: In<Bit>,
+    pub sirq: In<Bit>,
+    pub rdata: Rx<R<32, IW>>,
+    pub done: Rx<Done<IW>>,
+    pub grant: Rx<Grant<IW>>,
+    pub haltreq: In<Bit>,
+    pub resumereq: In<Bit>,
+    pub dbg_regno: In<U<16>>,
+    pub dbg_wdata: In<U<32>>,
+    pub dbg_we: In<Bit>,
+    pub time: In<U<64>>,
+    pub seirq: In<Bit>,
+    pub dc_snoop: In<U<9>>,
+}
+
+/// What a hart gives out (issue 1800): the core's outputs but for its
+/// lines to the memory management unit, which stay inside.
+pub struct HartOut<const IW: usize> {
+    pub halt: Out<Bit>,
+    pub instr: Out<U<32>>,
+    pub wb: Out<Writeback>,
+    pub issue: Tx<Issue<32>>,
+    pub wbeat: Tx<W<32, 4>>,
+    pub release: Tx<Grant<IW>>,
+    pub dbg: Out<Bit>,
+    pub dbg_rdata: Out<U<32>>,
+    pub asleep: Out<Bit>,
+}
+
 // begin{run}
 #[lower]
 impl<
@@ -62,7 +97,7 @@ impl<
 {
     async fn run(
         &mut self,
-        (
+        HartIn {
             rst,
             irq,
             tirq,
@@ -78,34 +113,18 @@ impl<
             time,
             seirq,
             dc_snoop,
-        ): (
-            In<Bit>,
-            In<Bit>,
-            In<Bit>,
-            In<Bit>,
-            Rx<R<32, IW>>,
-            Rx<Done<IW>>,
-            Rx<Grant<IW>>,
-            In<Bit>,
-            In<Bit>,
-            In<U<16>>,
-            In<U<32>>,
-            In<Bit>,
-            In<U<64>>,
-            In<Bit>,
-            In<U<9>>,
-        ),
-        (halt, instr, wb, issue, wbeat, release, dbg, dbg_rdata, asleep): (
-            Out<Bit>,
-            Out<U<32>>,
-            Out<Writeback>,
-            Tx<Issue<32>>,
-            Tx<W<32, 4>>,
-            Tx<Grant<IW>>,
-            Out<Bit>,
-            Out<U<32>>,
-            Out<Bit>,
-        ),
+        }: HartIn<IW>,
+        HartOut {
+            halt,
+            instr,
+            wb,
+            issue,
+            wbeat,
+            release,
+            dbg,
+            dbg_rdata,
+            asleep,
+        }: HartOut<IW>,
     ) {
         let rst_mmu = rst.clone();
         // What the core tells the unit.
