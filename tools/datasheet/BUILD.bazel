@@ -3,6 +3,7 @@
 # component has a datasheet.
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//tools:netlist_tool.bzl", "NETLIST_TOOL_RUSTC_FLAGS")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -11,6 +12,7 @@ rust_binary(
     name = "datasheet",
     srcs = ["main.rs"],
     edition = "2021",
+    rustc_flags = NETLIST_TOOL_RUSTC_FLAGS,
     deps = [
         "//cpu/vreteno:vreteno32",
         "//ddr3",

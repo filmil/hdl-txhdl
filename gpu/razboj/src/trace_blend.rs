@@ -146,8 +146,7 @@ fn main() {
         works[1].words[1] & razboj_tile::LOAD != 0,
         "the tile is loaded"
     );
-    let runs =
-        sim::run_works_at::<A, LOGW, H, N, DL, CTRL>(&works, true, false);
+    let runs = sim::run_works_at::<A, LOGW, H, N, DL, CTRL>(&works, true);
     let r = Raster::<A, { sim::IDB }, LOGW, H, 0, DL, CTRL>::lowered(
         "raster_blend",
     );

@@ -12,7 +12,7 @@ use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::bus::router::Router;
 use vreteno32::core::Writeback;
 use vreteno32::dmem::Dmem;
-use vreteno32::hart::Hart;
+use vreteno32::hart::{Hart, HartIn, HartOut};
 use vreteno32::isa::{disasm, CAUSE_MEXT};
 use vreteno32::program::demo;
 use vreteno32::term::Terminal;
@@ -268,22 +268,34 @@ fn main() {
             join2(
                 dmem.run(dbus, ()),
                 hart.run(
-                    (
-                        rst, irq, tirq, sirq, crdata, cdone, grant, haltreq,
-                        resumereq, dbg_regno, dbg_wdata, dbg_we, time, seirq,
+                    HartIn {
+                        rst,
+                        irq,
+                        tirq,
+                        sirq,
+                        rdata: crdata,
+                        done: cdone,
+                        grant,
+                        haltreq,
+                        resumereq,
+                        dbg_regno,
+                        dbg_wdata,
+                        dbg_we,
+                        time,
+                        seirq,
                         dc_snoop,
-                    ),
-                    (
-                        halt_out,
-                        instr_out,
-                        wb_out,
+                    },
+                    HartOut {
+                        halt: halt_out,
+                        instr: instr_out,
+                        wb: wb_out,
                         issue,
                         wbeat,
                         release,
-                        debug_o,
-                        dbg_rdata_o,
-                        asleep_o,
-                    ),
+                        dbg: debug_o,
+                        dbg_rdata: dbg_rdata_o,
+                        asleep: asleep_o,
+                    },
                 ),
             ),
         ),

@@ -808,31 +808,51 @@ impl Model {
             return translate(read, m, va, access);
         }
         // What the hart's walker reads when its buffers miss (issue
-        // 1561): the first level's entry, and the second's unless the
-        // first is a megapage's leaf or not valid at all.
-        let miss =
-            self.timing.is_some() && !self.hw_tlb.borrow().holds(va, access);
-        let mut mega = false;
+        // 1561), as `Mmu8`'s walk goes: the first level's entry, and the
+        // second's unless the first is a leaf or a fault; and the leaf it
+        // keeps, which it keeps whether or not the access is then
+        // allowed, since the buffers check that on every hit.
+        // Nothing is walked where translation is off: `satp` bare, or the
+        // access's mode machine. `m.prv` is that mode, which for a load
+        // or a store in machine mode with `MPRV` set is `MPP`'s, as
+        // `data_pa` gives it, so such an access is walked as `MPP`'s.
+        let on = m.satp >> 31 != 0 && m.prv != 3;
+        let miss = self.timing.is_some()
+            && on
+            && !self.hw_tlb.borrow().holds(va, access);
         if miss {
+            let leaf = |p: u32| p & 0xa != 0;
+            // Not valid, writable but not readable, a pointer at the
+            // second level, a megapage not aligned, or past 32 bits.
+            let bad = |p: u32, top: bool| {
+                p & 1 == 0
+                    || (p & 2 == 0 && p & 4 != 0)
+                    || (!leaf(p) && !top)
+                    || (leaf(p) && top && (p >> 10) & 0x3ff != 0)
+                    || p >> 30 != 0
+            };
             let root = (m.satp & 0x3f_ffff) << 12;
             let first = read(root | (va >> 22) << 2).unwrap_or(0);
-            mega = first & 1 != 0 && first & 0xa != 0;
-            let reads = if mega || first & 1 == 0 { 1 } else { 2 };
+            let (reads, keep) = if bad(first, true) {
+                (1, None)
+            } else if leaf(first) {
+                (1, Some(true))
+            } else {
+                let at = (first >> 10) << 12 | ((va >> 12) & 0x3ff) << 2;
+                let second = read(at).unwrap_or(0);
+                (2, (!bad(second, false)).then_some(false))
+            };
             self.walks.set(self.walks.get() + reads);
+            if let Some(mega) = keep {
+                self.hw_tlb.borrow_mut().fill(va, mega, access);
+            }
         }
         let vpn = va >> 12;
-        let held = self.tlb.borrow().get(vpn, &m, access);
-        let pa = match held {
-            Some(ppn) => ppn << 12 | (va & 0xfff),
-            None => {
-                let pa = translate(read, m, va, access)?;
-                self.tlb.borrow_mut().put(vpn, &m, access, pa >> 12);
-                pa
-            }
-        };
-        if miss {
-            self.hw_tlb.borrow_mut().fill(va, mega, access);
+        if let Some(ppn) = self.tlb.borrow().get(vpn, &m, access) {
+            return Ok(ppn << 12 | (va & 0xfff));
         }
+        let pa = translate(read, m, va, access)?;
+        self.tlb.borrow_mut().put(vpn, &m, access, pa >> 12);
         Ok(pa)
     }
 
@@ -2077,12 +2097,62 @@ mod tests {
         assert_eq!(reads(&m, page(3), false), 0, "page 3 was not");
         // Fetches have buffers of their own.
         assert!(!m.hw_tlb.borrow().holds(page(3), Access::Fetch));
-        // Nothing mapped at the first level: one read, and the fault.
+        // Nothing mapped at the first level: one read, the fault, and
+        // nothing kept, so the next try reads again.
         assert_eq!(reads(&m, 0x0140_0000, false), 1, "one read, no leaf");
         assert!(m.data_pa(&[], 0x0140_0000, false).is_err());
+        assert_eq!(reads(&m, 0x0140_0000, false), 1, "not kept");
+        // Writable but not readable at the first level: a fault there.
+        put(root + 24, W | V);
+        assert_eq!(reads(&m, 0x0180_0000, false), 1, "reserved: one read");
+        // Nothing at the second level: two reads, and nothing kept.
+        assert_eq!(reads(&m, page(20), false), 2, "no leaf at the second");
+        assert_eq!(reads(&m, page(20), false), 2, "still not kept");
+        // A leaf the access may not use is kept all the same, as the
+        // RTL keeps it and checks on each hit: a store to a page that is
+        // not writable faults, and a load after it does not walk.
+        put(l0 + 4 * 16, to(0x5001_0000, V | R | A));
+        assert_eq!(reads(&m, page(16), true), 2, "the store walks");
+        assert!(m.data_pa(&[], page(16), true).is_err(), "and faults");
+        assert_eq!(reads(&m, page(16), false), 0, "the leaf was kept");
         // A write of `satp` empties them.
         m.csr_write(CSR_SATP, 1 << 31 | root >> 12);
         assert_eq!(reads(&m, page(3), false), 2, "flushed");
+        // Fetches walk into their own buffers.
+        m.walks.set(0);
+        let _ = m.fetch_vm(&[], mega);
+        assert_eq!(m.walks.get(), 1, "a fetch from the megapage");
+        assert_eq!(reads(&m, mega, false), 1, "the data port's own walk");
+        m.walks.set(0);
+        let _ = m.fetch_vm(&[], mega + 4);
+        assert_eq!(m.walks.get(), 0, "the fetch's entry held");
+        // Nor in machine mode, where nothing is translated, whatever
+        // the page or how many there are.
+        m.prv = 3;
+        for k in 0..12 {
+            assert_eq!(reads(&m, 0x4000_0000 + k * 0x1000, false), 0, "M");
+        }
+        // Unless `MPRV` sends a load through the supervisor's tables.
+        m.csr.mstatus |= MPRV | 1 << 11;
+        assert_eq!(reads(&m, page(9), false), 2, "MPRV, MPP supervisor");
+        m.csr.mstatus &= !(MPRV | MPP);
+        m.prv = 1;
+        // Nor with `satp` bare.
+        m.csr_write(CSR_SATP, 0);
+        assert_eq!(reads(&m, page(10), false), 0, "satp bare");
+        m.csr_write(CSR_SATP, 1 << 31 | root >> 12);
+        // The other faults the walker stops at: a pointer at the second
+        // level, a megapage not aligned, and an entry past 32 bits, each
+        // read and never kept.
+        put(l0 + 4 * 21, to(l0, V));
+        assert_eq!(reads(&m, page(21), false), 2, "a pointer at level 0");
+        assert_eq!(reads(&m, page(21), false), 2, "not kept");
+        put(root + 28, to(0x4000_1000, V | R | W | A | D));
+        assert_eq!(reads(&m, 0x01c0_0000, false), 1, "megapage not aligned");
+        assert_eq!(reads(&m, 0x01c0_0000, false), 1, "not kept");
+        put(root + 32, 1 << 30 | V | R | W | A | D);
+        assert_eq!(reads(&m, 0x0200_0000, false), 1, "past 32 bits");
+        assert_eq!(reads(&m, 0x0200_0000, false), 1, "not kept");
         // Outside the timing mode nothing is counted.
         m.timing = None;
         m.csr_write(CSR_SATP, 1 << 31 | root >> 12);

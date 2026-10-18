@@ -5,6 +5,7 @@
 # against the model in lockstep.
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//tools:netlist_tool.bzl", "NETLIST_TOOL_RUSTC_FLAGS")
 load("//tools:opt_test.bzl", "opt_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -153,6 +154,16 @@ opt_test(
     test = ":board_test_rust",
 )
 
+# The board's netlist, checked at the default opt-level 0: the
+# generator `#[lower]` writes took LLVM 77 minutes and 9 GiB at
+# `board_test`'s opt-level 3 (#1792, #1807).
+rust_test(
+    name = "board_netlist_test",
+    srcs = ["tests/board_netlist.rs"],
+    edition = "2021",
+    deps = [":vreteno32"],
+)
+
 # The test itself, which `board_test` above builds optimised and runs.
 # Manual, so that it is not run a second time as it is.
 rust_test(
@@ -227,6 +238,7 @@ rust_binary(
     name = "board_netlist",
     srcs = ["src/bin/board_netlist.rs"],
     edition = "2021",
+    rustc_flags = NETLIST_TOOL_RUSTC_FLAGS,
     deps = [
         ":vreteno32",
         "//cpu/vreteno/rust:boot_program",

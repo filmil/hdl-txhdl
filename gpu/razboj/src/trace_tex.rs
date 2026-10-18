@@ -163,7 +163,6 @@ fn main() {
     let runs = sim::run_works_at::<A, LOGW, H, N, DL, CTRL>(
         std::slice::from_ref(&work),
         true,
-        false,
     );
     let r =
         Raster::<A, { sim::IDB }, LOGW, H, 0, DL, CTRL>::lowered("raster_tex");

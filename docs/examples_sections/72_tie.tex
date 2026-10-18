@@ -27,7 +27,10 @@ three nets and not one, so the lowering refuses both, naming the wire,
 the port and the child.
 
 The accumulator below adds its input and a step to a total while it
-is enabled; the parent holds the step at three and the enable on. The
+is enabled; the parent holds the step at three and the enable on. Its
+inputs are a struct of ports, so the two are tied as fields where the
+struct is written, \code{step: tie(...)}; an element of a tuple is
+tied the same way. The
 build checks the parent's netlist against this run under nvc and
 Verilator.
 

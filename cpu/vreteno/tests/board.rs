@@ -6,8 +6,7 @@
 //! interrupt, which takes the serial port's receive interrupt through
 //! the interrupt controller; and the remote peripheral, which the core
 //! reaches as frames on the Ethernet port with a program in this file
-//! answering them. And its netlist, which holds the memory controller
-//! as a foreign module.
+//! answering them. Its netlist is checked in `board_netlist.rs`.
 use std::collections::{HashMap, VecDeque};
 use txhdl::comp::{
     chan, join2, pad, set_reset, signal, Clock, DefaultClock, In, Out, Running,
@@ -2213,22 +2212,6 @@ fn a_transaction_leaves_the_board_as_a_frame() {
     // That is a second on the board, longer than this run.
     assert_eq!(ran.said, "", "the core is still waiting");
     assert!(ran.halted_at.is_none(), "and has not halted");
-}
-
-/// One module holds the rest, and the controller is an instance of its
-/// wrapper that the netlist does not write, with the memory's pads
-/// running out to the board's own ports.
-#[test]
-fn the_netlist_holds_the_controller() {
-    let v = TestBoard::verilog("board");
-    assert!(v.contains("module board("), "the top");
-    assert!(v.contains("module board_cpu("), "the core");
-    assert!(v.contains("module board_ddr3_pins("), "the pins");
-    assert!(v.contains("ddr3_axi32 "), "the controller");
-    assert!(!v.contains("module ddr3_axi32"), "not written");
-    assert!(v.contains("ring_osc "), "the rings");
-    assert!(!v.contains("module ring_osc"), "not written either");
-    assert!(v.contains("inout [31:0] dq"), "the data pads");
 }
 
 /// A program for the loader to load: it says `hi` on the serial port

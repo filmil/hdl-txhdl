@@ -36,7 +36,7 @@ use txhdl_parts::bus::noc::bridge::{HostBridge, PerBridge};
 use txhdl_parts::bus::noc::mesh::lattice;
 use txhdl_parts::bus::noc::node::Node;
 use vreteno32::core::Writeback;
-use vreteno32::hart::Hart;
+use vreteno32::hart::{Hart, HartIn, HartOut};
 use vreteno32::term::Terminal;
 use vreteno32::uart::Uart;
 
@@ -343,22 +343,34 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let ends = join2(
         join2(
             hart.run(
-                (
-                    rst_c, irq, tirq, sirq, crdata, cdone, grant, haltreq,
-                    resumereq, dbg_regno, dbg_wdata, dbg_we, time, seirq,
+                HartIn {
+                    rst: rst_c,
+                    irq,
+                    tirq,
+                    sirq,
+                    rdata: crdata,
+                    done: cdone,
+                    grant,
+                    haltreq,
+                    resumereq,
+                    dbg_regno,
+                    dbg_wdata,
+                    dbg_we,
+                    time,
+                    seirq,
                     dc_snoop,
-                ),
-                (
-                    halt_out,
-                    instr_out,
-                    wb_out,
+                },
+                HartOut {
+                    halt: halt_out,
+                    instr: instr_out,
+                    wb: wb_out,
                     issue,
                     wbeat,
                     release,
-                    debug_o,
-                    dbg_rdata_o,
-                    asleep_o,
-                ),
+                    dbg: debug_o,
+                    dbg_rdata: dbg_rdata_o,
+                    asleep: asleep_o,
+                },
             ),
             raster.run(
                 (ggrant, gdone, grdata, ring),

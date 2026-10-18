@@ -259,6 +259,16 @@ fn main() {
             shown = sent.len();
         }
     }
+    // The port goes on sending what waits in its queue after the hart
+    // stops, as the board's does (issue 1561).
+    m.board.0.borrow_mut().uart.drain();
+    {
+        let sent = &m.board.0.borrow().uart.sent;
+        if sent.len() > shown {
+            out.write_all(&sent[shown..]).ok();
+            out.flush().ok();
+        }
+    }
     let how = match m.model.halted {
         Some(h) => format!("halted ({h:?})"),
         None if done(&m) => "stopped when the download ended".to_string(),

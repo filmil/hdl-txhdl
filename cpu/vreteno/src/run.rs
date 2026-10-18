@@ -9,7 +9,7 @@
 //! in any language reaching the core is run and judged the same way.
 use crate::core::Writeback;
 use crate::dmem::Dmem;
-use crate::hart::Hart;
+use crate::hart::{Hart, HartIn, HartOut};
 use crate::rom::Rom;
 use crate::term::Terminal;
 use crate::timer::Timer;
@@ -168,22 +168,34 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
             join2(
                 join2(dmem.run(dbus, ()), rom.run(rbus, ())),
                 hart.run(
-                    (
-                        rst, irq, tirq, sirq, crdata, cdone, grant, haltreq,
-                        resumereq, dbg_regno, dbg_wdata, dbg_we, time, seirq,
+                    HartIn {
+                        rst,
+                        irq,
+                        tirq,
+                        sirq,
+                        rdata: crdata,
+                        done: cdone,
+                        grant,
+                        haltreq,
+                        resumereq,
+                        dbg_regno,
+                        dbg_wdata,
+                        dbg_we,
+                        time,
+                        seirq,
                         dc_snoop,
-                    ),
-                    (
-                        halt_out,
-                        instr_out,
-                        wb_out,
+                    },
+                    HartOut {
+                        halt: halt_out,
+                        instr: instr_out,
+                        wb: wb_out,
                         issue,
                         wbeat,
                         release,
-                        debug_o,
-                        dbg_rdata_o,
-                        asleep_o,
-                    ),
+                        dbg: debug_o,
+                        dbg_rdata: dbg_rdata_o,
+                        asleep: asleep_o,
+                    },
                 ),
             ),
         ),
