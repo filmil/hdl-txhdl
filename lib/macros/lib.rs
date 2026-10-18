@@ -5092,13 +5092,9 @@ fn stmts_code(items: &[String]) -> String {
 /// genrules that run the netlist tools, built at opt-level 3, took
 /// 363 s at 64 KB, 329 s at 32 KB, 272 s at 16 KB, 237 s at 8 KB and
 /// 224 s at 4 KB, so 8 KB, where it levels off.
-/// `TXHDL_LOWER_PIECE` sets it for a measurement.
-fn piece_budget() -> usize {
-    std::env::var("TXHDL_LOWER_PIECE")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(8 * 1024)
-}
+/// It is a constant and not read from the environment, which Bazel would
+/// not know the macro's output depends on.
+const PIECE_BUDGET: usize = 8 * 1024;
 
 /// Whether `code` names `id` as an identifier, outside a longer one.
 fn names_ident(code: &str, id: &str) -> bool {
@@ -5145,7 +5141,7 @@ fn pieces(items: &[String], budget: usize) -> Vec<Vec<String>> {
 /// on exactly as they did. A body with any raw code, or that reads
 /// another local of `lowered`, stays one block.
 fn body_code(items: &[String], helpers: &mut Vec<String>) -> String {
-    let budget = piece_budget();
+    let budget = PIECE_BUDGET;
     let total: usize = items.iter().map(|s| s.len()).sum();
     if total <= budget || !items.iter().all(|s| movable(s)) {
         return stmts_code(items);
@@ -5177,7 +5173,7 @@ fn body_code(items: &[String], helpers: &mut Vec<String>) -> String {
 /// The wires' vector as `let mut __w = ..;`, at once or, past the
 /// budget, as helpers that each return a piece of it, in order (#1807).
 fn wires_code(wires: &[String], helpers: &mut Vec<String>) -> String {
-    let budget = piece_budget();
+    let budget = PIECE_BUDGET;
     let total: usize = wires.iter().map(|s| s.len()).sum();
     let all = wires.join(",\n");
     if total <= budget
