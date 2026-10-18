@@ -422,9 +422,12 @@ pub struct Timing {
     /// What the core waits for the unit's answer under translation
     /// (issue 1561): once for each load, store or AMO translated
     /// (`stall_mem`'s `dvm & !x_done`), and once each time a translated
-    /// fetch moves to another page (`i_need`), which machine mode never
-    /// does. 4, as `translation_costs_the_core_what_the_timing_mode_charges`
-    /// times the RTL.
+    /// fetch moves to another page (`i_need`). Machine mode never
+    /// translates a fetch, nor a load or a store unless `MPRV` sends it
+    /// through `MPP`'s tables. 4, as
+    /// `translation_costs_the_core_what_the_timing_mode_charges` times the
+    /// RTL: a page move exactly, a load and a store 4 together with the
+    /// fetch's overlap a cycle either way.
     pub xlate: u64,
     /// What a `fence` waits, at most, for a store into the DDR3 still on
     /// its way (issue 1561): the most, right after the store, less the
@@ -1384,6 +1387,7 @@ impl Model {
     /// Debug mode left, to `dpc`, arming a single step when `dcsr.step`
     /// asks for one.
     pub fn resume(&mut self) {
+        self.hw_tlb.borrow_mut().forget_fetch();
         self.debug = false;
         self.pc = self.dpc;
         // The mode the hart was in, as `dcsr.prv` says (issue 1012).
@@ -2104,8 +2108,9 @@ mod tests {
     /// The waits for a translation the timing mode counts (issue 1561):
     /// one for every translated load or store, one for a fetch from a
     /// page other than the last one fetched from, none for a fetch from
-    /// the same page, and none in machine mode; a write of `satp` forgets
-    /// the fetch's page.
+    /// the same page, none in machine mode, and one for a load there that
+    /// `MPRV` translates; a write of `satp` and a trap forget the fetch's
+    /// page.
     #[test]
     fn the_timing_mode_counts_the_waits_for_a_translation() {
         use txhdl_parts::mmu::pte::{to, A, D, R, V, W, X};
@@ -2151,6 +2156,14 @@ mod tests {
         assert_eq!(waits(&m, &fetch(0x0080_2004)), 1, "satp forgets it");
         m.prv = 3;
         assert_eq!(waits(&m, &load(0x4000_0010)), 0, "machine mode");
+        m.csr.mstatus |= MPRV | 1 << 11;
+        assert_eq!(waits(&m, &load(0x0080_0010)), 1, "MPRV, MPP supervisor");
+        m.csr.mstatus &= !(MPRV | MPP);
+        m.prv = 1;
+        assert_eq!(waits(&m, &fetch(0x0080_2008)), 0, "the page held");
+        m.trap(CAUSE_BREAKPOINT, 0);
+        m.prv = 1;
+        assert_eq!(waits(&m, &fetch(0x0080_2008)), 1, "a trap forgets it");
         assert_eq!(m.timing.as_ref().unwrap().xlate, 4, "the RTL's wait");
     }
 
