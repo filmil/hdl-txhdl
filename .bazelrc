@@ -71,6 +71,18 @@ build:ci --remote_download_minimal
 # (release.yml, no --config=ci) stamps.
 build:ci --//docs:stamp=off
 
+# CI compiles the tools a genrule runs with less memory (#1792). Those are
+# built in the exec configuration, which is `-c opt`, so at opt-level 3,
+# and rustc's default within a crate is thin LTO across its codegen units.
+# The worst step, `board_netlist` with the core monomorphised inside it,
+# peaked at 6.05 GiB, and a runner's sidecar was killed for memory on
+# every failed run of 2026-10-17. Without the LTO and with 256 codegen
+# units it peaks at 3.60 GiB, and the build of //cpu/vreteno:board_sim_v
+# took no longer (1002 s against 1029, the cache bypassed). The release
+# workflow and local builds keep rustc's defaults.
+build:ci --@rules_rust//:extra_exec_rustc_flag=-Clto=off
+build:ci --@rules_rust//:extra_exec_rustc_flag=-Ccodegen-units=256
+
 # Shared caches on the hdlfactory hosts, where the file exists; a no-op
 # elsewhere. The repository cache there already holds the installer.
 try-import /data/cache/ci.bazelrc
