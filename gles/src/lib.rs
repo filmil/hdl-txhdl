@@ -94,6 +94,34 @@ struct View {
     depth_test: bool,
 }
 
+/// A window depth of sixteen bits from clip z and w and the depth range
+/// `n` to `f` in 16.16: n + (f - n) (z / w + 1) / 2, which is
+/// (2 n w + (f - n) (z + w)) / (2 w), times 65535 and rounded to the
+/// nearest. In 128 bits, where every product fits.
+fn depth128(z: Fx, w: Fx, n: Fx, f: Fx) -> u32 {
+    let (z, w, n, f) = (z as i128, w as i128, n as i128, f as i128);
+    let num = (2 * n * w + (f - n) * (z + w)) * emit::FAR as i128;
+    let den = 2 * w * ONE as i128;
+    (2 * num + den)
+        .div_euclid(2 * den)
+        .clamp(0, emit::FAR as i128) as u32
+}
+
+/// [`depth128`] in 64 bits, the same value, or `None` where a step of it
+/// would overflow (#1825).
+fn depth64(z: Fx, w: Fx, n: Fx, f: Fx) -> Option<u32> {
+    let (z, w, n, f) = (z as i64, w as i64, n as i64, f as i64);
+    let near = (2 * n).checked_mul(w)?;
+    let along = (f - n).checked_mul(z.checked_add(w)?)?;
+    let num = near.checked_add(along)?.checked_mul(emit::FAR as i64)?;
+    let den = (2 * w).checked_mul(ONE as i64)?;
+    let q = num
+        .checked_mul(2)?
+        .checked_add(den)?
+        .div_euclid(den.checked_mul(2)?);
+    Some(q.clamp(0, emit::FAR as i64) as u32)
+}
+
 impl View {
     /// A clipped vertex in GL's window, in sixteenths of a pixel, its y
     /// growing upwards: the divide and the viewport. `None` for a vertex
@@ -117,15 +145,13 @@ impl View {
     /// times 65535 and rounded to the nearest. Called only where
     /// [`View::window`] found the vertex in front of the eye.
     fn window_z(&self, v: &Vert) -> u32 {
-        let (z, w) = (v.clip[2] as i128, v.clip[3] as i128);
-        let (n, f) = (self.depth_range.0 as i128, self.depth_range.1 as i128);
-        // n + (f - n) (z / w + 1) / 2, in 16.16, is
-        // (2 n w + (f - n) (z + w)) / (2 w).
-        let num = (2 * n * w + (f - n) * (z + w)) * emit::FAR as i128;
-        let den = 2 * w * ONE as i128;
-        (2 * num + den)
-            .div_euclid(2 * den)
-            .clamp(0, emit::FAR as i128) as u32
+        let (z, w) = (v.clip[2], v.clip[3]);
+        let (n, f) = self.depth_range;
+        // The same sum in 64 bits whenever every step of it fits, which
+        // it does for a vertex whose z and w are within about 2^23 of the
+        // origin, as a scene's are: exact, so the depth is the 128-bit
+        // form's, without a 128-bit division a vertex (#1825).
+        depth64(z, w, n, f).unwrap_or_else(|| depth128(z, w, n, f))
     }
 
     /// The window place and depth of a point kept in exact homogeneous
@@ -3439,7 +3465,52 @@ fn unit_of(unit: u32) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::{along, cut};
+    use super::{along, cut, depth128, depth64, ONE};
+
+    /// The 64-bit depth is the 128-bit one wherever it answers (#1825):
+    /// over a scene's clip coordinates, at the depth range's ends and a
+    /// narrowed range, with z at the near and far planes and beyond, and
+    /// out to where it overflows and leaves the depth to the 128-bit form,
+    /// which it must do for a w near 2^31.
+    #[test]
+    fn the_64_bit_depth_is_the_128_bit_one() {
+        let mut x = 0x2545_f491u32;
+        let mut next = move || {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x
+        };
+        let ranges = [(0, ONE), (ONE / 4, 3 * ONE / 4), (ONE, 0), (0, 0)];
+        let mut answered = 0;
+        for i in 0..200_000 {
+            // Magnitudes from a few units to all 31 bits.
+            let bits = 1 + (i % 31) as u32;
+            let mask = ((1u64 << bits) - 1) as u32;
+            let w = ((next() & mask) as i32).max(1);
+            let z = match i % 4 {
+                0 => w,
+                1 => -w,
+                _ => {
+                    (next() & mask) as i32
+                        * if next() & 1 == 0 { 1 } else { -1 }
+                }
+            };
+            let (n, f) = ranges[i % ranges.len()];
+            if let Some(d) = depth64(z, w, n, f) {
+                assert_eq!(
+                    d,
+                    depth128(z, w, n, f),
+                    "z {z} w {w} range {n} {f}"
+                );
+                answered += 1;
+            }
+        }
+        assert!(answered > 100_000, "64 bits answers most: {answered}");
+        assert_eq!(depth64(i32::MAX, i32::MAX, 0, ONE), None, "w near 2^31");
+        assert_eq!(depth64(5 << 16, 5 << 16, 0, ONE), Some(0xffff), "far");
+        assert_eq!(depth64(-(5 << 16), 5 << 16, 0, ONE), Some(0), "near");
+    }
 
     /// A corner three units from a plane and a kept point of scale 2^40
     /// past it: the cut is where the edge meets the plane, and the
