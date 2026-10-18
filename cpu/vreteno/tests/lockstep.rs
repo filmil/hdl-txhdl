@@ -13,7 +13,7 @@ use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::bus::router::Router;
 use vreteno32::core::{is_load_word, Writeback};
 use vreteno32::dmem::Dmem;
-use vreteno32::hart::Hart;
+use vreteno32::hart::{Hart, HartIn, HartOut};
 use vreteno32::isa::{
     add, addi, beq, csrrs, csrrsi, csrrw, csrrwi, decode, disasm, ebreak, halt,
     jal, jalr, lui, lw, mret, or, sw, Kind, CAUSE_FETCH_ACCESS, CAUSE_MEXT,
@@ -278,22 +278,34 @@ fn lockstep_hart<const HID: usize>(
             join2(
                 dmem.run(dbus, ()),
                 hart.run(
-                    (
-                        rst, irq, tirq, sirq, crdata, cdone, grant, haltreq,
-                        resumereq, dbg_regno, dbg_wdata, dbg_we, time, seirq,
+                    HartIn {
+                        rst,
+                        irq,
+                        tirq,
+                        sirq,
+                        rdata: crdata,
+                        done: cdone,
+                        grant,
+                        haltreq,
+                        resumereq,
+                        dbg_regno,
+                        dbg_wdata,
+                        dbg_we,
+                        time,
+                        seirq,
                         dc_snoop,
-                    ),
-                    (
-                        halt_out,
-                        instr_out,
-                        wb_out,
+                    },
+                    HartOut {
+                        halt: halt_out,
+                        instr: instr_out,
+                        wb: wb_out,
                         issue,
                         wbeat,
                         release,
-                        debug_out,
-                        dbg_rdata_o,
-                        asleep_o,
-                    ),
+                        dbg: debug_out,
+                        dbg_rdata: dbg_rdata_o,
+                        asleep: asleep_o,
+                    },
                 ),
             ),
         ),

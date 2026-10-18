@@ -46,7 +46,7 @@ use txhdl_parts::bus::axi::{
 };
 use txhdl_parts::bus::exmon::ExMon;
 use vreteno32::core::Writeback;
-use vreteno32::hart::Hart;
+use vreteno32::hart::{Hart, HartIn, HartOut};
 
 /// The link, as the board has it.
 const IW: usize = 2;
@@ -265,21 +265,34 @@ fn simulate<const EXCL: usize>(
     };
     let mut sim = Running::new(join2(
         hart.run(
-            (
-                rst, irq, tirq, sirq, crdata, cdone, grant, haltreq, resumereq,
-                dbg_regno, dbg_wdata, dbg_we, time, seirq, dc_snoop,
-            ),
-            (
-                halt_out,
-                instr_out,
-                wb_out,
+            HartIn {
+                rst,
+                irq,
+                tirq,
+                sirq,
+                rdata: crdata,
+                done: cdone,
+                grant,
+                haltreq,
+                resumereq,
+                dbg_regno,
+                dbg_wdata,
+                dbg_we,
+                time,
+                seirq,
+                dc_snoop,
+            },
+            HartOut {
+                halt: halt_out,
+                instr: instr_out,
+                wb: wb_out,
                 issue,
                 wbeat,
                 release,
-                debug_o,
-                dbg_rdata_o,
-                asleep_o,
-            ),
+                dbg: debug_o,
+                dbg_rdata: dbg_rdata_o,
+                asleep: asleep_o,
+            },
         ),
         hardware,
     ));
