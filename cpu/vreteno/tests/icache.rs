@@ -105,31 +105,30 @@ const COUNTERS: [u32; 5] = [
     CSR_IC_DROPPED,
 ];
 
-/// The loop from the data memory at 0x1100, after which it stores the
-/// cache's five counters at 0x1000 and their upper halves after them
-/// (#1752). The loop's line is filled once and hit every round after.
+/// The loop from the data memory at 0x1100, called from the boot
+/// memory, which then stores the cache's five counters at 0x1000 and
+/// their upper halves after them (#1752). The boot memory is not
+/// cached, so the counters stand still while they are read, and a
+/// hit is a lookup that hit at the first look (#1781): lookups less
+/// hits are the fills started, every one of them kept or dropped.
 #[test]
 fn the_counters_count_the_loops_lookups_hits_and_fills() {
     let mut code = body();
-    code.pop(); // the halt, which comes after the reads
-    code.push(lui(6, 1)); // x6 = 0x1000, where the counts go
-
-    // The counters go on counting while they are read, each fetch of
-    // these instructions a lookup and most of them hits, so they are
-    // read back to back and in reverse: a count read later is never
-    // behind one it bounds that was read earlier.
-    for (i, csr) in COUNTERS.iter().enumerate().rev() {
-        code.push(csrrs(10 + i as u32, *csr, 0));
+    code.pop(); // the halt
+    code.push(jalr(0, 3, 0)); // back to the boot memory
+    let mut boot = vec![lui(5, 1), addi(5, 5, 0x100), jalr(3, 5, 0)];
+    // A few cycles for a fill still out to end.
+    boot.extend([addi(0, 0, 0); 8]);
+    boot.push(lui(6, 1)); // x6 = 0x1000, where the counts go
+    for (i, csr) in COUNTERS.iter().enumerate() {
+        boot.push(csrrs(10, *csr, 0));
+        boot.push(sw(10, 6, 4 * i as i32));
+        boot.push(csrrs(10, csr + 0x80, 0));
+        boot.push(sw(10, 6, 20 + 4 * i as i32));
     }
-    for i in 0..5 {
-        code.push(sw(10 + i, 6, 4 * i as i32));
-        code.push(csrrs(10, COUNTERS[i as usize] + 0x80, 0));
-        code.push(sw(10, 6, 20 + 4 * i as i32));
-    }
-    code.push(halt());
+    boot.push(halt());
     let mut data = vec![0u8; 0x100];
     data.extend(bytes(&code));
-    let boot = [lui(5, 1), addi(5, 5, 0x100), jalr(0, 5, 0)];
     let ran = run(&boot, &data, 200_000);
     assert!(ran.halted_at.is_some(), "the program halts");
     let [lookups, hits, fills, kept, dropped] =
@@ -142,14 +141,13 @@ fn the_counters_count_the_loops_lookups_hits_and_fills() {
     // Three instructions a round, and every round after the first
     // fetches its three from the line the first one filled.
     assert!(hits >= 3 * 999, "hits {hits}");
-    assert!(lookups >= hits, "lookups {lookups} against hits {hits}");
-    // The code is a few lines long, each filled about once: what this
-    // rules out is a fill for every fetch.
-    assert!((1..=20).contains(&kept), "fills kept {kept}");
-    assert!(kept + dropped <= fills, "{kept} kept, {dropped} dropped");
-    assert!(fills <= 40, "fills started {fills}");
+    // Every miss started a fill, and nothing else did (#1781).
+    assert_eq!(lookups - hits, fills, "{lookups} lookups, {hits} hits");
+    assert_eq!(kept + dropped, fills, "{kept} kept, {dropped} dropped");
+    // The code is a line or two long, each filled once: what this rules
+    // out is a fill for every fetch.
+    assert!((1..=4).contains(&kept), "fills kept {kept}");
 }
-
 /// A program that never leaves the boot memory, which is not cached,
 /// counts nothing, so each of the ten halves reads back what was
 /// written to it, and machine mode reads the low halves again as

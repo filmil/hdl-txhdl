@@ -1052,13 +1052,15 @@ pub struct Vreteno<
     pub mcycle: Reg<U<64>>,
     pub minstret: Reg<U<64>>,
     /// The instruction cache's counters, `mhpmcounter3` to `7` (#1752):
-    /// cached fetches looked up, lookups that hit, fills started, fills
-    /// whose four beats came back and wrote the tag, and fills whose
-    /// last beat came after the fetch was dropped. A fill the bus refused
-    /// is started and neither kept nor dropped. Each counts one wire of
-    /// the cache's state machine, `c_go`, `l_hit`, `r_go`, `r_ok` and
-    /// `r_last` with `f_drop`, so that a program on the board can say
-    /// how many lines a frame fills. A core without the cache (IC=0)
+    /// cached fetches looked up, lookups that hit at the first look,
+    /// fills started, fills whose four beats came back and wrote the tag,
+    /// and fills whose last beat came after the fetch was dropped. A fill
+    /// the bus refused is started and neither kept nor dropped. Each
+    /// counts one wire of the cache's state machine, `c_go`, `l_hit`
+    /// before any fill (#1781), `r_go`, `r_ok` and `r_last` with
+    /// `f_drop`, so that a program on the board can say how many lines
+    /// a frame fills. Lookups less hits are the misses: the fills
+    /// started, and the lookups whose fetch was dropped before either. A core without the cache (IC=0)
     /// never sees one, and they read zero. The model reads them as zero
     /// too, so a lockstep program reads them only into `x0`, as it does
     /// `mcycle`.
@@ -1192,6 +1194,9 @@ pub struct Vreteno<
     /// The next beat of a fill, and whether one of them was refused.
     pub ic_beat: Reg<U<2>>,
     pub ic_bad: Reg<Bit>,
+    /// Whether the lookup under way has started a fill, so that the hit
+    /// that ends it after the fill is not counted as one (#1781).
+    pub ic_missed: Reg<Bit>,
     /// The tags being cleared after a reset or a `fence.i`, a line a
     /// cycle, and the next line to clear.
     pub ic_clearing: Reg<Bit>,
@@ -2882,7 +2887,10 @@ impl<
                     ic_owd: self.ic_odd.read(rd_oa),
                     ic_tdat: self.ic_tag.read(rd_line)
                 },
-                c_go ? ic_st: U::<2>::from(1u8),
+                c_go ? {
+                    ic_st: U::<2>::from(1u8),
+                    ic_missed: Bit::Zero
+                },
                 // The address is taken on every cycle the cache is idle,
                 // not only when a fetch goes to it: nothing reads it then,
                 // and a fetch goes to the cache only while it is idle, so
@@ -2891,6 +2899,7 @@ impl<
                 Bit::from(ic_st == 0) ? ic_pa: f_pa,
                 r_go ? {
                     ic_st: U::<2>::from(2u8),
+                    ic_missed: Bit::One,
                     ic_beat: U::<2>::from(0u8),
                     ic_bad: Bit::Zero
                 },
@@ -3293,7 +3302,7 @@ impl<
                     ic_lookups: (self.ic_lookups.get()
                         & U::<64>::from(0xffff_ffffu64))
                         | (csr_new.zext::<64>() << 32),
-                ic_on & l_hit ? ic_hits: self.ic_hits.get() + 1,
+                ic_on & l_hit & !self.ic_missed ? ic_hits: self.ic_hits.get() + 1,
                 ic_on & csr_write & (f12 == isa::CSR_IC_HITS) ?
                     ic_hits: (self.ic_hits.get()
                         & U::<64>::from(0xffff_ffff_0000_0000u64))

@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # The boot image: the shim, OpenSBI, the device tree, the kernel and the
 # initramfs as one blob for fastboot (issue 1019).
-load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+load("//cpu/vreteno/rust:defs.bzl", "CORE_ONLY", "vreteno_flat")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -9,6 +10,53 @@ rust_binary(
     name = "bootimg",
     srcs = ["main.rs"],
     edition = "2021",
+    deps = ["@crates//:miniz_oxide"],
+)
+
+# Raw DEFLATE inflated into a slice, with no allocation (issue 1229):
+# the inflater runs it on the core to unpack the kernel, and its tests
+# hold it against miniz_oxide, which the packer compresses with.
+# Optimised wherever it is built, since the core runs it over the whole
+# kernel before Linux starts.
+rust_library(
+    name = "inflate",
+    srcs = ["inflate.rs"],
+    edition = "2021",
+    rustc_flags = ["-Copt-level=2"],
+)
+
+rust_test(
+    name = "inflate_test",
+    crate = ":inflate",
+    edition = "2021",
+    deps = ["@crates//:miniz_oxide"],
+)
+
+# The inflater as the core runs it: a C function at 0x4000_1000, past
+# the shim and below OpenSBI's load address, with no data or BSS.
+rust_binary(
+    name = "inflater",
+    srcs = ["inflater.rs"],
+    compile_data = ["inflater.ld"],
+    edition = "2021",
+    rustc_flags = [
+        "-Copt-level=2",
+        "-Cdebug-assertions=no",
+        "-Coverflow-checks=no",
+        "-Cpanic=abort",
+        "-Clinker=rust-lld",
+        "-Clink-arg=-T$(execpath :inflater.ld)",
+    ],
+    # Built through the transition below, not for this machine.
+    tags = ["manual"],
+    target_compatible_with = CORE_ONLY,
+    deps = [":inflate"],
+)
+
+vreteno_flat(
+    name = "inflater_bin",
+    platform = "//cpu/vreteno/rust:vreteno",
+    program = ":inflater",
 )
 
 # The layout's rules, and the image booting in the machine model.
@@ -18,11 +66,15 @@ rust_test(
     # The fastboot server's sources, which the test reads the download
     # limit from, so that the packer's copy of it cannot drift.
     data = [
+        ":inflater_bin",
         "//zephyr:fastboot/app/boards/ax7a200b.overlay",
         "//zephyr:fastboot/app/src/main.c",
     ],
     edition = "2021",
-    deps = ["//cpu/vreteno:vreteno32"],
+    deps = [
+        "//cpu/vreteno:vreteno32",
+        "@crates//:miniz_oxide",
+    ],
 )
 
 load(":defs.bzl", "boot_image")
