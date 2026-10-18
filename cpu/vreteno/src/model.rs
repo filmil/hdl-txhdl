@@ -163,6 +163,10 @@ pub struct HwTlb {
     entries: [[Option<(u32, bool)>; HwTlb::ENTRIES]; 2],
     /// Per port, the entry to fill next.
     next: [usize; 2],
+    /// The page the fetch last had translated, which the core keeps
+    /// beside the buffers (`ft_vpn`): a fetch from another page asks the
+    /// unit again, and waits for its answer.
+    fetch_page: Option<u32>,
 }
 
 impl HwTlb {
@@ -191,6 +195,20 @@ impl HwTlb {
     /// Both emptied, as a write of `satp` or an `sfence.vma` empties them.
     pub fn flush(&mut self) {
         *self = HwTlb::default();
+    }
+
+    /// Whether a fetch at `va` moves to a page other than the one the
+    /// fetch last had translated, which it then has.
+    pub fn fetch_moves(&mut self, va: u32) -> bool {
+        let moved = self.fetch_page != Some(va >> 12);
+        self.fetch_page = Some(va >> 12);
+        moved
+    }
+
+    /// The fetch's page forgotten, as the core forgets it on a trap, a
+    /// return and a `fence.i` (`vctx`), so the next fetch asks again.
+    pub fn forget_fetch(&mut self) {
+        self.fetch_page = None;
     }
 }
 
@@ -320,6 +338,9 @@ pub struct Model {
     pub loaded: std::cell::Cell<u32>,
     pub prev_loaded: u32,
     pub walks: std::cell::Cell<u32>,
+    /// The waits for a translation the step made (issue 1561): a load or
+    /// a store translated, and a translated fetch from a new page.
+    pub xlates: std::cell::Cell<u32>,
     pub ifence: std::cell::Cell<bool>,
     /// Whether the step was a `fence`, and the cycle count at the last
     /// store into the DDR3 (issue 1561).
@@ -398,6 +419,13 @@ pub struct Timing {
     /// from the `board_test` netlist's simulation until the board's
     /// `costs walk-page` and `walk-mega` say otherwise.
     pub walk: u64,
+    /// What the core waits for the unit's answer under translation
+    /// (issue 1561): once for each load, store or AMO translated
+    /// (`stall_mem`'s `dvm & !x_done`), and once each time a translated
+    /// fetch moves to another page (`i_need`), which machine mode never
+    /// does. 4, as `translation_costs_the_core_what_the_timing_mode_charges`
+    /// times the RTL.
+    pub xlate: u64,
     /// What a `fence` waits, at most, for a store into the DDR3 still on
     /// its way (issue 1561): the most, right after the store, less the
     /// cycles since.
@@ -451,6 +479,7 @@ impl Timing {
             load_use: 0,
             icache: None,
             walk: 0,
+            xlate: 0,
             fence: 0,
             fence_alone: 0,
         }
@@ -506,6 +535,7 @@ impl Timing {
                 shared: 3,
             }),
             walk: 86,
+            xlate: 4,
             fence: 14,
             fence_alone: 1,
             ..Self::board()
@@ -581,6 +611,7 @@ impl Default for Model {
             loaded: std::cell::Cell::new(0),
             prev_loaded: 0,
             walks: std::cell::Cell::new(0),
+            xlates: std::cell::Cell::new(0),
             ifence: std::cell::Cell::new(false),
             fenced: std::cell::Cell::new(false),
             stored_at: 0,
@@ -817,6 +848,18 @@ impl Model {
         // or a store in machine mode with `MPRV` set is `MPP`'s, as
         // `data_pa` gives it, so such an access is walked as `MPP`'s.
         let on = m.satp >> 31 != 0 && m.prv != 3;
+        // The core waits for the unit's answer on every translated load
+        // and store, and on a translated fetch from a page other than the
+        // one it last had (issue 1561).
+        if on && self.timing.is_some() {
+            let waits = match access {
+                Access::Fetch => self.hw_tlb.borrow_mut().fetch_moves(va),
+                _ => true,
+            };
+            if waits {
+                self.xlates.set(self.xlates.get() + 1);
+            }
+        }
         let miss = self.timing.is_some()
             && on
             && !self.hw_tlb.borrow().holds(va, access);
@@ -1215,6 +1258,7 @@ impl Model {
     /// `medeleg` for an exception and `mideleg` for an interrupt, goes to
     /// the supervisor instead, through its own registers (issue 1012).
     fn trap(&mut self, cause: u32, tval: u32) {
+        self.hw_tlb.borrow_mut().forget_fetch();
         if let Some(n) = self.causes.get_mut(cause as usize) {
             *n += 1;
         }
@@ -1370,6 +1414,7 @@ impl Model {
         self.reads.set((0, 0));
         self.loaded.set(0);
         self.walks.set(0);
+        self.xlates.set(0);
         self.ifence.set(false);
         self.fenced.set(false);
         let pc = self.pc;
@@ -1442,6 +1487,7 @@ impl Model {
         }
         self.prev_loaded = self.loaded.get();
         c += self.walks.get() as u64 * t.walk / 2;
+        c += self.xlates.get() as u64 * t.xlate;
         if self.ifence.get() {
             self.ic.clear();
             self.last_line = u32::MAX;
@@ -1847,6 +1893,9 @@ impl Model {
             // `fence.i` empties the instruction cache in the timing mode.
             Fence => {
                 self.ifence.set(w >> 12 & 7 == 1);
+                if w >> 12 & 7 == 1 {
+                    self.hw_tlb.borrow_mut().forget_fetch();
+                }
                 self.fenced.set(w >> 12 & 7 == 0);
             }
             Ebreak => {
@@ -1906,6 +1955,7 @@ impl Model {
                     (s & !(MIE | MPP | MPRV)) | MPIE | mie | mprv;
                 self.prv = s >> 11 & 3;
                 next = self.csr.mepc;
+                self.hw_tlb.borrow_mut().forget_fetch();
             }
             Sret => {
                 if self.prv == 0 || self.s_trapped(TSR) {
@@ -1917,6 +1967,7 @@ impl Model {
                 self.csr.mstatus = (s & !(SIE | SPP | MPRV)) | SPIE | sie;
                 self.prv = s >> 8 & 1;
                 next = self.csr.sepc;
+                self.hw_tlb.borrow_mut().forget_fetch();
             }
             Csrrw | Csrrs | Csrrc | Csrrwi | Csrrsi | Csrrci => {
                 // `dcsr` and `dpc` only in debug mode, which a program
@@ -2048,6 +2099,59 @@ mod tests {
         assert_eq!(m.data_pa(&[], va, true), Err((CAUSE_STORE_PAGE, va)));
         assert_eq!(m.data_pa(&[], va, true), Err((CAUSE_STORE_PAGE, va)));
         assert_eq!(m.data_pa(&[], va, false), Ok(0x6000_0234));
+    }
+
+    /// The waits for a translation the timing mode counts (issue 1561):
+    /// one for every translated load or store, one for a fetch from a
+    /// page other than the last one fetched from, none for a fetch from
+    /// the same page, and none in machine mode; a write of `satp` forgets
+    /// the fetch's page.
+    #[test]
+    fn the_timing_mode_counts_the_waits_for_a_translation() {
+        use txhdl_parts::mmu::pte::{to, A, D, R, V, W, X};
+        let root = 0x8000_0000u32;
+        let words = std::rc::Rc::new(Words::default());
+        let put = |a: u32, v: u32| assert!(words.store(a, v, u32::MAX));
+        // A megapage at 0x0080_0000 that may be read, written and run.
+        put(root + 8, to(0x4000_0000, V | R | W | X | A | D));
+        let mut m = Model {
+            bus: Some(words.clone() as std::rc::Rc<dyn Bus>),
+            timing: Some(Timing::board_cached()),
+            ..Model::default()
+        };
+        m.prv = 1;
+        m.csr_write(CSR_SATP, 1 << 31 | root >> 12);
+        let waits = |m: &Model, f: &dyn Fn(&Model)| {
+            m.xlates.set(0);
+            f(m);
+            m.xlates.get()
+        };
+        let load = |va: u32| {
+            move |m: &Model| {
+                let _ = m.data_pa(&[], va, false);
+            }
+        };
+        let store = |va: u32| {
+            move |m: &Model| {
+                let _ = m.data_pa(&[], va, true);
+            }
+        };
+        let fetch = |va: u32| {
+            move |m: &Model| {
+                let _ = m.fetch_vm(&[], va);
+            }
+        };
+        assert_eq!(waits(&m, &load(0x0080_0010)), 1, "a load");
+        assert_eq!(waits(&m, &store(0x0080_0010)), 1, "a store");
+        assert_eq!(waits(&m, &load(0x0080_0014)), 1, "every one, held or not");
+        assert_eq!(waits(&m, &fetch(0x0080_1000)), 1, "a fetch's first page");
+        assert_eq!(waits(&m, &fetch(0x0080_1ff0)), 0, "the same page");
+        assert_eq!(waits(&m, &fetch(0x0080_2000)), 1, "the next page");
+        m.csr_write(CSR_SATP, 1 << 31 | root >> 12);
+        assert_eq!(waits(&m, &fetch(0x0080_2004)), 1, "satp forgets it");
+        m.prv = 3;
+        assert_eq!(waits(&m, &load(0x4000_0010)), 0, "machine mode");
+        assert_eq!(m.timing.as_ref().unwrap().xlate, 4, "the RTL's wait");
     }
 
     /// The timing mode charges the walks the hart's own buffers make, as
