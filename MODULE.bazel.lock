@@ -698,8 +698,8 @@
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/rules_vhdl/0.3.0/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/rules_vhdl/0.4.0/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/rules_vhdl/0.4.1/MODULE.bazel": "not found",
-    "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/rules_vivado/3.16.1/MODULE.bazel": "4acc9943b72663357a9d79651e5e4f35a95a645817ce9ea97fa5958be0c9ae41",
-    "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/rules_vivado/3.16.1/source.json": "0d2ad74120eee51617407ccbc215c81da7b7b9c86b152acd2b03a58f996543fe",
+    "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/rules_vivado/4.1.0/MODULE.bazel": "bbffd192b3a63e373141966336642625e4142fcc6b744a0f97b40a32b9786ad9",
+    "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/rules_vivado/4.1.0/source.json": "471adeabcd8394736eb60ceb16b0277b55021119f5242ac566d6c0e19d65c48f",
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/stardoc/0.5.1/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/stardoc/0.5.3/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/filmil/bazel-registry/main/modules/stardoc/0.6.2/MODULE.bazel": "not found",
@@ -1072,8 +1072,8 @@
     },
     "@@rules_vivado+//:extensions.bzl%vivado": {
       "general": {
-        "bzlTransitiveDigest": "3OZAD7ChRclbYIKDLdZkEt6JbY+hpdFcELMcEdeCC4w=",
-        "usagesDigest": "VvaRkCBkYOwLDJEjgkNLeUsetY9K/z0eJ6YTUsUTcgI=",
+        "bzlTransitiveDigest": "563WI94+JacAL7C33szz72kao09rqYbm3AzZOsbCsJU=",
+        "usagesDigest": "ENJVvZ8NUf9ztU4HcgioTsz5AQQQWvFcsRIztWSB2eM=",
         "recordedInputs": [],
         "generatedRepoSpecs": {
           "vivado_hermetic": {
