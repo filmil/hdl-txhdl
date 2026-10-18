@@ -16,7 +16,7 @@ use txhdl_parts::bus::router::Router;
 use vreteno32::core::Writeback;
 use vreteno32::dmem::Dmem;
 use vreteno32::hart::Hart;
-use vreteno32::pair::Pair;
+use vreteno32::pair::{Pair, PairIn, PairOut};
 use vreteno32::program::random;
 use vreteno32::timer::Timer;
 use vreteno32::uart::Uart;
@@ -105,19 +105,28 @@ fn pair_says(program: &[u32], cycles: usize, fault: &[usize]) -> (bool, bool) {
             join2(
                 dmem.run(dbus, ()),
                 pair.run(
-                    (
-                        rst, irq, tirq, sirq, time, seirq, dc_snoop, fault_in,
-                        crdata, cdone, grant,
-                    ),
-                    (
-                        halt_out,
-                        instr_out,
-                        wb_out,
+                    PairIn {
+                        rst,
+                        irq,
+                        tirq,
+                        sirq,
+                        time,
+                        seirq,
+                        dc_snoop,
+                        fault: fault_in,
+                        rdata: crdata,
+                        done: cdone,
+                        grant,
+                    },
+                    PairOut {
+                        halt: halt_out,
+                        instr: instr_out,
+                        wb: wb_out,
                         issue,
                         wbeat,
                         release,
-                        differs_out,
-                    ),
+                        differs: differs_out,
+                    },
                 ),
             ),
         ),
