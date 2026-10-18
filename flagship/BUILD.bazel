@@ -18,7 +18,6 @@ load(
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//tools/vivado:defs.bzl", "vivado_place_and_route2", "vivado_synthesis2")
-load("//tools/vivado:given.bzl", "vivado_given_bitstream")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -85,47 +84,28 @@ vivado_program_device(
 
 # Write a bitstream another session built into the FPGA, once its
 # sha256 is the one given, rather than placing and routing again
-# (#1784). The programming script is generated against a placeholder,
-# given.bit, so building it needs no place and route; prog_given.sh puts
-# the checked file in its place and runs it.
+# (#1784). With no bitstream of its own, building it runs no place and
+# route, and its script programs the file --bitfile names, refused when
+# --sha256 differs or the file is no bitstream (rules_vivado 4.1.0,
+# #1803).
 #
-#   bazel run //flagship:flagship_prog_given -- --bit=PATH --sha256=HEX \
-#       --hostport localhost:3122 --device '*/xilinx_tcf/Digilent/*'
-vivado_given_bitstream(
-    name = "given_bit",
-    src = "given.bit",
-)
-
+#   bazel run //flagship:flagship_prog_given -- --bitfile=PATH \
+#       --sha256=HEX --hostport localhost:3122 \
+#       --device '*/xilinx_tcf/Digilent/*'
 vivado_program_device(
-    name = "flagship_prog_given_base",
-    prog_daemon = "//cpu/vreteno/board/remote:hw_server",
-    deps = [":given_bit"],
-    tags = ["manual"],
-)
-
-sh_binary(
     name = "flagship_prog_given",
-    srcs = ["prog_given.sh"],
-    data = [
-        ":flagship_prog_given_base",
-        "@bazel_tools//tools/bash/runfiles",
-    ],
+    prog_daemon = "//cpu/vreteno/board/remote:hw_server",
     tags = ["manual"],
 )
 
-# Its refusals and its dry run, which touch no board.
+# Its refusals, which come before it starts hw_server and touch no
+# board.
 sh_test(
     name = "prog_given_test",
     size = "small",
     srcs = ["prog_given_test.sh"],
-    args = [
-        "$(rootpath :flagship_prog_given)",
-        "$(rootpath :given.bit)",
-    ],
-    data = [
-        "given.bit",
-        ":flagship_prog_given",
-    ],
+    args = ["$(rootpath :flagship_prog_given)"],
+    data = [":flagship_prog_given"],
     tags = ["manual"],
 )
 
