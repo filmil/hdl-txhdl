@@ -1109,6 +1109,8 @@ latex_document(
         ":group_timing",
         ":port_arrays_run",
         ":port_arrays_timing",
+        ":value_arrays_run",
+        ":value_arrays_timing",
         ":mems_run",
         ":mems_timing",
         ":regs_run",
@@ -2606,6 +2608,18 @@ waveform(
 # Arrays of ports inside a struct of ports (issue 1636): the lanes of a
 # bus read in a loop, and an array of a split group's fields handed to a
 # child.
+waveform(
+    name = "value_arrays",
+    example = "//lib/examples:ex_value_arrays",
+    lowered = ("bright", "bright"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//px=>px",
+        "//best=>best",
+        "//which=>which",
+    ],
+)
+
 waveform(
     name = "port_arrays",
     example = "//lib/examples:ex_port_arrays",
