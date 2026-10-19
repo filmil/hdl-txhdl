@@ -325,6 +325,73 @@ impl<const N: usize, const L: usize> U<N, L> {
         }
         U::<LEN>::new(limbs::shr(&self.0, lo)[0])
     }
+
+    // The wide forms. Each states its result's limbs as well as its
+    // width, since a function's const parameter has no default and
+    // `L` cannot be worked out from `M` on stable Rust (`probe_limbs`);
+    // the narrow forms above keep their one-limb results, so nothing
+    // that calls them changes (#1860).
+
+    /// [`U::slice`] of any width: `LEN` bits from `LO`, in `LL` limbs.
+    pub fn slice_wide<const LO: usize, const LEN: usize, const LL: usize>(
+        self,
+    ) -> U<LEN, LL> {
+        self.slice_at_wide::<LEN, LL>(LO)
+    }
+    /// [`U::slice_at`] of any width: `LEN` bits from `lo`, in `LL`
+    /// limbs.
+    pub fn slice_at_wide<const LEN: usize, const LL: usize>(
+        self,
+        lo: usize,
+    ) -> U<LEN, LL> {
+        U::<LEN, LL>::from_limbs(limbs::relimb(&limbs::shr(&self.0, lo)))
+    }
+    /// [`U::resize`] of any width: zero extension or truncation to `M`
+    /// bits in `ML` limbs.
+    pub fn resize_wide<const M: usize, const ML: usize>(self) -> U<M, ML> {
+        U::<M, ML>::from_limbs(limbs::relimb(&self.0))
+    }
+    /// [`U::zext`] of any width; `resize_wide` by another name.
+    pub fn zext_wide<const M: usize, const ML: usize>(self) -> U<M, ML> {
+        self.resize_wide::<M, ML>()
+    }
+    /// [`U::sext`] of any width: the top bit fills `M - N` bits above.
+    pub fn sext_wide<const M: usize, const ML: usize>(self) -> U<M, ML> {
+        let v = self.resize_wide::<M, ML>();
+        if M > N && self.bit(N - 1).to_bool() {
+            v | (!U::<M, ML>::new(0) << N)
+        } else {
+            v
+        }
+    }
+    /// [`U::concat`] of any width: `self` above `low`, `M` = `N + K`
+    /// bits in `ML` limbs; `low` may be wide as well.
+    pub fn concat_wide<
+        const K: usize,
+        const KL: usize,
+        const M: usize,
+        const ML: usize,
+    >(
+        self,
+        low: U<K, KL>,
+    ) -> U<M, ML> {
+        let high = limbs::shl(&limbs::relimb::<L, ML>(&self.0), K);
+        let low = limbs::relimb::<KL, ML>(&low.0);
+        let mut r = [0u128; ML];
+        for (i, v) in r.iter_mut().enumerate() {
+            *v = high[i] | low[i];
+        }
+        U::<M, ML>::from_limbs(r)
+    }
+    /// [`U::mul`] of any width: the product, to `M` bits in `ML` limbs.
+    pub fn mul_wide<const M: usize, const ML: usize>(
+        self,
+        o: impl Into<Self>,
+    ) -> U<M, ML> {
+        let a = limbs::relimb::<L, ML>(&self.0);
+        let b = limbs::relimb::<L, ML>(&o.into().0);
+        U::<M, ML>::from_limbs(limbs::mul(&a, &b))
+    }
 }
 
 /// Arithmetic across limbs, least significant first, for a value wider
@@ -416,6 +483,14 @@ mod limbs {
         for (k, v) in r.iter_mut().enumerate() {
             *v = acc[2 * k] as u128 | (acc[2 * k + 1] as u128) << 64;
         }
+        r
+    }
+
+    /// The same value in `B` limbs: the low ones kept, the rest zero.
+    pub fn relimb<const A: usize, const B: usize>(a: &[u128; A]) -> [u128; B] {
+        let mut r = [0u128; B];
+        let n = A.min(B);
+        r[..n].copy_from_slice(&a[..n]);
         r
     }
 
@@ -1016,6 +1091,121 @@ mod wide_tests {
             assert_eq!((wa % wb).raw(), (na % nb).raw(), "{a} % {b}");
             assert_eq!((wa + wb).raw(), (na + nb).raw());
             assert_eq!(wa < wb, na < nb);
+        }
+    }
+
+    // The wide forms (#1860), each against a reference that works on
+    // the bits one at a time, least significant first, and so shares
+    // nothing with the limb arithmetic it checks.
+
+    /// A value's bits, least significant first.
+    fn bits<const N: usize, const L: usize>(v: U<N, L>) -> Vec<bool> {
+        (0..N).map(|i| v.bit(i).to_bool()).collect()
+    }
+
+    /// A value from its bits, least significant first; any past `N`
+    /// are dropped.
+    fn of<const N: usize, const L: usize>(b: &[bool]) -> U<N, L> {
+        let mut l = [0u128; L];
+        for (i, _) in b.iter().enumerate().take(N).filter(|(_, x)| **x) {
+            l[i / 128] |= 1 << (i % 128);
+        }
+        U::from_limbs(l)
+    }
+
+    /// Bits that look like nothing in particular, from a seed.
+    fn noise<const N: usize, const L: usize>(seed: u64) -> U<N, L> {
+        let mut s = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+        let b: Vec<bool> = (0..N)
+            .map(|_| {
+                s ^= s << 13;
+                s ^= s >> 7;
+                s ^= s << 17;
+                s & 1 == 1
+            })
+            .collect();
+        of(&b)
+    }
+
+    #[test]
+    fn a_wide_slice_is_the_bits_it_names() {
+        let x = noise::<600, 5>(1);
+        let b = bits(x);
+        assert_eq!(x.slice_wide::<100, 200, 2>(), of::<200, 2>(&b[100..300]));
+        for lo in [0, 1, 127, 128, 129, 255, 256, 400, 471] {
+            let s = x.slice_at_wide::<129, 2>(lo);
+            assert_eq!(s, of::<129, 2>(&b[lo..lo + 129]), "from {lo}");
+        }
+        // Past the top, the bits are zero.
+        let s = x.slice_at_wide::<256, 2>(500);
+        assert_eq!(s, of::<256, 2>(&b[500..600]));
+        // A narrow slice of a wide value is still the narrow form's.
+        assert_eq!(x.slice_wide::<300, 64, 1>(), x.slice::<300, 64>());
+    }
+
+    #[test]
+    fn a_wide_resize_keeps_the_low_bits() {
+        let x = noise::<256, 2>(2);
+        let b = bits(x);
+        let up = x.resize_wide::<600, 5>();
+        assert_eq!(bits(up)[..256], b[..]);
+        assert!(bits(up)[256..].iter().all(|v| !v));
+        assert_eq!(x.zext_wide::<600, 5>(), up);
+        assert_eq!(x.resize_wide::<129, 2>(), of::<129, 2>(&b[..129]));
+        assert_eq!(up.resize_wide::<256, 2>(), x);
+    }
+
+    #[test]
+    fn a_wide_sign_extension_fills_with_the_top_bit() {
+        for seed in 3..9 {
+            let x = noise::<129, 2>(seed);
+            let b = bits(x);
+            let top = b[128];
+            let want: Vec<bool> =
+                (0..600).map(|i| if i < 129 { b[i] } else { top }).collect();
+            assert_eq!(x.sext_wide::<600, 5>(), of::<600, 5>(&want));
+            assert_eq!(x.sext_wide::<200, 2>(), of::<200, 2>(&want[..200]));
+        }
+        // Minus one at 129 bits is minus one at 600.
+        let m = !U::<129, 2>::new(0);
+        assert_eq!(m.sext_wide::<600, 5>(), !U::<600, 5>::new(0));
+    }
+
+    #[test]
+    fn a_wide_concat_puts_self_above_low() {
+        let (h, l) = (noise::<150, 2>(10), noise::<150, 2>(11));
+        let want: Vec<bool> = bits(l).into_iter().chain(bits(h)).collect();
+        assert_eq!(h.concat_wide::<150, 2, 300, 3>(l), of::<300, 3>(&want));
+        // A narrow low operand under a wide high one.
+        let (h, l) = (noise::<200, 2>(12), U::<56>::new(0xab_cdef));
+        let want: Vec<bool> = bits(l).into_iter().chain(bits(h)).collect();
+        assert_eq!(h.concat_wide::<56, 1, 256, 2>(l), of::<256, 2>(&want));
+    }
+
+    /// The product of two bit strings by shifting and adding.
+    fn product(a: &[bool], b: &[bool], n: usize) -> Vec<bool> {
+        let mut acc = vec![false; n];
+        for (j, _) in b.iter().enumerate().filter(|(_, x)| **x) {
+            let mut carry = false;
+            for i in j..n {
+                let x = i - j < a.len() && a[i - j];
+                let s = acc[i] ^ x ^ carry;
+                carry = (acc[i] && x) || (carry && (acc[i] ^ x));
+                acc[i] = s;
+            }
+        }
+        acc
+    }
+
+    #[test]
+    fn a_wide_product_is_as_wide_as_stated() {
+        for seed in 20..24 {
+            let (a, b) = (noise::<200, 2>(seed), noise::<200, 2>(seed + 50));
+            let p = a.mul_wide::<400, 4>(b);
+            assert_eq!(p, of::<400, 4>(&product(&bits(a), &bits(b), 400)));
+            // Truncated to fewer bits than the product has.
+            let t = a.mul_wide::<129, 2>(b);
+            assert_eq!(t, of::<129, 2>(&product(&bits(a), &bits(b), 129)));
         }
     }
 }
