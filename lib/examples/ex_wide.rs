@@ -12,10 +12,23 @@ use txhdl::{lower, when, Trace};
 
 /// Two limbs of 128 bits.
 type W = U<256, 2>;
+/// One bit past one limb.
+type Odd = U<129, 2>;
 
-#[derive(Trace, Default)]
+#[derive(Trace)]
 pub struct Acc {
     pub acc: Reg<W>,
+    /// Starts past what one limb holds, and counts down.
+    pub down: Reg<Odd>,
+}
+
+impl Default for Acc {
+    fn default() -> Self {
+        Acc {
+            acc: Reg::default(),
+            down: Reg::new(Odd::from_limbs([1, 1])),
+        }
+    }
 }
 
 #[lower]
@@ -23,7 +36,7 @@ impl Unit for Acc {
     async fn run(
         &mut self,
         (x, clear): (In<W>, In<Bit>),
-        (sum, mid, top): (Out<W>, Out<U<8>>, Out<U<8>>),
+        (sum, mid, top, low): (Out<W>, Out<U<8>>, Out<U<8>>, Out<Odd>),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -34,6 +47,10 @@ impl Unit for Acc {
             // low limb, where a carry lands, and the top one.
             mid.set(self.acc.get().slice::<128, 8>());
             top.set(self.acc.get().slice::<248, 8>());
+            // A register's first value at 129 bits, then a borrow
+            // out of the high limb on the second cycle.
+            low.set(self.down);
+            self.down.set(self.down - 1);
         }
     }
 }
@@ -44,6 +61,7 @@ fn main() {
     let (sum_out, sum) = signal::<W, DefaultClock>();
     let (mid_out, mid) = signal::<U<8>, DefaultClock>();
     let (top_out, top) = signal::<U<8>, DefaultClock>();
+    let (low_out, low) = signal::<Odd, DefaultClock>();
     let mut acc = Acc::default();
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();
@@ -53,12 +71,17 @@ fn main() {
         w.add("sum", &sum);
         w.add("mid", &mid);
         w.add("top", &top);
+        w.add("low", &low);
         w.start();
     }
-    let mut sim =
-        Running::new(acc.run((x, clear), (sum_out, mid_out, top_out)));
+    let outs = (sum_out, mid_out, top_out, low_out);
+    let mut sim = Running::new(acc.run((x, clear), outs));
     clear_out.set(Bit::One);
     sim.cycle();
+    // The counter's first value, 2^128 + 1, which a netlist read into
+    // one u128 once lost (#1861).
+    let [lo, hi] = low.get().limbs();
+    println!("low {hi:x}_{lo:032x}");
     clear_out.set(Bit::Zero);
     // The low limb filled, then one more carries into the high limb;
     // the top bit, then all ones, which is minus one and wraps.
