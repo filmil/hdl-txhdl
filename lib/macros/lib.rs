@@ -1074,6 +1074,19 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
         })
         .collect::<Vec<_>>()
         .join("\n");
+    // A field's names in the netlist, one or one per element, so that a
+    // field's attribute reaches each of its memories (#1852).
+    let entries_of = names
+        .iter()
+        .zip(&types)
+        .map(|(n, t)| {
+            format!(
+                "\"{n}\" => <{t} as ::txhdl::netlist::Port>::entries(\"{n}\")\
+                 .into_iter().map(|e| e.0).collect(),"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     let generated = format!(
         "impl{b} ::txhdl::comp::trace::Traceable for {n}{a} {{\n\
          fn trace(&self, scope: &::txhdl::comp::trace::Scope) {{\n\
@@ -1090,7 +1103,9 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
          &[{dsps}];\n\
          fn fields() -> Vec<(&'static str, \
          Option<::txhdl::comp::trace::Kind>, usize, usize)> {{ \
-         let mut __v = Vec::new(); {fields} __v }}\n}}\n\
+         let mut __v = Vec::new(); {fields} __v }}\n\
+         fn entries_of(f: &'static str) -> Vec<&'static str> {{ \
+         match f {{ {entries_of} _ => vec![f] }} }}\n}}\n\
          impl{b} ::txhdl::netlist::Port for {n}{a} {{}}",
         b = item.bounds,
         n = item.name,
@@ -8086,8 +8101,10 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          // (issue 890).\n\
          init_regs: ::txhdl::netlist::starts::<Self>(),\n\
          async_regs: <Self as ::txhdl::netlist::Fields>::ASYNC_REGS.to_vec(),\n\
-         distributed: <Self as ::txhdl::netlist::Fields>::DISTRIBUTED.to_vec(),\n\
-         ram_styles: <Self as ::txhdl::netlist::Fields>::RAM_STYLES.to_vec(),\n\
+         distributed: ::txhdl::netlist::per_memory::<Self>(\
+         <Self as ::txhdl::netlist::Fields>::DISTRIBUTED),\n\
+         ram_styles: ::txhdl::netlist::styles_per_memory::<Self>(\
+         <Self as ::txhdl::netlist::Fields>::RAM_STYLES),\n\
          use_dsp: <Self as ::txhdl::netlist::Fields>::USE_DSP.to_vec(),\n\
          aliases: Vec::new(),\n\
          nets: {{ let mut n: Vec<(String, ::txhdl::comp::trace::Kind, \
