@@ -2525,6 +2525,7 @@ waveform(
         "//sorted/l_1=>l_1",
         "//sorted/l_2=>l_2",
         "//sorted/l_3=>l_3",
+        "//first=>first",
     ],
 )
 

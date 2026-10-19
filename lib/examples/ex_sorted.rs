@@ -34,10 +34,11 @@ impl<const N: usize> Unit for Sorted<N> {
             DefaultClock::rising().await;
             let v = x.get();
             // Where the byte goes: after every byte not below it.
-            let mut p = U::<8>::from(0u8);
+            // Sixteen bits count up to any `N` a netlist would hold.
+            let mut p = U::<16>::from(0u16);
             for j in 0..N {
                 let ahead = Bit::from(self.l[j].get() >= v);
-                p = p + mux(ahead, U::<8>::from(1u8), U::<8>::from(0u8));
+                p = p + mux(ahead, U::<16>::from(1u16), U::<16>::from(0u16));
             }
             let at0 = mux(Bit::from(p == 0), v, self.l[0].get());
             with!(self <= { go.get() ? l[0]: at0 });
