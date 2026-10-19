@@ -45,7 +45,7 @@ fn main() {
             "--verilog" => vpath = Some(val()),
             "--report" => rpath = Some(val()),
             "--testbench" => tbpath = Some(val()),
-            // Whole numbers only, an MMCM as a PLL divides (#1820).
+            // Whole numbers only, an MMCM as a PLL divides (#1830).
             "--whole" => whole = true,
             // Given settings, `D,M8,O8[,O8...]`, written as they are with
             // nothing checked: a limit's test breaks it on purpose.

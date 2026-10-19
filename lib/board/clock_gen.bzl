@@ -31,7 +31,8 @@ def clock_gen(name, primitive, input_hz, outputs, testbench = False, whole = Fal
       outputs: each "hz:ppm".
       testbench: whether to write `<name>_tb.v` as well.
       whole: whether an MMCM keeps to whole multipliers and dividers, as a
-        PLL does: no fractional jitter, at a lower oscillator (#1820).
+        PLL does, so no fractional divider's jitter, whatever oscillator
+        that leaves (#1830).
       **kwargs: the genrule's other attributes, such as `tags`.
     """
     outs = [name + ".v", name + ".txt"]
