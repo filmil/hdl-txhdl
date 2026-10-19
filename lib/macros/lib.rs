@@ -4307,11 +4307,16 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                             // macro sees tokens, not types, so it cannot
                             // infer one. The low operand of a `concat`
                             // is the exception, since its width is not
-                            // needed.
-                            let needed: &[usize] = match m.to_string().as_str()
-                            {
+                            // needed. A wide form also names its
+                            // result's limbs, which the netlist does not
+                            // need, and is lowered as its narrow form
+                            // from the same positions, but for
+                            // `concat_wide`, whose `M` is third (#1860).
+                            let m = m.to_string();
+                            let needed: &[usize] = match m.as_str() {
                                 "concat" => &[1],
-                                "slice" => &[0, 1],
+                                "concat_wide" => &[2],
+                                "slice" | "slice_wide" => &[0, 1],
                                 _ => &[0],
                             };
                             if needed
@@ -4325,7 +4330,8 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                                     m
                                 ));
                             }
-                            return Ok(match m.to_string().as_str() {
+                            let m = m.strip_suffix("_wide").unwrap_or(&m);
+                            return Ok(match m {
                                 "slice" => format!(
                                     "NlE::slice({l}, {}, {})",
                                     ks[0], ks[1]
