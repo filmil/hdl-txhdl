@@ -8335,8 +8335,37 @@ fn indexed_reg(
             }
             Ok(format!("{f}{DYN}{v}{DYN_END}"))
         }
+        // A loop's variable moved by a constant, `self.l[j - 1]`: the
+        // neighbour of each element, worked out as the loop unrolls,
+        // and refused there if it is below zero (issue 1851).
+        [TokenTree::Ident(v), TokenTree::Punct(op), TokenTree::Literal(c)]
+            if matches!(op.as_char(), '+' | '-')
+                && c.to_string().parse::<u128>().is_ok() =>
+        {
+            let v = v.to_string();
+            let looped = subst.is_none_or(|s| {
+                s.iter()
+                    .rev()
+                    .find(|(k, _)| *k == v)
+                    .is_some_and(|(_, e)| e.starts_with("NlE::Num("))
+            });
+            if !looped {
+                return Err(format!(
+                    "`self.{f}[{v} {op} {c}]`: `{v}` is not a loop's \
+                     variable. A register of an array is chosen by a \
+                     number, a loop's variable, or a loop's variable plus \
+                     or minus a constant"
+                ));
+            }
+            let op = op.as_char();
+            Ok(format!(
+                "{f}{DYN}::txhdl::netlist::moved_index({v} as i128 {op} {c}, \
+                 stringify!(self.{f}[{v} {op} {c}]), {v} as i128){DYN_END}"
+            ))
+        }
         _ => Err(format!(
-            "`self.{f}[..]`: the index is a number or a loop's variable"
+            "`self.{f}[..]`: the index is a number, a loop's variable, or \
+             a loop's variable plus or minus a constant"
         )),
     }
 }

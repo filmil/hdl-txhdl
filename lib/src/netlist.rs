@@ -554,6 +554,21 @@ pub fn inlined_begin() {
     INLINE.with(|f| f.borrow_mut().push((Vec::new(), 0)));
 }
 
+/// An index into an array of registers or memories that a loop's
+/// variable moved by a constant gives, `self.l[j - 1]`, worked out as
+/// `lowered` unrolls the loop (issue 1851). One below zero is refused
+/// here, naming the index and the variable's value. One past the end
+/// is not refused yet, as no index past the end is (#1853).
+pub fn moved_index(at: i128, what: &str, var: i128) -> usize {
+    usize::try_from(at).unwrap_or_else(|_| {
+        panic!(
+            "`{what}` is {at} where the loop's variable is {var}: an index \
+             below zero. Start the loop where the index is 0 or more \
+             (issue 1851)"
+        )
+    })
+}
+
 /// Close the frame [`inlined_begin`] opened and give its wires.
 #[doc(hidden)]
 pub fn inlined_end() -> Vec<(String, Expr)> {
