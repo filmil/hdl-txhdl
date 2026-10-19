@@ -2189,6 +2189,13 @@ impl Lowered {
         self.own(reg, Kind::Reg, "register");
         self.init_regs.push((reg.to_string(), format!("{value:b}")));
     }
+    /// [`Lowered::init_reg`] with the value as a value of the design,
+    /// so that a register of any width can be told its first value,
+    /// a `U<256, 2>` as well as a `U<8>` (#1860).
+    pub fn init_reg_value(&mut self, reg: &str, value: impl Value) {
+        self.own(reg, Kind::Reg, "register");
+        self.init_regs.push((reg.to_string(), value.vcd()));
+    }
     /// Refuse a name that is not one of the unit's own fields of `kind`,
     /// saying which the unit does have.
     fn own(&self, name: &str, kind: Kind, what: &str) {
@@ -5511,6 +5518,22 @@ mod tests {
         let h = net.vhdl();
         assert!(h.contains(&format!("odd <= \"{bits}\";")), "reset: {h}");
         assert!(h.contains(&format!(":= \"{bits}\";")), "declared: {h}");
+    }
+
+    /// A first value given as a wide value of the design is written as
+    /// the one given as its bits, and a narrow one as `init_reg` writes
+    /// it (#1860).
+    #[test]
+    fn a_first_value_may_be_a_wide_value() {
+        use crate::types::U;
+        let mut net = three_regs();
+        net.fields.push(("odd", Some(Kind::Reg), 129, 0));
+        net.init_reg_value("odd", U::<129, 2>::from_limbs([5, 1]));
+        net.init_reg_value("count", U::<8>::new(0x2a));
+        let v = net.verilog();
+        let hex = format!("129'h1{:032x}", 5u128);
+        assert!(v.contains(&format!("odd = {hex};")), "declared: {v}");
+        assert!(v.contains("count = 8'h2a;"), "the counter: {v}");
     }
 
     /// A parent holding a child on a clock called `slow`, in a field
