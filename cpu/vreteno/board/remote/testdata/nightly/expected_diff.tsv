@@ -31,3 +31,4 @@ costs	icache apart	-	7280	-	new, pass
 costs	icache-miss	-	4176	-	new, pass
 costs	icache-clash	-	4221	-	new, pass
 costs	icache-warm	-	700	-	new, pass
+ethernet	old check	5	-	-	gone

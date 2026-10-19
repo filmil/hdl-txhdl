@@ -8,6 +8,10 @@
 #   bazel run //cpu/vreteno/board/remote:nightly -- --bit=FILE \
 #       [--out=DIR] [--prev=RESULTS] [--server=HOST] [--dry-run]
 #
+# The board server is --server, or TXHDL_BOARD_SERVER, which .bazelrc
+# sets for every `bazel run`; a board run with neither stops. Paths
+# are the caller's, relative to where `bazel run` was called.
+#
 # In order: the bitstream programmed, checked against its own sha256;
 # Linux through fastboot, timed from `booting` to OpenSBI and to
 # `/init`, with the fastboot app's own rows from the same load; the
@@ -43,12 +47,20 @@ out="${TMPDIR:-/tmp}/txhdl-nightly"
 prev=""
 bit=""
 dry=""
+# A path as the caller meant it: `bazel run` starts in the runfiles,
+# and the caller's own directory is BUILD_WORKING_DIRECTORY.
+abspath() {
+  case "$1" in
+    /*) echo "$1" ;;
+    *) echo "${BUILD_WORKING_DIRECTORY:-$PWD}/$1" ;;
+  esac
+}
 for a in "$@"; do
   case "$a" in
     --server=*) server="${a#*=}" ;;
-    --out=*) out="${a#*=}" ;;
-    --prev=*) prev="$(realpath "${a#*=}")" ;;
-    --bit=*) bit="$(realpath "${a#*=}")" ;;
+    --out=*) out="$(abspath "${a#*=}")" ;;
+    --prev=*) prev="$(abspath "${a#*=}")" ;;
+    --bit=*) bit="$(abspath "${a#*=}")" ;;
     --dry-run) dry=1 ;;
     *) echo "unknown argument: $a" >&2; exit 2 ;;
   esac
@@ -83,7 +95,9 @@ fi
 
 cd "$ws"
 sha="$(git rev-parse --short=8 HEAD)"
-run="$(TZ=America/Los_Angeles date +%Y%m%dT%H%M%z)-$sha"
+# A dry run says so in its name, and is never a board run's night
+# before.
+run="$(TZ=America/Los_Angeles date +%Y%m%dT%H%M%z)-$sha${dry:+-dry}"
 dir="$out/$run"
 mkdir -p "$out"
 if ! mkdir "$dir"; then
@@ -95,13 +109,16 @@ echo "nightly at $sha into $dir${dry:+ (dry run, on the model)}"
 results="$dir/results.tsv"
 printf 'check\tmetric\tvalue\tunit\tstatus\n' >"$results"
 
+# The receive tester too, so that no build lands in the board's 40 s
+# wait for a burst.
 images=(//linux:board_boot //linux:board_demo_boot //zephyr:fastboot
   //cpu/vreteno/rust:phyregs_ram_bin //cpu/vreteno/rust:ethperf_ram_bin
-  //cpu/vreteno/rust:costs_ram_bin)
+  //cpu/vreteno/rust:costs_ram_bin //eth/hil:run)
 model=(//cpu/vreteno:machine //linux:model_boot)
 bazel build "${images[@]}" ${dry:+"${model[@]}"}
 file() { bazel cquery --output=files "$1" 2>/dev/null | grep -m1 '\.bin$\|/machine$'; }
 img() { echo "$ws/$(file "$1")"; }
+ethtest="$ws/$(bazel cquery --output=files //eth/hil:run 2>/dev/null | grep -m1 '^bazel-out/')"
 stamp() { while IFS= read -r l; do printf '%s %s\n' "$(date -u +%T.%3N)Z" "$l"; done; }
 
 # --- On the model ------------------------------------------------------
@@ -142,14 +159,17 @@ if [[ -n "$dry" ]]; then
     fi
     read_demo "$name" "$dir/$name.log" "$last" >>"$results"
   done < <(grep -v '^#' "$list" | grep -v '^[[:space:]]*$')
-  echo "costs on the model"
-  model_run "$(img //cpu/vreteno/rust:costs_ram_bin)" "$dir/costs.log" "" \
-    200000000 --timing
-  read_costs "$dir/costs.log" >>"$results"
+  # The rows a board run has and the model cannot, in the board run's
+  # order, so that the two read alike.
   for m in link "1000 full" "ping lost" ethperf; do
     row ethernet "$m" - - skipped >>"$results"
   done
   row fastboot "load to listening" - - skipped >>"$results"
+  row fastboot "getvar answered" - - skipped >>"$results"
+  echo "costs on the model"
+  model_run "$(img //cpu/vreteno/rust:costs_ram_bin)" "$dir/costs.log" "" \
+    200000000 --timing
+  read_costs "$dir/costs.log" >>"$results"
 fi
 
 # --- On the board ------------------------------------------------------
@@ -201,6 +221,11 @@ if [[ -z "$dry" ]]; then
     done
     sender="$(holders)"
     answered=no
+    # No app listening, no boot: the rows say so, and the run goes on.
+    if ! grep -q 'listening on port' "$log" 2>/dev/null; then
+      echo "  the fastboot app never listened"
+      return
+    fi
     if timeout 30 ssh -n -o BatchMode=yes "$server" \
         "cd $fbdir && ./fastboot -s tcp:192.168.1.50 getvar product" >>"$log" 2>&1; then
       answered=yes
@@ -224,7 +249,9 @@ if [[ -z "$dry" ]]; then
   fb_boot "$(img //linux:board_boot)" "$dir/linux.log" "Run /init as init process" 120
   fb_end
   read_linux linux "$dir/linux.log" >>"$results"
-  read_fastboot "$dir/linux.log" "$answered" >>"$results"
+  # The fastboot app's rows come from this load, and go in after the
+  # Ethernet port's, where the order puts them.
+  fastboot_rows="$(read_fastboot "$dir/linux.log" "$answered")"
 
   echo "the demos"
   "$demos" --server="$server" --bit="$bit" --out="$dir/demos" || true
@@ -241,12 +268,15 @@ if [[ -z "$dry" ]]; then
   program
   serial_run "$(img //cpu/vreteno/rust:phyregs_ram_bin)" "$dir/phyregs.log" 15
   read_phy "$dir/phyregs.log" >>"$results"
-  program
+  # No reprogram: phyregs answers the serial line's reset, so the
+  # fastboot app loads after it.
   fb_boot "$(img //linux:board_demo_boot)" "$dir/ping-linux.log" "txhdl: demo done" 180
   timeout 60 ssh -n -o BatchMode=yes "$server" "ping -c 100 -i 0.2 192.168.1.50" \
     >"$dir/ping.log" 2>&1 || true
   fb_end
   read_ping "$dir/ping.log" >>"$results"
+  # Linux does not answer the serial line's reset, so the part is
+  # programmed again before ethperf.
   program
   free_port
   ( "$load" --server="$server" --reset --image="$(img //cpu/vreteno/rust:ethperf_ram_bin)" \
@@ -260,8 +290,10 @@ if [[ -z "$dry" ]]; then
     while (( answered_waits < waits )); do
       answered_waits=$((answered_waits + 1))
       size="$(grep -a 'rx waiting' "$dir/ethperf.log" | sed -n "${answered_waits}p" | awk '{print $NF}')"
-      [[ -n "$size" ]] && bazel run //eth/hil:run -- --server="$server" --mode=send \
-        --count=1000 --size="$size" >>"$dir/ethtest.log" 2>&1 || true
+      # Built above; run as it is, with no Bazel in the board's wait.
+      [[ -n "$size" ]] && BUILD_WORKSPACE_DIRECTORY="$ws" "$ethtest" \
+        --server="$server" --mode=send --count=1000 --size="$size" \
+        >>"$dir/ethtest.log" 2>&1 || true
     done
     (( answered_waits >= 4 )) && grep -aq 'rx copy 1514' "$dir/ethperf.log" && break
     sleep 1
@@ -270,9 +302,10 @@ if [[ -z "$dry" ]]; then
   kill "$reader" 2>/dev/null || true
   wait "$reader" 2>/dev/null || true
   read_ethperf "$dir/ethperf.log" >>"$results"
+  [[ -n "$fastboot_rows" ]] && printf '%s\n' "$fastboot_rows" >>"$results"
 
   echo "the costs image"
-  program
+  # No reprogram: ethperf answers the serial line's reset.
   serial_run "$(img //cpu/vreteno/rust:costs_ram_bin)" "$dir/costs.log" 60
   read_costs "$dir/costs.log" >>"$results"
 fi
@@ -280,7 +313,13 @@ fi
 # --- What moved --------------------------------------------------------
 
 if [[ -z "$prev" ]]; then
-  prev="$(ls -d "$out"/*/results.tsv 2>/dev/null | grep -v "^$dir/" | sort | tail -1 || true)"
+  # The newest earlier night of the same kind, by when its results were
+  # written rather than by its name, whose Pacific offset changes with
+  # daylight saving: a board run against a board run, a dry run against
+  # a dry run.
+  prev="$(ls -dt "$out"/*/results.tsv 2>/dev/null | grep -v "^$dir/" |
+    if [[ -n "$dry" ]]; then grep -- '-dry/'; else grep -v -- '-dry/'; fi |
+    head -1 || true)"
 fi
 if [[ -n "$prev" && -f "$prev" ]]; then
   diff_results "$prev" "$results" >"$dir/diff.tsv"

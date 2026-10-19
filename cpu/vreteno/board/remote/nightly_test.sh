@@ -35,4 +35,22 @@ trap 'rm -f "$now" "$with_header" "$empty"' EXIT
 [[ "$(read_ethperf "$empty" | cut -f5)" == fail ]]
 [[ "$(read_costs "$empty" | cut -f5)" == fail ]]
 [[ "$(read_linux linux "$empty" | cut -f5)" == fail ]]
+# Each reader's failing case, on a log made for it (agy on PR 1856).
+bad="$(mktemp)"
+trap 'rm -f "$now" "$with_header" "$empty" "$bad"' EXIT
+# OpenSBI 15 s after booting, #1457's gap, and no /init: both fail.
+printf '00:00:01.000Z fastboot: booting 1 bytes at 0x40000000\n00:00:16.000Z OpenSBI v1.6\n' >"$bad"
+[[ "$(read_linux linux "$bad" | cut -f5 | tr '\n' ' ')" == "fail fail " ]]
+# A demo that never reached its end, and one that dropped frames.
+printf '00:00:01.000Z demo ico 5 tx_dropped 3\n' >"$bad"
+[[ "$(read_demo d "$bad" "" | cut -f5 | tr '\n' ' ')" == "fail fail " ]]
+# The PHY with the link down and no 1000BASE-T partner.
+printf '00:00:01.000Z r00 1140 7969 937c 4032\n00:00:01.000Z r08 0000 0200 0000 0000\n' >"$bad"
+[[ "$(read_phy "$bad" | cut -f5 | tr '\n' ' ')" == "fail fail " ]]
+# A receive with nothing sent is not a pass.
+printf '00:00:01.000Z rx dma 60 got 0 of 0 lost 0 other 0 ticks 0 cycles/frame 0\n' >"$bad"
+[[ "$(read_ethperf "$bad" | cut -f5)" == fail ]]
+# Listening with no load before it is not a time.
+printf '00:00:01.000Z fastboot: listening on port 5554\n' >"$bad"
+[[ "$(read_fastboot "$bad" yes | head -1 | cut -f5)" == fail ]]
 echo "nightly readers: pass"

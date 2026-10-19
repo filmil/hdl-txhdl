@@ -128,6 +128,8 @@ sh_binary(
 # unless --dry-run, which runs what it can on the machine model.
 #
 #   bazel run //cpu/vreteno/board/remote:nightly -- --bit=FILE
+#
+# The board server is TXHDL_BOARD_SERVER, which .bazelrc sets, or --server.
 sh_binary(
     name = "nightly",
     srcs = ["nightly.sh"],

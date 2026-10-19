@@ -101,7 +101,7 @@ read_ethperf() {
       if (/\btx (dma|copy) (\d+) frames \d+ ticks \d+ frames\/s (\d+)/) {
         print "ethernet\ttx $1 $2\t$3\tframes/s\tpass\n"; $n++;
       } elsif (/\brx (dma|copy) (\d+) got (\d+) of (\d+)/) {
-        printf "ethernet\trx %s %s got\t%d\tof %d\t%s\n", $1, $2, $3, $4, $3 == $4 ? "pass" : "fail"; $n++;
+        printf "ethernet\trx %s %s got\t%d\tof %d\t%s\n", $1, $2, $3, $4, $4 > 0 && $3 == $4 ? "pass" : "fail"; $n++;
       }
     }
     print "ethernet\tethperf\t-\t-\tfail\n" unless $n;
@@ -121,7 +121,7 @@ read_fastboot() {
     }
     printf "fastboot\tload to listening\t%s\ts\t%s\n",
       defined $s && defined $l ? sprintf("%.2f", gap($s, $l)) : "-",
-      defined $l ? "pass" : "fail";
+      defined $s && defined $l ? "pass" : "fail";
   ' "$log"
   row fastboot "getvar answered" "$answered" - "$([[ "$answered" == yes ]] && echo pass || echo fail)"
 }
@@ -165,7 +165,13 @@ diff_results() {
       my $va = $a ? $a->[0] : "-";
       my $vb = $b ? $b->[0] : "-";
       my $num = qr/^-?\d+(?:\.\d+)?$/;
-      my $ch = ($va =~ $num && $vb =~ $num) ? sprintf("%+g", $vb - $va) : "-";
+      # Whole numbers as whole, others to the hundredth, never in
+      # exponent form.
+      my $ch = "-";
+      if ($va =~ $num && $vb =~ $num) {
+        $ch = ($va =~ /^-?\d+$/ && $vb =~ /^-?\d+$/)
+          ? sprintf("%+d", $vb - $va) : sprintf("%+.2f", $vb - $va);
+      }
       my $st = !$a ? "new, $b->[2]"
         : !$b ? "gone"
         : $a->[2] eq $b->[2] ? $b->[2]

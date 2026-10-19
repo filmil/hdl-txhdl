@@ -51,7 +51,11 @@ for a in "$@"; do
   case "$a" in
     --server=*) server="${a#*=}" ;;
     --out=*) out="${a#*=}" ;;
-    --bit=*) given="$(realpath "${a#*=}")" ;;
+    # Relative to where `bazel run` was called, not the runfiles.
+    --bit=*)
+      given="${a#*=}"
+      [[ "$given" == /* ]] || given="${BUILD_WORKING_DIRECTORY:-$PWD}/$given"
+      ;;
     --dry-run) dry=1 ;;
     *) echo "unknown argument: $a" >&2; exit 2 ;;
   esac
