@@ -816,6 +816,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# An array of memories, lowered:  bazel run //lib/examples:ex_mems
+rust_binary(
+    name = "ex_mems",
+    srcs = ["ex_mems.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # An array of child units, lowered:  bazel run //lib/examples:ex_lanes
 rust_binary(
     name = "ex_lanes",
@@ -1568,6 +1577,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_mul.rs",
         "ex_lanes.rs",
         "ex_mesh.rs",
+        "ex_mems.rs",
         "ex_regs.rs",
         "ex_wide.rs",
         "ex_tap.rs",
