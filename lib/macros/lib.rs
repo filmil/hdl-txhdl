@@ -3054,6 +3054,27 @@ fn typed_field(ty: &str, base: &str, f: &str) -> String {
     text
 }
 
+/// Whether tokens before an index name a field of a value, so that the
+/// index is an element of an array field: `p.lanes` before `[k]`, or
+/// `p.grid[i]` before `[j]`; not `self.f`, an array of registers, nor
+/// a bare name (issue 1869).
+fn indexes_a_field(rest: &[TokenTree]) -> bool {
+    match rest {
+        [base @ .., TokenTree::Punct(dot), TokenTree::Ident(_)]
+            if dot.as_char() == '.' && !base.is_empty() =>
+        {
+            !matches!(base, [TokenTree::Ident(s)]
+                if matches!(s.to_string().as_str(), "self" | "this"))
+        }
+        [inner @ .., TokenTree::Group(g)]
+            if g.delimiter() == Delimiter::Bracket && inner.len() >= 3 =>
+        {
+            indexes_a_field(inner)
+        }
+        _ => false,
+    }
+}
+
 /// A field of a port's value, `p.f`: the base must be a port's data,
 /// or a field of it this lowering wrote, and the field's bits are found
 /// from the value type's layout when `lowered` runs, so a generic
@@ -4516,20 +4537,32 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
             Ok(ename(&indexed_reg(&f.to_string(), g, Some(subst))?))
         }
         // An element of an array field of a port's value, `p.lanes[k]`
-        // with `k` a number or a loop's variable: the field's path with
-        // the index after it, which `[T; N]`'s `field_bits` reads
-        // (issue 1869).
-        [base @ .., TokenTree::Punct(dot), TokenTree::Ident(_), TokenTree::Group(g)]
-            if dot.as_char() == '.'
-                && !base.is_empty()
-                && g.delimiter() == Delimiter::Bracket
-                && !matches!(base, [TokenTree::Ident(s)]
-                    if matches!(s.to_string().as_str(), "self" | "this")) =>
+        // with `k` a number or a loop's variable, or of an array inside
+        // it, `p.grid[i][j]`: the field's path with each index after it,
+        // which `[T; N]`'s `field_bits` reads (issue 1869).
+        [rest @ .., TokenTree::Group(g)]
+            if g.delimiter() == Delimiter::Bracket && indexes_a_field(rest) =>
         {
-            let field = tr(&ts[..ts.len() - 1], subst)?;
+            let field = tr(rest, subst)?;
+            if !FIELDS.with(|c| c.borrow().iter().any(|c| c.text == field)) {
+                return Err(
+                    "an index after a field is an element of an array field \
+                     of a port's value"
+                        .into(),
+                );
+            }
             let it: Vec<TokenTree> = g.stream().into_iter().collect();
             let index = match it.as_slice() {
-                [TokenTree::Literal(k)] => k.to_string(),
+                // A number in any spelling Rust takes beside a usize,
+                // `2`, `0x2` or `2usize`, as the number it is.
+                [TokenTree::Literal(k)] => match moved_const(&k.to_string()) {
+                    Some(n) => n.to_string(),
+                    None => {
+                        return Err(format!(
+                            "`[{k}]`: an index is a number of at most 64 bits"
+                        ))
+                    }
+                },
                 [TokenTree::Ident(v)]
                     if subst
                         .iter()
