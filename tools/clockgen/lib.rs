@@ -60,7 +60,7 @@ pub struct Limits {
     pub outputs: usize,
     /// Whether the feedback multiplier and the first output divide in
     /// eighths: the MMCM's do, unless a plan asks for whole numbers only
-    /// (#1820); a PLL's never do.
+    /// (#1830); a PLL's never do.
     pub fractional: bool,
 }
 
@@ -214,12 +214,11 @@ fn allowed(frac: bool, k: usize, o8: i64) -> bool {
 /// `input * m8 / (d * o8)`, so a whole one comes out whole.
 fn best_out(
     l: &Limits,
-    p: Primitive,
     k: usize,
     (input, d, m8): (f64, u32, u32),
     w: &Want,
 ) -> Option<Out> {
-    let frac = p == Primitive::Mmcm && l.fractional;
+    let frac = l.fractional;
     let step = steps(frac, k).2;
     let ideal = input * m8 as f64 / (d as f64 * w.hz);
     let near = ((ideal / step as f64).floor() as i64) * step as i64;
@@ -292,11 +291,7 @@ pub fn plan(
     {
         return Err(Refusal::Want(k));
     }
-    let m_step = if primitive == Primitive::Mmcm && limits.fractional {
-        1
-    } else {
-        8
-    };
+    let m_step = if limits.fractional { 1 } else { 8 };
     let mut best: Option<(f64, Plan)> = None;
     // The nearest any setting came, for the refusal.
     let mut nearest: Option<(f64, Vec<Out>)> = None;
@@ -313,7 +308,7 @@ pub fn plan(
             let outs: Option<Vec<Out>> = wants
                 .iter()
                 .enumerate()
-                .map(|(k, w)| best_out(limits, primitive, k, (input, d, m8), w))
+                .map(|(k, w)| best_out(limits, k, (input, d, m8), w))
                 .collect();
             let Some(outs) = outs else { continue };
             let s = score(&outs, wants);
@@ -714,7 +709,7 @@ mod tests {
 
     /// An MMCM asked for whole numbers keeps its multiplier and every
     /// divider whole, as a PLL does, and 125 MHz from 200 MHz is still
-    /// exact (#1820).
+    /// exact (#1830).
     #[test]
     fn whole_numbers_only_when_asked() {
         let p = Primitive::Mmcm;
@@ -725,6 +720,22 @@ mod tests {
         assert_eq!(q.m8 % 8, 0, "{q:?}");
         assert!(q.outs.iter().all(|o| o.o8 % 8 == 0), "{q:?}");
         assert_eq!(q.outs[0].hz, 125.0 * MHZ, "{q:?}");
+    }
+
+    /// Whole numbers only are refused where only eighths reach: 720p's
+    /// 74.25 MHz exactly, which a fractional plan makes and no whole one
+    /// does (#1830).
+    #[test]
+    fn whole_numbers_refuse_what_only_eighths_reach() {
+        let p = Primitive::Mmcm;
+        let w = [want(74.25, 0.0)];
+        assert!(mmcm(200.0, &w).is_ok(), "the fractional plan meets it");
+        let mut l = Limits::artix7_2(p);
+        l.fractional = false;
+        assert!(matches!(
+            plan(p, &l, 200.0 * MHZ, &w),
+            Err(Refusal::Unmet(_))
+        ));
     }
 
     /// The module instantiates the primitive with the plan's parameters,

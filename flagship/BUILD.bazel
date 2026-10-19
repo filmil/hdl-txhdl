@@ -47,7 +47,7 @@ clock_gen(
     outputs = ["125000000:0"],
     primitive = "mmcm",
     # Whole numbers: the 125 MHz is an exact ratio, and a fractional plan
-    # cost the transmit clock half its slack, 0.811 to 0.397 ns (#1820).
+    # cost the transmit clock half its slack, 0.811 to 0.397 ns (#1830).
     whole = True,
 )
 
