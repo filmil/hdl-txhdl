@@ -8064,6 +8064,8 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          use ::txhdl::netlist::{{Expr as NlE, Stmt as NlS, Target as NlT}};\n\
          {uses}\
          {prelude}\
+         // A field named like an element of an array field (#1858).\n\
+         ::txhdl::netlist::refuse_named_like_elements::<Self>(name);\n\
          // The wires the helpers of other files ask for (issue 504).\n\
          ::txhdl::netlist::inlined_begin();\n\
          #[allow(unused_mut)] let mut __dynw: Vec<(String, NlE)> = Vec::new();\n\

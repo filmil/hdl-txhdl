@@ -576,6 +576,43 @@ pub fn moved_index(at: i128, what: &str, var: i128) -> usize {
     })
 }
 
+/// Refuse a unit with a field named `base_k` beside a field `base`
+/// that is an array of registers or memories, `base_0` onward (#1858).
+/// Within the array's length the two would be declared under one name;
+/// past it, `self.base[k]` would fold to the other field's name and
+/// read it rather than be refused (#1853). Either way the names say two
+/// things, so the field is refused whatever `k` is. What the derive
+/// checks, two fields of one name, sees `base` and `base_k`; this sees
+/// what `base` expands to.
+#[doc(hidden)]
+pub fn refuse_named_like_elements<F: Fields>(unit: &str) {
+    let entries: Vec<&str> = F::fields().into_iter().map(|e| e.0).collect();
+    // A field that is an array is not declared under its own name, but
+    // its first element is.
+    let arrays: Vec<&str> = F::NAMES
+        .iter()
+        .copied()
+        .filter(|n| {
+            !entries.contains(n) && entries.contains(&&*format!("{n}_0"))
+        })
+        .collect();
+    for m in F::NAMES {
+        let Some((base, k)) = m.rsplit_once('_') else {
+            continue;
+        };
+        if !k.is_empty()
+            && k.bytes().all(|b| b.is_ascii_digit())
+            && arrays.contains(&base)
+        {
+            panic!(
+                "`{unit}` has a field `{m}` beside `{base}`, an array whose \
+                 elements are `{base}_0` onward: the netlist would give two \
+                 things one name. Rename the field (#1858)"
+            );
+        }
+    }
+}
+
 /// Close the frame [`inlined_begin`] opened and give its wires.
 #[doc(hidden)]
 pub fn inlined_end() -> Vec<(String, Expr)> {
