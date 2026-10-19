@@ -1026,7 +1026,11 @@ pub struct Lowered {
     /// the unit's `Default`, its own registers read before any edge
     /// ([`starts`], issue 890), and [`Lowered::init_reg`] adds to it
     /// for a top the run built some other way (issue 359).
-    pub init_regs: Vec<(String, u128)>,
+    ///
+    /// The value is its bits, most significant first, as a trace
+    /// sample writes them, so that a register wider than 128 bits keeps
+    /// its value too (#1861).
+    pub init_regs: Vec<(String, String)>,
     /// The registers the netlist marks `ASYNC_REG`, as
     /// [`Fields::ASYNC_REGS`] names them: a synchroniser's stages.
     pub async_regs: Vec<&'static str>,
@@ -2183,7 +2187,7 @@ impl Lowered {
     /// that is not is refused, as for [`Lowered::init`] (issue 1104).
     pub fn init_reg(&mut self, reg: &str, value: u128) {
         self.own(reg, Kind::Reg, "register");
-        self.init_regs.push((reg.to_string(), value));
+        self.init_regs.push((reg.to_string(), format!("{value:b}")));
     }
     /// Refuse a name that is not one of the unit's own fields of `kind`,
     /// saying which the unit does have.
@@ -2212,10 +2216,12 @@ impl Lowered {
 /// any depth starts as the run starts it, with no `init_reg` (issue
 /// 890). A child's registers are the child's own `lowered`'s business,
 /// so only the unit's own fields are read: a path one step below the
-/// unit. A register wider than 128 bits is left at zero, as `init_reg`
-/// cannot hold it either.
+/// unit. The value is kept as the sample's bits, so a register wider
+/// than 128 bits keeps it as well; it was read into a `u128` once, and
+/// a wider one started at zero in the netlist and not in the run
+/// (#1861).
 #[doc(hidden)]
-pub fn starts<T: Default + Traceable>() -> Vec<(String, u128)> {
+pub fn starts<T: Default + Traceable>() -> Vec<(String, String)> {
     collect("unit", &T::default())
         .into_iter()
         .filter(|p| p.kind == Kind::Reg)
@@ -2224,8 +2230,33 @@ pub fn starts<T: Default + Traceable>() -> Vec<(String, u128)> {
             if name.contains('.') {
                 return None;
             }
-            let v = u128::from_str_radix(&(p.sample)(), 2).ok()?;
-            (v != 0).then(|| (name.to_string(), v))
+            let bits = (p.sample)();
+            let bits = bits.trim_start_matches('0');
+            (!bits.is_empty() && bits.bytes().all(|b| b == b'1' || b == b'0'))
+                .then(|| (name.to_string(), bits.to_string()))
+        })
+        .collect()
+}
+
+/// Bits, most significant first, as hexadecimal digits with no
+/// leading zeros, which is what `{:x}` writes for a value that fits a
+/// `u128`, so a netlist of narrow registers is written as it was.
+fn bits_hex(bits: &str) -> String {
+    let b = bits.trim_start_matches('0').as_bytes();
+    if b.is_empty() {
+        return "0".to_string();
+    }
+    let head = b.len() % 4;
+    let mut chunks: Vec<&[u8]> = Vec::new();
+    if head > 0 {
+        chunks.push(&b[..head]);
+    }
+    chunks.extend(b[head..].chunks(4));
+    chunks
+        .iter()
+        .map(|c| {
+            let v = c.iter().fold(0u32, |a, d| a * 2 + u32::from(d - b'0'));
+            char::from_digit(v, 16).unwrap()
         })
         .collect()
 }
@@ -2234,11 +2265,18 @@ impl Lowered {
     /// What a register starts at: what `init_reg` was told last, or
     /// zero. The generated `lowered` puts the unit's own starts first
     /// (issue 890), so an `init_reg` a caller writes after it wins.
-    fn reg_init(&self, reg: &str) -> u128 {
+    /// Its bits, most significant first, with no leading zeros, so
+    /// zero is the empty string.
+    fn reg_init(&self, reg: &str) -> &str {
         match self.init_regs.iter().rev().find(|(n, _)| n == reg) {
-            Some((_, v)) => *v,
-            None => 0,
+            Some((_, v)) => v.trim_start_matches('0'),
+            None => "",
         }
+    }
+    /// What a register starts at as the Verilog writes it, in its
+    /// declaration: hexadecimal at its width.
+    fn reg_init_verilog(&self, reg: &str) -> String {
+        format!("{}'h{}", self.reg_width(reg), bits_hex(self.reg_init(reg)))
     }
     /// A register's width, or one for a name that is not a field.
     fn reg_width(&self, reg: &str) -> usize {
@@ -2253,10 +2291,10 @@ impl Lowered {
     /// the same value (issue 728).
     fn reg_init_vhdl(&self, reg: &str) -> String {
         match (self.reg_init(reg), self.reg_width(reg)) {
-            (0, 1) => "'0'".to_string(),
-            (0, _) => "(others => '0')".to_string(),
+            ("", 1) => "'0'".to_string(),
+            ("", _) => "(others => '0')".to_string(),
             (v, 1) => format!("'{v}'"),
-            (v, w) => format!("\"{v:0w$b}\""),
+            (v, w) => format!("\"{v:0>w$}\""),
         }
     }
     /// Say under which trace scope a port is found, when the run named
@@ -2932,7 +2970,7 @@ impl Lowered {
                 // hand (#884).
                 Some(Kind::Reg) => writeln!(
                     out,
-                    "  {}{}reg {}{n} = {w}'h{:x};",
+                    "  {}{}reg {}{n} = {};",
                     if self.async_regs.contains(n) {
                         "(* ASYNC_REG = \"TRUE\" *) "
                     } else {
@@ -2945,7 +2983,7 @@ impl Lowered {
                         None => String::new(),
                     },
                     range(*w),
-                    self.reg_init(n)
+                    self.reg_init_verilog(n)
                 )
                 .unwrap(),
                 // A wire kept as a field: declared here, driven below.
@@ -3280,8 +3318,8 @@ impl Lowered {
                     // runtime's reset puts back (issue 728).
                     for r in &regs {
                         let v = match self.reg_init(r) {
-                            0 => "0".to_string(),
-                            v => format!("{}'h{v:x}", self.reg_width(r)),
+                            "" => "0".to_string(),
+                            _ => self.reg_init_verilog(r),
                         };
                         writeln!(out, "      {r} <= {v};").unwrap();
                     }
@@ -5432,6 +5470,47 @@ mod tests {
         net.init_reg("flag", 1);
         let net = net.renamed(&[("flag", "banner")]);
         assert_eq!(net.init_regs[0].0, "banner");
+    }
+
+    /// The hexadecimal of a first value's bits is what `{:x}` writes
+    /// for one that fits a `u128`, so no narrow netlist changes (#1861).
+    #[test]
+    fn bits_hex_is_lower_hex() {
+        for v in [0u128, 1, 0x2a, 0xf, 0x10, 0xdead_beef, u128::MAX, 1 << 127] {
+            assert_eq!(bits_hex(&format!("{v:b}")), format!("{v:x}"), "{v}");
+            assert_eq!(
+                bits_hex(&format!("{v:0200b}")),
+                format!("{v:x}"),
+                "{v}"
+            );
+        }
+        assert_eq!(bits_hex(""), "0");
+    }
+
+    /// A register of 129 bits that starts at `2^128 + 5` says so in
+    /// both languages, in its declaration and in its reset; read into a
+    /// `u128` it started at zero instead (#1861).
+    #[test]
+    fn a_register_over_128_bits_keeps_its_first_value() {
+        let mut net = three_regs();
+        net.fields.push(("odd", Some(Kind::Reg), 129, 0));
+        net.procs.push(Process {
+            clock: "clk",
+            falling: false,
+            body: vec![Stmt::Drive(
+                Target::Name("odd".to_string()),
+                Expr::Name("odd".to_string()),
+            )],
+        });
+        let bits = format!("1{:0128b}", 5u128);
+        net.init_regs.push(("odd".to_string(), bits.clone()));
+        let v = net.verilog();
+        let hex = format!("129'h1{:032x}", 5u128);
+        assert!(v.contains(&format!("odd = {hex};")), "declared: {v}");
+        assert!(v.contains(&format!("odd <= {hex};")), "reset: {v}");
+        let h = net.vhdl();
+        assert!(h.contains(&format!("odd <= \"{bits}\";")), "reset: {h}");
+        assert!(h.contains(&format!(":= \"{bits}\";")), "declared: {h}");
     }
 
     /// A parent holding a child on a clock called `slow`, in a field
