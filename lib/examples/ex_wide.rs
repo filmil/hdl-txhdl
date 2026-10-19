@@ -4,8 +4,9 @@
 //! a `U<N>` of at most 128 bits is `U<N, 1>` as before. The unit is
 //! an accumulator at that width: its sum carries across the limbs,
 //! and two bytes come out of it as slices. The wide forms take wider
-//! pieces: a 200-bit field, two 150-bit halves joined the other way
-//! round, and a sign extension to 300 bits. The netlist is checked
+//! pieces: a 200-bit field, the low and top 150 bits joined the other
+//! way round, a sign extension, a zero extension and a truncation, and
+//! the 258-bit square of a 129-bit value. The netlist is checked
 //! against the trace under nvc and Verilator.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{signal, Clock, DefaultClock, In, Out, Reg, Running, Unit};
@@ -19,6 +20,8 @@ type Odd = U<129, 2>;
 /// A field of the sum, and what is made of it, wider than one limb.
 type F = U<200, 2>;
 type T = U<300, 3>;
+/// The square of a 129-bit value.
+type Sq = U<258, 3>;
 
 #[derive(Trace)]
 pub struct Acc {
@@ -42,7 +45,7 @@ impl Unit for Acc {
     async fn run(
         &mut self,
         (x, clear): (In<W>, In<Bit>),
-        (sum, mid, top, low, field, swapped, ext): (
+        (sum, mid, top, low, field, swapped, ext, grown, cut, square): (
             Out<W>,
             Out<U<8>>,
             Out<U<8>>,
@@ -50,6 +53,9 @@ impl Unit for Acc {
             Out<F>,
             Out<T>,
             Out<T>,
+            Out<T>,
+            Out<Odd>,
+            Out<Sq>,
         ),
     ) {
         loop {
@@ -62,16 +68,21 @@ impl Unit for Acc {
             mid.set(self.acc.get().slice::<128, 8>());
             top.set(self.acc.get().slice::<248, 8>());
             // Wider pieces, which state their limbs as well: 200 bits
-            // from bit 28, and the low 150 bits above the high 150.
+            // from bit 28, and the low 150 bits above the top 150,
+            // which share the middle 44.
             field.set(self.acc.get().slice_wide::<28, 200, 2>());
             let hi = self.acc.get().slice_wide::<106, 150, 2>();
             let lo = self.acc.get().slice_wide::<0, 150, 2>();
             swapped.set(lo.concat_wide::<150, 2, 300, 3>(hi));
+            // Wider and narrower again, still in limbs.
+            grown.set(self.acc.get().zext_wide::<300, 3>());
+            cut.set(self.acc.get().resize_wide::<129, 2>());
             // A register's first value at 129 bits, then a borrow
             // out of the high limb on the second cycle; its top bit
             // is set at first, so the extension fills with ones.
             low.set(self.down);
             ext.set(self.down.get().sext_wide::<300, 3>());
+            square.set(self.down.get().mul_wide::<258, 3>(self.down.get()));
             self.down.set(self.down - 1);
         }
     }
@@ -87,6 +98,9 @@ fn main() {
     let (field_out, field) = signal::<F, DefaultClock>();
     let (swapped_out, swapped) = signal::<T, DefaultClock>();
     let (ext_out, ext) = signal::<T, DefaultClock>();
+    let (grown_out, grown) = signal::<T, DefaultClock>();
+    let (cut_out, cut) = signal::<Odd, DefaultClock>();
+    let (square_out, square) = signal::<Sq, DefaultClock>();
     let mut acc = Acc::default();
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();
@@ -100,6 +114,9 @@ fn main() {
         w.add("field", &field);
         w.add("swapped", &swapped);
         w.add("ext", &ext);
+        w.add("grown", &grown);
+        w.add("cut", &cut);
+        w.add("square", &square);
         w.start();
     }
     let outs = (
@@ -110,6 +127,9 @@ fn main() {
         field_out,
         swapped_out,
         ext_out,
+        grown_out,
+        cut_out,
+        square_out,
     );
     let mut sim = Running::new(acc.run((x, clear), outs));
     clear_out.set(Bit::One);
