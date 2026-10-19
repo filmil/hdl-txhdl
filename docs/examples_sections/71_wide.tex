@@ -9,8 +9,28 @@ which adds its input each cycle and puts out the sum and two bytes
 of it, taken with \code{slice}: the byte just above the low limb,
 where an overflow bit lands, and the top byte. The run fills the low limb, adds
 one so the sum overflows into the high limb, sets the top bit, and then
-adds all ones, which is minus one and takes one away. The netlists
-declare 256-bit vectors, and both are checked under nvc and Verilator
+adds all ones, which is minus one and takes one away. Beside it a
+129-bit register, \code{down}, starts at $2^{128}+1$, which no single
+limb holds, and counts down, so the netlists must give it that first
+value and borrow across the limbs on its second cycle. The accumulator
+itself starts at $2^{128}+7$ for the same reason.
+
+\code{slice}, \code{resize}, \code{zext}, \code{sext}, \code{concat}
+and \code{mul} give at most 128 bits, one limb. Each has a wide form
+beside it, named with \code{\_wide}, which also states its result's
+limbs, since Rust cannot work them out from the width: \code{field}
+is \code{slice\_wide::<28, 200, 2>}, 200 bits of the sum in two limbs;
+\code{swapped} joins the sum's low 150 bits above its top 150, which
+share the middle 44, with \code{concat\_wide::<150, 2, 300, 3>}, whose
+four parameters are the low operand's width and limbs and the result's;
+\code{ext} is the 129-bit counter sign-extended to 300 bits with
+\code{sext\_wide}, all ones above it while its top bit is set;
+\code{grown} and \code{cut} are the sum zero-extended to 300 bits and
+cut to 129; and \code{square} is the counter times itself, 258 bits,
+with \code{mul\_wide}. In the netlists the limbs are gone, and each is
+a slice, a concatenation, a replicated bit or a product.
+The netlists declare vectors of up to 300 bits, and both are checked
+under nvc and Verilator
 against the trace, as Section~\ref{sec:x-checked} describes, so the
 trace, the testbenches and the two languages are all shown to hold
 the full width.
@@ -26,4 +46,4 @@ the printout.}
 
 \lstinputlisting[caption={\code{ex\_wide.rs}. Run with \code{bazel run //lib/examples:ex\_wide}.},label={lst:x-wide}]{lib/examples/ex_wide.rs}
 
-\lstinputlisting[style=ascii,caption={What \code{ex\_wide} printed when the build ran it: the sums as two limbs, then the lowering.},label={lst:x-wide-out}]{out_wide.txt}
+\lstinputlisting[style=ascii,caption={What \code{ex\_wide} printed when the build ran it: the first values, the sums as two limbs, then the lowering.},label={lst:x-wide-out}]{out_wide.txt}
