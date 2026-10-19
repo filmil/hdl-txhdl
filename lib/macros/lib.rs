@@ -8317,6 +8317,20 @@ fn indexed_reg(
     subst: Option<&[(String, String)]>,
 ) -> Result<String, String> {
     let it: Vec<TokenTree> = g.stream().into_iter().collect();
+    // A constant before the loop's variable, `self.r[1 + j]`, is the
+    // same index as `self.r[j + 1]` (issue 1851).
+    let it = match it.as_slice() {
+        [TokenTree::Literal(c), TokenTree::Punct(p), TokenTree::Ident(v)]
+            if p.as_char() == '+' =>
+        {
+            vec![
+                TokenTree::Ident(v.clone()),
+                TokenTree::Punct(p.clone()),
+                TokenTree::Literal(c.clone()),
+            ]
+        }
+        _ => it,
+    };
     match it.as_slice() {
         [TokenTree::Literal(k)] => Ok(format!("{f}_{k}")),
         [TokenTree::Ident(v)] => {
@@ -8338,8 +8352,8 @@ fn indexed_reg(
         // A loop's variable moved by a constant, `self.l[j - 1]`: the
         // neighbour of each element, worked out as the loop unrolls,
         // and refused there if it is below zero (issue 1851). The
-        // constant is an integer literal of at most 64 bits, written with
-        // underscores or an unsigned suffix if it likes.
+        // constant is an integer literal whose value fits in 64 bits,
+        // in any base, with underscores or `usize` if it likes.
         [TokenTree::Ident(v), TokenTree::Punct(op), TokenTree::Literal(c)]
             if matches!(op.as_char(), '+' | '-')
                 && moved_const(&c.to_string()).is_some() =>
@@ -8375,15 +8389,13 @@ fn indexed_reg(
 }
 
 /// The value of an index's constant, `1`, `1_000`, `0x10` or `2usize`:
-/// an unsigned integer literal of at most 64 bits, in any of Rust's four
+/// an integer literal whose value fits in 64 bits, in any of Rust's four
 /// bases, so that the sum with a loop's variable cannot overflow the
-/// `i128` it is worked out in (issue 1851).
+/// `i128` it is worked out in (issue 1851). The only suffix is `usize`:
+/// the simulation adds the constant to a loop's `usize`, so Rust itself
+/// refuses `j + 1i32` or `j + 1u64` before the lowering sees it.
 fn moved_const(lit: &str) -> Option<u64> {
-    let digits = ["usize", "u64", "u32", "u16", "u8"]
-        .iter()
-        .find_map(|s| lit.strip_suffix(s))
-        .unwrap_or(lit)
-        .replace('_', "");
+    let digits = lit.strip_suffix("usize").unwrap_or(lit).replace('_', "");
     let (radix, body) = match digits.get(..2) {
         Some("0x") => (16, &digits[2..]),
         Some("0o") => (8, &digits[2..]),
