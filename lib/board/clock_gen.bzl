@@ -21,7 +21,7 @@ needs them. With `testbench = True` it writes
 `clk_pix_tb.v` as well, which measures each output in simulation.
 """
 
-def clock_gen(name, primitive, input_hz, outputs, testbench = False, **kwargs):
+def clock_gen(name, primitive, input_hz, outputs, testbench = False, whole = False, **kwargs):
     """Plans the clock manager `name` and writes its module.
 
     Args:
@@ -30,6 +30,8 @@ def clock_gen(name, primitive, input_hz, outputs, testbench = False, **kwargs):
       input_hz: the input clock's frequency in hertz.
       outputs: each "hz:ppm".
       testbench: whether to write `<name>_tb.v` as well.
+      whole: whether an MMCM keeps to whole multipliers and dividers, as a
+        PLL does: no fractional jitter, at a lower oscillator (#1820).
       **kwargs: the genrule's other attributes, such as `tags`.
     """
     outs = [name + ".v", name + ".txt"]
@@ -37,6 +39,8 @@ def clock_gen(name, primitive, input_hz, outputs, testbench = False, **kwargs):
     if testbench:
         outs.append(name + "_tb.v")
         tb = " --testbench $(location %s_tb.v)" % name
+    if whole:
+        tb += " --whole"
     native.genrule(
         name = name,
         outs = outs,

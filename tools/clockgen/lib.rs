@@ -58,6 +58,10 @@ pub struct Limits {
     pub d_max: u32,
     /// How many outputs.
     pub outputs: usize,
+    /// Whether the feedback multiplier and the first output divide in
+    /// eighths: the MMCM's do, unless a plan asks for whole numbers only
+    /// (#1820); a PLL's never do.
+    pub fractional: bool,
 }
 
 const MHZ: f64 = 1e6;
@@ -101,6 +105,7 @@ impl Limits {
                 },
                 d_max: 106,
                 outputs: 7,
+                fractional: true,
             },
             Primitive::Pll => Limits {
                 input: Range {
@@ -121,6 +126,7 @@ impl Limits {
                 },
                 d_max: 56,
                 outputs: 6,
+                fractional: false,
             },
         }
     }
@@ -181,11 +187,11 @@ pub enum Refusal {
     Unmet(Vec<(f64, f64)>),
 }
 
-/// The divider steps an output allows, in eighths: the MMCM's first
-/// output 1.000, or from 2.000 to 128.000 in eighths (UG472), every
-/// other from 1 to 128.
-fn steps(p: Primitive, k: usize) -> (u32, u32, u32) {
-    if p == Primitive::Mmcm && k == 0 {
+/// The divider steps an output allows, in eighths: a fractional first
+/// output (an MMCM's) 1.000, or from 2.000 to 128.000 in eighths
+/// (UG472), every other from 1 to 128.
+fn steps(frac: bool, k: usize) -> (u32, u32, u32) {
+    if frac && k == 0 {
         (8, 1024, 1)
     } else {
         (8, 1024, 8)
@@ -195,8 +201,8 @@ fn steps(p: Primitive, k: usize) -> (u32, u32, u32) {
 /// Whether output `k` takes the divider `o8`: inside [`steps`]' range
 /// and on its step, and not one of 1.125 to 1.875, which the MMCM's
 /// `CLKOUT0_DIVIDE_F` does not take.
-fn allowed(p: Primitive, k: usize, o8: i64) -> bool {
-    let (lo, hi, step) = steps(p, k);
+fn allowed(frac: bool, k: usize, o8: i64) -> bool {
+    let (lo, hi, step) = steps(frac, k);
     (lo as i64..=hi as i64).contains(&o8)
         && o8 % step as i64 == 0
         && !(9..16).contains(&o8)
@@ -213,7 +219,8 @@ fn best_out(
     (input, d, m8): (f64, u32, u32),
     w: &Want,
 ) -> Option<Out> {
-    let step = steps(p, k).2;
+    let frac = p == Primitive::Mmcm && l.fractional;
+    let step = steps(frac, k).2;
     let ideal = input * m8 as f64 / (d as f64 * w.hz);
     let near = ((ideal / step as f64).floor() as i64) * step as i64;
     let mut best: Option<Out> = None;
@@ -227,7 +234,7 @@ fn best_out(
         8,
         16,
     ] {
-        if !allowed(p, k, c) {
+        if !allowed(frac, k, c) {
             continue;
         }
         let o8 = c as u32;
@@ -285,7 +292,11 @@ pub fn plan(
     {
         return Err(Refusal::Want(k));
     }
-    let m_step = if primitive == Primitive::Mmcm { 1 } else { 8 };
+    let m_step = if primitive == Primitive::Mmcm && limits.fractional {
+        1
+    } else {
+        8
+    };
     let mut best: Option<(f64, Plan)> = None;
     // The nearest any setting came, for the refusal.
     let mut nearest: Option<(f64, Vec<Out>)> = None;
@@ -699,6 +710,21 @@ mod tests {
             "{t}"
         );
         assert!(t.contains("if (n1 < 81)"), "{t}");
+    }
+
+    /// An MMCM asked for whole numbers keeps its multiplier and every
+    /// divider whole, as a PLL does, and 125 MHz from 200 MHz is still
+    /// exact (#1820).
+    #[test]
+    fn whole_numbers_only_when_asked() {
+        let p = Primitive::Mmcm;
+        let mut l = Limits::artix7_2(p);
+        l.fractional = false;
+        let q = plan(p, &l, 200.0 * MHZ, &[want(125.0, 0.0)]).expect("a plan");
+        inside(&q);
+        assert_eq!(q.m8 % 8, 0, "{q:?}");
+        assert!(q.outs.iter().all(|o| o.o8 % 8 == 0), "{q:?}");
+        assert_eq!(q.outs[0].hz, 125.0 * MHZ, "{q:?}");
     }
 
     /// The module instantiates the primitive with the plan's parameters,
