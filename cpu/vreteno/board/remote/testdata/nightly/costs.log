@@ -1,0 +1,14 @@
+08:31:44.710Z costs load 318
+08:31:44.713Z costs store 230
+08:31:44.715Z costs amoadd.w 5722
+08:31:44.867Z costs lr.w+sc.w 5717
+08:31:44.870Z costs lr.w 4145
+08:31:44.876Z costs fence 124
+08:31:44.883Z costs store+fence 1741
+08:31:44.890Z costs load-miss+step 4568
+08:31:44.899Z costs mul 509
+08:31:44.902Z costs divu 4020
+08:31:44.908Z icache cold 3170 warm 455 clash 51184 apart 7280
+08:31:44.911Z costs icache-miss 4176
+08:31:44.916Z costs icache-clash 4221
+08:31:44.919Z costs icache-warm 700

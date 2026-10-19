@@ -263,6 +263,23 @@ impl<T: Value + Copy + 'static, const N: usize, C: Clock> Port
     const WIDTH: usize = T::WIDTH;
     const DEPTH: usize = N;
 }
+/// The memories a list of fields names, each field's own name or its
+/// memories' names when it is an array of them: what `#[distributed]`
+/// says of a `Mems` field it says of every memory (#1852).
+pub fn per_memory<F: Fields>(names: &[&'static str]) -> Vec<&'static str> {
+    names.iter().flat_map(|f| F::entries_of(f)).collect()
+}
+
+/// The same for a list of fields and what each says, `#[ram_style]`.
+pub fn styles_per_memory<F: Fields>(
+    pairs: &[(&'static str, &'static str)],
+) -> Vec<(&'static str, &'static str)> {
+    pairs
+        .iter()
+        .flat_map(|(f, st)| F::entries_of(f).into_iter().map(|m| (m, *st)))
+        .collect()
+}
+
 /// An array of memories is a memory per index, `name_0` to
 /// `name_{N-1}`, each of depth `D` (issue 1845).
 impl<T: Value + Copy + 'static, const D: usize, const N: usize, C: Clock> Port
@@ -328,6 +345,13 @@ pub trait Fields {
     /// Every field of the unit, as its name, what it is, how wide it
     /// is, and how many words it holds if it is a memory.
     fn fields() -> Vec<(&'static str, Option<Kind>, usize, usize)>;
+    /// The netlist's names for field `f`: its own name, or for an
+    /// array of them, `f_0` onward, so that what an attribute says of a
+    /// field is said of each of its memories (#1852). The derive writes
+    /// it from each field's own `Port` entries; it has no default, so
+    /// that an impl without it is a compile error rather than a field
+    /// whose attributes reach none of its memories.
+    fn entries_of(f: &'static str) -> Vec<&'static str>;
 }
 
 /// The name a wire takes: `want`, unless a field of the unit already
@@ -2722,7 +2746,6 @@ impl Lowered {
     /// What memory `m` asks Vivado to make it: its `#[ram_style]`, or
     /// `"distributed"` for `#[distributed]` (issue 1371).
     pub fn ram_style(&self, m: &str) -> Option<&'static str> {
-        let m = self.mem_field(m);
         self.ram_styles
             .iter()
             .find(|(n, _)| *n == m)
@@ -2730,30 +2753,6 @@ impl Lowered {
             .or_else(|| self.distributed.contains(&m).then_some("distributed"))
     }
 
-    /// Whether memory `m` is `#[distributed]`, itself or as one of a
-    /// field of `Mems`.
-    fn is_distributed(&self, m: &str) -> bool {
-        self.distributed.contains(&self.mem_field(m))
-    }
-
-    /// The field a memory's attributes are on: the memory's own name,
-    /// or for `way_3`, one of a field `way` of `Mems`, `way`. That is
-    /// the field's name when no field of the netlist has it, since a
-    /// `Mems` field is only its memories `way_0` onward (issue 1845).
-    fn mem_field<'a>(&self, m: &'a str) -> &'a str {
-        let Some((base, k)) = m.rsplit_once('_') else {
-            return m;
-        };
-        let indexed = !k.is_empty() && k.bytes().all(|b| b.is_ascii_digit());
-        let declared = self.fields.iter().any(|(n, ..)| *n == base);
-        let styled = self.ram_styles.iter().any(|(n, _)| *n == base)
-            || self.distributed.contains(&base);
-        if indexed && !declared && styled {
-            base
-        } else {
-            m
-        }
-    }
     /// The width of an expression, as far as the netlist can tell:
     /// what an extension's replication needs.
     fn ewidth(&self, e: &Expr) -> usize {
@@ -5191,7 +5190,7 @@ impl Lowered {
         for (m, k, w, d) in &self.fields {
             if *k != Some(Kind::Mem)
                 || w * d <= 4096
-                || self.is_distributed(m)
+                || self.distributed.contains(m)
                 || matches!(
                     self.ram_style(m),
                     Some("distributed" | "registers")

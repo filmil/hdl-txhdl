@@ -61,6 +61,7 @@ use txhdl_parts::station::Station3;
 use txhdl_parts::syscon::Syscon;
 use txhdl_parts::tracer::Tracer;
 use txhdl_parts::trng::{Entropy, Trng};
+use txhdl_parts::udprx::UdpRx;
 use txhdl_parts::wdog::Wdog;
 use vreteno32::board::{Board, BoardRouter};
 use vreteno32::core::Vreteno;
@@ -596,6 +597,7 @@ fn main() {
     );
     sheet("EthTx", "EthTx", EthTx::lowered("eth_tx"));
     sheet("EthRx", "EthRx", EthRx::lowered("eth_rx"));
+    sheet("UdpRx", "UdpRx", UdpRx::lowered("udp_rx"));
     sheet("EthLite", "EthLite", EthLite::lowered("eth_lite"));
     sheet(
         "EthSlots",
