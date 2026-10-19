@@ -3981,6 +3981,74 @@ fn a_core_load_waits_behind_the_scanout() {
     assert!(beside < alone + 32, "a load waited {beside} cycles");
 }
 
+/// A program that times the core's loads from the data memory (#1755):
+/// 512 single-word loads walking up from `DATA_BASE`, each between two
+/// reads of `mcycle` and used at once, and the shortest said in hex.
+fn dmem_load_program() -> Vec<u32> {
+    use vreteno32::isa::{
+        add, addi, andi, bgeu, blt, bne, csrrs, halt, lui, lw, srli, sub, sw,
+        CSR_MCYCLE, UART_BASE,
+    };
+    use vreteno32::model::DATA_BASE;
+    let mut a = vreteno32::program::Asm::default();
+    a.emit(lui(1, UART_BASE >> 12)); // x1: the serial port, for say
+    li(&mut a, 5, DATA_BASE);
+    a.emit(addi(20, 0, -1)); // x20: the shortest, from the largest
+    li(&mut a, 21, 512);
+    let each = a.label();
+    let longer = a.label();
+    a.place(each);
+    a.emit(csrrs(6, CSR_MCYCLE, 0));
+    a.emit(lw(8, 5, 0));
+    a.emit(add(9, 8, 0)); // the word, used
+    a.emit(csrrs(7, CSR_MCYCLE, 0));
+    a.emit(sub(7, 7, 6));
+    a.to(longer, |off| bgeu(7, 20, off));
+    a.emit(addi(20, 7, 0));
+    a.place(longer);
+    a.emit(addi(5, 5, 4));
+    a.emit(addi(21, 21, -1));
+    a.to(each, |off| bne(21, 0, off));
+    // The shortest, in eight hex digits and a newline.
+    for k in (0..8).rev() {
+        a.emit(srli(22, 20, 4 * k));
+        a.emit(andi(22, 22, 15));
+        a.emit(addi(23, 0, 10));
+        let digit = a.label();
+        a.emit(addi(3, 22, b'0' as i32));
+        a.to(digit, |off| blt(22, 23, off));
+        a.emit(addi(3, 22, b'a' as i32 - 10));
+        a.place(digit);
+        let wait = a.label();
+        a.place(wait);
+        a.emit(lw(2, 1, 0));
+        a.to(wait, |off| blt(2, 0, off));
+        a.emit(sw(3, 1, 0));
+    }
+    say(&mut a, b"\n");
+    a.emit(halt());
+    a.words()
+}
+
+/// The data memory answers a read from its block RAM's own output
+/// register (#1755): the beat crosses to the router in the cycle it
+/// leaves the memory, where it went through a registered channel
+/// first, a cycle more. The figure is the shortest window between the
+/// two reads of `mcycle` around one load, the reads and the use of the
+/// word included, so it is the load's latency plus a fixed overhead:
+/// 15 cycles, where it was 16 before.
+#[test]
+fn a_data_memory_load_answers_from_the_block_ram() {
+    let text = dmem_load_program();
+    let ran =
+        run_all(&text, &[], b"", &[], 40 * SCAN_LINE, Net::default(), &[]);
+    let line = ran.said.lines().next().unwrap_or("");
+    let shortest = u32::from_str_radix(line, 16)
+        .unwrap_or_else(|_| panic!("said {:?}", ran.said));
+    eprintln!("a data memory load's window is at least {shortest} cycles");
+    assert_eq!(shortest, 15, "a data memory load's window: {shortest}");
+}
+
 /// EGL's machine on the board (issue 996): `eglboard.rs` writes a
 /// rectangle into Razboj's display list through the board's machine at
 /// the second buffer's rows, has Razboj draw it, points the scanout

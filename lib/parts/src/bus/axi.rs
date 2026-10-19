@@ -41,7 +41,7 @@ use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::rc::Rc;
 use txhdl::comp::{
-    chan, join_all, mux, now, Clock, DefaultClock, Reg, Rx, Tx, Unit,
+    chan, join2, join_all, mux, now, Clock, DefaultClock, Reg, Rx, Tx, Unit,
 };
 use txhdl::types::{Bit, U};
 
@@ -482,9 +482,11 @@ impl<
 /// write beats to the client, and turns the client's answers back
 /// into `B` beats and `R` beats.
 ///
-/// The two address channels take turns, so neither starves the other
-/// however long one of them streams. Written in the lowered subset,
-/// so it is a netlist too.
+/// It is its two halves joined, [`AxiPerReq`] and [`AxiPerRsp`], which
+/// share no state (issue 1291). A design whose client answers over an
+/// unregistered channel joins the two apart, the request half before
+/// the client and the response half after it, since an unregistered
+/// channel's sender runs first.
 ///
 /// `A`, `D`, `S` and `I` are the link's widths, which [`axi`] states.
 /// There is no `NIDS`: this end allocates no identifiers, it answers
@@ -497,8 +499,10 @@ pub struct AxiPer<
     const S: usize,
     const I: usize,
 > {
-    /// Which address channel goes first: zero for the read channel.
-    pub rr: Reg<U<1>>,
+    /// The address channels and the write beats, into the client.
+    pub req: AxiPerReq<A, D, S, I>,
+    /// The client's answers, back onto the response channels.
+    pub rsp: AxiPerRsp<A, D, S, I>,
 }
 
 #[lower]
@@ -515,6 +519,38 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize> Unit
             Rx<R<D, I>>,
         ),
         (req, wd, b, r): (Tx<PerReq<A, I>>, Tx<W<D, S>>, Tx<B<I>>, Tx<R<D, I>>),
+    ) {
+        join2(
+            self.req.run((aw, ar, w), (req, wd)),
+            self.rsp.run((ans, rb), (b, r)),
+        )
+        .await;
+    }
+}
+
+/// The request half of [`AxiPer`]: the two address channels merged
+/// into one stream of requests, taking turns so that neither starves
+/// the other however long one of them streams, and the write beats
+/// handed to the client.
+#[derive(Trace, Default)]
+pub struct AxiPerReq<
+    const A: usize,
+    const D: usize,
+    const S: usize,
+    const I: usize,
+> {
+    /// Which address channel goes first: zero for the read channel.
+    pub rr: Reg<U<1>>,
+}
+
+#[lower]
+impl<const A: usize, const D: usize, const S: usize, const I: usize> Unit
+    for AxiPerReq<A, D, S, I>
+{
+    async fn run(
+        &mut self,
+        (aw, ar, w): (Rx<Aw<A, I>>, Rx<Ar<A, I>>, Rx<W<D, S>>),
+        (req, wd): (Tx<PerReq<A, I>>, Tx<W<D, S>>),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -538,13 +574,6 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize> Unit
             let wr = w.head();
             let wr_go = w.peek().is_some() & wd.ready();
             let _ = w.recv_if(wd.ready());
-            // The client's answers, back onto the response channels.
-            let ah = ans.head();
-            let a_go = ans.peek().is_some() & b.ready();
-            let _ = ans.recv_if(b.ready());
-            let rh = rb.head();
-            let r_go = rb.peek().is_some() & r.ready();
-            let _ = rb.recv_if(r.ready());
             if (take_ar | take_aw).to_bool() {
                 req.send(PerReq {
                     read: take_ar,
@@ -567,6 +596,38 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize> Unit
                     last: wr.last,
                 });
             }
+        }
+    }
+}
+
+/// The response half of [`AxiPer`]: the client's answers back onto
+/// the response channels, a write's as a `B` beat and a read's as an
+/// `R` beat. It keeps nothing, so it is wires and the two hand-offs.
+#[derive(Trace, Default)]
+pub struct AxiPerRsp<
+    const A: usize,
+    const D: usize,
+    const S: usize,
+    const I: usize,
+> {}
+
+#[lower]
+impl<const A: usize, const D: usize, const S: usize, const I: usize> Unit
+    for AxiPerRsp<A, D, S, I>
+{
+    async fn run(
+        &mut self,
+        (ans, rb): (Rx<Answer<I>>, Rx<R<D, I>>),
+        (b, r): (Tx<B<I>>, Tx<R<D, I>>),
+    ) {
+        loop {
+            DefaultClock::rising().await;
+            let ah = ans.head();
+            let a_go = ans.peek().is_some() & b.ready();
+            let _ = ans.recv_if(b.ready());
+            let rh = rb.head();
+            let r_go = rb.peek().is_some() & r.ready();
+            let _ = rb.recv_if(r.ready());
             if a_go.to_bool() {
                 b.send(B {
                     id: ah.id,
