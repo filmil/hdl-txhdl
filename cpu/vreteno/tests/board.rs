@@ -4033,8 +4033,10 @@ fn dmem_load_program() -> Vec<u32> {
 /// The data memory answers a read from its block RAM's own output
 /// register (#1755): the beat crosses to the router in the cycle it
 /// leaves the memory, where it went through a registered channel
-/// first, a cycle more. The shortest of 512 loads, timed between two
-/// reads of `mcycle`, is 15 cycles, where it was 16 before.
+/// first, a cycle more. The figure is the shortest window between the
+/// two reads of `mcycle` around one load, the reads and the use of the
+/// word included, so it is the load's latency plus a fixed overhead:
+/// 15 cycles, where it was 16 before.
 #[test]
 fn a_data_memory_load_answers_from_the_block_ram() {
     let text = dmem_load_program();
@@ -4043,8 +4045,8 @@ fn a_data_memory_load_answers_from_the_block_ram() {
     let line = ran.said.lines().next().unwrap_or("");
     let shortest = u32::from_str_radix(line, 16)
         .unwrap_or_else(|_| panic!("said {:?}", ran.said));
-    eprintln!("a data memory load takes at least {shortest} cycles");
-    assert_eq!(shortest, 15, "a data memory load took {shortest} cycles");
+    eprintln!("a data memory load's window is at least {shortest} cycles");
+    assert_eq!(shortest, 15, "a data memory load's window: {shortest}");
 }
 
 /// EGL's machine on the board (issue 996): `eglboard.rs` writes a

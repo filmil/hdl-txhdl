@@ -550,7 +550,8 @@ fn main() -> ! {
     icache_guess_contend();
     icache4();
     // A load from the data memory at 0x1000, `DATA_BASE`, over the bus
-    // and not cached (#1755); the `lui` is a cycle the row carries on
+    // (#1755): the data cache holds only the DDR3's lines, so the load
+    // goes around it every time. The `lui` is a cycle the row carries on
     // every board alike, so two boards compare.
     say(b"dmem-load", timed!("lui a3, 1", "lw a2, 0(a3)"), empty);
     Uart::say(b"costs done\n");
