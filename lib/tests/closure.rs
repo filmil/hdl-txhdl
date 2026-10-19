@@ -191,3 +191,112 @@ fn a_closure_with_lets_and_one_that_shadows_a_function() {
         verilog_of(BracedInline::lowered("unit"))
     );
 }
+
+/// A file function that calls `bump`: the file's `bump`, whatever
+/// closure of that name the caller has in scope.
+#[lower]
+fn bump(v: U<8>) -> U<8> {
+    v + U::<8>::from(1u8)
+}
+
+#[lower]
+fn twice(v: U<8>) -> U<8> {
+    bump(bump(v))
+}
+
+/// The scoping rules, each against a twin written out (agy on PR 1849):
+/// a parameter shadows a capture; a later `let` of a captured name
+/// leaves the closure's capture as it was; a closure that calls a
+/// closure calls the one in scope where it was written; a closure in
+/// an inner block ends with it; and a function of the file sees none of
+/// its caller's closures.
+#[derive(Trace, Default)]
+pub struct Scopes {
+    pub r: Reg<U<8>>,
+}
+
+#[lower]
+impl Unit for Scopes {
+    async fn run(
+        &mut self,
+        (x, y, go): (In<U<8>>, In<U<8>>, In<Bit>),
+        out: Out<U<8>>,
+    ) {
+        loop {
+            DefaultClock::rising().await;
+            let a = x.get();
+            let b = y.get();
+            // The parameter `a` shadows the captured `a`.
+            let p = |a: U<8>| a ^ b;
+            // `c` is captured as `a + b`, and later rebinding it does not
+            // change the closure.
+            let c = a + b;
+            let q = |s: U<8>| s & c;
+            let c = a - b;
+            // `f` is the first `f` inside `g`, though a second follows.
+            let f = |s: U<8>| s | U::<8>::from(1u8);
+            let g = |s: U<8>| f(s);
+            let f = |s: U<8>| s | U::<8>::from(2u8);
+            // The caller's `bump` is not the file's, which `twice` calls.
+            let bump = |s: U<8>| s ^ U::<8>::from(0x80u8);
+            let v = p(a) ^ q(b) ^ c ^ g(a) ^ f(b) ^ twice(a) ^ bump(b);
+            if go.get().to_bool() {
+                // An inner block's closure, gone after it.
+                let h = |s: U<8>| s + U::<8>::from(3u8);
+                self.r.set(h(v));
+            }
+            out.set(self.r.get());
+        }
+    }
+}
+
+#[derive(Trace, Default)]
+pub struct ScopesInline {
+    pub r: Reg<U<8>>,
+}
+
+#[lower]
+impl Unit for ScopesInline {
+    async fn run(
+        &mut self,
+        (x, y, go): (In<U<8>>, In<U<8>>, In<Bit>),
+        out: Out<U<8>>,
+    ) {
+        loop {
+            DefaultClock::rising().await;
+            let a = x.get();
+            let b = y.get();
+            let c = a + b;
+            let c_w = a - b;
+            let v = (a ^ b)
+                ^ (b & c)
+                ^ c_w
+                ^ (a | U::<8>::from(1u8))
+                ^ (b | U::<8>::from(2u8))
+                ^ ((a + U::<8>::from(1u8)) + U::<8>::from(1u8))
+                ^ (b ^ U::<8>::from(0x80u8));
+            if go.get().to_bool() {
+                self.r.set(v + U::<8>::from(3u8));
+            }
+            out.set(self.r.get());
+        }
+    }
+}
+
+/// The netlist without its comments: the closures' unit says in one
+/// that its second `let c` is the wire `c_w`, which the twin names so.
+fn uncommented(l: txhdl::netlist::Lowered) -> String {
+    l.verilog()
+        .lines()
+        .filter(|s| !s.starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn closures_are_read_where_they_are_written() {
+    assert_eq!(
+        uncommented(Scopes::lowered("unit")),
+        uncommented(ScopesInline::lowered("unit"))
+    );
+}

@@ -2726,11 +2726,12 @@ struct Helper {
     refused: Vec<String>,
 }
 
-/// `let f = |a, b: T| e;` read as a helper the body can call by name, or
-/// why it cannot be one, or `None` when the statement is not a closure's
-/// `let` (issue 1838). The body is an expression or a block of `let`s
-/// and a value, as a function's under `#[lower]` is.
-fn local_closure(ts: &[TokenTree]) -> Option<Result<Helper, String>> {
+/// `let f = |a, b: T| e;` read as a helper the body can call by name,
+/// with its parameters' types, or why it cannot be one, or `None` when
+/// the statement is not a closure's `let` (issue 1838). The body is an
+/// expression, or a block of `let`s and a value as a function's under
+/// `#[lower]` is, with or without `-> T` before the block.
+fn local_closure(ts: &[TokenTree]) -> Option<Result<(Helper, Params), String>> {
     let bar =
         |t: &TokenTree| matches!(t, TokenTree::Punct(p) if p.as_char() == '|');
     let (Some(l), Some(TokenTree::Ident(name)), Some(eq)) =
@@ -2743,8 +2744,9 @@ fn local_closure(ts: &[TokenTree]) -> Option<Result<Helper, String>> {
     {
         return None;
     }
-    let alt = "write it as a function under `#[lower]` in this file and \
-               call that instead, which a lowered body inlines the same way";
+    let alt = "write it as a function under `#[lower]` in this file, with \
+               the names it reads from the body as parameters, and call that \
+               instead: a lowered body inlines it the same way";
     match ts.get(3) {
         Some(t) if is_ident(t, "move") => {
             return Some(Err(format!(
@@ -2759,14 +2761,13 @@ fn local_closure(ts: &[TokenTree]) -> Option<Result<Helper, String>> {
     let Some(close) = (4..ts.len()).find(|&k| bar(&ts[k])) else {
         return Some(Err(format!("the closure `{name}` has no closing `|`")));
     };
-    let mut params = Vec::new();
+    let mut typed = Vec::new();
     for p in split_type_commas_slice(&ts[4..close]) {
         match p.as_slice() {
             [] => {}
-            [TokenTree::Ident(n), ..]
-                if p.len() == 1 || punct_at(&p, 1, ':') =>
-            {
-                params.push(n.to_string())
+            [TokenTree::Ident(n)] => typed.push((n.to_string(), String::new())),
+            [TokenTree::Ident(n), ..] if punct_at(&p, 1, ':') => {
+                typed.push((n.to_string(), text_of(&p[2..])))
             }
             _ => {
                 return Some(Err(format!(
@@ -2777,9 +2778,31 @@ fn local_closure(ts: &[TokenTree]) -> Option<Result<Helper, String>> {
             }
         }
     }
-    let body = &ts[close + 1..];
-    if body.is_empty() {
-        return Some(Err(format!("the closure `{name}` has no body")));
+    let params: Vec<String> = typed.iter().map(|(n, _)| n.clone()).collect();
+    let mut body = &ts[close + 1..];
+    // `-> T { .. }`: the type is Rust's to check, the block the body.
+    if punct_at(body, 0, '-') && punct_at(body, 1, '>') {
+        match body.last() {
+            Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => {
+                body = &body[body.len() - 1..]
+            }
+            _ => {
+                return Some(Err(format!(
+                    "the closure `{name}` names its return type without a \
+                     block after it"
+                )))
+            }
+        }
+    }
+    match body.first() {
+        None => return Some(Err(format!("the closure `{name}` has no body"))),
+        Some(t) if bar(t) || is_ident(t, "move") => {
+            return Some(Err(format!(
+                "the closure `{name}` returns a closure: a lowered closure \
+                 returns a value; {alt}"
+            )))
+        }
+        _ => {}
     }
     let (lets, value, refused) = match body {
         [TokenTree::Group(g)] if g.delimiter() == Delimiter::Brace => {
@@ -2787,14 +2810,17 @@ fn local_closure(ts: &[TokenTree]) -> Option<Result<Helper, String>> {
         }
         _ => (Vec::new(), text_of(body), Vec::new()),
     };
-    Some(Ok(Helper {
-        name: name.to_string(),
-        params,
-        consts: Vec::new(),
-        lets,
-        value,
-        refused,
-    }))
+    Some(Ok((
+        Helper {
+            name: name.to_string(),
+            params,
+            consts: Vec::new(),
+            lets,
+            value,
+            refused,
+        },
+        typed,
+    )))
 }
 
 /// A helper's body read as its `let`s and its value, and why it cannot
@@ -2826,6 +2852,22 @@ fn helper_body(
                 _ => None,
             };
             match names {
+                // A closure inside a helper or a closure's block is
+                // refused by name rather than lowered as a value
+                // (issue 1838).
+                None if st.get(3).is_some_and(|t| {
+                    is_ident(t, "move")
+                        || matches!(t, TokenTree::Punct(p) if p.as_char() == '|')
+                }) =>
+                {
+                    refused.push(format!(
+                        "`{name}` binds the closure `{}` in its own body: a \
+                         lowered closure is bound in a unit's body only; \
+                         write it as a function under `#[lower]` in this \
+                         file and call that",
+                        st[1]
+                    ))
+                }
                 None => lets.push((st[1].to_string(), text_of(&st[3..]))),
                 Some(names) => {
                     let values = match &st[3] {
@@ -2902,7 +2944,7 @@ thread_local! {
     /// before `HELPERS`, last first, so a closure shadows a function of
     /// the same name, and cut back at the end of the block that bound
     /// it (issue 1838).
-    static LOCALS: std::cell::RefCell<Vec<(Helper, Vec<(String, String)>)>> =
+    static LOCALS: std::cell::RefCell<Vec<Local>> =
         const { std::cell::RefCell::new(Vec::new()) };
     /// Each helper's parameters with the text of their types, by the
     /// helper's name, so a field of a struct it takes can be sliced out
@@ -4009,6 +4051,34 @@ type Params = Vec<(String, String)>;
 /// The parameters of a helper, typed in `TYPED` while its body is read,
 /// and taken off when this is dropped (issue 504). A const parameter in
 /// a type is replaced by what the call gave for it.
+/// A closure a lowered body bound with `let` (issue 1838): the helper it
+/// is, the body's substitution where it was written, its parameters'
+/// types, and how many of the closures before it it can see, which are
+/// the ones in scope where it was written. Each is read where it was
+/// written, not where it is called, as Rust reads it.
+#[derive(Clone)]
+struct Local {
+    h: Helper,
+    captured: Params,
+    typed: Params,
+    visible: usize,
+}
+
+/// `f` with only the first `keep` closures of `LOCALS` in view, and the
+/// rest put back after: a closure's body sees the closures in scope
+/// where it was written, and a function of the file sees none of its
+/// caller's (issue 1838).
+fn with_locals<R>(keep: usize, f: impl FnOnce() -> R) -> R {
+    let hidden = LOCALS.with(|l| {
+        let mut l = l.borrow_mut();
+        let keep = keep.min(l.len());
+        l.split_off(keep)
+    });
+    let r = f();
+    LOCALS.with(|l| l.borrow_mut().extend(hidden));
+    r
+}
+
 /// The closures bound in a block, cut back when the block's lowering
 /// ends, whatever way it ends (issue 1838).
 struct LocalScope(usize);
@@ -4037,6 +4107,13 @@ impl Typed {
                 .map(|(_, p)| p.clone())
                 .unwrap_or_default()
         });
+        Typed::from_params(params, consts)
+    }
+
+    /// The parameters' types given rather than looked up by name: a
+    /// closure's, which a function of the file of the same name must
+    /// not lend it (issue 1838).
+    fn from_params(params: Params, consts: &[(String, String)]) -> Typed {
         TYPED.with(|t| {
             let mut t = t.borrow_mut();
             let n = t.len();
@@ -4062,6 +4139,7 @@ fn inline_helper(
     args: &[String],
     consts: &[String],
     captured: &[(String, String)],
+    typed: Option<&Params>,
 ) -> Result<String, String> {
     if args.len() != h.params.len() {
         return Err(format!("`{}` takes {} arguments", h.name, h.params.len()));
@@ -4132,7 +4210,11 @@ fn inline_helper(
     }
     // The parameters' types, for a field of one of them; taken off
     // again when the body has been read, whatever it returns.
-    let _typed = Typed::of(&h.name, &cs);
+    // A closure's own, given; a function's, by its name (issue 1838).
+    let _typed = match typed {
+        Some(p) => Typed::from_params(p.clone(), &cs),
+        None => Typed::of(&h.name, &cs),
+    };
     let toks = |text: &str| -> Result<Vec<TokenTree>, String> {
         with_consts(text, &cs)
             .parse::<TokenStream>()
@@ -4563,12 +4645,14 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
             // stored or returned. It is inlined where it is called and
             // is no value of the netlist, so it would otherwise become a
             // wire of its name that nothing drives (issue 1838).
-            if LOCALS.with(|l| l.borrow().iter().any(|(h, _)| h.name == n)) {
+            if LOCALS.with(|l| l.borrow().iter().any(|l| l.h.name == n)) {
                 return Err(format!(
                     "the closure `{n}` is used as a value here: a lowered \
-                     body can only call a local closure by name, `{n}(..)`; \
-                     to pass it on, write it as a function under `#[lower]` \
-                     in this file"
+                     body can only call a local closure by name, `{n}(..)`, \
+                     and no function is a value of the netlist either; call \
+                     it where its value is needed, or write it as a function \
+                     under `#[lower]` in this file, with the names it reads \
+                     from the body as parameters, and call that"
                 ));
             }
             if n == "true" || n == "false" {
@@ -4702,12 +4786,10 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                 // A closure the body bound comes before a function of
                 // the file of the same name (issue 1838).
                 let local = LOCALS.with(|l| {
-                    l.borrow().iter().rev().find(|(x, _)| x.name == f).cloned()
+                    l.borrow().iter().rev().find(|x| x.h.name == f).cloned()
                 });
-                let captured: Vec<(String, String)> =
-                    local.as_ref().map(|(_, c)| c.clone()).unwrap_or_default();
-                let helper = match local {
-                    Some((h, _)) => Some(h),
+                let helper = match &local {
+                    Some(l) => Some(l.h.clone()),
                     None => HELPERS.with(|h| {
                         h.borrow().iter().find(|x| x.name == f).cloned()
                     }),
@@ -4748,7 +4830,24 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                                 cs.push(text_of(&a));
                             }
                         }
-                        return inline_helper(&h, &v, &cs, &captured);
+                        // A closure is read where it was written: its
+                        // captures, its own parameters' types, and the
+                        // closures in scope there. A function of the file
+                        // sees none of the caller's closures (issue 1838).
+                        return match &local {
+                            Some(l) => with_locals(l.visible, || {
+                                inline_helper(
+                                    &h,
+                                    &v,
+                                    &cs,
+                                    &l.captured,
+                                    Some(&l.typed),
+                                )
+                            }),
+                            None => with_locals(0, || {
+                                inline_helper(&h, &v, &cs, &[], None)
+                            }),
+                        };
                     }
                     return Ok(match f.as_str() {
                         "sra" => ebin(">>>", &v[0], &v[1]),
@@ -5483,8 +5582,17 @@ fn lower_stmts(
         // function under `#[lower]` would be, with the names it reads
         // from this body as they are here (issue 1838).
         match local_closure(&ts) {
-            Some(Ok(h)) => {
-                LOCALS.with(|l| l.borrow_mut().push((h, cx.subst.clone())));
+            Some(Ok((h, typed))) => {
+                LOCALS.with(|l| {
+                    let mut l = l.borrow_mut();
+                    let visible = l.len();
+                    l.push(Local {
+                        h,
+                        captured: cx.subst.clone(),
+                        typed,
+                        visible,
+                    })
+                });
                 continue;
             }
             Some(Err(m)) => return Err(err(ts[0].span(), &m)),
@@ -5803,10 +5911,18 @@ fn lower_stmts(
             // The receiver is the name before `.recv_if`, in
             // `let v = rx.recv_if(c)` and in the statement
             // `rx.recv_if(c);`, which only takes (issue 1838).
+            // The statement is that and nothing more: a take inside
+            // another expression, `if rx.recv_if(c).is_some()`, is
+            // refused as before rather than taken and the rest dropped.
             let at = ts.iter().position(|t| is_ident(t, "recv_if"));
+            let whole = text.starts_with("let")
+                || (ts.len() == 4
+                    && punct_at(&ts, 1, '.')
+                    && matches!(&ts[3], TokenTree::Group(g)
+                        if g.delimiter() == Delimiter::Parenthesis));
             let rx =
                 match at.and_then(|i| i.checked_sub(2)).map(|i| &ts[i]) {
-                    Some(TokenTree::Ident(rx)) => rx.clone(),
+                    Some(TokenTree::Ident(rx)) if whole => rx.clone(),
                     _ => return Err(err(
                         ts[0].span(),
                         "expected `let v = rx.recv_if(c)` or `rx.recv_if(c);`",
