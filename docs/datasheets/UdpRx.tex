@@ -24,8 +24,8 @@ in bits 31 to 24; and \code{port}. Its outputs are the payloads,
 \code{Out<U<32>>}.
 
 Every header byte is checked as it goes by, and none is held. The
-checks are done by the forty-second byte, \code{HEADER}, where the
-payload starts, and nothing is sent before it, so a frame that fails
+checks are done by offset 42, \code{HEADER}, where the payload
+starts, and nothing is sent before it, so a frame that fails
 a check gives no byte at all.
 
 \subsection*{Parameters}
