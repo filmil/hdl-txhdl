@@ -231,7 +231,7 @@ fn a_neighbour_below_the_first_is_refused() {
 
 /// An index past the end, three ways: a loop's variable that runs one
 /// too far, a neighbour past the last, and a number; and a memory's
-/// (#1853). Each reads four registers and two memories.
+/// (#1853). The registers are four and the memories two.
 #[derive(Trace, Default)]
 pub struct Past {
     pub r: Regs<U<8>, 4>,
@@ -301,13 +301,73 @@ impl Unit<In<U<8>>, Out<U<8>>> for PastMem {
     }
 }
 
+/// Writes past the end: a register driven as `r[4]` of four, and a
+/// memory written as `m[2]` of two (#1853).
+#[derive(Trace, Default)]
+pub struct PastWrite {
+    pub r: Regs<U<8>, 4>,
+}
+
+#[derive(Trace, Default)]
+pub struct PastWriteMem {
+    pub m: Mems<U<8>, 2, 2>,
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for PastWrite {
+    async fn run(&mut self, x: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            with!(self <= { r[4]: x.get() });
+            o.set(self.r[0].get());
+        }
+    }
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for PastWriteMem {
+    async fn run(&mut self, x: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            with!(self <= { m[2].at(U::<1>::from(0u8)): x.get() });
+            o.set(self.m[0].read(U::<1>::from(0u8)));
+        }
+    }
+}
+
+/// A lone field whose name ends in a number is no array: `stage_2`
+/// beside nothing else is read and driven as itself (#1853).
+#[derive(Trace, Default)]
+pub struct Lone {
+    pub stage_2: txhdl::comp::Reg<U<8>>,
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for Lone {
+    async fn run(&mut self, x: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            with!(self <= { stage_2: x.get() });
+            o.set(self.stage_2.get());
+        }
+    }
+}
+
+#[test]
+fn a_lone_field_ending_in_a_number_lowers() {
+    let v = Lone::lowered("lone").verilog();
+    assert!(v.contains("stage_2"), "{v}");
+}
+
 #[test]
 fn an_index_past_the_end_is_refused() {
-    let cases: [(fn() -> txhdl::netlist::Lowered, &str); 4] = [
+    let cases: [(fn() -> txhdl::netlist::Lowered, &str); 6] = [
         (|| Past::lowered("past"), "reaches `r_4`"),
         (|| PastMoved::lowered("past"), "reaches `r_4`"),
         (|| PastNumber::lowered("past"), "reaches `r_4`"),
         (|| PastMem::lowered("past"), "reaches `m_2`"),
+        (|| PastWrite::lowered("past"), "reaches `r_4`"),
+        (|| PastWriteMem::lowered("past"), "reaches `m_2`"),
     ];
     for (k, (lower, want)) in cases.into_iter().enumerate() {
         let Err(e) = std::panic::catch_unwind(lower) else {
