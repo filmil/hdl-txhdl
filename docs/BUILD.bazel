@@ -1109,6 +1109,8 @@ latex_document(
         ":group_timing",
         ":port_arrays_run",
         ":port_arrays_timing",
+        ":mems_run",
+        ":mems_timing",
         ":regs_run",
         ":regs_timing",
         ":wide_run",
@@ -2492,6 +2494,20 @@ waveform(
         "//clear=>clear",
         "//mid=>mid",
         "//top=>top",
+    ],
+)
+
+waveform(
+    name = "mems",
+    example = "//lib/examples:ex_mems",
+    lowered = ("ways", "ways"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//row=>row",
+        "//key=>key",
+        "//wen=>wen",
+        "//pick=>pick",
+        "//hits=>hits",
     ],
 )
 
