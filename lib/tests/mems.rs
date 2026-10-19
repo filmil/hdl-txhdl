@@ -139,3 +139,80 @@ fn the_ways_hold_what_was_written_in_the_simulation() {
         }
     }
 }
+
+/// A field named like an element of an array field beside it: `r_3`
+/// beside `r`'s four registers, and `way_1` beside two memories, each
+/// of which would be declared twice; and `r_4` beside four, past the
+/// end, which `self.r[4]` would fold into. Each is refused (#1858).
+#[derive(Trace, Default)]
+pub struct DupReg {
+    pub r: txhdl::comp::Regs<U<8>, 4>,
+    pub r_3: txhdl::comp::Reg<U<8>>,
+}
+
+#[derive(Trace, Default)]
+pub struct DupMem {
+    pub way: Mems<U<8>, 4, 2>,
+    pub way_1: txhdl::comp::Mem<U<8>, 4>,
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for DupReg {
+    async fn run(&mut self, x: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            o.set(self.r[3].get() ^ self.r_3.get());
+            with!(self <= { r_3: x.get() });
+        }
+    }
+}
+
+#[lower]
+impl Unit<In<U<2>>, Out<U<8>>> for DupMem {
+    async fn run(&mut self, a: In<U<2>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            o.set(self.way[1].read(a.get()) ^ self.way_1.read(a.get()));
+        }
+    }
+}
+
+#[derive(Trace, Default)]
+pub struct Beyond {
+    pub r: txhdl::comp::Regs<U<8>, 4>,
+    pub r_4: txhdl::comp::Reg<U<8>>,
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for Beyond {
+    async fn run(&mut self, x: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            o.set(self.r[0].get() ^ self.r_4.get());
+            with!(self <= { r_4: x.get() });
+        }
+    }
+}
+
+#[test]
+fn a_field_named_like_an_element_is_refused() {
+    let cases: [(fn() -> txhdl::netlist::Lowered, &str); 3] = [
+        (|| DupReg::lowered("dup_reg"), "a field `r_3` beside `r`"),
+        (
+            || DupMem::lowered("dup_mem"),
+            "a field `way_1` beside `way`",
+        ),
+        (|| Beyond::lowered("beyond"), "a field `r_4` beside `r`"),
+    ];
+    for (k, (lower, want)) in cases.into_iter().enumerate() {
+        let Err(e) = std::panic::catch_unwind(lower) else {
+            panic!("case {k}: not refused");
+        };
+        let msg = e
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+            .expect("the refusal says why");
+        assert!(msg.contains(want), "case {k}: {msg}");
+    }
+}
