@@ -1113,6 +1113,8 @@ latex_document(
         ":mems_timing",
         ":regs_run",
         ":regs_timing",
+        ":sorted_run",
+        ":sorted_timing",
         ":wide_run",
         ":wide_timing",
         ":tap_run",
@@ -2508,6 +2510,21 @@ waveform(
         "//wen=>wen",
         "//pick=>pick",
         "//hits=>hits",
+    ],
+)
+
+waveform(
+    name = "sorted",
+    example = "//lib/examples:ex_sorted",
+    lowered = ("sorted", "sorted"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//go=>go",
+        "//x=>x",
+        "//sorted/l_0=>l_0",
+        "//sorted/l_1=>l_1",
+        "//sorted/l_2=>l_2",
+        "//sorted/l_3=>l_3",
     ],
 )
 
