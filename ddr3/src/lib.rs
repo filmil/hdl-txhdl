@@ -908,13 +908,16 @@ mod tests {
     }
 
     /// The wide port drains across a design reset (#1847): a burst of
-    /// eight beats is asked, and the design is reset once two of its
-    /// beats have come. The controller still answers the other six, and
-    /// `WidePins` takes and drops them: none reaches the design after the
-    /// reset, and it offers no address until they have come, so a burst
-    /// asked after the reset is answered only after the model has sent the
-    /// first burst's last beat. That burst comes back whole, which it
-    /// would not if `owe` were left above nought or counted a beat twice.
+    /// eight beats is asked, and the design is reset for one step once two
+    /// of its beats have come. Four beats reach the design, the two and
+    /// the two already on their way, and the controller still answers the
+    /// other four, which `WidePins` takes and drops. None reaches the
+    /// design after the reset, and `WidePins` offers no address until
+    /// they have come, so a burst asked after the reset comes back whole,
+    /// at the step its address could leave once `owe` is nought. A drain
+    /// that ends early, as a beat counted twice would make it, lets the
+    /// old burst's tail through; one that never ends holds the second
+    /// burst back for ever.
     #[test]
     fn the_wide_port_drains_across_a_reset() {
         let bits = || signal::<Bit, DefaultClock>().0;
@@ -1018,17 +1021,37 @@ mod tests {
         let reset = reset_at.get().expect("the reset was driven");
         let first: Vec<_> = got.iter().filter(|b| b.1.id.raw() == 3).collect();
         let second: Vec<_> = got.iter().filter(|b| b.1.id.raw() == 4).collect();
+        assert_eq!(
+            first.len() + second.len(),
+            got.len(),
+            "every beat is one of the two bursts': {got:?}"
+        );
         // A beat `WidePins` put on its channel in the step the reset was
         // driven reaches the sink the step after, so one more may come.
         assert!(
             first.iter().all(|b| b.0 <= reset + 1),
             "no beat of the first burst after the reset at {reset}: {got:?}"
         );
-        assert!(first.len() < 8, "the first burst was cut: {got:?}");
-        assert_eq!(second.len(), 2, "the second burst came whole: {got:?}");
+        assert_eq!(first.len(), 4, "the first burst was cut: {got:?}");
         let started = first[0].0;
-        assert!(
-            second[0].0 >= started + 7 + MODEL_READ_LATENCY,
+        for (k, (t, beat)) in first.iter().enumerate() {
+            let mut limbs = [0u128; 2];
+            for j in 0..8u128 {
+                let word = 0x1000_0000u128 + 8 * k as u128 + j;
+                limbs[(j / 4) as usize] |= word << (32 * (j % 4));
+            }
+            assert_eq!(*t, started + k as u32, "first burst beat {k}'s step");
+            assert_eq!(beat.data.limbs(), limbs, "first burst beat {k}");
+            assert!(!beat.last.to_bool(), "first burst beat {k} not last");
+        }
+        assert_eq!(second.len(), 2, "the second burst came whole: {got:?}");
+        // The step is pinned as measured in this simulation, which is
+        // deterministic: the first burst's first beat at 90, the second
+        // burst's at 123, nine steps past the model's latency. An address
+        // let out a step early, before `owe` is nought, moves it.
+        assert_eq!(
+            second[0].0,
+            started + 9 + MODEL_READ_LATENCY,
             "the second address waited for the first burst's last beat: \
              first beat at {started}, second burst at {}",
             second[0].0
