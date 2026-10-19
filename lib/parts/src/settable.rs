@@ -32,8 +32,9 @@
 //!
 //! * Lookup: the value of a key present (`HIT`), or `MISS`.
 //! * Insert: a key not present goes into the lowest-numbered free way
-//!   of its set (`HIT`); a key present changes nothing (`EXISTS`); a
-//!   full set takes nothing, answers `FULL`, and counts one refusal.
+//!   of its set (`HIT`); a key present changes nothing, and answers the
+//!   value it already has (`EXISTS`); a full set takes nothing, answers
+//!   `FULL`, and counts one refusal.
 //! * Update: the value of a key present is replaced, and the new value
 //!   answered (`HIT`), or `MISS`. A function of the old value is the
 //!   user's: look up, work it out, update.
@@ -41,7 +42,17 @@
 //!   `MISS`.
 //!
 //! An operation is taken when its answer has room: when nothing is
-//! being answered, or the answer is taken that cycle.
+//! being answered, or the answer is taken that cycle. An operation's
+//! write is made once, in the cycle its answer goes out, however long
+//! the answer waits.
+//!
+//! # Limits
+//!
+//! `B` is from 1 to 32, and `D` must be `1 << B`: stable Rust cannot
+//! write the one from the other in a type, so both are given, and the
+//! plain-Rust [`set_of`] and [`SetTableModel::new`] check the first. A
+//! key is at most 32 bits, since the hash is over 32; `W` is at most
+//! 256, since a way's number is eight bits.
 use txhdl::comp::{
     mux, Clock, DefaultClock, Mems, Out, Reg, Regs, Rx, Tx, Unit,
 };
@@ -86,19 +97,21 @@ pub struct TableOp<const KW: usize, const VW: usize> {
 pub struct TableResult<const VW: usize> {
     /// `HIT`, `MISS`, `EXISTS` or `FULL`.
     pub res: U<2>,
-    /// The value found, put in or freed, on a `HIT`.
+    /// On a `HIT`, the value found, put in or freed; on `EXISTS`, the
+    /// value the key already has; else nought.
     pub val: U<VW>,
 }
 
 /// The set of `key` in a table of `1 << b` sets: the top `b` bits of
-/// `key * GOLDEN`, over the key widened to 32 bits.
+/// `key * GOLDEN`, over the key widened to 32 bits. `b` is from 1 to 32.
 pub fn set_of(key: u32, b: usize) -> usize {
+    assert!((1..=32).contains(&b), "a table of 2^{b} sets: b is 1 to 32");
     (key.wrapping_mul(GOLDEN) >> (32 - b)) as usize
 }
 
 // begin{state}
-/// `W` ways of `D = 1 << B` rows of a key of `KW` bits, at most 32,
-/// and a value of `VW` bits.
+/// `W` ways, at most 256, of `D = 1 << B` rows, `B` from 1 to 32, of a
+/// key of `KW` bits, at most 32, and a value of `VW` bits.
 #[derive(Trace, Default)]
 pub struct SetTable<
     const KW: usize,
@@ -203,14 +216,16 @@ impl<
             // way, an update's or a remove's hit.
             let upd_go = is_upd & hit;
             let rem_go = is_rem & hit;
-            let write = busy & (ins_go | upd_go | rem_go);
+            let change = ins_go | upd_go | rem_go;
             let wway = mux(ins_go, fway, hway);
             let wkey = okey;
             let wval = mux(rem_go, hval, oval);
             let wused = !rem_go;
 
-            // The answer goes out when there is room for it.
+            // The answer goes out when there is room for it, and the
+            // way changes once, as it does.
             let send = busy & results.ready();
+            let write = send & change;
 
             // Stage 1: an operation taken when stage 2 is free or
             // leaving, its set hashed and every way read at it.
@@ -270,8 +285,9 @@ pub struct SetTableModel {
 }
 
 impl SetTableModel {
-    /// An empty table of `ways` ways of `1 << b` rows.
+    /// An empty table of `ways` ways of `1 << b` rows, `b` from 1 to 32.
     pub fn new(b: usize, ways: usize) -> Self {
+        assert!((1..=32).contains(&b), "a table of 2^{b} sets: b is 1 to 32");
         SetTableModel {
             b,
             rows: vec![vec![None; ways]; 1 << b],
@@ -322,10 +338,12 @@ mod tests {
     /// Eight sets of four ways, keys of 16 bits and values of 8.
     type Small = SetTable<16, 8, 3, 8, 4>;
 
-    /// Run `ops` through a `Small`, the answers taken on the cycles
-    /// `take` says; the answers, and the refusals counted.
-    fn run(
+    /// Run `ops` through a `Small`, each offered on the cycles `give`
+    /// says and the answers taken on the cycles `take` says; the
+    /// answers, and the refusals counted.
+    fn run_paced(
         ops: &[(u32, u32, u32)],
+        give: &mut dyn FnMut(usize) -> bool,
         take: &mut dyn FnMut(usize) -> bool,
     ) -> (Vec<(u32, u32)>, u32) {
         let (op_tx, op_rx) = chan::<TableOp<16, 8>, DefaultClock>();
@@ -344,7 +362,7 @@ mod tests {
         let mut got = vec![];
         let mut cycle = 0;
         while got.len() < ops.len() {
-            if !queue.is_empty() && op_tx.ready().to_bool() {
+            if !queue.is_empty() && op_tx.ready().to_bool() && give(cycle) {
                 op_tx.send(queue.remove(0));
             }
             if take(cycle) {
@@ -360,6 +378,13 @@ mod tests {
             sim.cycle();
         }
         (got, ref_i.get().raw() as u32)
+    }
+
+    fn run(
+        ops: &[(u32, u32, u32)],
+        take: &mut dyn FnMut(usize) -> bool,
+    ) -> (Vec<(u32, u32)>, u32) {
+        run_paced(ops, &mut |_| true, take)
     }
 
     fn model(ops: &[(u32, u32, u32)]) -> (Vec<(u32, u32)>, u32) {
@@ -418,8 +443,21 @@ mod tests {
         for k in [HIT, MISS, EXISTS, FULL] {
             assert!(kinds(&want.0, k) > 20, "answer {k} occurs");
         }
+        // Operations offered on three cycles in four, and answers taken
+        // in runs: held up for up to eight cycles at a time.
+        let mut gap = Rng(3);
         let mut stall = Rng(7);
-        let got = run(&ops, &mut |_| stall.below(3) != 0);
+        let mut held = 0;
+        let got = run_paced(&ops, &mut |_| gap.below(4) != 0, &mut |_| {
+            if held > 0 {
+                held -= 1;
+                return false;
+            }
+            if stall.below(6) == 0 {
+                held = stall.below(8);
+            }
+            true
+        });
         assert_eq!(got.1, want.1, "the refusals counted");
         for (i, (g, w)) in got.0.iter().zip(&want.0).enumerate() {
             assert_eq!(g, w, "operation {i}: {:?}", ops[i]);
