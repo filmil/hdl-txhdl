@@ -142,3 +142,105 @@ fn an_array_travels_over_a_channel() {
     let v = Take::lowered("take").verilog();
     assert!(v.contains("rx_data[31:24]"), "{v}");
 }
+
+/// A pair of nibbles, as an array's element.
+#[derive(Value, Clone, Copy, Default, Debug)]
+pub struct Pair {
+    pub hi: U<4>,
+    pub lo: U<4>,
+}
+
+/// Two pairs, and a grid of two rows of two nibbles.
+#[derive(Value, Clone, Copy, Default, Debug)]
+pub struct Deep {
+    pub pairs: [Pair; 2],
+    pub grid: [[U<4>; 2]; 2],
+}
+
+/// The low nibble of each pair, the grid's corners, and indexes spelled
+/// as Rust spells them.
+#[derive(Trace, Default)]
+pub struct Reach {}
+
+#[lower]
+impl Unit<In<Deep>, (Out<U<8>>, Out<U<8>>, Out<U<8>>)> for Reach {
+    async fn run(
+        &mut self,
+        d: In<Deep>,
+        (los, corners, spelled): (Out<U<8>>, Out<U<8>>, Out<U<8>>),
+    ) {
+        loop {
+            DefaultClock::rising().await;
+            let v = d.get();
+            let mut l = U::<8>::from(0u8);
+            for k in 0..2 {
+                l = (l << 4) | v.pairs[k].lo.resize::<8>();
+            }
+            los.set(l);
+            corners.set(
+                (v.grid[0][0].resize::<8>() << 4) | v.grid[1][1].resize::<8>(),
+            );
+            spelled.set(
+                (v.grid[0x1][0usize].resize::<8>() << 4)
+                    | v.pairs[1usize].hi.resize::<8>(),
+            );
+        }
+    }
+}
+
+#[test]
+fn an_element_of_structs_and_of_arrays_is_reached_by_path() {
+    // Deep is 32 bits: pairs (16) then grid (16), each first-highest.
+    assert_eq!(<Deep as Value>::WIDTH, 32);
+    assert_eq!(Deep::field_bits(&["pairs", "0", "hi"]), Some((28, 4)));
+    assert_eq!(Deep::field_bits(&["pairs", "1", "lo"]), Some((16, 4)));
+    assert_eq!(Deep::field_bits(&["grid", "0", "0"]), Some((12, 4)));
+    assert_eq!(Deep::field_bits(&["grid", "1", "1"]), Some((0, 4)));
+    // Past the end, or not a number, is no element.
+    assert_eq!(Deep::field_bits(&["pairs", "2"]), None);
+    assert_eq!(Deep::field_bits(&["grid", "x"]), None);
+}
+
+#[test]
+fn an_array_has_a_part_and_a_layout_per_element() {
+    let r = Rec {
+        tag: U::from(0u8),
+        lanes: [U::from(1u8), U::from(2u8), U::from(3u8), U::from(4u8)],
+    };
+    let parts = r.lanes.parts();
+    let names: Vec<&str> = parts.iter().map(|p| p.name).collect();
+    assert_eq!(names, ["0", "1", "2", "3"]);
+    assert_eq!(parts[2].bits, "00000011");
+    assert_eq!(
+        <[U<8>; 4] as Value>::layout(),
+        vec![("0", 8), ("1", 8), ("2", 8), ("3", 8)]
+    );
+}
+
+#[test]
+fn nested_and_struct_elements_lower_to_their_slices() {
+    let (d_o, d_i) = signal::<Deep, DefaultClock>();
+    let (l_o, l_i) = signal::<U<8>, DefaultClock>();
+    let (c_o, c_i) = signal::<U<8>, DefaultClock>();
+    let (s_o, s_i) = signal::<U<8>, DefaultClock>();
+    let mut unit = Reach::default();
+    let mut sim = Running::new(unit.run(d_i, (l_o, c_o, s_o)));
+    let n = |x: u8| U::<4>::from(x);
+    d_o.set(Deep {
+        pairs: [Pair { hi: n(1), lo: n(2) }, Pair { hi: n(3), lo: n(4) }],
+        grid: [[n(5), n(6)], [n(7), n(8)]],
+    });
+    sim.cycle();
+    sim.cycle();
+    assert_eq!(l_i.get().raw(), 0x24, "the low nibbles");
+    assert_eq!(c_i.get().raw(), 0x58, "the corners");
+    assert_eq!(
+        s_i.get().raw(),
+        0x73,
+        "grid[0x1][0usize] and pairs[1usize].hi"
+    );
+    let v = Reach::lowered("reach").verilog();
+    for slice in ["d[27:24]", "d[19:16]", "d[15:12]", "d[3:0]", "d[7:4]"] {
+        assert!(v.contains(slice), "no `{slice}` in:\n{v}");
+    }
+}
