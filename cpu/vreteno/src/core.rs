@@ -2541,10 +2541,13 @@ impl<
             // The data cache's miss asks for its line (issue 1275) once
             // every store of the core's is answered, so that the line has
             // them, and nothing else of the core's is out; a single word
-            // for a load not in the DDR3 after all. That word, a device's,
-            // does not wait for the posted stores (issue 1463): no store of
-            // the core's to a device is kept in order with a load from one
-            // anywhere else either, and the DDR3's data cannot be there.
+            // for a load not in the DDR3 after all, a device's, waits for
+            // them the same way (#1815). Nothing on the bus keeps a read
+            // behind a write: the arbiter holds the core's write address
+            // behind another host's write burst while its read goes on, so
+            // a poll of the serial port's `txdata` reached the port before
+            // the byte stored ahead of it, found room that byte took, and
+            // the next byte was dropped.
             let wb_pa = self.wb_pa.get();
             let dc_st = self.dc_st.get();
             let dc_ask = self.dev_wait
@@ -2552,7 +2555,7 @@ impl<
                 & Bit::from(dc_st == 1)
                 & !self.f_wait
                 & !self.p_wait
-                & (Bit::from(self.stores_out.get() == 0) | self.dc_one)
+                & Bit::from(self.stores_out.get() == 0)
                 & issue.ready();
             let dc_line_go = dc_ask & !self.dc_one;
             let send_any =
