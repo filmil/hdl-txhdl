@@ -1,5 +1,5 @@
 % SPDX-License-Identifier: Apache-2.0
-% covers: AxiPer
+% covers: AxiPer, AxiPerReq, AxiPerRsp
 \datasheet{AxiPer}{The peripheral side of an AXI4 link: two address channels merged into one stream of requests.}
 
 \dsfacts{\code{lib/parts/src/bus/axi.rs}}{\code{txhdl\_parts::bus::axi::AxiPer}}%
@@ -19,6 +19,18 @@ client gave it. Its ports are named types, \code{PerIn} and
 \code{PerOut}, so a design may supply a unit of its own instead.
 \code{//docs:axi} notes that a peripheral may also read the five AXI
 channels directly and leave \code{AxiPer} out.
+
+It is two units joined, \code{AxiPerReq} and \code{AxiPerRsp}, which
+share no state. The request half merges the address channels and
+hands on the write beats; it keeps \code{rr}. The response half turns
+answers into \code{B} beats and passes read beats on; it keeps
+nothing. A design whose client answers over an unregistered channel,
+while its requests reach the client over another, joins the two
+halves apart: the request half before the client and the response
+half after it, since an unregistered channel's sender runs first in a
+step. The board joins its data memory's tracker that way (\#1755).
+Both halves take \code{AxiPer}'s four parameters, so the response
+half carries \code{A} and \code{S} without using them.
 
 \subsection*{Parameters}
 
@@ -108,8 +120,9 @@ The examples \code{ex\_axi}, \code{ex\_axi\_serve},
 \code{ex\_axi\_router}, \code{ex\_axi\_reg} and \code{ex\_axi\_wb}.
 Vreteno's run in \code{cpu/vreteno/src/run.rs} and
 \code{cpu/vreteno/src/main.rs}, in front of the data memory and the
-timer. The board's design, \code{Board}, as its fields \code{pdmem},
-\code{ptimer}, \code{prom} and \code{pflash}. The four-corner system in
+timer. The board's design, \code{Board}, as its fields \code{ptimer},
+\code{prom} and \code{pflash}, and as its two halves \code{pdmemq} and
+\code{pdmems} in front of the data memory. The four-corner system in
 \code{soc/src/lib.rs}, and Razboj's simulation in
 \code{gpu/razboj/src/sim.rs}.
 
