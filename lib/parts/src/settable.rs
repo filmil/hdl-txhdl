@@ -314,3 +314,173 @@ impl SetTableModel {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use txhdl::comp::{chan, signal, Running};
+
+    /// Eight sets of four ways, keys of 16 bits and values of 8.
+    type Small = SetTable<16, 8, 3, 8, 4>;
+
+    /// Run `ops` through a `Small`, the answers taken on the cycles
+    /// `take` says; the answers, and the refusals counted.
+    fn run(
+        ops: &[(u32, u32, u32)],
+        take: &mut dyn FnMut(usize) -> bool,
+    ) -> (Vec<(u32, u32)>, u32) {
+        let (op_tx, op_rx) = chan::<TableOp<16, 8>, DefaultClock>();
+        let (res_tx, res_rx) = chan::<TableResult<8>, DefaultClock>();
+        let (ref_o, ref_i) = signal::<U<32>, DefaultClock>();
+        let mut t = Small::default();
+        let mut sim = Running::new(t.run(op_rx, (res_tx, ref_o)));
+        let mut queue: Vec<TableOp<16, 8>> = ops
+            .iter()
+            .map(|&(op, key, val)| TableOp {
+                op: U::from(op),
+                key: U::from(key),
+                val: U::from(val),
+            })
+            .collect();
+        let mut got = vec![];
+        let mut cycle = 0;
+        while got.len() < ops.len() {
+            if !queue.is_empty() && op_tx.ready().to_bool() {
+                op_tx.send(queue.remove(0));
+            }
+            if take(cycle) {
+                if let Some(r) = res_rx.recv() {
+                    got.push((r.res.raw() as u32, r.val.raw() as u32));
+                }
+            }
+            sim.cycle();
+            cycle += 1;
+            assert!(cycle < 20 * ops.len() + 100, "the table stopped");
+        }
+        for _ in 0..4 {
+            sim.cycle();
+        }
+        (got, ref_i.get().raw() as u32)
+    }
+
+    fn model(ops: &[(u32, u32, u32)]) -> (Vec<(u32, u32)>, u32) {
+        let mut m = SetTableModel::new(3, 4);
+        let got = ops
+            .iter()
+            .map(|&(op, key, val)| {
+                let (r, v) = m.apply(op, key, val as u128);
+                (r, v as u32)
+            })
+            .collect();
+        (got, m.refused)
+    }
+
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+    }
+
+    #[test]
+    fn the_parameters_agree() {
+        assert_eq!(1 << 3, 8, "Small's D is 1 << B");
+        for k in 0..1000u32 {
+            assert!(set_of(k, 3) < 8);
+        }
+    }
+
+    /// Random operations on few keys, so that every answer occurs,
+    /// against the model, with the answers taken on random cycles.
+    #[test]
+    fn random_operations_agree_with_the_model() {
+        let mut r = Rng(0x2545_f491_4f6c_dd1d);
+        let keys: Vec<u32> = (0..48).map(|_| r.below(1 << 16) as u32).collect();
+        let ops: Vec<(u32, u32, u32)> = (0..2000)
+            .map(|_| {
+                let op = match r.below(10) {
+                    0..=3 => INSERT,
+                    4..=6 => LOOKUP,
+                    7 => UPDATE,
+                    _ => REMOVE,
+                };
+                (op, keys[r.below(48) as usize], r.below(256) as u32)
+            })
+            .collect();
+        let want = model(&ops);
+        let kinds =
+            |a: &[(u32, u32)], k: u32| a.iter().filter(|x| x.0 == k).count();
+        for k in [HIT, MISS, EXISTS, FULL] {
+            assert!(kinds(&want.0, k) > 20, "answer {k} occurs");
+        }
+        let mut stall = Rng(7);
+        let got = run(&ops, &mut |_| stall.below(3) != 0);
+        assert_eq!(got.1, want.1, "the refusals counted");
+        for (i, (g, w)) in got.0.iter().zip(&want.0).enumerate() {
+            assert_eq!(g, w, "operation {i}: {:?}", ops[i]);
+        }
+    }
+
+    /// Operations on one set back to back: each reads the row the one
+    /// before it is writing, through the forward.
+    #[test]
+    fn back_to_back_on_one_set_see_each_other() {
+        let s = set_of(1, 3);
+        let same: Vec<u32> = (1..4000u32)
+            .filter(|&k| set_of(k, 3) == s)
+            .take(6)
+            .collect();
+        let mut ops = vec![];
+        for (i, &k) in same.iter().enumerate() {
+            ops.push((INSERT, k, i as u32 + 1));
+            ops.push((LOOKUP, k, 0));
+        }
+        ops.push((REMOVE, same[0], 0));
+        ops.push((INSERT, same[5], 9));
+        ops.push((UPDATE, same[1], 77));
+        ops.push((LOOKUP, same[1], 0));
+        let want = model(&ops);
+        assert_eq!(run(&ops, &mut |_| true), want);
+        assert_eq!(want.1, 2, "two inserts found the set full");
+    }
+
+    /// Keys in strides would crowd a few sets by their low bits; the
+    /// hash spreads them over most of the sets.
+    #[test]
+    fn strided_keys_spread_over_the_sets() {
+        for stride in [64u32, 4096] {
+            let mut sets = std::collections::HashSet::new();
+            for i in 0..256u32 {
+                sets.insert(set_of(i * stride, 6));
+            }
+            assert!(sets.len() >= 48, "stride {stride}: {} sets", sets.len());
+        }
+    }
+
+    #[test]
+    fn each_way_is_a_memory_read_through_a_register() {
+        let v = Small::lowered("small").verilog();
+        for w in 0..4 {
+            for m in ["key", "val", "used"] {
+                assert!(v.contains(&format!("{m}_{w} [0:7]")), "{m}_{w}:\n{v}");
+                assert!(v.contains(&format!("r{m}_{w} <= ")), "r{m}_{w}:\n{v}");
+            }
+        }
+    }
+
+    /// A table whose values are block RAMs, 1024 rows of 32 bits a way:
+    /// each memory is read at one address and written at one, which the
+    /// check that a memory of more than 4096 bits fits a block RAM's
+    /// ports takes (issue 1285).
+    #[test]
+    fn a_large_table_fits_block_rams() {
+        let net = SetTable::<32, 32, 10, 1024, 4>::lowered("large");
+        let v = net.verilog();
+        assert!(v.contains("val_3 [0:1023]"), "{v}");
+    }
+}
