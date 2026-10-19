@@ -695,12 +695,18 @@ impl Unit for Ddr3Per {
 #[cfg(test)]
 mod tests {
     use super::sim::WideRead;
-    use super::{Ddr3Per, Ddr3PerBus, Ddr3PerPins, MODEL_WARMUP};
+    use super::{
+        Ddr3Per, Ddr3PerBus, Ddr3PerPins, MODEL_READ_LATENCY, MODEL_WARMUP,
+    };
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
-    use txhdl::comp::{chan, join2, pad, signal, DefaultClock, Running, Unit};
+    use txhdl::comp::{
+        chan, join2, pad, signal, Clock, DefaultClock, Running, Unit,
+    };
     use txhdl::types::{Bit, U};
-    use txhdl_parts::bus::axi::{axi, Ar, AxiHost, Link, Rd, Resp, Wr, R};
+    use txhdl_parts::bus::axi::{
+        axi, Ar, Aw, AxiHost, Link, Rd, Resp, Wr, B, R, W,
+    };
 
     /// Words written across the memory and read back, the first ones
     /// issued while the controller is still calibrating, and a burst
@@ -897,6 +903,167 @@ mod tests {
             assert_eq!(beat.data.limbs(), limbs, "beat {k}");
             assert_eq!(beat.id.raw(), 3);
             assert_eq!(beat.resp, Resp::Okay);
+            assert_eq!(beat.last.to_bool(), k == 1);
+        }
+    }
+
+    /// The wide port drains across a design reset (#1847): a burst of
+    /// eight beats is asked, and the design is reset for one step once two
+    /// of its beats have come. Four beats reach the design, the two and
+    /// the two already on their way, and the controller still answers the
+    /// other four, which `WidePins` takes and drops. None reaches the
+    /// design after the reset, and `WidePins` offers no address until
+    /// they have come, so a burst asked after the reset comes back whole,
+    /// at the step its address could leave once `owe` is nought. A drain
+    /// that ends early, as a beat counted twice would make it, lets the
+    /// old burst's tail through; one that never ends holds the second
+    /// burst back for ever.
+    #[test]
+    fn the_wide_port_drains_across_a_reset() {
+        let bits = || signal::<Bit, DefaultClock>().0;
+        let mut mem = Ddr3Per::default();
+        let words = mem.ctl.memory();
+        for k in 0..64u128 {
+            words
+                .0
+                .borrow_mut()
+                .insert(0x400 + k, U::new(0x1000_0000 + k));
+        }
+        for k in 0..16u128 {
+            words
+                .0
+                .borrow_mut()
+                .insert(0x800 + k, U::new(0x2000_0000 + k));
+        }
+        let (rst_o, rst) = signal::<Bit, DefaultClock>();
+        let (wide_ar, wide_ar_rx) = chan::<Ar<32, 5>, DefaultClock>();
+        let (wide_r_tx, wide_r) = chan::<R<256, 5, 2>, DefaultClock>();
+        let now = Rc::new(Cell::new(0u32));
+        let got = Rc::new(RefCell::new(Vec::new()));
+        let reset_at = Rc::new(Cell::new(None));
+        let (at, into, count) = (now.clone(), got.clone(), got.clone());
+        let (at2, mark) = (now.clone(), reset_at.clone());
+        let client = async move {
+            wide_ar
+                .put(|| Ar {
+                    id: U::new(3),
+                    addr: U::new(0x4000_1000),
+                    len: U::new(7),
+                    ..Default::default()
+                })
+                .await;
+            // The reset, for one step, once two beats have come: shorter than
+            // the beats still owed, so only the drain can drop them all.
+            while count.borrow().len() < 2 {
+                DefaultClock::rising().await;
+            }
+            mark.set(Some(at2.get()));
+            rst_o.set(Bit::One);
+            DefaultClock::rising().await;
+            rst_o.set(Bit::Zero);
+            wide_ar
+                .put(|| Ar {
+                    id: U::new(4),
+                    addr: U::new(0x4000_2000),
+                    len: U::new(1),
+                    ..Default::default()
+                })
+                .await;
+        };
+        let sink = async move {
+            loop {
+                let beat = wide_r.wait().await;
+                into.borrow_mut().push((at.get(), beat));
+            }
+        };
+        let mut sim = Running::new(join2(
+            mem.run(
+                Ddr3PerBus {
+                    rst,
+                    aw: chan::<Aw<32, 5>, DefaultClock>().1,
+                    ar: chan::<Ar<32, 5>, DefaultClock>().1,
+                    w: chan::<W<32, 4>, DefaultClock>().1,
+                    b: chan::<B<5>, DefaultClock>().0,
+                    r: chan::<R<32, 5>, DefaultClock>().0,
+                    xar: wide_ar_rx,
+                    xr: wide_r_tx,
+                },
+                Ddr3PerPins {
+                    sys_clk: signal::<Bit, DefaultClock>().1,
+                    sys_rst: signal::<Bit, DefaultClock>().1,
+                    calib: bits(),
+                    ui_clk: bits(),
+                    ui_rst: bits(),
+                    ck_p: bits(),
+                    ck_n: bits(),
+                    mem_rst_n: bits(),
+                    cke: bits(),
+                    cs_n: bits(),
+                    ras_n: bits(),
+                    cas_n: bits(),
+                    we_n: bits(),
+                    row: signal::<U<15>, DefaultClock>().0,
+                    bank: signal::<U<3>, DefaultClock>().0,
+                    dm: signal::<U<4>, DefaultClock>().0,
+                    odt: bits(),
+                    dq: pad::<U<32>, DefaultClock>(),
+                    dqs: pad::<U<4>, DefaultClock>(),
+                    dqs_n: pad::<U<4>, DefaultClock>(),
+                },
+            ),
+            join2(client, sink),
+        ));
+        for c in 0..2000u32 {
+            now.set(c);
+            sim.cycle();
+        }
+        let got = got.borrow();
+        let reset = reset_at.get().expect("the reset was driven");
+        let first: Vec<_> = got.iter().filter(|b| b.1.id.raw() == 3).collect();
+        let second: Vec<_> = got.iter().filter(|b| b.1.id.raw() == 4).collect();
+        assert_eq!(
+            first.len() + second.len(),
+            got.len(),
+            "every beat is one of the two bursts': {got:?}"
+        );
+        // A beat `WidePins` put on its channel in the step the reset was
+        // driven reaches the sink the step after, so one more may come.
+        assert!(
+            first.iter().all(|b| b.0 <= reset + 1),
+            "no beat of the first burst after the reset at {reset}: {got:?}"
+        );
+        assert_eq!(first.len(), 4, "the first burst was cut: {got:?}");
+        let started = first[0].0;
+        for (k, (t, beat)) in first.iter().enumerate() {
+            let mut limbs = [0u128; 2];
+            for j in 0..8u128 {
+                let word = 0x1000_0000u128 + 8 * k as u128 + j;
+                limbs[(j / 4) as usize] |= word << (32 * (j % 4));
+            }
+            assert_eq!(*t, started + k as u32, "first burst beat {k}'s step");
+            assert_eq!(beat.data.limbs(), limbs, "first burst beat {k}");
+            assert!(!beat.last.to_bool(), "first burst beat {k} not last");
+        }
+        assert_eq!(second.len(), 2, "the second burst came whole: {got:?}");
+        // The step is pinned as measured in this simulation, which is
+        // deterministic: the first burst's first beat at 90, the second
+        // burst's at 123, nine steps past the model's latency. An address
+        // let out a step early, before `owe` is nought, moves it.
+        assert_eq!(
+            second[0].0,
+            started + 9 + MODEL_READ_LATENCY,
+            "the second address waited for the first burst's last beat: \
+             first beat at {started}, second burst at {}",
+            second[0].0
+        );
+        assert_eq!(second[1].0, second[0].0 + 1, "one beat a step");
+        for (k, (_, beat)) in second.iter().enumerate() {
+            let mut limbs = [0u128; 2];
+            for j in 0..8u128 {
+                let word = 0x2000_0000u128 + 8 * k as u128 + j;
+                limbs[(j / 4) as usize] |= word << (32 * (j % 4));
+            }
+            assert_eq!(beat.data.limbs(), limbs, "beat {k}");
             assert_eq!(beat.last.to_bool(), k == 1);
         }
     }
