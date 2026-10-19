@@ -6,9 +6,12 @@
 # demos are for, holding the board token:
 #
 #   bazel run //cpu/vreteno/board/remote:demos -- [--out=DIR] [--dry-run]
+#       [--bit=FILE]
 #
 # It builds the flagship and every image at this commit, programs the
-# flagship, and for each demo: checks that nothing else holds the
+# flagship, or with --bit the bitstream given, checked against its own
+# sha256 (the nightly's, issue 1854), and for each demo: checks that
+# nothing else holds the
 # board's serial port, loads the demo with the serial loader or with
 # fastboot, keeps the console for the demo's seconds with every line
 # stamped in UTC, then stops its own reader on the board server. It
@@ -41,10 +44,18 @@ source "${RUNFILES_DIR:-/dev/null}/$f" 2>/dev/null || \
 server="${TXHDL_BOARD_SERVER:-}"
 out="${TMPDIR:-/tmp}/txhdl-demos"
 dry=""
+# A bitstream to program as it is, rather than the flagship built at
+# this commit: the nightly's (issue 1854).
+given=""
 for a in "$@"; do
   case "$a" in
     --server=*) server="${a#*=}" ;;
     --out=*) out="${a#*=}" ;;
+    # Relative to where `bazel run` was called, not the runfiles.
+    --bit=*)
+      given="${a#*=}"
+      [[ "$given" == /* ]] || given="${BUILD_WORKING_DIRECTORY:-$PWD}/$given"
+      ;;
     --dry-run) dry=1 ;;
     *) echo "unknown argument: $a" >&2; exit 2 ;;
   esac
@@ -109,12 +120,17 @@ echo "demos at $sha into $dir"
 targets=(//zephyr:fastboot)
 for d in "${demos[@]}"; do targets+=("$(cut -f2 <<<"$d")"); done
 bazel build "${targets[@]}"
-if [[ -z "$dry" ]]; then
+if [[ -z "$dry" && -z "$given" ]]; then
   flock -o -w 14400 "$lock" bazel build //flagship:flagship_pnr
 fi
 file() { bazel cquery --output=files "$1" 2>/dev/null | grep -m1 '\.\(bin\|bit\)$'; }
 fastboot_bin="$ws/$(file //zephyr:fastboot)"
-bit="$ws/$(file //flagship:flagship_pnr || true)"
+if [[ -n "$given" ]]; then
+  [[ -f "$given" ]] || { echo "demos: no bitstream at $given" >&2; exit 2; }
+  bit="$given"
+else
+  bit="$ws/$(file //flagship:flagship_pnr || true)"
+fi
 printf 'demo\timage\tsha256\tstart\tend\tlast line\n' >"$dir/manifest.tsv"
 
 # Whatever holds the serial port on the board server: none, or the
@@ -131,8 +147,15 @@ release() {
 program() {
   echo "programming $( (sha256sum "$bit" 2>/dev/null || echo none) | cut -c1-16)"
   [[ -n "$dry" ]] && return
-  flock -o -w 5400 "$lock" bazel run //flagship:flagship_prog -- \
-    --hostport localhost:3122 --device "*/xilinx_tcf/Digilent/*"
+  if [[ -n "$given" ]]; then
+    # The given file, checked against its own sum before it goes in.
+    flock -o -w 5400 "$lock" bazel run //flagship:flagship_prog_given -- \
+      --bitfile="$bit" --sha256="$(sha256sum "$bit" | cut -c1-64)" \
+      --hostport localhost:3122 --device "*/xilinx_tcf/Digilent/*"
+  else
+    flock -o -w 5400 "$lock" bazel run //flagship:flagship_prog -- \
+      --hostport localhost:3122 --device "*/xilinx_tcf/Digilent/*"
+  fi
 }
 stamp() { while IFS= read -r l; do printf '%s %s\n' "$(date -u +%T.%3N)Z" "$l"; done; }
 
