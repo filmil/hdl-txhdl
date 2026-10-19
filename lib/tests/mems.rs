@@ -194,6 +194,32 @@ impl Unit<In<U<8>>, Out<U<8>>> for Beyond {
     }
 }
 
+/// A field `r` of one register beside a field `r_0`: no array, so
+/// nothing is named twice, and it lowers (#1858).
+#[derive(Trace, Default)]
+pub struct NotArray {
+    pub r: txhdl::comp::Reg<U<8>>,
+    pub r_0: txhdl::comp::Reg<U<8>>,
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for NotArray {
+    async fn run(&mut self, x: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            with!(self <= { r: x.get() });
+            with!(self <= { r_0: self.r.get() });
+            o.set(self.r_0.get());
+        }
+    }
+}
+
+#[test]
+fn a_field_beside_a_lone_register_of_its_base_name_lowers() {
+    let v = NotArray::lowered("not_array").verilog();
+    assert!(v.contains("r_0 <= r;"), "{v}");
+}
+
 #[test]
 fn a_field_named_like_an_element_is_refused() {
     let cases: [(fn() -> txhdl::netlist::Lowered, &str); 3] = [
