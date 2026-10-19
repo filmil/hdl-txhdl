@@ -34,7 +34,7 @@ impl<const N: usize> Unit for Sorted<N> {
             DefaultClock::rising().await;
             let v = x.get();
             // Where the byte goes: after every byte not below it.
-            // Sixteen bits count up to any `N` a netlist would hold.
+            // Sixteen bits count the places of any `N` below 65536.
             let mut p = U::<16>::from(0u16);
             for j in 0..N {
                 let ahead = Bit::from(self.l[j].get() >= v);

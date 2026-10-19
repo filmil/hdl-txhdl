@@ -318,3 +318,46 @@ fn an_index_past_the_end_is_refused() {
         assert!(msg.contains("past its end"), "case {k}: {msg}");
     }
 }
+
+/// The constant beside a loop's variable written every way Rust writes
+/// an unsigned integer: `0_1`, `1usize`, `0x1`, `0o1` and `0b1` are all
+/// one, so each place reads the next (issue 1851).
+#[derive(Trace, Default)]
+pub struct Spellings {
+    pub r: Regs<U<8>, 6>,
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for Spellings {
+    async fn run(&mut self, x: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            for j in 0..1 {
+                with!(self <= { r[j]: self.r[j + 0_1].get() });
+            }
+            for j in 1..2 {
+                with!(self <= { r[j]: self.r[j + 1usize].get() });
+            }
+            for j in 2..3 {
+                with!(self <= { r[j]: self.r[j + 0x1].get() });
+            }
+            for j in 3..4 {
+                with!(self <= { r[j]: self.r[j + 0o1].get() });
+            }
+            for j in 4..5 {
+                with!(self <= { r[j]: self.r[j + 0b1].get() });
+            }
+            with!(self <= { r[5]: x.get() });
+            o.set(self.r[0].get());
+        }
+    }
+}
+
+#[test]
+fn a_constant_is_one_in_any_spelling() {
+    let v = Spellings::lowered("spellings").verilog();
+    for j in 0..5 {
+        let d = format!("r_{j} <= r_{};", j + 1);
+        assert!(v.contains(&d), "no `{d}` in:\n{v}");
+    }
+}

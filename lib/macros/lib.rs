@@ -8374,17 +8374,23 @@ fn indexed_reg(
     }
 }
 
-/// The value of an index's constant, `1`, `1_000` or `2usize`: an
-/// unsigned integer literal of at most 64 bits, so that the sum with a
-/// loop's variable cannot overflow the `i128` it is worked out in
-/// (issue 1851).
+/// The value of an index's constant, `1`, `1_000`, `0x10` or `2usize`:
+/// an unsigned integer literal of at most 64 bits, in any of Rust's four
+/// bases, so that the sum with a loop's variable cannot overflow the
+/// `i128` it is worked out in (issue 1851).
 fn moved_const(lit: &str) -> Option<u64> {
     let digits = ["usize", "u64", "u32", "u16", "u8"]
         .iter()
         .find_map(|s| lit.strip_suffix(s))
         .unwrap_or(lit)
         .replace('_', "");
-    digits.parse::<u64>().ok()
+    let (radix, body) = match digits.get(..2) {
+        Some("0x") => (16, &digits[2..]),
+        Some("0o") => (8, &digits[2..]),
+        Some("0b") => (2, &digits[2..]),
+        _ => (10, digits.as_str()),
+    };
+    u64::from_str_radix(body, radix).ok()
 }
 
 /// Every join of an array of children in a token list, into any group:
