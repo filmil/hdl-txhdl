@@ -265,7 +265,7 @@ impl<T: Value + Copy + 'static, const N: usize, C: Clock> Port
 }
 /// The memories a list of fields names, each field's own name or its
 /// memories' names when it is an array of them: what `#[distributed]`
-/// says of a `Mems` field it says of every memory (issue 1845).
+/// says of a `Mems` field it says of every memory (#1852).
 pub fn per_memory<F: Fields>(names: &[&'static str]) -> Vec<&'static str> {
     names.iter().flat_map(|f| F::entries_of(f)).collect()
 }
@@ -347,10 +347,11 @@ pub trait Fields {
     fn fields() -> Vec<(&'static str, Option<Kind>, usize, usize)>;
     /// The netlist's names for field `f`: its own name, or for an
     /// array of them, `f_0` onward, so that what an attribute says of a
-    /// field is said of each of its memories (issue 1845).
-    fn entries_of(f: &'static str) -> Vec<&'static str> {
-        vec![f]
-    }
+    /// field is said of each of its memories (#1852). The derive writes
+    /// it from each field's own `Port` entries; it has no default, so
+    /// that an impl without it is a compile error rather than a field
+    /// whose attributes reach none of its memories.
+    fn entries_of(f: &'static str) -> Vec<&'static str>;
 }
 
 /// The name a wire takes: `want`, unless a field of the unit already

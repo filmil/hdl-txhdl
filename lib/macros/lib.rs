@@ -1075,7 +1075,7 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
         .collect::<Vec<_>>()
         .join("\n");
     // A field's names in the netlist, one or one per element, so that a
-    // field's attribute reaches each of its memories (issue 1845).
+    // field's attribute reaches each of its memories (#1852).
     let entries_of = names
         .iter()
         .zip(&types)

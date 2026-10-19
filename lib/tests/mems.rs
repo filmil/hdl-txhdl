@@ -72,7 +72,7 @@ impl Unit<(In<U<2>>, In<U<8>>), Out<U<8>>> for Two {
 
 /// A field of `Mems` beside a field of one `Mem` whose name is one of
 /// theirs would be, had there been five: the field's style is said of
-/// its own memories and not of the other field (issue 1845).
+/// its own memories and not of the other field (#1852).
 #[derive(Trace, Default)]
 pub struct Beside {
     #[ram_style("block")]
@@ -92,7 +92,7 @@ impl Unit<In<U<2>>, Out<U<8>>> for Beside {
 
 /// Memories of more than 4096 bits read at three addresses, which no
 /// block RAM has the ports for: refused, unless the field says it is
-/// distributed, which reaches each memory (issue 1285, issue 1845).
+/// distributed, which reaches each memory (issue 1285, #1852).
 #[derive(Trace, Default)]
 pub struct Big {
     pub m: Mems<U<32>, 256, 2>,
@@ -145,7 +145,12 @@ fn a_large_memory_of_an_array_is_held_to_a_block_rams_ports() {
     let Err(msg) = refused else {
         panic!("three reads of m_1 were not refused");
     };
-    let msg = msg.downcast_ref::<String>().cloned().unwrap_or_default();
+    // A panic's payload is a String when formatted, a &str when not.
+    let msg = msg
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| msg.downcast_ref::<&str>().map(|s| s.to_string()))
+        .expect("the refusal says why");
     assert!(msg.contains("memory `m_1`"), "{msg}");
     let v = BigLut::lowered("big_lut").verilog();
     assert!(v.contains("reg [31:0] m_1 [0:255];"), "{v}");
