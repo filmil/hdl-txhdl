@@ -263,6 +263,24 @@ impl<T: Value + Copy + 'static, const N: usize, C: Clock> Port
     const WIDTH: usize = T::WIDTH;
     const DEPTH: usize = N;
 }
+/// An array of memories is a memory per index, `name_0` to
+/// `name_{N-1}`, each of depth `D` (issue 1845).
+impl<T: Value + Copy + 'static, const D: usize, const N: usize, C: Clock> Port
+    for crate::comp::Mems<T, D, N, C>
+{
+    fn entries(
+        name: &'static str,
+    ) -> Vec<(&'static str, Option<Kind>, usize, usize)> {
+        // Leaked, as `Regs`' names are: made once per unit lowered.
+        (0..N)
+            .map(|i| {
+                let n: &'static str =
+                    Box::leak(format!("{name}_{i}").into_boxed_str());
+                (n, Some(Kind::Mem), T::WIDTH, D)
+            })
+            .collect()
+    }
+}
 impl<T> Port for PhantomData<T> {}
 macro_rules! plain {
     ($($t:ty),*) => { $( impl Port for $t {} )* };
@@ -2653,11 +2671,37 @@ impl Lowered {
     /// What memory `m` asks Vivado to make it: its `#[ram_style]`, or
     /// `"distributed"` for `#[distributed]` (issue 1371).
     pub fn ram_style(&self, m: &str) -> Option<&'static str> {
+        let m = self.mem_field(m);
         self.ram_styles
             .iter()
             .find(|(n, _)| *n == m)
             .map(|(_, st)| *st)
             .or_else(|| self.distributed.contains(&m).then_some("distributed"))
+    }
+
+    /// Whether memory `m` is `#[distributed]`, itself or as one of a
+    /// field of `Mems`.
+    fn is_distributed(&self, m: &str) -> bool {
+        self.distributed.contains(&self.mem_field(m))
+    }
+
+    /// The field a memory's attributes are on: the memory's own name,
+    /// or for `way_3`, one of a field `way` of `Mems`, `way`. That is
+    /// the field's name when no field of the netlist has it, since a
+    /// `Mems` field is only its memories `way_0` onward (issue 1845).
+    fn mem_field<'a>(&self, m: &'a str) -> &'a str {
+        let Some((base, k)) = m.rsplit_once('_') else {
+            return m;
+        };
+        let indexed = !k.is_empty() && k.bytes().all(|b| b.is_ascii_digit());
+        let declared = self.fields.iter().any(|(n, ..)| *n == base);
+        let styled = self.ram_styles.iter().any(|(n, _)| *n == base)
+            || self.distributed.contains(&base);
+        if indexed && !declared && styled {
+            base
+        } else {
+            m
+        }
     }
     /// The width of an expression, as far as the netlist can tell:
     /// what an extension's replication needs.
@@ -4977,7 +5021,7 @@ impl Lowered {
         for (m, k, w, d) in &self.fields {
             if *k != Some(Kind::Mem)
                 || w * d <= 4096
-                || self.distributed.contains(m)
+                || self.is_distributed(m)
                 || matches!(
                     self.ram_style(m),
                     Some("distributed" | "registers")
