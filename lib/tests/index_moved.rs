@@ -229,12 +229,13 @@ fn a_neighbour_below_the_first_is_refused() {
     );
 }
 
-/// The constant beside a loop's variable written every way Rust writes
-/// an unsigned integer: `0_1`, `1usize`, `0x1`, `0o1` and `0b1` are all
-/// one, so each place reads the next (issue 1851).
+/// The constant beside a loop's variable written every way Rust takes
+/// it beside a `usize`: `0_1`, `1usize`, `0x1`, `0o1` and `0b1` are all
+/// one, and `1 + j` is `j + 1`, so each place reads the next (issue
+/// 1851).
 #[derive(Trace, Default)]
 pub struct Spellings {
-    pub r: Regs<U<8>, 6>,
+    pub r: Regs<U<8>, 7>,
 }
 
 #[lower]
@@ -257,7 +258,10 @@ impl Unit<In<U<8>>, Out<U<8>>> for Spellings {
             for j in 4..5 {
                 with!(self <= { r[j]: self.r[j + 0b1].get() });
             }
-            with!(self <= { r[5]: x.get() });
+            for j in 5..6 {
+                with!(self <= { r[j]: self.r[1 + j].get() });
+            }
+            with!(self <= { r[6]: x.get() });
             o.set(self.r[0].get());
         }
     }
@@ -266,7 +270,7 @@ impl Unit<In<U<8>>, Out<U<8>>> for Spellings {
 #[test]
 fn a_constant_is_one_in_any_spelling() {
     let v = Spellings::lowered("spellings").verilog();
-    for j in 0..5 {
+    for j in 0..6 {
         let d = format!("r_{j} <= r_{};", j + 1);
         assert!(v.contains(&d), "no `{d}` in:\n{v}");
     }
