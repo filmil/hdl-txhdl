@@ -8337,10 +8337,12 @@ fn indexed_reg(
         }
         // A loop's variable moved by a constant, `self.l[j - 1]`: the
         // neighbour of each element, worked out as the loop unrolls,
-        // and refused there if it is below zero (issue 1851).
+        // and refused there if it is below zero (issue 1851). The
+        // constant is an integer literal of at most 64 bits, written with
+        // underscores or an unsigned suffix if it likes.
         [TokenTree::Ident(v), TokenTree::Punct(op), TokenTree::Literal(c)]
             if matches!(op.as_char(), '+' | '-')
-                && c.to_string().parse::<u128>().is_ok() =>
+                && moved_const(&c.to_string()).is_some() =>
         {
             let v = v.to_string();
             let looped = subst.is_none_or(|s| {
@@ -8358,9 +8360,11 @@ fn indexed_reg(
                 ));
             }
             let op = op.as_char();
+            let k = moved_const(&c.to_string()).unwrap_or_default();
             Ok(format!(
-                "{f}{DYN}::txhdl::netlist::moved_index({v} as i128 {op} {c}, \
-                 stringify!(self.{f}[{v} {op} {c}]), {v} as i128){DYN_END}"
+                "{f}{DYN}::txhdl::netlist::moved_index({v} as i128 {op} \
+                 {k}i128, stringify!(self.{f}[{v} {op} {c}]), {v} as i128)\
+                 {DYN_END}"
             ))
         }
         _ => Err(format!(
@@ -8368,6 +8372,19 @@ fn indexed_reg(
              a loop's variable plus or minus a constant"
         )),
     }
+}
+
+/// The value of an index's constant, `1`, `1_000` or `2usize`: an
+/// unsigned integer literal of at most 64 bits, so that the sum with a
+/// loop's variable cannot overflow the `i128` it is worked out in
+/// (issue 1851).
+fn moved_const(lit: &str) -> Option<u64> {
+    let digits = ["usize", "u64", "u32", "u16", "u8"]
+        .iter()
+        .find_map(|s| lit.strip_suffix(s))
+        .unwrap_or(lit)
+        .replace('_', "");
+    digits.parse::<u64>().ok()
 }
 
 /// Every join of an array of children in a token list, into any group:

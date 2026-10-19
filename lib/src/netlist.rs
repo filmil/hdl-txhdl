@@ -560,11 +560,17 @@ pub fn inlined_begin() {
 /// here, naming the index and the variable's value. One past the end
 /// is not refused yet, as no index past the end is (#1853).
 pub fn moved_index(at: i128, what: &str, var: i128) -> usize {
-    usize::try_from(at).unwrap_or_else(|_| {
+    if at < 0 {
         panic!(
             "`{what}` is {at} where the loop's variable is {var}: an index \
              below zero. Start the loop where the index is 0 or more \
              (issue 1851)"
+        );
+    }
+    usize::try_from(at).unwrap_or_else(|_| {
+        panic!(
+            "`{what}` is {at} where the loop's variable is {var}: an index \
+             no array has (issue 1851)"
         )
     })
 }
