@@ -971,6 +971,64 @@ impl<const N: usize> Value for logic::Vec<N> {
     }
 }
 
+/// An array of values is a value: `N` of them side by side, element 0
+/// highest, as a struct's first field is (issue 1869). So `N` like
+/// fields of a struct may become one field `[T; N]` with the same bits
+/// on every wire, and code over them a loop: `v.lanes[k]` in a lowered
+/// body is element `k`'s slice, for `k` a number or a loop's variable.
+impl<T: Value, const N: usize> Value for [T; N] {
+    const WIDTH: usize = T::WIDTH * N;
+    fn vcd(self) -> String {
+        self.iter().map(|e| e.vcd()).collect()
+    }
+    /// Each element a part, named by its index.
+    fn parts(self) -> Vec<Part> {
+        self.iter()
+            .enumerate()
+            .map(|(i, e)| Part {
+                name: element_name(i),
+                width: T::WIDTH,
+                bits: e.vcd(),
+                names: T::names(),
+            })
+            .collect()
+    }
+    fn layout() -> Vec<(&'static str, usize)> {
+        (0..N).map(|i| (element_name(i), T::WIDTH)).collect()
+    }
+    /// `["2"]` is element 2, and `["2", "lo"]` a field of it.
+    fn field_bits(path: &[&str]) -> Option<(usize, usize)> {
+        let (first, rest) = path.split_first()?;
+        let i: usize = first.parse().ok().filter(|i| *i < N)?;
+        let lo = (N - 1 - i) * T::WIDTH;
+        if rest.is_empty() {
+            return Some((lo, T::WIDTH));
+        }
+        let (sub, w) = T::field_bits(rest)?;
+        Some((lo + sub, w))
+    }
+}
+
+/// The name of an array's element `i`: `"0"`, `"1"` and on, made once
+/// each and kept, since a part's name and a layout's are `&'static`.
+fn element_name(i: usize) -> &'static str {
+    use std::sync::Mutex;
+    static NAMES: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+    let mut names = NAMES.lock().unwrap_or_else(|e| e.into_inner());
+    while names.len() <= i {
+        let n = names.len();
+        names.push(Box::leak(n.to_string().into_boxed_str()));
+    }
+    names[i]
+}
+
+/// An array of transactions is one too, so a record of `N` like fields
+/// travels over a channel whole.
+impl<T: Transaction + Value, const N: usize> Transaction for [T; N] where
+    [T; N]: Default
+{
+}
+
 /// Marker: a struct that moves between units over a channel. Derived
 /// with `#[derive(Transaction)]`, which also asks for `Copy` and
 /// `Default` so the channel can hold one.

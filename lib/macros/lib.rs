@@ -4515,6 +4515,40 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
         {
             Ok(ename(&indexed_reg(&f.to_string(), g, Some(subst))?))
         }
+        // An element of an array field of a port's value, `p.lanes[k]`
+        // with `k` a number or a loop's variable: the field's path with
+        // the index after it, which `[T; N]`'s `field_bits` reads
+        // (issue 1869).
+        [base @ .., TokenTree::Punct(dot), TokenTree::Ident(_), TokenTree::Group(g)]
+            if dot.as_char() == '.'
+                && !base.is_empty()
+                && g.delimiter() == Delimiter::Bracket
+                && !matches!(base, [TokenTree::Ident(s)]
+                    if matches!(s.to_string().as_str(), "self" | "this")) =>
+        {
+            let field = tr(&ts[..ts.len() - 1], subst)?;
+            let it: Vec<TokenTree> = g.stream().into_iter().collect();
+            let index = match it.as_slice() {
+                [TokenTree::Literal(k)] => k.to_string(),
+                [TokenTree::Ident(v)]
+                    if subst
+                        .iter()
+                        .rev()
+                        .find(|(k, _)| *k == v.to_string())
+                        .is_some_and(|(_, e)| e.starts_with("NlE::Num(")) =>
+                {
+                    format!("{DYN}{v}{DYN_END}")
+                }
+                _ => {
+                    return Err(
+                        "an element of an array field is chosen by a number \
+                         or by a loop's variable"
+                            .into(),
+                    )
+                }
+            };
+            Ok(typed_field("", &field, &index))
+        }
         // A field of a port's value, `p.tag`: a slice of the port's data.
         [base @ .., TokenTree::Punct(dot), TokenTree::Ident(f)]
             if dot.as_char() == '.' && !base.is_empty() =>
