@@ -3,7 +3,9 @@
 //! limbs of 128, the second parameter being the number of limbs, and
 //! a `U<N>` of at most 128 bits is `U<N, 1>` as before. The unit is
 //! an accumulator at that width: its sum carries across the limbs,
-//! and two bytes come out of it as slices. The netlist is checked
+//! and two bytes come out of it as slices. The wide forms take wider
+//! pieces: a 200-bit field, two 150-bit halves joined the other way
+//! round, and a sign extension to 300 bits. The netlist is checked
 //! against the trace under nvc and Verilator.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{signal, Clock, DefaultClock, In, Out, Reg, Running, Unit};
@@ -14,9 +16,13 @@ use txhdl::{lower, when, Trace};
 type W = U<256, 2>;
 /// One bit past one limb.
 type Odd = U<129, 2>;
+/// A field of the sum, and what is made of it, wider than one limb.
+type F = U<200, 2>;
+type T = U<300, 3>;
 
 #[derive(Trace)]
 pub struct Acc {
+    /// Starts at a value no single limb holds.
     pub acc: Reg<W>,
     /// Starts past what one limb holds, and counts down.
     pub down: Reg<Odd>,
@@ -25,7 +31,7 @@ pub struct Acc {
 impl Default for Acc {
     fn default() -> Self {
         Acc {
-            acc: Reg::default(),
+            acc: Reg::new(W::from_limbs([7, 1])),
             down: Reg::new(Odd::from_limbs([1, 1])),
         }
     }
@@ -36,7 +42,15 @@ impl Unit for Acc {
     async fn run(
         &mut self,
         (x, clear): (In<W>, In<Bit>),
-        (sum, mid, top, low): (Out<W>, Out<U<8>>, Out<U<8>>, Out<Odd>),
+        (sum, mid, top, low, field, swapped, ext): (
+            Out<W>,
+            Out<U<8>>,
+            Out<U<8>>,
+            Out<Odd>,
+            Out<F>,
+            Out<T>,
+            Out<T>,
+        ),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -47,9 +61,17 @@ impl Unit for Acc {
             // low limb, where a carry lands, and the top one.
             mid.set(self.acc.get().slice::<128, 8>());
             top.set(self.acc.get().slice::<248, 8>());
+            // Wider pieces, which state their limbs as well: 200 bits
+            // from bit 28, and the low 150 bits above the high 150.
+            field.set(self.acc.get().slice_wide::<28, 200, 2>());
+            let hi = self.acc.get().slice_wide::<106, 150, 2>();
+            let lo = self.acc.get().slice_wide::<0, 150, 2>();
+            swapped.set(lo.concat_wide::<150, 2, 300, 3>(hi));
             // A register's first value at 129 bits, then a borrow
-            // out of the high limb on the second cycle.
+            // out of the high limb on the second cycle; its top bit
+            // is set at first, so the extension fills with ones.
             low.set(self.down);
+            ext.set(self.down.get().sext_wide::<300, 3>());
             self.down.set(self.down - 1);
         }
     }
@@ -62,6 +84,9 @@ fn main() {
     let (mid_out, mid) = signal::<U<8>, DefaultClock>();
     let (top_out, top) = signal::<U<8>, DefaultClock>();
     let (low_out, low) = signal::<Odd, DefaultClock>();
+    let (field_out, field) = signal::<F, DefaultClock>();
+    let (swapped_out, swapped) = signal::<T, DefaultClock>();
+    let (ext_out, ext) = signal::<T, DefaultClock>();
     let mut acc = Acc::default();
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();
@@ -72,16 +97,31 @@ fn main() {
         w.add("mid", &mid);
         w.add("top", &top);
         w.add("low", &low);
+        w.add("field", &field);
+        w.add("swapped", &swapped);
+        w.add("ext", &ext);
         w.start();
     }
-    let outs = (sum_out, mid_out, top_out, low_out);
+    let outs = (
+        sum_out,
+        mid_out,
+        top_out,
+        low_out,
+        field_out,
+        swapped_out,
+        ext_out,
+    );
     let mut sim = Running::new(acc.run((x, clear), outs));
     clear_out.set(Bit::One);
     sim.cycle();
-    // The counter's first value, 2^128 + 1, which a netlist read into
-    // one u128 once lost (#1861).
+    // The first values, 2^128 + 7 and 2^128 + 1, which a netlist
+    // read into one u128 once lost (#1861).
+    let [lo, hi] = sum.get().limbs();
+    println!("sum {hi:032x}_{lo:032x}");
     let [lo, hi] = low.get().limbs();
     println!("low {hi:x}_{lo:032x}");
+    let [_, _, s] = ext.get().limbs();
+    println!("ext, top limb {s:x}");
     clear_out.set(Bit::Zero);
     // The low limb filled, then one more carries into the high limb;
     // the top bit, then all ones, which is minus one and wraps.
