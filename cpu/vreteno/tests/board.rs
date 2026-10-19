@@ -4337,7 +4337,12 @@ fn a_device_load_waits_for_posted_stores() {
     p.push(halt());
     let ran = run_debugged(&p, &[], 200_000, &[]);
     let took = ran.halted_at.expect("the loop halts");
-    assert!(took <= 2700, "a hundred device rounds took {took} cycles");
+    // At least 2500: a load that went on without waiting would take
+    // about 1709 again.
+    assert!(
+        (2500..=2700).contains(&took),
+        "a hundred device rounds took {took} cycles"
+    );
 }
 
 /// A random mix of loads and stores of every width over two lines of
@@ -4999,7 +5004,9 @@ enum Beside {
 /// and the eighth fills the queue, so a ninth is written only if a read
 /// missed the store before it. The loop has no `fence` after its write,
 /// unlike the HAL's `Uart::put` since #1778, so it is the loop that lost
-/// bytes on the board; the simulation has never lost one (#1815).
+/// bytes on the board. Only beside Razboj's write bursts did the
+/// simulation lose any, 25 of 425, until a device load waited for the
+/// core's posted stores (#1815).
 /// Hart 1 meanwhile idles, stores into the DDR3, or reads or writes the
 /// pulse width modulator at 0x3100, behind the same AXI-Lite bridge as
 /// the serial port; or, with hart 1 idle, Razboj fills the screen
