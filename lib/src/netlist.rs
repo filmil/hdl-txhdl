@@ -5110,19 +5110,26 @@ impl Lowered {
             }
             Some((base.to_string(), k.parse().ok()?))
         };
-        // The arrays, by their base, and how many elements each has.
-        let mut arrays: Vec<(String, usize)> = Vec::new();
+        // The arrays, by their base, and how many elements each has:
+        // a base whose elements are `base_0` onward with none missing.
+        // A lone field `stage_2`, with no `stage_0`, is no array.
+        let mut seen: Vec<(String, Vec<usize>)> = Vec::new();
         for (f, k, ..) in &self.fields {
             if !matches!(k, Some(Kind::Reg | Kind::Mem)) {
                 continue;
             }
             if let Some((base, i)) = split(f) {
-                match arrays.iter_mut().find(|(b, _)| *b == base) {
-                    Some((_, n)) => *n = (*n).max(i + 1),
-                    None => arrays.push((base, i + 1)),
+                match seen.iter_mut().find(|(b, _)| *b == base) {
+                    Some((_, is)) => is.push(i),
+                    None => seen.push((base, vec![i])),
                 }
             }
         }
+        let arrays: Vec<(String, usize)> = seen
+            .into_iter()
+            .filter(|(_, is)| (0..is.len()).all(|i| is.contains(&i)))
+            .map(|(b, is)| (b, is.len()))
+            .collect();
         if arrays.is_empty() {
             return;
         }
