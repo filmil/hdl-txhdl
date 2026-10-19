@@ -5003,8 +5003,8 @@ enum Beside {
 /// `txdata` for room before each write and giving up after 200 reads,
 /// and the eighth fills the queue, so a ninth is written only if a read
 /// missed the store before it. The loop has no `fence` after its write,
-/// unlike the HAL's `Uart::put` since #1778, so it is the loop that lost
-/// bytes on the board. Only beside Razboj's write bursts did the
+/// as the HAL's `Uart::put` has none since #1834, so it is the loop that
+/// lost bytes on the board. Only beside Razboj's write bursts did the
 /// simulation lose any, 25 of 425, until a device load waited for the
 /// core's posted stores (#1815).
 /// Hart 1 meanwhile idles, stores into the DDR3, or reads or writes the
