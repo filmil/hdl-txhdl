@@ -228,3 +228,93 @@ fn a_neighbour_below_the_first_is_refused() {
         "{msg}"
     );
 }
+
+/// An index past the end, three ways: a loop's variable that runs one
+/// too far, a neighbour past the last, and a number; and a memory's
+/// (#1853). Each reads four registers and two memories.
+#[derive(Trace, Default)]
+pub struct Past {
+    pub r: Regs<U<8>, 4>,
+    pub m: Mems<U<8>, 2, 2>,
+}
+
+#[derive(Trace, Default)]
+pub struct PastMoved {
+    pub r: Regs<U<8>, 4>,
+}
+
+#[derive(Trace, Default)]
+pub struct PastNumber {
+    pub r: Regs<U<8>, 4>,
+}
+
+#[derive(Trace, Default)]
+pub struct PastMem {
+    pub m: Mems<U<8>, 2, 2>,
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for Past {
+    async fn run(&mut self, x: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            let mut s = x.get();
+            for j in 0..5 {
+                s = s ^ self.r[j].get();
+            }
+            o.set(s ^ self.m[0].read(U::<1>::from(0u8)));
+        }
+    }
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for PastMoved {
+    async fn run(&mut self, x: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            let mut s = x.get();
+            for j in 0..4 {
+                s = s ^ self.r[j + 1].get();
+            }
+            o.set(s);
+        }
+    }
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for PastNumber {
+    async fn run(&mut self, x: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            o.set(x.get() ^ self.r[4].get());
+        }
+    }
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for PastMem {
+    async fn run(&mut self, x: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            o.set(x.get() ^ self.m[2].read(U::<1>::from(0u8)));
+        }
+    }
+}
+
+#[test]
+fn an_index_past_the_end_is_refused() {
+    let cases: [(fn() -> txhdl::netlist::Lowered, &str); 4] = [
+        (|| Past::lowered("past"), "reaches `r_4`"),
+        (|| PastMoved::lowered("past"), "reaches `r_4`"),
+        (|| PastNumber::lowered("past"), "reaches `r_4`"),
+        (|| PastMem::lowered("past"), "reaches `m_2`"),
+    ];
+    for (k, (lower, want)) in cases.into_iter().enumerate() {
+        let Err(e) = std::panic::catch_unwind(lower) else {
+            panic!("case {k}: not refused");
+        };
+        let msg = said(e.as_ref());
+        assert!(msg.contains(want), "case {k}: {msg}");
+        assert!(msg.contains("past its end"), "case {k}: {msg}");
+    }
+}
