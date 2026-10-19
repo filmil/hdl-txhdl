@@ -576,6 +576,25 @@ pub fn moved_index(at: i128, what: &str, var: i128) -> usize {
     })
 }
 
+/// The fields of `F` that are arrays of registers or memories, with
+/// their lengths: a field not declared under its own name whose
+/// elements `name_0` onward are (#1853).
+#[doc(hidden)]
+pub fn arrays_of<F: Fields>() -> Vec<(String, usize)> {
+    let entries: Vec<&str> = F::fields().into_iter().map(|e| e.0).collect();
+    F::NAMES
+        .iter()
+        .filter(|n| !entries.contains(n))
+        .map(|n| {
+            let len = (0..)
+                .take_while(|k| entries.contains(&&*format!("{n}_{k}")))
+                .count();
+            (n.to_string(), len)
+        })
+        .filter(|(_, len)| *len > 0)
+        .collect()
+}
+
 /// Refuse a unit with a field named `base_k` beside a field `base`
 /// that is an array of registers or memories, `base_0` onward (#1858).
 /// Within the array's length the two would be declared under one name;
@@ -583,26 +602,17 @@ pub fn moved_index(at: i128, what: &str, var: i128) -> usize {
 /// read it rather than be refused (#1853). Either way the names say two
 /// things, so the field is refused whatever `k` is. What the derive
 /// checks, two fields of one name, sees `base` and `base_k`; this sees
-/// what `base` expands to.
+/// what `base` expands to, from [`arrays_of`].
 #[doc(hidden)]
 pub fn refuse_named_like_elements<F: Fields>(unit: &str) {
-    let entries: Vec<&str> = F::fields().into_iter().map(|e| e.0).collect();
-    // A field that is an array is not declared under its own name, but
-    // its first element is.
-    let arrays: Vec<&str> = F::NAMES
-        .iter()
-        .copied()
-        .filter(|n| {
-            !entries.contains(n) && entries.contains(&&*format!("{n}_0"))
-        })
-        .collect();
+    let arrays = arrays_of::<F>();
     for m in F::NAMES {
         let Some((base, k)) = m.rsplit_once('_') else {
             continue;
         };
         if !k.is_empty()
             && k.bytes().all(|b| b.is_ascii_digit())
-            && arrays.contains(&base)
+            && arrays.iter().any(|(a, _)| a == base)
         {
             panic!(
                 "`{unit}` has a field `{m}` beside `{base}`, an array whose \
@@ -1095,6 +1105,12 @@ pub struct Lowered {
     /// The memories [`Fields::RAM_STYLES`] names, with what each asks
     /// Vivado to make it (issue 1371).
     pub ram_styles: Vec<(&'static str, &'static str)>,
+    /// The fields that are arrays of registers or memories, by name,
+    /// with how many elements each has: `r` for `r: Regs<_, 4>`, whose
+    /// elements are `r_0` to `r_3` (#1853). What the derive knows and
+    /// a name alone does not, since a lone field `stage_2` ends in a
+    /// number too.
+    pub arrays: Vec<(String, usize)>,
     /// The registers [`Fields::USE_DSP`] names, with what each says
     /// (issue 1383).
     pub use_dsp: Vec<(&'static str, &'static str)>,
@@ -1267,6 +1283,7 @@ pub fn foreign(
         async_regs: Vec::new(),
         distributed: Vec::new(),
         ram_styles: Vec::new(),
+        arrays: Vec::new(),
         use_dsp: Vec::new(),
         aliases: Vec::new(),
         nets: Vec::new(),
@@ -5135,51 +5152,29 @@ fn mem_sites(
 impl Lowered {
     /// Refuse a name `base_k` that a body reads or drives when `base` is
     /// an array of registers or memories, `base_0` onward, and `base_k`
-    /// is declared nowhere: an index past the array's end, which the
-    /// simulation refuses too, since it indexes a Rust array (#1853).
+    /// is not one of its elements: an index past the array's end, which
+    /// the simulation refuses too, since it indexes a Rust array (#1853).
     /// A literal index, a loop's variable and one moved by a constant
-    /// all end here, as the name they were folded into.
+    /// all end here, as the name they were folded into. Which fields are
+    /// arrays is [`Lowered::arrays`], what the derive knows, not a guess
+    /// from names, so a lone field `stage_2` is no array, and a port or
+    /// wire named `r_4` does not stand in for `r[4]` of four.
     fn refuse_past_ends(&self) {
-        let split = |n: &str| -> Option<(String, usize)> {
+        if self.arrays.is_empty() {
+            return;
+        }
+        let split = |n: &str| -> Option<(String, String)> {
             let (base, k) = n.rsplit_once('_')?;
             if k.is_empty() || !k.bytes().all(|b| b.is_ascii_digit()) {
                 return None;
             }
-            Some((base.to_string(), k.parse().ok()?))
+            Some((base.to_string(), k.to_string()))
         };
-        // The arrays, by their base, and how many elements each has:
-        // a base whose elements are `base_0` onward with none missing.
-        // A lone field `stage_2`, with no `stage_0`, is no array.
-        let mut seen: Vec<(String, Vec<usize>)> = Vec::new();
-        for (f, k, ..) in &self.fields {
-            if !matches!(k, Some(Kind::Reg | Kind::Mem)) {
-                continue;
-            }
-            if let Some((base, i)) = split(f) {
-                match seen.iter_mut().find(|(b, _)| *b == base) {
-                    Some((_, is)) => is.push(i),
-                    None => seen.push((base, vec![i])),
-                }
-            }
-        }
-        let arrays: Vec<(String, usize)> = seen
-            .into_iter()
-            .filter(|(_, is)| (0..is.len()).all(|i| is.contains(&i)))
-            .map(|(b, is)| (b, is.len()))
-            .collect();
-        if arrays.is_empty() {
-            return;
-        }
-        let declared = |n: &str| {
-            self.fields.iter().any(|(f, ..)| *f == n)
-                || self.wires.iter().any(|(w, _)| w == n)
-                || self.nets.iter().any(|(w, ..)| w == n)
-                || self.ports.iter().any(|(p, ..)| {
-                    p.as_str() == n
-                        || n.strip_prefix(p.as_str()).is_some_and(|s| {
-                            matches!(s, "_data" | "_valid" | "_ready")
-                        })
-                })
+        // An element is a register or a memory the unit declares.
+        let element = |n: &str| {
+            self.fields.iter().any(|(f, k, ..)| {
+                *f == n && matches!(k, Some(Kind::Reg | Kind::Mem))
+            })
         };
         let mut names = Vec::new();
         for p in &self.procs {
@@ -5190,14 +5185,19 @@ impl Lowered {
         }
         for n in &names {
             let Some((base, i)) = split(n) else { continue };
-            let Some((_, len)) = arrays.iter().find(|(b, _)| *b == base) else {
+            let Some((_, len)) = self.arrays.iter().find(|(b, _)| *b == base)
+            else {
                 continue;
             };
-            if !declared(n) {
+            // `r_04`, or `r_4` of four, is no element, whatever else is
+            // declared under that name.
+            let canonical = i == "0" || !i.starts_with('0');
+            let inside = i.parse::<usize>().is_ok_and(|k| k < *len);
+            if !(canonical && inside && element(n)) {
                 panic!(
                     "`{}` reaches `{n}`: element {i} of `{base}`, an array of \
-                     {len} (`{base}_0` to `{base}_{}`), past its end. An \
-                     index of an array is checked when the loop unrolls, as \
+                     {len} (`{base}_0` to `{base}_{}`), past its end. Each \
+                     index into an array is checked when the netlist is, as \
                      the simulation checks it (#1853)",
                     self.name,
                     len - 1
@@ -5325,6 +5325,7 @@ mod tests {
             async_regs: Vec::new(),
             distributed: Vec::new(),
             ram_styles: Vec::new(),
+            arrays: Vec::new(),
             use_dsp: Vec::new(),
             aliases: Vec::new(),
             nets: Vec::new(),
