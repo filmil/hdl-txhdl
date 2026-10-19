@@ -8334,6 +8334,20 @@ fn indexed_reg(
     subst: Option<&[(String, String)]>,
 ) -> Result<String, String> {
     let it: Vec<TokenTree> = g.stream().into_iter().collect();
+    // A constant before the loop's variable, `self.r[1 + j]`, is the
+    // same index as `self.r[j + 1]` (issue 1851).
+    let it = match it.as_slice() {
+        [TokenTree::Literal(c), TokenTree::Punct(p), TokenTree::Ident(v)]
+            if p.as_char() == '+' =>
+        {
+            vec![
+                TokenTree::Ident(v.clone()),
+                TokenTree::Punct(p.clone()),
+                TokenTree::Literal(c.clone()),
+            ]
+        }
+        _ => it,
+    };
     match it.as_slice() {
         [TokenTree::Literal(k)] => Ok(format!("{f}_{k}")),
         [TokenTree::Ident(v)] => {
@@ -8352,10 +8366,60 @@ fn indexed_reg(
             }
             Ok(format!("{f}{DYN}{v}{DYN_END}"))
         }
+        // A loop's variable moved by a constant, `self.l[j - 1]`: the
+        // neighbour of each element, worked out as the loop unrolls,
+        // and refused there if it is below zero (issue 1851). The
+        // constant is an integer literal whose value fits in 64 bits,
+        // in any base, with underscores or `usize` if it likes.
+        [TokenTree::Ident(v), TokenTree::Punct(op), TokenTree::Literal(c)]
+            if matches!(op.as_char(), '+' | '-')
+                && moved_const(&c.to_string()).is_some() =>
+        {
+            let v = v.to_string();
+            let looped = subst.is_none_or(|s| {
+                s.iter()
+                    .rev()
+                    .find(|(k, _)| *k == v)
+                    .is_some_and(|(_, e)| e.starts_with("NlE::Num("))
+            });
+            if !looped {
+                return Err(format!(
+                    "`self.{f}[{v} {op} {c}]`: `{v}` is not a loop's \
+                     variable. A register of an array is chosen by a \
+                     number, a loop's variable, or a loop's variable plus \
+                     or minus a constant"
+                ));
+            }
+            let op = op.as_char();
+            let k = moved_const(&c.to_string()).unwrap_or_default();
+            Ok(format!(
+                "{f}{DYN}::txhdl::netlist::moved_index({v} as i128 {op} \
+                 {k}i128, stringify!(self.{f}[{v} {op} {c}]), {v} as i128)\
+                 {DYN_END}"
+            ))
+        }
         _ => Err(format!(
-            "`self.{f}[..]`: the index is a number or a loop's variable"
+            "`self.{f}[..]`: the index is a number, a loop's variable, or \
+             a loop's variable plus or minus a constant"
         )),
     }
+}
+
+/// The value of an index's constant, `1`, `1_000`, `0x10` or `2usize`:
+/// an integer literal whose value fits in 64 bits, in any of Rust's four
+/// bases, so that the sum with a loop's variable cannot overflow the
+/// `i128` it is worked out in (issue 1851). The only suffix is `usize`:
+/// the simulation adds the constant to a loop's `usize`, so Rust itself
+/// refuses `j + 1i32` or `j + 1u64` before the lowering sees it.
+fn moved_const(lit: &str) -> Option<u64> {
+    let digits = lit.strip_suffix("usize").unwrap_or(lit).replace('_', "");
+    let (radix, body) = match digits.get(..2) {
+        Some("0x") => (16, &digits[2..]),
+        Some("0o") => (8, &digits[2..]),
+        Some("0b") => (2, &digits[2..]),
+        _ => (10, digits.as_str()),
+    };
+    u64::from_str_radix(body, radix).ok()
 }
 
 /// Every join of an array of children in a token list, into any group:
