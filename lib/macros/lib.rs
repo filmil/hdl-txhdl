@@ -2726,6 +2726,147 @@ struct Helper {
     refused: Vec<String>,
 }
 
+/// `let f = |a, b: T| e;` read as a helper the body can call by name, or
+/// why it cannot be one, or `None` when the statement is not a closure's
+/// `let` (issue 1838). The body is an expression or a block of `let`s
+/// and a value, as a function's under `#[lower]` is.
+fn local_closure(ts: &[TokenTree]) -> Option<Result<Helper, String>> {
+    let bar =
+        |t: &TokenTree| matches!(t, TokenTree::Punct(p) if p.as_char() == '|');
+    let (Some(l), Some(TokenTree::Ident(name)), Some(eq)) =
+        (ts.first(), ts.get(1), ts.get(2))
+    else {
+        return None;
+    };
+    if !is_ident(l, "let")
+        || !matches!(eq, TokenTree::Punct(p) if p.as_char() == '=')
+    {
+        return None;
+    }
+    let alt = "write it as a function under `#[lower]` in this file and \
+               call that instead, which a lowered body inlines the same way";
+    match ts.get(3) {
+        Some(t) if is_ident(t, "move") => {
+            return Some(Err(format!(
+                "the closure `{name}` is `move`: a lowered body inlines a \
+                 closure where it is called, so it has nothing to move; drop \
+                 `move`, or {alt}"
+            )))
+        }
+        Some(t) if bar(t) => {}
+        _ => return None,
+    }
+    let Some(close) = (4..ts.len()).find(|&k| bar(&ts[k])) else {
+        return Some(Err(format!("the closure `{name}` has no closing `|`")));
+    };
+    let mut params = Vec::new();
+    for p in split_type_commas_slice(&ts[4..close]) {
+        match p.as_slice() {
+            [] => {}
+            [TokenTree::Ident(n), ..]
+                if p.len() == 1 || punct_at(&p, 1, ':') =>
+            {
+                params.push(n.to_string())
+            }
+            _ => {
+                return Some(Err(format!(
+                    "the closure `{name}` takes the pattern `{}`: a lowered \
+                     closure's parameters are names; {alt}",
+                    p[0]
+                )))
+            }
+        }
+    }
+    let body = &ts[close + 1..];
+    if body.is_empty() {
+        return Some(Err(format!("the closure `{name}` has no body")));
+    }
+    let (lets, value, refused) = match body {
+        [TokenTree::Group(g)] if g.delimiter() == Delimiter::Brace => {
+            helper_body(&name.to_string(), g)
+        }
+        _ => (Vec::new(), text_of(body), Vec::new()),
+    };
+    Some(Ok(Helper {
+        name: name.to_string(),
+        params,
+        consts: Vec::new(),
+        lets,
+        value,
+        refused,
+    }))
+}
+
+/// A helper's body read as its `let`s and its value, and why it cannot
+/// be inlined if it cannot: a function's under `#[lower]`, or a closure's
+/// in braces in a lowered body (issue 1838).
+#[allow(clippy::type_complexity)]
+fn helper_body(
+    name: &str,
+    body: &Group,
+) -> (Vec<(String, String)>, String, Vec<String>) {
+    let mut lets = Vec::new();
+    let mut refused = Vec::new();
+    let mut value = String::new();
+    for st in statements(body) {
+        let st: Vec<TokenTree> = st.into_iter().collect();
+        if st.len() > 3 && is_ident(&st[0], "let") {
+            // A tuple `let` stands for one `let` per name, and it
+            // is taken apart here: the name of a helper's `let` is
+            // what its value is substituted for, so a name of
+            // `(x, y)` would substitute for nothing and leave `x`
+            // and `y` in the netlist with nothing declaring them,
+            // which is issue 159.
+            let names = match &st[1] {
+                TokenTree::Group(g)
+                    if g.delimiter() == Delimiter::Parenthesis =>
+                {
+                    Some(split_commas(g))
+                }
+                _ => None,
+            };
+            match names {
+                None => lets.push((st[1].to_string(), text_of(&st[3..]))),
+                Some(names) => {
+                    let values = match &st[3] {
+                        TokenTree::Group(g)
+                            if g.delimiter() == Delimiter::Parenthesis
+                                && st.len() == 4 =>
+                        {
+                            Some(split_commas(g))
+                        }
+                        _ => None,
+                    };
+                    let single = |t: &Vec<TokenTree>| match t.as_slice() {
+                        [TokenTree::Ident(id)] => Some(id.to_string()),
+                        _ => None,
+                    };
+                    let named: Option<Vec<String>> =
+                        names.iter().map(single).collect();
+                    match (named, values) {
+                        (Some(ns), Some(vs)) if ns.len() == vs.len() => {
+                            for (n, v) in ns.iter().zip(&vs) {
+                                lets.push((n.clone(), text_of(v)));
+                            }
+                        }
+                        _ => refused.push(format!(
+                            "the tuple `let` of `{name}` binds {n} \
+                             names to something that is not a tuple of \
+                             {n} values: a helper's `let` is a \
+                             substitution, so write one `let` per name \
+                             (issue 159)",
+                            n = names.len()
+                        )),
+                    }
+                }
+            }
+        } else {
+            value = text_of(&st);
+        }
+    }
+    (lets, value, refused)
+}
+
 fn punct_at(ts: &[TokenTree], i: usize, c: char) -> bool {
     matches!(ts.get(i), Some(TokenTree::Punct(p)) if p.as_char() == c)
 }
@@ -2753,6 +2894,15 @@ fn text_of(ts: &[TokenTree]) -> String {
 thread_local! {
     /// The functions of the file the unit being lowered is in.
     static HELPERS: std::cell::RefCell<Vec<Helper>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    /// The closures a lowered body has bound with `let`, each with the
+    /// body's substitution as it stood at the `let`: a call inlines one
+    /// as it would a function of the file, reading the names the
+    /// closure captured as they were where it was written. Searched
+    /// before `HELPERS`, last first, so a closure shadows a function of
+    /// the same name, and cut back at the end of the block that bound
+    /// it (issue 1838).
+    static LOCALS: std::cell::RefCell<Vec<(Helper, Vec<(String, String)>)>> =
         const { std::cell::RefCell::new(Vec::new()) };
     /// Each helper's parameters with the text of their types, by the
     /// helper's name, so a field of a struct it takes can be sliced out
@@ -3276,65 +3426,7 @@ fn scan_helpers(ts: Vec<TokenTree>) -> Vec<Helper> {
         let TokenTree::Group(body) = &ts[j + k] else {
             break;
         };
-        let mut lets = Vec::new();
-        let mut refused = Vec::new();
-        let mut value = String::new();
-        for st in statements(body) {
-            let st: Vec<TokenTree> = st.into_iter().collect();
-            if st.len() > 3 && is_ident(&st[0], "let") {
-                // A tuple `let` stands for one `let` per name, and it
-                // is taken apart here: the name of a helper's `let` is
-                // what its value is substituted for, so a name of
-                // `(x, y)` would substitute for nothing and leave `x`
-                // and `y` in the netlist with nothing declaring them,
-                // which is issue 159.
-                let names = match &st[1] {
-                    TokenTree::Group(g)
-                        if g.delimiter() == Delimiter::Parenthesis =>
-                    {
-                        Some(split_commas(g))
-                    }
-                    _ => None,
-                };
-                match names {
-                    None => lets.push((st[1].to_string(), text_of(&st[3..]))),
-                    Some(names) => {
-                        let values = match &st[3] {
-                            TokenTree::Group(g)
-                                if g.delimiter() == Delimiter::Parenthesis
-                                    && st.len() == 4 =>
-                            {
-                                Some(split_commas(g))
-                            }
-                            _ => None,
-                        };
-                        let single = |t: &Vec<TokenTree>| match t.as_slice() {
-                            [TokenTree::Ident(id)] => Some(id.to_string()),
-                            _ => None,
-                        };
-                        let named: Option<Vec<String>> =
-                            names.iter().map(single).collect();
-                        match (named, values) {
-                            (Some(ns), Some(vs)) if ns.len() == vs.len() => {
-                                for (n, v) in ns.iter().zip(&vs) {
-                                    lets.push((n.clone(), text_of(v)));
-                                }
-                            }
-                            _ => refused.push(format!(
-                                "the tuple `let` of `{name}` binds {n} \
-                                 names to something that is not a tuple of \
-                                 {n} values: a helper's `let` is a \
-                                 substitution, so write one `let` per name \
-                                 (issue 159)",
-                                n = names.len()
-                            )),
-                        }
-                    }
-                }
-            } else {
-                value = text_of(&st);
-            }
-        }
+        let (lets, value, refused) = helper_body(&name.to_string(), body);
         out.push(Helper {
             name: name.to_string(),
             params,
@@ -3917,6 +4009,22 @@ type Params = Vec<(String, String)>;
 /// The parameters of a helper, typed in `TYPED` while its body is read,
 /// and taken off when this is dropped (issue 504). A const parameter in
 /// a type is replaced by what the call gave for it.
+/// The closures bound in a block, cut back when the block's lowering
+/// ends, whatever way it ends (issue 1838).
+struct LocalScope(usize);
+
+impl LocalScope {
+    fn open() -> LocalScope {
+        LocalScope(LOCALS.with(|l| l.borrow().len()))
+    }
+}
+
+impl Drop for LocalScope {
+    fn drop(&mut self) {
+        LOCALS.with(|l| l.borrow_mut().truncate(self.0));
+    }
+}
+
 struct Typed(usize);
 
 impl Typed {
@@ -3953,6 +4061,7 @@ fn inline_helper(
     h: &Helper,
     args: &[String],
     consts: &[String],
+    captured: &[(String, String)],
 ) -> Result<String, String> {
     if args.len() != h.params.len() {
         return Err(format!("`{}` takes {} arguments", h.name, h.params.len()));
@@ -4013,7 +4122,10 @@ fn inline_helper(
         INLINED.with(|ws| ws.borrow_mut().push((w.clone(), v)));
         ename(&w)
     };
-    let mut s: Vec<(String, String)> = Vec::new();
+    // A closure's captures first, so its parameters, bound after them,
+    // shadow them as Rust's do (issue 1838). A function of the file
+    // captures nothing.
+    let mut s: Vec<(String, String)> = captured.to_vec();
     for (p, a) in h.params.iter().zip(args) {
         let reads = reads_of(p, &rest(0));
         s.push((p.clone(), bind(p, a.clone(), reads)));
@@ -4447,6 +4559,18 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
             if let Some((_, v)) = subst.iter().rev().find(|(k, _)| *k == n) {
                 return Ok(v.clone());
             }
+            // A closure the body bound, named but not called: passed,
+            // stored or returned. It is inlined where it is called and
+            // is no value of the netlist, so it would otherwise become a
+            // wire of its name that nothing drives (issue 1838).
+            if LOCALS.with(|l| l.borrow().iter().any(|(h, _)| h.name == n)) {
+                return Err(format!(
+                    "the closure `{n}` is used as a value here: a lowered \
+                     body can only call a local closure by name, `{n}(..)`; \
+                     to pass it on, write it as a function under `#[lower]` \
+                     in this file"
+                ));
+            }
             if n == "true" || n == "false" {
                 let b = if n == "true" { 1 } else { 0 };
                 return Ok(format!("NlE::Bits(1, \"{b}\".to_string())"));
@@ -4575,8 +4699,19 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                 _ => None,
             };
             if let Some((f, g)) = call {
-                let helper = HELPERS
-                    .with(|h| h.borrow().iter().find(|x| x.name == f).cloned());
+                // A closure the body bound comes before a function of
+                // the file of the same name (issue 1838).
+                let local = LOCALS.with(|l| {
+                    l.borrow().iter().rev().find(|(x, _)| x.name == f).cloned()
+                });
+                let captured: Vec<(String, String)> =
+                    local.as_ref().map(|(_, c)| c.clone()).unwrap_or_default();
+                let helper = match local {
+                    Some((h, _)) => Some(h),
+                    None => HELPERS.with(|h| {
+                        h.borrow().iter().find(|x| x.name == f).cloned()
+                    }),
+                };
                 if helper.is_some() || ts.len() == 2 {
                     let mut v = Vec::new();
                     for x in split_commas(&g) {
@@ -4613,7 +4748,7 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                                 cs.push(text_of(&a));
                             }
                         }
-                        return inline_helper(&h, &v, &cs);
+                        return inline_helper(&h, &v, &cs, &captured);
                     }
                     return Ok(match f.as_str() {
                         "sra" => ebin(">>>", &v[0], &v[1]),
@@ -5330,6 +5465,8 @@ fn lower_stmts(
     path: Option<String>,
 ) -> Result<Vec<String>, TokenStream> {
     let mut stmts: Vec<String> = Vec::new();
+    // The closures this block binds end with it (issue 1838).
+    let _scope = LocalScope::open();
     for st in stmts_of(toks) {
         // The wires the statement before this one asked for while it
         // was inlining a call, taken into the unit's. They are
@@ -5342,6 +5479,17 @@ fn lower_stmts(
             .map(|t| t.to_string())
             .collect::<Vec<_>>()
             .join("");
+        // `let f = |a, b: T| e;`: a closure, inlined at each call as a
+        // function under `#[lower]` would be, with the names it reads
+        // from this body as they are here (issue 1838).
+        match local_closure(&ts) {
+            Some(Ok(h)) => {
+                LOCALS.with(|l| l.borrow_mut().push((h, cx.subst.clone())));
+                continue;
+            }
+            Some(Err(m)) => return Err(err(ts[0].span(), &m)),
+            None => {}
+        }
         let wait = text.ends_with(".await");
         if wait && path.is_some() {
             return Err(err(
@@ -5652,12 +5800,18 @@ fn lower_stmts(
         // condition, and the take happens when it holds and a
         // transaction is offered.
         if text.contains(".recv_if(") {
-            let TokenTree::Ident(rx) = &ts[3] else {
-                return Err(err(
-                    ts[0].span(),
-                    "expected `let v = rx.recv_if(c)`",
-                ));
-            };
+            // The receiver is the name before `.recv_if`, in
+            // `let v = rx.recv_if(c)` and in the statement
+            // `rx.recv_if(c);`, which only takes (issue 1838).
+            let at = ts.iter().position(|t| is_ident(t, "recv_if"));
+            let rx =
+                match at.and_then(|i| i.checked_sub(2)).map(|i| &ts[i]) {
+                    Some(TokenTree::Ident(rx)) => rx.clone(),
+                    _ => return Err(err(
+                        ts[0].span(),
+                        "expected `let v = rx.recv_if(c)` or `rx.recv_if(c);`",
+                    )),
+                };
             let after = ts
                 .iter()
                 .position(|t| match t {
@@ -5681,6 +5835,10 @@ fn lower_stmts(
                 "NlS::Drive(NlT::Name(\"{rx}_ready\".to_string()), {take})"
             ));
             bind_take(&ts, take, &mut cx.subst);
+            // The statement binds nothing, so it ends here.
+            if !text.starts_with("let") {
+                continue;
+            }
         }
         if text.starts_with("let") {
             // `let a = e` or `let (a, b) = (e1, e2)`, bound pairwise.
