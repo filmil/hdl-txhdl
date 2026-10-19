@@ -1,0 +1,33 @@
+check	metric	before	now	change	status
+linux	booting to OpenSBI	0.60	0.67	+0.07	pass
+linux	booting to /init	-	12.41	-	new, pass
+demo ico-5-mipmapped	ran	-	yes	-	new, pass
+demo ico-5-mipmapped	tx_dropped	-	0	-	new, pass
+ethernet	link	-	up	-	new, pass
+ethernet	1000 full	-	yes	-	new, pass
+ethernet	ping lost	-	0	-	new, pass
+ethernet	tx dma 60	-	663728	-	new, pass
+ethernet	tx copy 60	-	388430	-	new, pass
+ethernet	tx dma 1514	-	26840	-	new, pass
+ethernet	tx copy 1514	-	21373	-	new, pass
+ethernet	rx dma 60 got	1000	0	-1000	moved pass to fail
+ethernet	rx copy 60 got	-	0	-	new, fail
+fastboot	load to listening	-	58.09	-	new, pass
+fastboot	getvar answered	-	yes	-	new, pass
+costs	load	320	318	-2	pass
+costs	store	-	230	-	new, pass
+costs	amoadd.w	-	5722	-	new, pass
+costs	lr.w+sc.w	-	5717	-	new, pass
+costs	lr.w	-	4145	-	new, pass
+costs	fence	-	124	-	new, pass
+costs	store+fence	-	1741	-	new, pass
+costs	load-miss+step	-	4568	-	new, pass
+costs	mul	-	509	-	new, pass
+costs	divu	-	4020	-	new, pass
+costs	icache cold	-	3170	-	new, pass
+costs	icache warm	-	455	-	new, pass
+costs	icache clash	-	51184	-	new, pass
+costs	icache apart	-	7280	-	new, pass
+costs	icache-miss	-	4176	-	new, pass
+costs	icache-clash	-	4221	-	new, pass
+costs	icache-warm	-	700	-	new, pass

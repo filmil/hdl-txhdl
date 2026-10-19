@@ -122,6 +122,37 @@ sh_binary(
     tags = ["manual"],
 )
 
+# The nightly regression of a given flagship: Linux timed, the demos,
+# the Ethernet port and the costs image, a row each in results.tsv and
+# a diff against the night before (issue 1854). Needs the board token,
+# unless --dry-run, which runs what it can on the machine model.
+#
+#   bazel run //cpu/vreteno/board/remote:nightly -- --bit=FILE
+sh_binary(
+    name = "nightly",
+    srcs = ["nightly.sh"],
+    data = [
+        "nightly_lib.sh",
+        ":demos",
+        ":load",
+        "//docs:demos.tsv",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
+    tags = ["manual"],
+)
+
+# The nightly's readers and its diff, on logs a board session kept.
+sh_test(
+    name = "nightly_test",
+    size = "small",
+    srcs = ["nightly_test.sh"],
+    args = [
+        "$(rootpath nightly_lib.sh)",
+        "$(rootpath testdata/nightly/linux.log)",
+    ],
+    data = ["nightly_lib.sh"] + glob(["testdata/nightly/*"]),
+)
+
 # The scripts find their files by the repository's apparent name, so
 # that they run from a module that depends on TxHDL as well (issue
 # 1677): each file they look up resolves so, and none of the five
@@ -137,15 +168,20 @@ sh_test(
         "txhdl/cpu/vreteno/board/remote/hw_server_remote.sh",
         "txhdl/cpu/vreteno/board/remote/load_bin_/load_bin",
         "txhdl/cpu/vreteno/board/remote/serial_bin_/serial_bin",
+        "txhdl/cpu/vreteno/board/remote/nightly_lib.sh",
+        "txhdl/cpu/vreteno/board/remote/demos",
     ],
     data = [
         "demos.sh",
         "hw_server.sh",
         "hw_server_remote.sh",
         "load.sh",
+        "nightly.sh",
+        "nightly_lib.sh",
         "serial.sh",
         ":demos",
         ":load",
+        ":nightly",
         ":serial",
         "//docs:demos.tsv",
         "@bazel_tools//tools/bash/runfiles",

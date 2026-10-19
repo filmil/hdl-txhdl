@@ -1,0 +1,4 @@
+check	metric	value	unit	status
+linux	booting to OpenSBI	0.60	s	pass
+ethernet	rx dma 60 got	1000	of 1000	pass
+costs	load	320	cycles	pass

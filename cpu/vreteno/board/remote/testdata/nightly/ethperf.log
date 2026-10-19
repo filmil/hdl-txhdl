@@ -1,0 +1,6 @@
+05:34:05.826Z tx dma 60 frames 1000 ticks 150664 frames/s 663728 kB/s 39823 cycles/frame 7
+05:34:05.991Z tx copy 60 frames 1000 ticks 257446 frames/s 388430 kB/s 23305 cycles/frame 206
+05:34:05.992Z tx dma 1514 frames 1000 ticks 3725698 frames/s 26840 kB/s 40636 cycles/frame 7
+05:34:05.994Z tx copy 1514 frames 1000 ticks 4678692 frames/s 21373 kB/s 32359 cycles/frame 4625
+05:34:45.935Z rx dma 60 got 0 of 1000 lost 1000 other 3 ticks 0 cycles/frame 197
+05:35:25.942Z rx copy 60 got 0 of 1000 lost 1000 other 3 ticks 0 cycles/frame 1903
