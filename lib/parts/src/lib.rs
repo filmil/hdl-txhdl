@@ -40,6 +40,7 @@ mod regmap;
 pub mod remote;
 pub mod scanout;
 pub mod sd;
+pub mod settable;
 pub mod spi;
 pub mod station;
 pub mod syscon;
