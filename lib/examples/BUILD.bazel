@@ -825,6 +825,16 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A sorted list, each place reading its neighbour:
+#   bazel run //lib/examples:ex_sorted
+rust_binary(
+    name = "ex_sorted",
+    srcs = ["ex_sorted.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # An array of child units, lowered:  bazel run //lib/examples:ex_lanes
 rust_binary(
     name = "ex_lanes",
@@ -1579,6 +1589,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_mesh.rs",
         "ex_mems.rs",
         "ex_regs.rs",
+        "ex_sorted.rs",
         "ex_wide.rs",
         "ex_tap.rs",
         "ex_buffer.rs",
