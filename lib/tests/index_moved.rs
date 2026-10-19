@@ -359,15 +359,59 @@ fn a_lone_field_ending_in_a_number_lowers() {
     assert!(v.contains("stage_2"), "{v}");
 }
 
+/// A port named like the element past the end: `r_4` beside four
+/// registers does not stand in for `self.r[4]` (#1853).
+#[derive(Trace, Default)]
+pub struct PastPort {
+    pub r: Regs<U<8>, 4>,
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for PastPort {
+    async fn run(&mut self, r_4: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            o.set(r_4.get() ^ self.r[4].get());
+        }
+    }
+}
+
+/// Two lone fields `stage_0` and `stage_1`, and a port `stage_2`: no
+/// array, so reading the port is reading the port (#1853).
+#[derive(Trace, Default)]
+pub struct Stages {
+    pub stage_0: txhdl::comp::Reg<U<8>>,
+    pub stage_1: txhdl::comp::Reg<U<8>>,
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for Stages {
+    async fn run(&mut self, stage_2: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            with!(self <= { stage_0: stage_2.get() });
+            with!(self <= { stage_1: self.stage_0.get() });
+            o.set(self.stage_1.get());
+        }
+    }
+}
+
+#[test]
+fn lone_fields_ending_in_numbers_beside_a_port_lower() {
+    let v = Stages::lowered("stages").verilog();
+    assert!(v.contains("stage_2"), "{v}");
+}
+
 #[test]
 fn an_index_past_the_end_is_refused() {
-    let cases: [(fn() -> txhdl::netlist::Lowered, &str); 6] = [
+    let cases: [(fn() -> txhdl::netlist::Lowered, &str); 7] = [
         (|| Past::lowered("past"), "reaches `r_4`"),
         (|| PastMoved::lowered("past"), "reaches `r_4`"),
         (|| PastNumber::lowered("past"), "reaches `r_4`"),
         (|| PastMem::lowered("past"), "reaches `m_2`"),
         (|| PastWrite::lowered("past"), "reaches `r_4`"),
         (|| PastWriteMem::lowered("past"), "reaches `m_2`"),
+        (|| PastPort::lowered("past"), "reaches `r_4`"),
     ];
     for (k, (lower, want)) in cases.into_iter().enumerate() {
         let Err(e) = std::panic::catch_unwind(lower) else {
