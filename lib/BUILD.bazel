@@ -111,6 +111,33 @@ rust_test(
     deps = [":txhdl"],
 )
 
+# An array of memories, indexed like an array of registers (issue 1845).
+rust_test(
+    name = "mems_test",
+    srcs = ["tests/mems.rs"],
+    edition = "2021",
+    proc_macro_deps = [":txhdl_macros"],
+    deps = [":txhdl"],
+)
+
+# An array's index moved by a constant in a loop (issue 1851).
+rust_test(
+    name = "index_moved_test",
+    srcs = ["tests/index_moved.rs"],
+    edition = "2021",
+    proc_macro_deps = [":txhdl_macros"],
+    deps = [":txhdl"],
+)
+
+# An array as a field of a value, read by index (issue 1869).
+rust_test(
+    name = "value_arrays_test",
+    srcs = ["tests/value_arrays.rs"],
+    edition = "2021",
+    proc_macro_deps = [":txhdl_macros"],
+    deps = [":txhdl"],
+)
+
 # A port group splits into an end per field, read and driven through the
 # whole (issue 1647).
 rust_test(

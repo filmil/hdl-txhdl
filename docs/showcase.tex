@@ -97,7 +97,7 @@ A scanout from memory: two lines, each asked one or two rows ahead, their fetch,
 Stations of 2 to 10 inputs & parts & 2 and 3 \\
 An AXI router, one unit for N peripherals & parts & 3 \\
 An AXI arbiter, one unit for 2 to 8 hosts & parts & 2 \\
-AXI host and peripheral trackers & parts & both \\
+AXI host and peripheral trackers, the peripheral's also as two halves & parts & both \\
 An AXI-Lite bridge, one unit for N peripherals; a slot split in two & parts & 1 and 2; the split in a parent \\
 AXI to Wishbone bridge & parts & yes \\
 AXI host pins to the link's channels & parts & yes \\
@@ -106,6 +106,7 @@ An interrupt controller, one unit for 1 to 31 sources & parts & 3 \\
 Sv32 translation: fetch and data TLBs, a walker that never writes & parts & yes \\
 Network node, switch, 2 bridges; a mesh of nodes & parts & the mesh \\
 Pins; SPI; I2C; MDIO; SD; Ethernet's five; HDMI's two & parts & all twelve \\
+A UDP/IPv4 receive filter & parts & not yet \\
 The RISC-V debug transport, behind \code{BSCANE2}, and its bridge & parts & the transport \\
 Words to frames and back; a frame's length & parts & all three \\
 System control: identity, cause, reset & parts & yes \\

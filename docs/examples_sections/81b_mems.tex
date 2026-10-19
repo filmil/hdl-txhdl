@@ -1,0 +1,36 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{An Array of Memories}
+\label{sec:x-mems}
+
+A set-associative table keeps a key in one of several ways, and a
+lookup reads every way at the same row in the same cycle.
+Each way is a memory of its own, so that all of them can be read at
+once, and the logic per way is the same for every way.
+\code{Mems<T, D, N>} is \code{N} memories of \code{D} words of
+\code{T} as one field, and \code{self.way[w]} is the \code{w}-th, a
+\code{Mem} read with \code{read} and written in \code{with!} as
+\code{way[w].at(row): v} (issue 1845).
+The index is a number or a loop's variable, as for \code{Regs} in
+Section~\ref{sec:x-regs}.
+A \code{\#[ram\_style]} or \code{\#[distributed]} on the field is said
+of every memory.
+
+\code{Ways<N>} goes over its ways in one loop: each way's word at the
+row is compared with the key, which gives one bit of \code{hits}, and
+a write goes to the way \code{pick} names.
+The netlist of \code{Ways<4>} has the memories \code{way\_0} to
+\code{way\_3}, which the run prints, and it is checked against the run
+under nvc and Verilator, as Section~\ref{sec:x-checked} describes.
+
+\begin{figure}[htbp]
+\centering
+\input{mems_timing.tex}
+\caption{Three writes at row 3, to ways 0, 2 and 1, then four looks:
+for the first key at row 3, which ways 0 and 2 hold, for the second,
+which way 1 holds, and two that no way holds.}
+\label{fig:x-mems}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_mems.rs}. Run with \code{bazel run //lib/examples:ex\_mems}.},label={lst:x-mems}]{lib/examples/ex_mems.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_mems} printed when the build ran it: the hits, the memories, then the lowering.},label={lst:x-mems-out}]{out_mems.txt}

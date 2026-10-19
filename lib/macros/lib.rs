@@ -1074,6 +1074,19 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
         })
         .collect::<Vec<_>>()
         .join("\n");
+    // A field's names in the netlist, one or one per element, so that a
+    // field's attribute reaches each of its memories (#1852).
+    let entries_of = names
+        .iter()
+        .zip(&types)
+        .map(|(n, t)| {
+            format!(
+                "\"{n}\" => <{t} as ::txhdl::netlist::Port>::entries(\"{n}\")\
+                 .into_iter().map(|e| e.0).collect(),"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     let generated = format!(
         "impl{b} ::txhdl::comp::trace::Traceable for {n}{a} {{\n\
          fn trace(&self, scope: &::txhdl::comp::trace::Scope) {{\n\
@@ -1090,7 +1103,9 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
          &[{dsps}];\n\
          fn fields() -> Vec<(&'static str, \
          Option<::txhdl::comp::trace::Kind>, usize, usize)> {{ \
-         let mut __v = Vec::new(); {fields} __v }}\n}}\n\
+         let mut __v = Vec::new(); {fields} __v }}\n\
+         fn entries_of(f: &'static str) -> Vec<&'static str> {{ \
+         match f {{ {entries_of} _ => vec![f] }} }}\n}}\n\
          impl{b} ::txhdl::netlist::Port for {n}{a} {{}}",
         b = item.bounds,
         n = item.name,
@@ -3231,6 +3246,27 @@ fn typed_field(ty: &str, base: &str, f: &str) -> String {
     text
 }
 
+/// Whether tokens before an index name a field of a value, so that the
+/// index is an element of an array field: `p.lanes` before `[k]`, or
+/// `p.grid[i]` before `[j]`; not `self.f`, an array of registers, nor
+/// a bare name (issue 1869).
+fn indexes_a_field(rest: &[TokenTree]) -> bool {
+    match rest {
+        [base @ .., TokenTree::Punct(dot), TokenTree::Ident(_)]
+            if dot.as_char() == '.' && !base.is_empty() =>
+        {
+            !matches!(base, [TokenTree::Ident(s)]
+                if matches!(s.to_string().as_str(), "self" | "this"))
+        }
+        [inner @ .., TokenTree::Group(g)]
+            if g.delimiter() == Delimiter::Bracket && inner.len() >= 3 =>
+        {
+            indexes_a_field(inner)
+        }
+        _ => false,
+    }
+}
+
 /// A field of a port's value, `p.f`: the base must be a port's data,
 /// or a field of it this lowering wrote, and the field's bits are found
 /// from the value type's layout when `lowered` runs, so a generic
@@ -4501,11 +4537,16 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                             // macro sees tokens, not types, so it cannot
                             // infer one. The low operand of a `concat`
                             // is the exception, since its width is not
-                            // needed.
-                            let needed: &[usize] = match m.to_string().as_str()
-                            {
+                            // needed. A wide form also names its
+                            // result's limbs, which the netlist does not
+                            // need, and is lowered as its narrow form
+                            // from the same positions, but for
+                            // `concat_wide`, whose `M` is third (#1860).
+                            let m = m.to_string();
+                            let needed: &[usize] = match m.as_str() {
                                 "concat" => &[1],
-                                "slice" => &[0, 1],
+                                "concat_wide" => &[2],
+                                "slice" | "slice_wide" => &[0, 1],
                                 _ => &[0],
                             };
                             if needed
@@ -4519,7 +4560,8 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                                     m
                                 ));
                             }
-                            return Ok(match m.to_string().as_str() {
+                            let m = m.strip_suffix("_wide").unwrap_or(&m);
+                            return Ok(match m {
                                 "slice" => format!(
                                     "NlE::slice({l}, {}, {})",
                                     ks[0], ks[1]
@@ -4701,6 +4743,52 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                 && g.delimiter() == Delimiter::Bracket =>
         {
             Ok(ename(&indexed_reg(&f.to_string(), g, Some(subst))?))
+        }
+        // An element of an array field of a port's value, `p.lanes[k]`
+        // with `k` a number or a loop's variable, or of an array inside
+        // it, `p.grid[i][j]`: the field's path with each index after it,
+        // which `[T; N]`'s `field_bits` reads (issue 1869).
+        [rest @ .., TokenTree::Group(g)]
+            if g.delimiter() == Delimiter::Bracket && indexes_a_field(rest) =>
+        {
+            let field = tr(rest, subst)?;
+            if !FIELDS.with(|c| c.borrow().iter().any(|c| c.text == field)) {
+                return Err(
+                    "an index after a field is an element of an array field \
+                     of a port's value"
+                        .into(),
+                );
+            }
+            let it: Vec<TokenTree> = g.stream().into_iter().collect();
+            let index = match it.as_slice() {
+                // A number in any spelling Rust takes beside a usize,
+                // `2`, `0x2` or `2usize`, as the number it is.
+                [TokenTree::Literal(k)] => match moved_const(&k.to_string()) {
+                    Some(n) => n.to_string(),
+                    None => {
+                        return Err(format!(
+                            "`[{k}]`: an index is a number of at most 64 bits"
+                        ))
+                    }
+                },
+                [TokenTree::Ident(v)]
+                    if subst
+                        .iter()
+                        .rev()
+                        .find(|(k, _)| *k == v.to_string())
+                        .is_some_and(|(_, e)| e.starts_with("NlE::Num(")) =>
+                {
+                    format!("{DYN}{v}{DYN_END}")
+                }
+                _ => {
+                    return Err(
+                        "an element of an array field is chosen by a number \
+                         or by a loop's variable"
+                            .into(),
+                    )
+                }
+            };
+            Ok(typed_field("", &field, &index))
         }
         // A field of a port's value, `p.tag`: a slice of the port's data.
         [base @ .., TokenTree::Punct(dot), TokenTree::Ident(f)]
@@ -8360,8 +8448,10 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          // (issue 890).\n\
          init_regs: ::txhdl::netlist::starts::<Self>(),\n\
          async_regs: <Self as ::txhdl::netlist::Fields>::ASYNC_REGS.to_vec(),\n\
-         distributed: <Self as ::txhdl::netlist::Fields>::DISTRIBUTED.to_vec(),\n\
-         ram_styles: <Self as ::txhdl::netlist::Fields>::RAM_STYLES.to_vec(),\n\
+         distributed: ::txhdl::netlist::per_memory::<Self>(\
+         <Self as ::txhdl::netlist::Fields>::DISTRIBUTED),\n\
+         ram_styles: ::txhdl::netlist::styles_per_memory::<Self>(\
+         <Self as ::txhdl::netlist::Fields>::RAM_STYLES),\n\
          use_dsp: <Self as ::txhdl::netlist::Fields>::USE_DSP.to_vec(),\n\
          aliases: Vec::new(),\n\
          nets: {{ let mut n: Vec<(String, ::txhdl::comp::trace::Kind, \
@@ -8591,6 +8681,20 @@ fn indexed_reg(
     subst: Option<&[(String, String)]>,
 ) -> Result<String, String> {
     let it: Vec<TokenTree> = g.stream().into_iter().collect();
+    // A constant before the loop's variable, `self.r[1 + j]`, is the
+    // same index as `self.r[j + 1]` (issue 1851).
+    let it = match it.as_slice() {
+        [TokenTree::Literal(c), TokenTree::Punct(p), TokenTree::Ident(v)]
+            if p.as_char() == '+' =>
+        {
+            vec![
+                TokenTree::Ident(v.clone()),
+                TokenTree::Punct(p.clone()),
+                TokenTree::Literal(c.clone()),
+            ]
+        }
+        _ => it,
+    };
     match it.as_slice() {
         [TokenTree::Literal(k)] => Ok(format!("{f}_{k}")),
         [TokenTree::Ident(v)] => {
@@ -8609,10 +8713,60 @@ fn indexed_reg(
             }
             Ok(format!("{f}{DYN}{v}{DYN_END}"))
         }
+        // A loop's variable moved by a constant, `self.l[j - 1]`: the
+        // neighbour of each element, worked out as the loop unrolls,
+        // and refused there if it is below zero (issue 1851). The
+        // constant is an integer literal whose value fits in 64 bits,
+        // in any base, with underscores or `usize` if it likes.
+        [TokenTree::Ident(v), TokenTree::Punct(op), TokenTree::Literal(c)]
+            if matches!(op.as_char(), '+' | '-')
+                && moved_const(&c.to_string()).is_some() =>
+        {
+            let v = v.to_string();
+            let looped = subst.is_none_or(|s| {
+                s.iter()
+                    .rev()
+                    .find(|(k, _)| *k == v)
+                    .is_some_and(|(_, e)| e.starts_with("NlE::Num("))
+            });
+            if !looped {
+                return Err(format!(
+                    "`self.{f}[{v} {op} {c}]`: `{v}` is not a loop's \
+                     variable. A register of an array is chosen by a \
+                     number, a loop's variable, or a loop's variable plus \
+                     or minus a constant"
+                ));
+            }
+            let op = op.as_char();
+            let k = moved_const(&c.to_string()).unwrap_or_default();
+            Ok(format!(
+                "{f}{DYN}::txhdl::netlist::moved_index({v} as i128 {op} \
+                 {k}i128, stringify!(self.{f}[{v} {op} {c}]), {v} as i128)\
+                 {DYN_END}"
+            ))
+        }
         _ => Err(format!(
-            "`self.{f}[..]`: the index is a number or a loop's variable"
+            "`self.{f}[..]`: the index is a number, a loop's variable, or \
+             a loop's variable plus or minus a constant"
         )),
     }
+}
+
+/// The value of an index's constant, `1`, `1_000`, `0x10` or `2usize`:
+/// an integer literal whose value fits in 64 bits, in any of Rust's four
+/// bases, so that the sum with a loop's variable cannot overflow the
+/// `i128` it is worked out in (issue 1851). The only suffix is `usize`:
+/// the simulation adds the constant to a loop's `usize`, so Rust itself
+/// refuses `j + 1i32` or `j + 1u64` before the lowering sees it.
+fn moved_const(lit: &str) -> Option<u64> {
+    let digits = lit.strip_suffix("usize").unwrap_or(lit).replace('_', "");
+    let (radix, body) = match digits.get(..2) {
+        Some("0x") => (16, &digits[2..]),
+        Some("0o") => (8, &digits[2..]),
+        Some("0b") => (2, &digits[2..]),
+        _ => (10, digits.as_str()),
+    };
+    u64::from_str_radix(body, radix).ok()
 }
 
 /// Every join of an array of children in a token list, into any group:

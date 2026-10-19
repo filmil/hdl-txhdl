@@ -1111,8 +1111,14 @@ latex_document(
         ":port_arrays_timing",
         ":closure_run",
         ":closure_timing",
+        ":value_arrays_run",
+        ":value_arrays_timing",
+        ":mems_run",
+        ":mems_timing",
         ":regs_run",
         ":regs_timing",
+        ":sorted_run",
+        ":sorted_timing",
         ":wide_run",
         ":wide_timing",
         ":tap_run",
@@ -2498,6 +2504,36 @@ waveform(
 )
 
 waveform(
+    name = "mems",
+    example = "//lib/examples:ex_mems",
+    lowered = ("ways", "ways"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//row=>row",
+        "//key=>key",
+        "//wen=>wen",
+        "//pick=>pick",
+        "//hits=>hits",
+    ],
+)
+
+waveform(
+    name = "sorted",
+    example = "//lib/examples:ex_sorted",
+    lowered = ("sorted", "sorted"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//go=>go",
+        "//x=>x",
+        "//sorted/l_0=>l_0",
+        "//sorted/l_1=>l_1",
+        "//sorted/l_2=>l_2",
+        "//sorted/l_3=>l_3",
+        "//first=>first",
+    ],
+)
+
+waveform(
     name = "regs",
     example = "//lib/examples:ex_regs",
     lowered = ("tallies", "tallies"),
@@ -2574,6 +2610,18 @@ waveform(
 # Arrays of ports inside a struct of ports (issue 1636): the lanes of a
 # bus read in a loop, and an array of a split group's fields handed to a
 # child.
+waveform(
+    name = "value_arrays",
+    example = "//lib/examples:ex_value_arrays",
+    lowered = ("bright", "bright"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//px=>px",
+        "//best=>best",
+        "//which=>which",
+    ],
+)
+
 waveform(
     name = "port_arrays",
     example = "//lib/examples:ex_port_arrays",

@@ -11,6 +11,8 @@ rust_library(
         "src/eth.rs",
         "src/ethdma.rs",
         "src/ethshare.rs",
+        "src/settable.rs",
+        "src/udprx.rs",
         "src/ethslots.rs",
         "src/bus/axi.rs",
         "src/bus/axi_lite.rs",

@@ -1,0 +1,37 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Neighbour's Register}
+\label{sec:x-sorted}
+
+A sorted list kept in registers moves its bytes along by one place
+when a byte is put in: each place after the new byte takes the byte of
+the place before it.
+In a loop over the places that is \code{self.l[j - 1]}, the loop's
+variable moved by a constant, which the lowering folds into a register's
+name as it unrolls the loop: \code{l\_1} reads \code{l\_0}, and so on
+(issue 1851).
+A loop's variable plus or minus a constant is the only arithmetic an
+index takes, as in Section~\ref{sec:x-regs} it is a number or the
+loop's variable; an index that the unrolled loop would make below zero
+is refused, naming the index and the variable's value.
+
+\code{Sorted<N>} keeps the \code{N} largest bytes it is given, largest
+first.
+A byte in goes after every byte not below it; the places before keep
+theirs, its place takes it, and the places after take their
+neighbours', the last byte falling off.
+Its second loop starts at 1, since place 0 has no place before it.
+The netlist of \code{Sorted<4>} is checked against the run under nvc
+and Verilator, as Section~\ref{sec:x-checked} describes.
+
+\begin{figure}[htbp]
+\centering
+\input{sorted_timing.tex}
+\caption{Five bytes in: each goes to its place and the bytes after it
+move along by one; the fifth, larger than the rest, pushes the
+smallest off the end.}
+\label{fig:x-sorted}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_sorted.rs}. Run with \code{bazel run //lib/examples:ex\_sorted}.},label={lst:x-sorted}]{lib/examples/ex_sorted.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_sorted} printed when the build ran it: the places after each byte, the first, then the lowering.},label={lst:x-sorted-out}]{out_sorted.txt}

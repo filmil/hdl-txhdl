@@ -1094,6 +1094,38 @@ impl<T, const N: usize> std::ops::Index<usize> for Units<T, N> {
     }
 }
 
+/// `N` memories of one shape, `D` words of `T` each, for a unit whose
+/// memories are a count it takes as a const parameter: the ways of a
+/// set-associative table, each read at the same row in the same cycle
+/// (issue 1845). `self.way[i]` is the `i`-th, a [`Mem`] like any other,
+/// and in a lowered body `i` is a number or a loop's variable, as for
+/// [`Regs`]. The netlist and the trace name them `way_0` to
+/// `way_{N-1}`, and a `#[ram_style]` or `#[distributed]` on the field
+/// applies to every one.
+pub struct Mems<
+    T: Copy + 'static,
+    const D: usize,
+    const N: usize,
+    C: Clock = DefaultClock,
+>(pub [Mem<T, D, C>; N]);
+
+impl<T: Copy + Default + 'static, const D: usize, const N: usize, C: Clock>
+    Default for Mems<T, D, N, C>
+{
+    fn default() -> Self {
+        Mems(std::array::from_fn(|_| Mem::default()))
+    }
+}
+
+impl<T: Copy + 'static, const D: usize, const N: usize, C: Clock>
+    std::ops::Index<usize> for Mems<T, D, N, C>
+{
+    type Output = Mem<T, D, C>;
+    fn index(&self, i: usize) -> &Mem<T, D, C> {
+        &self.0[i]
+    }
+}
+
 /// `N` ends of one kind, each handed out once, by its index: what
 /// [`chans`] and [`signals`] give, so that a join of `N` children can
 /// give child `i` the ends at `i`, or at a neighbour's index, inside a
@@ -2187,6 +2219,23 @@ pub mod trace {
         fn trace_as(&self, scope: &Scope, name: &str) {
             for (i, r) in self.0.iter().enumerate() {
                 r.trace(&scope.child(&format!("{name}_{i}")));
+            }
+        }
+    }
+
+    /// Each memory says where it is, under its own name, as one
+    /// [`Mem`] field does (issue 1845).
+    impl<T: Copy + 'static, const D: usize, const N: usize, C: Clock> Traceable
+        for super::Mems<T, D, N, C>
+    {
+        fn trace(&self, scope: &Scope) {
+            for (i, m) in self.0.iter().enumerate() {
+                m.trace(&scope.child(&i.to_string()));
+            }
+        }
+        fn trace_as(&self, scope: &Scope, name: &str) {
+            for (i, m) in self.0.iter().enumerate() {
+                m.trace(&scope.child(&format!("{name}_{i}")));
             }
         }
     }

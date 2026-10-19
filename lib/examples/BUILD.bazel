@@ -816,6 +816,35 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# An array of memories, lowered:  bazel run //lib/examples:ex_mems
+rust_binary(
+    name = "ex_mems",
+    srcs = ["ex_mems.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
+# A sorted list, each place reading its neighbour:
+#   bazel run //lib/examples:ex_sorted
+rust_binary(
+    name = "ex_sorted",
+    srcs = ["ex_sorted.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
+# An array as a field of a value, lowered:
+#   bazel run //lib/examples:ex_value_arrays
+rust_binary(
+    name = "ex_value_arrays",
+    srcs = ["ex_value_arrays.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # An array of child units, lowered:  bazel run //lib/examples:ex_lanes
 rust_binary(
     name = "ex_lanes",
@@ -1522,6 +1551,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_cheat.rs",
         "ex_group.rs",
         "ex_port_arrays.rs",
+        "ex_value_arrays.rs",
         "ex_alu.rs",
         "ex_ops.rs",
         "ex_if.rs",
@@ -1578,7 +1608,9 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_mul.rs",
         "ex_lanes.rs",
         "ex_mesh.rs",
+        "ex_mems.rs",
         "ex_regs.rs",
+        "ex_sorted.rs",
         "ex_wide.rs",
         "ex_tap.rs",
         "ex_buffer.rs",

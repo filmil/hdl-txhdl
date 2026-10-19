@@ -1,0 +1,32 @@
+linux	booting to OpenSBI	0.67	s	pass
+linux	booting to /init	12.41	s	pass
+demo ico-5-mipmapped	ran	yes	-	pass
+demo ico-5-mipmapped	tx_dropped	0	frames	pass
+ethernet	link	up	-	pass
+ethernet	1000 full	yes	-	pass
+ethernet	ping lost	0	of 100	pass
+ethernet	tx dma 60	663728	frames/s	pass
+ethernet	tx copy 60	388430	frames/s	pass
+ethernet	tx dma 1514	26840	frames/s	pass
+ethernet	tx copy 1514	21373	frames/s	pass
+ethernet	rx dma 60 got	0	of 1000	fail
+ethernet	rx copy 60 got	0	of 1000	fail
+fastboot	load to listening	58.09	s	pass
+fastboot	getvar answered	yes	-	pass
+costs	load	318	cycles	pass
+costs	store	230	cycles	pass
+costs	amoadd.w	5722	cycles	pass
+costs	lr.w+sc.w	5717	cycles	pass
+costs	lr.w	4145	cycles	pass
+costs	fence	124	cycles	pass
+costs	store+fence	1741	cycles	pass
+costs	load-miss+step	4568	cycles	pass
+costs	mul	509	cycles	pass
+costs	divu	4020	cycles	pass
+costs	icache cold	3170	cycles	pass
+costs	icache warm	455	cycles	pass
+costs	icache clash	51184	cycles	pass
+costs	icache apart	7280	cycles	pass
+costs	icache-miss	4176	cycles	pass
+costs	icache-clash	4221	cycles	pass
+costs	icache-warm	700	cycles	pass
