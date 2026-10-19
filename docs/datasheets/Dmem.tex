@@ -98,7 +98,9 @@ of \code{//cpu/vreteno:vreteno} under nvc and Verilator:
 
 \subsection*{Used by}
 
-\code{Board}, as \code{dmem} behind the tracker \code{pdmem}. The
+\code{Board}, as \code{dmem} between its tracker's two halves,
+\code{pdmemq} and \code{pdmems}, so that a read's beat reaches the
+router in the cycle it leaves the block RAM (\#1755). The
 demonstration \code{//cpu/vreteno:vreteno}, the lockstep test and
 \code{run.rs}. \code{board\_netlist} writes a program's data into
 \code{lane0} to \code{lane3} of the board's netlist.
