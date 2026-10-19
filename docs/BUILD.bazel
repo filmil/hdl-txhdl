@@ -1109,6 +1109,8 @@ latex_document(
         ":group_timing",
         ":port_arrays_run",
         ":port_arrays_timing",
+        ":closure_run",
+        ":closure_timing",
         ":regs_run",
         ":regs_timing",
         ":wide_run",
@@ -3212,6 +3214,20 @@ waveform(
     ],
     from_tick = 61,
     until = 91,
+)
+
+# A closure in a lowered body, and a take as a statement (issue 1838).
+waveform(
+    name = "closure",
+    example = "//lib/examples:ex_closure",
+    lowered = ("hdr", "pair"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//go=>go",
+        "//pair/check/pos=>pos",
+        "//pair/check/bad=>bad_r",
+        "//bad=>bad",
+    ],
 )
 
 waveform(
