@@ -1,5 +1,5 @@
 % SPDX-License-Identifier: Apache-2.0
-% covers: Ddr3Per
+% covers: Ddr3Per, WidePins
 \datasheet{Ddr3Per}{The board's DDR3 memory as an AXI peripheral: AMD's MIG controller with its own AXI4 port, joined to the link by \code{AxiPerPins}, and making the design's clock.}
 
 \dsfacts{\code{ddr3/src/lib.rs}}{\code{ddr3::Ddr3Per}}%
@@ -8,19 +8,23 @@
 \subsection*{Function}
 
 \code{Ddr3Per} puts the DDR3 memory of the Alinx AX7A200B on an AXI
-link. It is a unit of units with two children. \code{pins} is
+link. It is a unit of units with three children. \code{pins} is
 \code{AxiPerPins<32, 32, 4, 5>} of \code{txhdl\_parts}, which puts the
 link's peripheral end onto an AXI4 peripheral's pins and holds
 nothing. \code{ctl} is \code{Ddr3}, AMD's MIG 7 Series controller,
 which the build generates with its AXI4 port as
 \code{//ddr3:ddr3\_mig\_axi}, behind the wrapper
 \code{ddr3/hdl/ddr3\_axi32.v}. Thirty-seven AXI4 signals join the two.
+\code{wide} is \code{WidePins}, the wide read port's channels on the
+wrapper's wide pins (issue 1696).
 
 There is no tracker in front of it. The controller keeps its own
-transactions, cuts a burst into the memory's commands, and packs
-thirty-two bit beats into its 256-bit native interface, so the
-peripheral takes the link's channels as they are: \code{aw},
-\code{ar} and \code{w} in, \code{b} and \code{r} out.
+transactions and cuts a burst into the memory's commands. Its AXI4
+port is 256 bits wide, the width of its native interface, with narrow
+bursts on, and the wrapper puts two ports on it: the thirty-two bit
+one, whose beats it steers to their lanes, and a read-only one of 256
+bits beside it. So the peripheral takes the link's channels as they
+are: \code{aw}, \code{ar} and \code{w} in, \code{b} and \code{r} out.
 
 \code{Ddr3} is a foreign unit. Its netlist is an instance of the
 module \code{ddr3\_axi32}, which the lowering names and does not write.
@@ -38,8 +42,12 @@ on the same words. \code{ddr3::sim::WideRead<I>} reads them: a read
 port 256 bits wide that stands in for the controller's native
 interface in simulation, taking read address phases on
 \code{Rx<Ar<32, I>>} and answering on \code{Tx<R<256, I, 2>>}.
-Neither is in the netlist: the words are the model's state, not a
-port, and the wide port is not lowered.
+The words are the model's state, not a port, and are not in the
+netlist. The wide port is: \code{WidePins} puts its address channel
+on the wrapper's wide \code{AR} pins and its beats from the \code{R}
+pins onto a \code{Tx<R<256, 5, 2>>}, and in simulation
+\code{ddr3::sim::serve\_wide\_pins} answers those pins from the same
+words, as \code{WideRead} answers a channel.
 
 On the memory side its ports are the board's clock and the
 controller's reset in, the design's clock and its reset out, since the
@@ -106,6 +114,16 @@ lowest address in bits 31:0 of the first limb and the eighth in bits
 bursts in the order their addresses came. It takes the words when it
 takes the address, as the 32-bit port does, and answers
 \code{OKAY}; it does not read \code{AxSIZE} or \code{AxBURST}.
+\item \code{WidePins} offers the head of its address channel on the
+wide \code{AR} pins and takes it when \code{ARREADY} is high. It puts
+each beat the controller offers onto its \code{R} channel when the
+channel has room, which is what it drives on \code{RREADY}. It counts
+the beats asked for and not yet come in \code{owe}.
+\item Under the design's reset, and after it while \code{owe} is not
+zero, \code{WidePins} offers no address and takes and drops every beat,
+since the controller runs through a reset of the design and a read
+asked before it is not answered after it. A beat counts only while one
+is owed, so the pins before the controller is ready are masked.
 \end{itemize}
 
 \subsection*{Verification}
@@ -123,6 +141,19 @@ through the 32-bit port are read back through the wide one, which
 shares the model's memory: a burst of two beats from an address inside
 the first, each beat eight words with the lowest address in bits
 31:0, one beat a step.
+\item \code{//ddr3:ddr3\_test} runs \code{the\_wide\_pins\_stream\_a\_burst}
+in \code{ddr3::sim}: a hand-written design on \code{serve\_wide\_pins}'s
+pins asks one burst of two beats and takes every beat. It checks the
+model's side of the wide port; \code{WidePins} is not in it.
+\item \code{//cpu/vreteno:board\_test} runs the board's wide port with
+\code{WidePins} in it. In \code{the\_wide\_port\_reads\_what}\allowbreak
+\code{\_the\_host\_wrote}, four bursts of eight words written through the
+host's port come back on the wide port as one burst of four beats, one
+a cycle once the first has come. In
+\code{the\_wide\_port\_and\_narrow\_reads}\allowbreak
+\code{\_share\_the\_controller}, the host reads the same words through
+its port while the wide port reads them, and each side gets its own.
+No test drives a reset while the wide port still owes beats.
 \item \code{//ddr3:ddr3\_test} also runs
 \code{the\_controller\_is\_instantiated\_and\_not\_written}. It checks
 that the Verilog and the VHDL of \code{Ddr3Per} instantiate
@@ -175,10 +206,10 @@ The Rust run of \code{Ddr3} is a model and not the controller. A
 lowered netlist needs \code{//ddr3:hdl}, the wrapper, beside it, and
 the controller's library, \code{//ddr3:ddr3\_mig\_axi}, which the build
 generates under Vivado and which stays out of the tree, being AMD's.
-The controller was generated without narrow bursts, so every beat is
-the full thirty-two bits, with strobes for less; a byte's access is a
-full-width beat at the byte's address under that byte's strobe, which
-\code{wrapper\_test} checks.
+On the thirty-two bit port every beat is the full thirty-two bits,
+with strobes for less; a byte's access is a full-width beat at the
+byte's address under that byte's strobe, which \code{wrapper\_test}
+checks. The wide port reads only.
 
 The path through the controller's own port has run on the board
 (issue~\#1023). On October 5, 2026, the flagship's
