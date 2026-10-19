@@ -1,0 +1,5 @@
+05:36:03.267Z [load] 19244 words to 0x40000000
+05:37:01.354Z fastboot: listening on port 5554
+05:37:11.700Z fastboot: booting 6021468 bytes at 0x40000000
+05:37:12.372Z OpenSBI v1.6
+05:37:24.114Z Run /init as init process

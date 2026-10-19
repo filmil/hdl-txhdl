@@ -1,0 +1,113 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: UdpRx
+\datasheet{UdpRx}{A UDP/IPv4 receive filter after the MAC's receiver:
+the payload of each datagram addressed to it, and nothing else.}
+
+\dsfacts{\code{lib/parts/src/udprx.rs}}{\code{txhdl\_parts::udprx::UdpRx}}%
+{\code{//docs:datasheets}}
+
+\subsection*{Function}
+
+\code{UdpRx} takes the frames \code{EthRx} offers: only frames whose
+check sequence held, without it, from the destination address on,
+with the last byte marked, and a short frame still padded to sixty
+bytes. It passes on the payload of each UDP datagram addressed to the
+MAC address, IPv4 address and UDP port its configuration names, and
+nothing of any other frame.
+
+Its inputs are the frames, \code{Rx<EthByte>}, and its configuration,
+\code{In<UdpCfg>}. \code{UdpCfg} holds \code{mac}, a 48-bit MAC
+address with its first byte on the wire in bits 47 to 40; \code{ip},
+the IPv4 address or the multicast group it listens to, its first byte
+in bits 31 to 24; and \code{port}. Its outputs are the payloads,
+\code{Tx<EthByte>}, and a count of the datagrams passed on,
+\code{Out<U<32>>}.
+
+Every header byte is checked as it goes by, and none is held. The
+checks are done by offset 42, \code{HEADER}, where the payload
+starts, and nothing is sent before it, so a frame that fails
+a check gives no byte at all.
+
+\subsection*{Parameters}
+
+None. The tables are generated for \code{UdpRx}.
+
+\dstables{UdpRx}
+
+\subsection*{Behaviour}
+
+The checks, by the frame's byte offset:
+
+\begin{itemize}
+\item 0 to 5: the destination address is the configured one. When the
+configured IPv4 address is a multicast group, 224.0.0.0/4, it is the
+group's instead: \code{01:00:5e} and the group's low 23 bits.
+Broadcast is refused.
+\item 12 and 13: the type is IPv4, \code{0x0800}. A VLAN tag is
+refused.
+\item 14: \code{0x45}, version 4 and a header of five words. Options
+are refused.
+\item 16 and 17: the total length is at least the UDP length and the
+twenty bytes of the IPv4 header.
+\item 20 and 21: more-fragments is clear and the fragment offset is
+zero. Don't-fragment is ignored.
+\item 23: the protocol is 17, UDP.
+\item 14 to 33: the header checksum. The ones' complement sum over the
+header, taken a pair of bytes at a time, is all ones.
+\item 30 to 33: the destination address is the configured one.
+\item 36 and 37: the destination port is the configured one.
+\item 38 and 39: the UDP length is at least nine. An empty datagram
+has no byte to mark last, so it is refused.
+\end{itemize}
+
+The payload and the count:
+
+\begin{itemize}
+\item The payload is the UDP length less eight bytes. Its last byte
+goes out marked last. If the frame ends first, the frame's last byte
+is marked instead, and the datagram is cut short there.
+\item What follows the payload, padding included, is taken and
+dropped.
+\item The count rises with each datagram's last byte, and wraps.
+\item A payload byte is taken from the receiver only when the output
+is ready. A header byte, or a byte being dropped, is taken whenever it
+is offered.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{//lib/parts:parts\_test} runs \code{udprx::tests}:
+\begin{itemize}
+\item \code{the\_helpers\_checksum\_matches\_a\_published\_header}
+checks the tests' own checksum against a published IPv4 header;
+\item \code{a\_datagram\_to\_the\_address\_and\_port\_passes},
+\code{a\_one\_byte\_datagram\_passes} and
+\code{a\_short\_frames\_padding\_is\_dropped};
+\item \code{a\_datagram\_cut\_short\_by\_the\_frame\_ends\_with\_it};
+\item \code{a\_multicast\_group\_takes\_its\_own\_mac\_address}, which
+also refuses the group's datagram when it comes to the configured
+unicast MAC address rather than the group's;
+\item \code{every\_check\_refuses\_the\_frame\_whole}, a frame per check,
+each giving no byte and no count;
+\item \code{frames\_back\_to\_back\_each\_pass\_or\_not\_on\_their\_own};
+\item \code{random\_frames\_agree\_with\_the\_reference}: 300 frames
+from a fixed seed, most valid but for one field, against a reference
+filter in Rust, with the output taken on two cycles in three;
+\item \code{it\_lowers}, which writes its Verilog.
+\end{itemize}
+\item Its netlist is not simulated against a trace.
+\end{itemize}
+
+\subsection*{Used by}
+
+Nothing in the tree yet.
+
+\subsection*{Limits}
+
+It does not take IPv4 options, fragments or a VLAN tag, and it
+refuses broadcast. It does not check the source address or port, the
+time to live or the UDP checksum. The UDP checksum covers the payload,
+so checking it would mean holding the whole datagram, and the MAC's
+CRC-32 has already checked every byte of the frame. It receives only:
+there is no sending side.

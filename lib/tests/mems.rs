@@ -50,7 +50,9 @@ impl Unit<In<Op>, Out<U<4>>> for Ways {
     }
 }
 
-/// The same four ways, distributed, with the literal index.
+/// Two memories of four bytes, distributed, read and written by a
+/// literal index: the byte at `a` of each, xored, and `d` written into
+/// the first.
 #[derive(Trace, Default)]
 pub struct Two {
     #[distributed]
@@ -58,13 +60,145 @@ pub struct Two {
 }
 
 #[lower]
-impl Unit<In<U<2>>, Out<U<8>>> for Two {
-    async fn run(&mut self, a: In<U<2>>, o: Out<U<8>>) {
+impl Unit<(In<U<2>>, In<U<8>>), Out<U<8>>> for Two {
+    async fn run(&mut self, (a, d): (In<U<2>>, In<U<8>>), o: Out<U<8>>) {
         loop {
             DefaultClock::rising().await;
             o.set(self.m[0].read(a.get()) ^ self.m[1].read(a.get()));
+            with!(self <= { m[0].at(a.get()): d.get() });
         }
     }
+}
+
+/// A field of `Mems` beside a field of one `Mem` whose name is one of
+/// theirs would be, had there been five: the field the array's style
+/// could leak to (#1852), refused outright since #1858.
+#[derive(Trace, Default)]
+pub struct Beside {
+    #[ram_style("block")]
+    pub way: Mems<U<8>, 4, 4>,
+    pub way_4: txhdl::comp::Mem<U<8>, 4>,
+}
+
+#[lower]
+impl Unit<In<U<2>>, Out<U<8>>> for Beside {
+    async fn run(&mut self, a: In<U<2>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            o.set(self.way[3].read(a.get()) ^ self.way_4.read(a.get()));
+        }
+    }
+}
+
+/// Memories of more than 4096 bits read at three addresses, which no
+/// block RAM has the ports for: refused, unless the field says it is
+/// distributed, which reaches each memory (issue 1285, #1852).
+#[derive(Trace, Default)]
+pub struct Big {
+    pub m: Mems<U<32>, 256, 2>,
+}
+
+#[derive(Trace, Default)]
+pub struct BigLut {
+    #[distributed]
+    pub m: Mems<U<32>, 256, 2>,
+}
+
+#[lower]
+impl Unit<[In<U<8>>; 3], Out<U<32>>> for Big {
+    async fn run(&mut self, a: [In<U<8>>; 3], o: Out<U<32>>) {
+        loop {
+            DefaultClock::rising().await;
+            let x = self.m[1].read(a[0].get()) ^ self.m[1].read(a[1].get());
+            o.set(x ^ self.m[1].read(a[2].get()));
+        }
+    }
+}
+
+#[lower]
+impl Unit<[In<U<8>>; 3], Out<U<32>>> for BigLut {
+    async fn run(&mut self, a: [In<U<8>>; 3], o: Out<U<32>>) {
+        loop {
+            DefaultClock::rising().await;
+            let x = self.m[1].read(a[0].get()) ^ self.m[1].read(a[1].get());
+            o.set(x ^ self.m[1].read(a[2].get()));
+        }
+    }
+}
+
+/// `way_4` beside four ways was a field the array's style could leak
+/// to (#1852); a field named like an element of an array is refused
+/// since #1858, so the unit does not lower at all.
+#[test]
+fn a_field_beside_an_array_of_its_name_is_refused() {
+    let Err(e) = std::panic::catch_unwind(|| Beside::lowered("beside")) else {
+        panic!("way_4 beside four ways was not refused");
+    };
+    let msg = e
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+        .expect("the refusal says why");
+    assert!(msg.contains("a field `way_4` beside `way`"), "{msg}");
+}
+
+#[test]
+fn a_large_memory_of_an_array_is_held_to_a_block_rams_ports() {
+    let refused = std::panic::catch_unwind(|| Big::lowered("big"));
+    let Err(msg) = refused else {
+        panic!("three reads of m_1 were not refused");
+    };
+    // A panic's payload is a String when formatted, a &str when not.
+    let msg = msg
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| msg.downcast_ref::<&str>().map(|s| s.to_string()))
+        .expect("the refusal says why");
+    assert!(msg.contains("memory `m_1`"), "{msg}");
+    let v = BigLut::lowered("big_lut").verilog();
+    assert!(v.contains("reg [31:0] m_1 [0:255];"), "{v}");
+}
+
+#[test]
+fn the_trace_finds_each_memory_by_its_name() {
+    let ways = Ways::default();
+    let found: Vec<String> = txhdl::comp::trace::memories("ways", &ways)
+        .into_iter()
+        .map(|(p, _)| p)
+        .collect();
+    let want: Vec<String> = (0..4).map(|w| format!("ways.way_{w}")).collect();
+    assert_eq!(found, want);
+    // Each is a memory of its own.
+    let cells: std::collections::HashSet<usize> =
+        txhdl::comp::trace::memories("ways", &ways)
+            .into_iter()
+            .map(|(_, c)| c)
+            .collect();
+    assert_eq!(cells.len(), 4);
+}
+
+#[test]
+fn a_literal_index_reads_and_writes_in_the_simulation() {
+    let (a_o, a_i) = signal::<U<2>, DefaultClock>();
+    let (d_o, d_i) = signal::<U<8>, DefaultClock>();
+    let (o_o, o_i) = signal::<U<8>, DefaultClock>();
+    let mut two = Two::default();
+    let mut sim = Running::new(two.run((a_i, d_i), o_o));
+    // Write 0x11 * k at each word of m[0], then read them back; m[1]
+    // stays zero, so the xor is m[0]'s word.
+    for k in 0..4u8 {
+        a_o.set(U::from(k));
+        d_o.set(U::from(0x11 * k + 1));
+        sim.cycle();
+    }
+    for k in 0..4u8 {
+        a_o.set(U::from(k));
+        d_o.set(U::from(0x11 * k + 1));
+        sim.cycle();
+        assert_eq!(o_i.get().raw(), (0x11 * k + 1) as u128, "word {k}");
+    }
+    let v = Two::lowered("two").verilog();
+    assert!(v.contains("m_0["), "{v}");
 }
 
 #[test]
