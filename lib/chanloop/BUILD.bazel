@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: Apache-2.0
+# Two lowered units joined wire to wire in a Verilog top deadlock when
+# the sender's valid waits on its ready and the receiver's ready on its
+# valid (#1868); joined by TxHDL's own channel they do not.
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+load("@rules_verilator//verilator:defs.bzl", "verilator_cc_library")
+load("@rules_verilog//verilog:defs.bzl", "verilog_library")
+
+rust_binary(
+    name = "gen",
+    srcs = ["gen.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
+genrule(
+    name = "netlists",
+    outs = ["count.v", "stage.v", "pair.v"],
+    cmd = "$(location :gen) $(location count.v) $(location stage.v) $(location pair.v)",
+    tools = [":gen"],
+)
+
+
+# Joined wire to wire: no word passes (#1868).
+verilog_library(
+    name = "direct_vl",
+    srcs = ["count.v", "stage.v", "direct_tb.v"],
+    top_module = "direct_tb",
+)
+
+verilator_cc_library(
+    name = "direct_verilated",
+    module = ":direct_vl",
+    copts = ["-Wno-sign-compare"],
+    timing = True,
+    vopts = ["--main", "-Wno-fatal"],
+)
+
+cc_test(
+    name = "direct_vsim_test",
+    srcs = ["//tools/vlcheck:main.cc"],
+    deps = [":direct_verilated"],
+)
+
+# Joined by TxHDL's own channel: every word passes, in order.
+verilog_library(
+    name = "buffered_vl",
+    srcs = ["pair.v", "buffered_tb.v"],
+    top_module = "buffered_tb",
+)
+
+verilator_cc_library(
+    name = "buffered_verilated",
+    module = ":buffered_vl",
+    copts = ["-Wno-sign-compare"],
+    timing = True,
+    vopts = ["--main", "-Wno-fatal"],
+)
+
+cc_test(
+    name = "buffered_vsim_test",
+    srcs = ["//tools/vlcheck:main.cc"],
+    deps = [":buffered_verilated"],
+)
