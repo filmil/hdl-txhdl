@@ -1,0 +1,130 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: SetTable
+\datasheet{SetTable}{A set-associative key-to-value table in block RAM:
+lookup, insert, update and remove, one operation a cycle.}
+
+\dsfacts{\code{lib/parts/src/settable.rs}}{\code{txhdl\_parts::settable::SetTable}}%
+{\code{//docs:datasheets}}
+
+\subsection*{Function}
+
+\code{SetTable} keeps keys and their values in \code{W} ways of
+\code{D} rows each. A key's set, the row it may live in, is chosen by
+a multiplicative hash, and the key may sit in any way of that set.
+
+It takes operations on \code{Rx<TableOp<KW, VW>>}: \code{op}, one of
+\code{LOOKUP}, \code{INSERT}, \code{UPDATE} and \code{REMOVE}; the
+\code{key}; and the \code{val} an insert or an update puts in. It
+answers each on \code{Tx<TableResult<VW>>}: \code{res}, one of
+\code{HIT}, \code{MISS}, \code{EXISTS} and \code{FULL}, and a
+\code{val}. Its other output, \code{Out<U<32>>}, counts the inserts
+refused because their set was full.
+
+\code{SetTableModel} is the same table in plain Rust, for a design's
+own tests: the same hash, the same way chosen and the same refusals.
+\code{set\_of} is the one definition of the hash, which the part and
+the model both use.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{KW} & The key's width, at most 32 bits. \\
+\code{VW} & The value's width. \\
+\code{B} & The bits that number the sets, from 1 to 32. \\
+\code{D} & The rows of a way, which must be \code{1 << B}. \\
+\code{W} & The ways, at most 256. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Stable Rust cannot write \code{D} from \code{B} in a type, so both are
+given; the plain-Rust \code{set\_of} and \code{SetTableModel::new}
+check \code{B}. The tables below use \code{SetTable<16, 8, 3, 8, 4>},
+the table of the tests: eight sets of four ways, keys of 16 bits and
+values of 8.
+
+\dstables{SetTable}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item \textbf{The set.} A key's set is \code{(key * 0x9E3779B1) >> (32
+- B)} over the key widened to 32 bits: the top \code{B} bits of the
+product, a Fibonacci hash. A key's low bits would crowd keys allocated
+in strides into a few sets, and the product spreads them.
+\item \textbf{The ways.} Each way is three memories: its keys, its
+values and whether each row is used, each a \code{Mems} of \code{W}.
+An operation reads every way at its set at once, into registers at the
+edge, the synchronous read a block RAM has. The cycle after, a loop
+over the ways finds a hit, the first free way and whether the set is
+full, and answers; the one way that changes is written back in the
+cycle the answer goes out, which is that cycle unless the answer
+waits. So every
+memory is read at one address and written at one, which a block RAM
+holds.
+\item \textbf{One operation a cycle.} An operation that reads the set
+the one before it is writing, in the same cycle, would read the row
+from before that write. So the way written is forwarded into the row
+it reads, and nothing stalls.
+\item \textbf{Lookup} answers the value of a key present with
+\code{HIT}, or \code{MISS}.
+\item \textbf{Insert} puts a key not present into the lowest-numbered
+free way of its set and answers \code{HIT}. A key present changes
+nothing and answers \code{EXISTS} with the value it already has. A
+full set takes nothing, answers \code{FULL}, and counts one refusal.
+\item \textbf{Update} replaces the value of a key present and answers
+the new value with \code{HIT}, or \code{MISS}. A function of the old
+value is the user's: look up, work it out, update.
+\item \textbf{Remove} frees a key present and answers its value with
+\code{HIT}, or \code{MISS}.
+\item An answer's \code{val} is, on \code{HIT}, the value found, put in
+or freed; on \code{EXISTS}, the value the key already has; and on
+\code{MISS} or \code{FULL}, nought.
+\item An operation is taken when its answer has room: when nothing is
+being answered, or the answer is taken that cycle. Its write is made
+once, in the cycle its answer goes out, however long the answer waits.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item \code{//lib/parts:parts\_test} runs \code{settable::tests}:
+\begin{itemize}
+\item \code{random\_operations\_agree\_with\_the\_model}: 2000
+operations from a fixed seed on 48 keys, so that every answer occurs
+more than twenty times, against \code{SetTableModel}. The operations
+are offered on three cycles in four and the answers held up for up to
+eight cycles at a time, and the refusals counted must agree too.
+\item \code{back\_to\_back\_on\_one\_set\_see\_each\_other}: six keys of
+one set, each inserted and looked up back to back, then a remove, an
+insert, an update and a lookup, each reading the row the one before it
+is writing; two inserts find the set full.
+\item \code{strided\_keys\_spread\_over\_the\_sets}: 256 keys at strides
+of 64 and of 4096 land in at least 48 of 64 sets.
+\item \code{each\_way\_is\_a\_memory\_read\_through\_a\_register} reads the
+Verilog of \code{SetTable<16, 8, 3, 8, 4>}.
+\item \code{a\_large\_table\_fits\_block\_rams} lowers
+\code{SetTable<32, 32, 10, 1024, 4>}, whose values are 1024 rows of 32
+bits a way, through the check that a memory of more than 4096 bits
+fits a block RAM's ports (issue 1285).
+\item \code{the\_parameters\_agree}: the tests' table has \code{D} as
+\code{1 << B}, and \code{set\_of} puts each of the first 1000 keys in
+one of its eight sets.
+\end{itemize}
+\item Its netlist is not simulated against a trace.
+\end{itemize}
+
+\subsection*{Used by}
+
+Nothing in the tree yet, outside its own tests.
+
+\subsection*{Limits}
+
+A key is at most 32 bits, since the hash is over 32. \code{W} is at
+most 256, since a way's number is eight bits. \code{D} must be
+\code{1 << B}, given beside it. A set holds at most \code{W} keys, and
+an insert beyond that is refused rather than placed elsewhere.
