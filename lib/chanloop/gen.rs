@@ -90,27 +90,72 @@ impl Unit<In<U<8>>, Out<U<8>>> for Plain {
     }
 }
 
+/// Takes every word: its only channel port is a receiving one.
+#[derive(Trace, Default)]
+pub struct Sink {}
+
+#[lower]
+impl Unit<Rx<U<8>>, ()> for Sink {
+    async fn run(&mut self, inp: Rx<U<8>>, _o: ()) {
+        loop {
+            DefaultClock::rising().await;
+            let _ = inp.recv_if(Bit::One);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const RULE: &str = "// txhdl: a channel port here waits on the other side";
+    const SENDS: &str = "// txhdl: a sending port's valid here waits";
+    const TAKES: &str = "// txhdl: a receiving port's ready here waits";
+    const JOIN: &str = "// txhdl: join through <top>_txhdl_chan";
 
-    /// Each module with a channel port says the rule in its header, the
-    /// first thing whoever writes a top reads; one without says
-    /// nothing (#1868).
+    /// The header of module `name` in `v`: what comes before its line.
+    fn header<'a>(v: &'a str, name: &str) -> &'a str {
+        let at = v.find(&format!("module {name}(")).expect("the module");
+        let start = v[..at].rfind("`timescale").unwrap_or(0);
+        &v[start..at]
+    }
+
+    /// Each module says what its channel ports wait on, the first thing
+    /// whoever writes a top reads, and one with none says nothing
+    /// (#1868).
     #[test]
-    fn the_rule_is_in_the_header_of_a_module_with_a_channel() {
-        for (name, v) in [
-            ("count", Count::lowered("count").verilog()),
-            ("stage", Stage::lowered("stage").verilog()),
-            ("pair", Pair::lowered("pair").verilog()),
-        ] {
-            let header = &v[..v.find(&format!("module {name}(")).unwrap()];
-            assert!(header.contains(RULE), "{name}:\n{header}");
-            assert!(header.contains("<top>_txhdl_chan"), "{name}");
-        }
+    fn each_module_says_what_its_channel_ports_wait_on() {
+        let v = Count::lowered("count").verilog();
+        let h = header(&v, "count");
+        assert!(h.contains(SENDS) && !h.contains(TAKES), "{h}");
+        assert!(h.contains(JOIN), "{h}");
+        let v = Sink::lowered("sink").verilog();
+        let h = header(&v, "sink");
+        assert!(h.contains(TAKES) && !h.contains(SENDS), "{h}");
+        assert!(h.contains(JOIN), "{h}");
+        let v = Stage::lowered("stage").verilog();
+        let h = header(&v, "stage");
+        assert!(h.contains(SENDS) && h.contains(TAKES), "{h}");
         let v = Plain::lowered("plain").verilog();
-        assert!(!v.contains(RULE), "{v}");
+        assert!(!v.contains("txhdl:"), "{v}");
+    }
+
+    /// A unit of units' file holds its children's modules, and each
+    /// says it too: `pair` sends, and its children are a sender and a
+    /// stage.
+    #[test]
+    fn a_child_module_in_a_parents_file_says_it_too() {
+        let v = Pair::lowered("pair").verilog();
+        let h = header(&v, "pair");
+        assert!(h.contains(SENDS) && !h.contains(TAKES), "{h}");
+        let children: Vec<&str> = v
+            .lines()
+            .filter_map(|l| l.strip_prefix("module "))
+            .filter_map(|l| l.split('(').next())
+            .filter(|m| *m != "pair" && !m.contains("txhdl_chan"))
+            .collect();
+        assert_eq!(children.len(), 2, "{children:?}");
+        for m in children {
+            assert!(header(&v, m).contains(SENDS), "{m}");
+        }
     }
 }

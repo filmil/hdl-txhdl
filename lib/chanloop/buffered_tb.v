@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // The same two joined by TxHDL's own channel, `pair_txhdl_chan`, whose
-// ready is a register (#1868): the words pass, in order.
+// ready is a register (#1868): the words pass, a word a cycle, in
+// order.
 module buffered_tb;
   reg clk = 0;
   reg rst = 1;
@@ -11,8 +12,11 @@ module buffered_tb;
   integer passed = 0;
   integer cycle;
   initial begin
+    // The clock rises at 5, 15, ...; reset is let go and the outputs
+    // are looked at on the falling edge, away from the rising one.
     for (cycle = 0; cycle < 100; cycle = cycle + 1) begin
       #5 clk = 1;
+      #5 clk = 0;
       if (cycle == 2) rst = 0;
       if (ov) begin
         if (od != passed[7:0]) begin
@@ -21,9 +25,10 @@ module buffered_tb;
         end
         passed = passed + 1;
       end
-      #5 clk = 0;
     end
-    if (passed < 50) begin
+    // A word a cycle once reset is let go, less the cycles the
+    // channel takes to fill.
+    if (passed < 95) begin
       $display("buffered: only %0d words passed", passed);
       $fatal(1);
     end

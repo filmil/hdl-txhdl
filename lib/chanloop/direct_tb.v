@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // `count` joined to `stage` wire to wire, as a hand-written top joins
 // two netlists (#1868). `count`'s valid is its ready, and `stage`'s
-// ready is its valid with room downstream: neither rises first, so no
-// word passes. The test passes when none does, which is the deadlock.
+// ready is its valid with room downstream, so the two wires are a loop
+// with nothing driving it: low and high are both consistent, and from
+// reset, where nothing has raised either, it stays low and no word
+// passes. Verilator says as much, flagging the loop as circular logic,
+// which is why this test alone builds with -Wno-fatal. The test passes
+// when no word passes, which is the deadlock.
 module direct_tb;
   reg clk = 0;
   reg rst = 1;
@@ -16,11 +20,13 @@ module direct_tb;
   integer passed = 0;
   integer cycle;
   initial begin
+    // The clock rises at 5, 15, ...; reset is let go and the outputs
+    // are looked at on the falling edge, away from the rising one.
     for (cycle = 0; cycle < 100; cycle = cycle + 1) begin
       #5 clk = 1;
+      #5 clk = 0;
       if (cycle == 2) rst = 0;
       if (ov) passed = passed + 1;
-      #5 clk = 0;
     end
     if (passed != 0) begin
       $display("direct: %0d words passed; the join did not deadlock", passed);

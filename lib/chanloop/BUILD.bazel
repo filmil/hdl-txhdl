@@ -37,6 +37,8 @@ verilog_library(
     top_module = "direct_tb",
 )
 
+# -Wno-fatal: Verilator flags the direct join's loop as circular
+# logic, which is the hazard itself.
 verilator_cc_library(
     name = "direct_verilated",
     module = ":direct_vl",
@@ -58,12 +60,14 @@ verilog_library(
     top_module = "buffered_tb",
 )
 
+# No -Wno-fatal here: a loop or a width warning in pair_txhdl_chan
+# fails the build.
 verilator_cc_library(
     name = "buffered_verilated",
     module = ":buffered_vl",
     copts = ["-Wno-sign-compare"],
     timing = True,
-    vopts = ["--main", "-Wno-fatal"],
+    vopts = ["--main"],
 )
 
 cc_test(
