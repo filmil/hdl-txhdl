@@ -112,7 +112,7 @@ pub fn set_of(key: u32, b: usize) -> usize {
 // begin{state}
 /// `W` ways, at most 256, of `D = 1 << B` rows, `B` from 1 to 32, of a
 /// key of `KW` bits, at most 32, and a value of `VW` bits.
-#[derive(Trace, Default)]
+#[derive(Trace)]
 pub struct SetTable<
     const KW: usize,
     const VW: usize,
@@ -146,6 +146,39 @@ pub struct SetTable<
     pub refused: Reg<U<32>>,
 }
 // end{state}
+
+/// Written out rather than derived, so that a table whose parameters
+/// disagree is refused where it is made (#1873). The lowering makes the
+/// unit with `Default` too, so a netlist is refused the same way.
+impl<
+        const KW: usize,
+        const VW: usize,
+        const B: usize,
+        const D: usize,
+        const W: usize,
+    > Default for SetTable<KW, VW, B, D, W>
+{
+    fn default() -> Self {
+        assert!((1..=32).contains(&B), "SetTable: B is {B}, not 1 to 32");
+        assert!(D == 1 << B, "SetTable: D is {D}, not 1 << B = {}", 1 << B);
+        assert!(KW <= 32, "SetTable: KW is {KW}, more than 32");
+        assert!((1..=256).contains(&W), "SetTable: W is {W}, not 1 to 256");
+        SetTable {
+            key: Mems::default(),
+            val: Mems::default(),
+            used: Mems::default(),
+            busy: Reg::default(),
+            kind: Reg::default(),
+            okey: Reg::default(),
+            oval: Reg::default(),
+            set: Reg::default(),
+            rkey: Regs::default(),
+            rval: Regs::default(),
+            rused: Regs::default(),
+            refused: Reg::default(),
+        }
+    }
+}
 
 // begin{run}
 #[lower]
