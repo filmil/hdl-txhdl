@@ -93,6 +93,9 @@ rust_binary(
         "probe_tuple_let",             # the macro's own message
         "probe_lit_signal",            # the macro's own message
         "probe_send_bare",             # the macro's own message (issue 882)
+        "probe_closure_move",          # the macro's own message (issue 1838)
+        "probe_closure_pattern",       # the macro's own message (issue 1838)
+        "probe_closure_value",         # the macro's own message (issue 1838)
     ]
 ]
 

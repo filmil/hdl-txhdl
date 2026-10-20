@@ -1,0 +1,40 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Closure, Inlined}
+\label{sec:x-closure}
+
+A small predicate that the step uses twice used to need a function of
+its own under \code{\#[lower]}, written away from the step and called
+with every type spelled out. A closure bound by \code{let} in the step
+does the same where it is used. The lowering treats it as a function
+of the file: it is inlined at each call, its parameters bound to the
+arguments and its body read as the step's own. The names it reads from
+the step, such as the position \code{p} that \code{at} compares with,
+are taken as they stand where the closure is written. That is what
+Rust means by them too, since Rust refuses to assign a name that a
+closure still in use has borrowed. A closure shadows a function of
+the file of the same name, as it does in Rust, and ends with its
+block.
+
+What the lowering refuses, it refuses at the closure, with a message
+that names it and points at a function under \code{\#[lower]}: a
+\code{move} closure, a parameter that is a pattern rather than a
+name, and a closure used as a value rather than called. The probes for
+the three are kept in \code{experiments/rust\_embedding}.
+
+The checker takes a byte with \code{inp.recv\_if(take);}, a statement
+with nothing bound, since only the take matters. It used to need a
+binding nobody read, \code{let \_ = inp.recv\_if(take);}, which the
+step of Section~\ref{sec:x-flush} still has.
+
+\begin{figure}[htbp]
+\centering
+\input{closure_timing.tex}
+\caption{The header check: a byte is taken while \code{go} is high and
+\code{pos} counts it; the byte at 12 is the one expected there, the
+byte at 13 is not, and \code{bad} rises once it has been taken.}
+\label{fig:x-closure}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_closure.rs}. Run with \code{bazel run //lib/examples:ex\_closure}.},label={lst:x-closure}]{lib/examples/ex_closure.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_closure} printed when the build ran it: the positions and the flag, then the lowering, the closures written in.},label={lst:x-closure-out}]{out_closure.txt}

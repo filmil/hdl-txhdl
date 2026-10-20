@@ -189,6 +189,16 @@ rust_test(
     deps = [":txhdl"],
 )
 
+# Local closures in a lowered body, and `rx.recv_if(c);` as a statement
+# (issue 1838).
+rust_test(
+    name = "closure_test",
+    srcs = ["tests/closure.rs"],
+    edition = "2021",
+    proc_macro_deps = [":txhdl_macros"],
+    deps = [":txhdl"],
+)
+
 # `#[derive(Link)]`: the other side's struct, arrays and nested bundles
 # turned round, and `link` in a run and a unit of units (issue 1695).
 rust_test(

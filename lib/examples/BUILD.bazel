@@ -905,6 +905,16 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A closure in a lowered body, and a take as a statement (issue 1838):
+#   bazel run //lib/examples:ex_closure
+rust_binary(
+    name = "ex_closure",
+    srcs = ["ex_closure.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A function under #[lower], inlined:  bazel run //lib/examples:ex_fn
 rust_binary(
     name = "ex_fn",
@@ -1605,6 +1615,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_tap.rs",
         "ex_buffer.rs",
         "ex_wire.rs",
+        "ex_closure.rs",
         "ex_fn.rs",
         "ex_litfn.rs",
         "ex_arith.rs",
