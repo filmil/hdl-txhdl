@@ -110,8 +110,8 @@ pub fn set_of(key: u32, b: usize) -> usize {
 }
 
 // begin{state}
-/// `W` ways, at most 256, of `D = 1 << B` rows, `B` from 1 to 32, of a
-/// key of `KW` bits, at most 32, and a value of `VW` bits.
+/// `W` ways, 1 to 256, of `D = 1 << B` rows, `B` from 1 to 32, of a
+/// key of `KW` bits, 1 to 32, and a value of `VW` bits.
 #[derive(Trace)]
 pub struct SetTable<
     const KW: usize,
@@ -160,8 +160,10 @@ impl<
 {
     fn default() -> Self {
         assert!((1..=32).contains(&B), "SetTable: B is {B}, not 1 to 32");
-        assert!(D == 1 << B, "SetTable: D is {D}, not 1 << B = {}", 1 << B);
-        assert!(KW <= 32, "SetTable: KW is {KW}, more than 32");
+        // In 64 bits, so that B of 32 does not overflow a 32-bit usize.
+        let rows = 1u64 << B;
+        assert!(D as u64 == rows, "SetTable: D is {D}, not 1 << B = {rows}");
+        assert!((1..=32).contains(&KW), "SetTable: KW is {KW}, not 1 to 32");
         assert!((1..=256).contains(&W), "SetTable: W is {W}, not 1 to 256");
         SetTable {
             key: Mems::default(),
@@ -571,6 +573,14 @@ mod tests {
         let _ = SetTable::<16, 8, 3, 16, 4>::lowered("bad");
     }
 
+    /// Too few rows, the case that would run past the memory: four rows
+    /// for eight sets.
+    #[test]
+    #[should_panic(expected = "SetTable: D is 4, not 1 << B = 8")]
+    fn too_few_rows_for_the_sets_are_refused() {
+        let _ = SetTable::<16, 8, 3, 4, 4>::default();
+    }
+
     #[test]
     #[should_panic(expected = "SetTable: B is 0, not 1 to 32")]
     fn no_set_bits_are_refused() {
@@ -578,7 +588,19 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "SetTable: KW is 33, more than 32")]
+    #[should_panic(expected = "SetTable: B is 33, not 1 to 32")]
+    fn more_set_bits_than_the_hash_are_refused() {
+        let _ = SetTable::<16, 8, 33, 8, 4>::default();
+    }
+
+    #[test]
+    #[should_panic(expected = "SetTable: KW is 0, not 1 to 32")]
+    fn a_key_of_no_bits_is_refused() {
+        let _ = SetTable::<0, 8, 3, 8, 4>::default();
+    }
+
+    #[test]
+    #[should_panic(expected = "SetTable: KW is 33, not 1 to 32")]
     fn a_key_wider_than_the_hash_is_refused() {
         let _ = SetTable::<33, 8, 3, 8, 4>::default();
     }
