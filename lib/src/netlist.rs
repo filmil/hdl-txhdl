@@ -619,6 +619,34 @@ pub fn arrays_of<F: Fields>() -> Vec<(String, usize)> {
         .collect()
 }
 
+/// Refuse a unit with a field named `base_k` beside a field `base`
+/// that is an array of registers or memories, `base_0` onward (#1858).
+/// Within the array's length the two would be declared under one name;
+/// past it, `self.base[k]` would fold to the other field's name and
+/// read it rather than be refused (#1853). Either way the names say two
+/// things, so the field is refused whatever `k` is. What the derive
+/// checks, two fields of one name, sees `base` and `base_k`; this sees
+/// what `base` expands to, from [`arrays_of`].
+#[doc(hidden)]
+pub fn refuse_named_like_elements<F: Fields>(unit: &str) {
+    let arrays = arrays_of::<F>();
+    for m in F::NAMES {
+        let Some((base, k)) = m.rsplit_once('_') else {
+            continue;
+        };
+        if !k.is_empty()
+            && k.bytes().all(|b| b.is_ascii_digit())
+            && arrays.iter().any(|(a, _)| a == base)
+        {
+            panic!(
+                "`{unit}` has a field `{m}` beside `{base}`, an array whose \
+                 elements are `{base}_0` onward: the netlist would give two \
+                 things one name. Rename the field (#1858)"
+            );
+        }
+    }
+}
+
 /// Close the frame [`inlined_begin`] opened and give its wires.
 #[doc(hidden)]
 pub fn inlined_end() -> Vec<(String, Expr)> {

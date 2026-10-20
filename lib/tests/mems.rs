@@ -71,8 +71,8 @@ impl Unit<(In<U<2>>, In<U<8>>), Out<U<8>>> for Two {
 }
 
 /// A field of `Mems` beside a field of one `Mem` whose name is one of
-/// theirs would be, had there been five: the field's style is said of
-/// its own memories and not of the other field (#1852).
+/// theirs would be, had there been five: the field the array's style
+/// could leak to (#1852), refused outright since #1858.
 #[derive(Trace, Default)]
 pub struct Beside {
     #[ram_style("block")]
@@ -126,17 +126,20 @@ impl Unit<[In<U<8>>; 3], Out<U<32>>> for BigLut {
     }
 }
 
+/// `way_4` beside four ways was a field the array's style could leak
+/// to (#1852); a field named like an element of an array is refused
+/// since #1858, so the unit does not lower at all.
 #[test]
-fn a_fields_style_is_not_said_of_a_field_beside_it() {
-    let v = Beside::lowered("beside").verilog();
-    assert!(
-        v.contains("(* ram_style = \"block\" *)\n  reg [7:0] way_3 [0:3];"),
-        "{v}"
-    );
-    assert!(
-        !v.contains("(* ram_style = \"block\" *)\n  reg [7:0] way_4 "),
-        "way_4 is a field of its own:\n{v}"
-    );
+fn a_field_beside_an_array_of_its_name_is_refused() {
+    let Err(e) = std::panic::catch_unwind(|| Beside::lowered("beside")) else {
+        panic!("way_4 beside four ways was not refused");
+    };
+    let msg = e
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+        .expect("the refusal says why");
+    assert!(msg.contains("a field `way_4` beside `way`"), "{msg}");
 }
 
 #[test]
@@ -268,5 +271,108 @@ fn the_ways_hold_what_was_written_in_the_simulation() {
             model[op.way.raw() as usize][op.row.raw() as usize] =
                 op.data.raw() as u16;
         }
+    }
+}
+
+/// A field named like an element of an array field beside it: `r_3`
+/// beside `r`'s four registers, and `way_1` beside two memories, each
+/// of which would be declared twice; and `r_4` beside four, past the
+/// end, which `self.r[4]` would fold into. Each is refused (#1858).
+#[derive(Trace, Default)]
+pub struct DupReg {
+    pub r: txhdl::comp::Regs<U<8>, 4>,
+    pub r_3: txhdl::comp::Reg<U<8>>,
+}
+
+#[derive(Trace, Default)]
+pub struct DupMem {
+    pub way: Mems<U<8>, 4, 2>,
+    pub way_1: txhdl::comp::Mem<U<8>, 4>,
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for DupReg {
+    async fn run(&mut self, x: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            o.set(self.r[3].get() ^ self.r_3.get());
+            with!(self <= { r_3: x.get() });
+        }
+    }
+}
+
+#[lower]
+impl Unit<In<U<2>>, Out<U<8>>> for DupMem {
+    async fn run(&mut self, a: In<U<2>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            o.set(self.way[1].read(a.get()) ^ self.way_1.read(a.get()));
+        }
+    }
+}
+
+#[derive(Trace, Default)]
+pub struct Beyond {
+    pub r: txhdl::comp::Regs<U<8>, 4>,
+    pub r_4: txhdl::comp::Reg<U<8>>,
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for Beyond {
+    async fn run(&mut self, x: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            o.set(self.r[0].get() ^ self.r_4.get());
+            with!(self <= { r_4: x.get() });
+        }
+    }
+}
+
+/// A field `r` of one register beside a field `r_0`: no array, so
+/// nothing is named twice, and it lowers (#1858).
+#[derive(Trace, Default)]
+pub struct NotArray {
+    pub r: txhdl::comp::Reg<U<8>>,
+    pub r_0: txhdl::comp::Reg<U<8>>,
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for NotArray {
+    async fn run(&mut self, x: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            with!(self <= { r: x.get() });
+            with!(self <= { r_0: self.r.get() });
+            o.set(self.r_0.get());
+        }
+    }
+}
+
+#[test]
+fn a_field_beside_a_lone_register_of_its_base_name_lowers() {
+    let v = NotArray::lowered("not_array").verilog();
+    assert!(v.contains("r_0 <= r;"), "{v}");
+}
+
+#[test]
+fn a_field_named_like_an_element_is_refused() {
+    let cases: [(fn() -> txhdl::netlist::Lowered, &str); 3] = [
+        (|| DupReg::lowered("dup_reg"), "a field `r_3` beside `r`"),
+        (
+            || DupMem::lowered("dup_mem"),
+            "a field `way_1` beside `way`",
+        ),
+        (|| Beyond::lowered("beyond"), "a field `r_4` beside `r`"),
+    ];
+    for (k, (lower, want)) in cases.into_iter().enumerate() {
+        let Err(e) = std::panic::catch_unwind(lower) else {
+            panic!("case {k}: not refused");
+        };
+        let msg = e
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+            .expect("the refusal says why");
+        assert!(msg.contains(want), "case {k}: {msg}");
     }
 }
