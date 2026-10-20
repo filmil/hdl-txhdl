@@ -581,8 +581,9 @@ pub fn inlined_begin() {
 /// An index into an array of registers or memories that a loop's
 /// variable moved by a constant gives, `self.l[j - 1]`, worked out as
 /// `lowered` unrolls the loop (issue 1851). One below zero is refused
-/// here, naming the index and the variable's value. One past the end
-/// is not refused yet, as no index past the end is (#1853).
+/// here, naming the index and the variable's value; one past the end
+/// is refused with every other index past an array's end, when the
+/// netlist is checked (#1853).
 pub fn moved_index(at: i128, what: &str, var: i128) -> usize {
     if at < 0 {
         panic!(
@@ -597,6 +598,25 @@ pub fn moved_index(at: i128, what: &str, var: i128) -> usize {
              no array has (issue 1851)"
         )
     })
+}
+
+/// The fields of `F` that are arrays of registers or memories, with
+/// their lengths: a field not declared under its own name whose
+/// elements `name_0` onward are (#1853).
+#[doc(hidden)]
+pub fn arrays_of<F: Fields>() -> Vec<(String, usize)> {
+    let entries: Vec<&str> = F::fields().into_iter().map(|e| e.0).collect();
+    F::NAMES
+        .iter()
+        .filter(|n| !entries.contains(n))
+        .map(|n| {
+            let len = (0..)
+                .take_while(|k| entries.contains(&&*format!("{n}_{k}")))
+                .count();
+            (n.to_string(), len)
+        })
+        .filter(|(_, len)| *len > 0)
+        .collect()
 }
 
 /// Close the frame [`inlined_begin`] opened and give its wires.
@@ -1085,6 +1105,12 @@ pub struct Lowered {
     /// The memories [`Fields::RAM_STYLES`] names, with what each asks
     /// Vivado to make it (issue 1371).
     pub ram_styles: Vec<(&'static str, &'static str)>,
+    /// The fields that are arrays of registers or memories, by name,
+    /// with how many elements each has: `r` for `r: Regs<_, 4>`, whose
+    /// elements are `r_0` to `r_3` (#1853). What the derive knows and
+    /// a name alone does not, since a lone field `stage_2` ends in a
+    /// number too.
+    pub arrays: Vec<(String, usize)>,
     /// The registers [`Fields::USE_DSP`] names, with what each says
     /// (issue 1383).
     pub use_dsp: Vec<(&'static str, &'static str)>,
@@ -1257,6 +1283,7 @@ pub fn foreign(
         async_regs: Vec::new(),
         distributed: Vec::new(),
         ram_styles: Vec::new(),
+        arrays: Vec::new(),
         use_dsp: Vec::new(),
         aliases: Vec::new(),
         nets: Vec::new(),
@@ -1728,6 +1755,9 @@ impl Lowered {
         // A memory a block RAM cannot hold is refused here, not found
         // in a synthesis an hour later (issue 1285).
         self.refuse_unblockable_mems();
+        // An index past the end of an array of registers or memories
+        // names one that is not there (#1853).
+        self.refuse_past_ends();
         // `ASYNC_REG` belongs on a register; on a wire or a memory it
         // would say nothing true (#884).
         for a in &self.async_regs {
@@ -4988,6 +5018,69 @@ impl Lowered {
     }
 }
 
+/// Every name `e` reads, into `out`.
+fn expr_names(e: &Expr, out: &mut Vec<String>) {
+    match e {
+        Expr::Name(n) => out.push(n.clone()),
+        Expr::Num(_) | Expr::Bits(_, _) => {}
+        Expr::Bin(_, a, b) | Expr::Cat(a, b) | Expr::Index(a, b) => {
+            expr_names(a, out);
+            expr_names(b, out);
+        }
+        Expr::Not(a)
+        | Expr::Slice(a, _, _)
+        | Expr::Sext(a, _)
+        | Expr::Zext(a, _)
+        | Expr::Cast(a, _) => expr_names(a, out),
+        Expr::Cond(c, a, b) => {
+            expr_names(c, out);
+            expr_names(a, out);
+            expr_names(b, out);
+        }
+    }
+}
+
+/// Every name a body reads or drives, into `out`.
+fn body_names(body: &[Stmt], out: &mut Vec<String>) {
+    let drive = |t: &Target, e: &Expr, out: &mut Vec<String>| {
+        match t {
+            Target::Name(n) => out.push(n.clone()),
+            Target::Word(m, a) => {
+                out.push(m.clone());
+                expr_names(a, out);
+            }
+        }
+        expr_names(e, out);
+    };
+    for st in body {
+        match st {
+            Stmt::Drive(t, e) => drive(t, e, out),
+            Stmt::When(c, a, b) => {
+                expr_names(c, out);
+                for (t, e) in a.iter().chain(b) {
+                    drive(t, e, out);
+                }
+            }
+            Stmt::Case(arms) => {
+                for (c, ds) in arms {
+                    expr_names(c, out);
+                    for (t, e) in ds {
+                        drive(t, e, out);
+                    }
+                }
+            }
+            Stmt::If(arms, els) => {
+                for (c, ss) in arms {
+                    expr_names(c, out);
+                    body_names(ss, out);
+                }
+                body_names(els, out);
+            }
+            Stmt::Guard(c) | Stmt::Check(_, c, _) => expr_names(c, out),
+        }
+    }
+}
+
 /// Every address `e` reads `mem` at: each `Index` of the memory's name.
 fn mem_reads(e: &Expr, mem: &str, out: &mut Vec<String>) {
     match e {
@@ -5073,6 +5166,62 @@ fn mem_sites(
 }
 
 impl Lowered {
+    /// Refuse a name `base_k` that a body reads or drives when `base` is
+    /// an array of registers or memories, `base_0` onward, and `base_k`
+    /// is not one of its elements: an index past the array's end, which
+    /// the simulation refuses too, since it indexes a Rust array (#1853).
+    /// A literal index, a loop's variable and one moved by a constant
+    /// all end here, as the name they were folded into. Which fields are
+    /// arrays is [`Lowered::arrays`], what the derive knows, not a guess
+    /// from names, so a lone field `stage_2` is no array, and a port or
+    /// wire named `r_4` does not stand in for `r[4]` of four.
+    fn refuse_past_ends(&self) {
+        if self.arrays.is_empty() {
+            return;
+        }
+        let split = |n: &str| -> Option<(String, String)> {
+            let (base, k) = n.rsplit_once('_')?;
+            if k.is_empty() || !k.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            Some((base.to_string(), k.to_string()))
+        };
+        // An element is a register or a memory the unit declares.
+        let element = |n: &str| {
+            self.fields.iter().any(|(f, k, ..)| {
+                *f == n && matches!(k, Some(Kind::Reg | Kind::Mem))
+            })
+        };
+        let mut names = Vec::new();
+        for p in &self.procs {
+            body_names(&p.body, &mut names);
+        }
+        for (_, e) in &self.wires {
+            expr_names(e, &mut names);
+        }
+        for n in &names {
+            let Some((base, i)) = split(n) else { continue };
+            let Some((_, len)) = self.arrays.iter().find(|(b, _)| *b == base)
+            else {
+                continue;
+            };
+            // `r_04`, or `r_4` of four, is no element, whatever else is
+            // declared under that name.
+            let canonical = i == "0" || !i.starts_with('0');
+            let inside = i.parse::<usize>().is_ok_and(|k| k < *len);
+            if !(canonical && inside && element(n)) {
+                panic!(
+                    "`{}` reaches `{n}`: element {i} of `{base}`, an array of \
+                     {len} (`{base}_0` to `{base}_{}`), past its end. Each \
+                     index into an array is checked when the netlist is, as \
+                     the simulation checks it (#1853)",
+                    self.name,
+                    len - 1
+                );
+            }
+        }
+    }
+
     /// Refuse a memory of more than 4096 bits whose accesses no block
     /// RAM has the ports for (issue 1285). A block RAM has two ports,
     /// and a read at the address a write is at shares the write's port,
@@ -5192,6 +5341,7 @@ mod tests {
             async_regs: Vec::new(),
             distributed: Vec::new(),
             ram_styles: Vec::new(),
+            arrays: Vec::new(),
             use_dsp: Vec::new(),
             aliases: Vec::new(),
             nets: Vec::new(),

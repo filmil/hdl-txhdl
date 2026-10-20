@@ -8178,6 +8178,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          <Self as ::txhdl::netlist::Fields>::DISTRIBUTED),\n\
          ram_styles: ::txhdl::netlist::styles_per_memory::<Self>(\
          <Self as ::txhdl::netlist::Fields>::RAM_STYLES),\n\
+         arrays: ::txhdl::netlist::arrays_of::<Self>(),\n\
          use_dsp: <Self as ::txhdl::netlist::Fields>::USE_DSP.to_vec(),\n\
          aliases: Vec::new(),\n\
          nets: {{ let mut n: Vec<(String, ::txhdl::comp::trace::Kind, \

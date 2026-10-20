@@ -229,6 +229,200 @@ fn a_neighbour_below_the_first_is_refused() {
     );
 }
 
+/// An index past the end, three ways: a loop's variable that runs one
+/// too far, a neighbour past the last, and a number; and a memory's
+/// (#1853). The registers are four and the memories two.
+#[derive(Trace, Default)]
+pub struct Past {
+    pub r: Regs<U<8>, 4>,
+    pub m: Mems<U<8>, 2, 2>,
+}
+
+#[derive(Trace, Default)]
+pub struct PastMoved {
+    pub r: Regs<U<8>, 4>,
+}
+
+#[derive(Trace, Default)]
+pub struct PastNumber {
+    pub r: Regs<U<8>, 4>,
+}
+
+#[derive(Trace, Default)]
+pub struct PastMem {
+    pub m: Mems<U<8>, 2, 2>,
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for Past {
+    async fn run(&mut self, x: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            let mut s = x.get();
+            for j in 0..5 {
+                s = s ^ self.r[j].get();
+            }
+            o.set(s ^ self.m[0].read(U::<1>::from(0u8)));
+        }
+    }
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for PastMoved {
+    async fn run(&mut self, x: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            let mut s = x.get();
+            for j in 0..4 {
+                s = s ^ self.r[j + 1].get();
+            }
+            o.set(s);
+        }
+    }
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for PastNumber {
+    async fn run(&mut self, x: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            o.set(x.get() ^ self.r[4].get());
+        }
+    }
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for PastMem {
+    async fn run(&mut self, x: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            o.set(x.get() ^ self.m[2].read(U::<1>::from(0u8)));
+        }
+    }
+}
+
+/// Writes past the end: a register driven as `r[4]` of four, and a
+/// memory written as `m[2]` of two (#1853).
+#[derive(Trace, Default)]
+pub struct PastWrite {
+    pub r: Regs<U<8>, 4>,
+}
+
+#[derive(Trace, Default)]
+pub struct PastWriteMem {
+    pub m: Mems<U<8>, 2, 2>,
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for PastWrite {
+    async fn run(&mut self, x: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            with!(self <= { r[4]: x.get() });
+            o.set(self.r[0].get());
+        }
+    }
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for PastWriteMem {
+    async fn run(&mut self, x: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            with!(self <= { m[2].at(U::<1>::from(0u8)): x.get() });
+            o.set(self.m[0].read(U::<1>::from(0u8)));
+        }
+    }
+}
+
+/// A lone field whose name ends in a number is no array: `stage_2`
+/// beside nothing else is read and driven as itself (#1853).
+#[derive(Trace, Default)]
+pub struct Lone {
+    pub stage_2: txhdl::comp::Reg<U<8>>,
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for Lone {
+    async fn run(&mut self, x: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            with!(self <= { stage_2: x.get() });
+            o.set(self.stage_2.get());
+        }
+    }
+}
+
+#[test]
+fn a_lone_field_ending_in_a_number_lowers() {
+    let v = Lone::lowered("lone").verilog();
+    assert!(v.contains("stage_2"), "{v}");
+}
+
+/// A port named like the element past the end: `r_4` beside four
+/// registers does not stand in for `self.r[4]` (#1853).
+#[derive(Trace, Default)]
+pub struct PastPort {
+    pub r: Regs<U<8>, 4>,
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for PastPort {
+    async fn run(&mut self, r_4: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            o.set(r_4.get() ^ self.r[4].get());
+        }
+    }
+}
+
+/// Two lone fields `stage_0` and `stage_1`, and a port `stage_2`: no
+/// array, so reading the port is reading the port (#1853).
+#[derive(Trace, Default)]
+pub struct Stages {
+    pub stage_0: txhdl::comp::Reg<U<8>>,
+    pub stage_1: txhdl::comp::Reg<U<8>>,
+}
+
+#[lower]
+impl Unit<In<U<8>>, Out<U<8>>> for Stages {
+    async fn run(&mut self, stage_2: In<U<8>>, o: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            with!(self <= { stage_0: stage_2.get() });
+            with!(self <= { stage_1: self.stage_0.get() });
+            o.set(self.stage_1.get());
+        }
+    }
+}
+
+#[test]
+fn lone_fields_ending_in_numbers_beside_a_port_lower() {
+    let v = Stages::lowered("stages").verilog();
+    assert!(v.contains("stage_2"), "{v}");
+}
+
+#[test]
+fn an_index_past_the_end_is_refused() {
+    let cases: [(fn() -> txhdl::netlist::Lowered, &str); 7] = [
+        (|| Past::lowered("past"), "reaches `r_4`"),
+        (|| PastMoved::lowered("past"), "reaches `r_4`"),
+        (|| PastNumber::lowered("past"), "reaches `r_4`"),
+        (|| PastMem::lowered("past"), "reaches `m_2`"),
+        (|| PastWrite::lowered("past"), "reaches `r_4`"),
+        (|| PastWriteMem::lowered("past"), "reaches `m_2`"),
+        (|| PastPort::lowered("past"), "reaches `r_4`"),
+    ];
+    for (k, (lower, want)) in cases.into_iter().enumerate() {
+        let Err(e) = std::panic::catch_unwind(lower) else {
+            panic!("case {k}: not refused");
+        };
+        let msg = said(e.as_ref());
+        assert!(msg.contains(want), "case {k}: {msg}");
+        assert!(msg.contains("past its end"), "case {k}: {msg}");
+    }
+}
+
 /// The constant beside a loop's variable written every way Rust takes
 /// it beside a `usize`: `0_1`, `1usize`, `0x1`, `0o1` and `0b1` are all
 /// one, and `1 + j` is `j + 1`, so each place reads the next (issue
