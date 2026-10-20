@@ -311,6 +311,31 @@ whose \code{Host} is the other side's: its nets are listed by
 whole joins them in order through \code{link\_args}, or one at a time
 as \code{host.aw}. \code{Lowered::checked} then counts every channel
 between children, which must join exactly two ports (issue 498).
+
+That buffer is what lets two lowered units be joined at all.
+A sender offers its \code{valid} only once it has room, so its
+\code{valid} waits on its \code{ready}; a receiver's \code{ready} is
+its take, the condition it takes on and \code{valid}, so its
+\code{ready} waits on its \code{valid}.
+Two lowered units joined wire to wire, as a top written by hand in
+Verilog might join them, therefore wait on each other, and no
+transaction ever passes (\#1868).
+No simulation shows it, since the runtime's channel is the same buffer.
+The same holds for a lowered unit's sending port joined wire to wire
+to any receiver whose \code{ready} waits on its \code{valid}, IP or
+hand-written, and for its receiving port joined to any sender whose
+\code{valid} waits on its \code{ready}.
+So the rule for a top is plain: never join a lowered unit's channel
+port wire to wire to one that waits the other way, which every lowered
+unit's does; join them through \code{txhdl\_chan}, as a unit of units
+does, or through a FIFO whose \code{ready} is a register.
+Every module with a channel port says what its ports wait on in a
+comment above it, and
+\code{//lib/chanloop} shows both under Verilator: a pair joined wire to
+wire passes nothing in a hundred cycles, and the same pair joined by a
+channel passes a word a cycle.
+A sender that offers before it has room, as AXI requires of one, would
+make the receiver's wait harmless; that is \#1871.
 A child need not be lowered. A unit that implements \code{Lower} by
 hand with \code{netlist::foreign} is a module the netlist does not
 write: its lowering names the module, its ports by their own names in
