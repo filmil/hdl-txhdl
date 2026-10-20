@@ -3,7 +3,7 @@
 # the sender's valid waits on its ready and the receiver's ready on its
 # valid (#1868); joined by TxHDL's own channel they do not.
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
-load("@rules_rust//rust:defs.bzl", "rust_binary")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
 load("@rules_verilator//verilator:defs.bzl", "verilator_cc_library")
 load("@rules_verilog//verilog:defs.bzl", "verilog_library")
 
@@ -13,6 +13,13 @@ rust_binary(
     edition = "2021",
     deps = ["//lib:txhdl"],
     proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
+# The rule for a top is in the header of each module with a channel.
+rust_test(
+    name = "header_test",
+    crate = ":gen",
+    edition = "2021",
 )
 
 genrule(
