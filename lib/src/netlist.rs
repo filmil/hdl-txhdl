@@ -3044,6 +3044,7 @@ impl Lowered {
         }
         writeln!(out, "`timescale 1ns/1ps").unwrap();
         out.push_str(&self.renamed_lets("//"));
+        out.push_str(&self.join_rule("//"));
         writeln!(out, "module {name}(\n  {}\n);", plist.join(",\n  ")).unwrap();
         out.push_str(&self.verilog_groups());
         for (n, k, w, d) in &self.fields {
@@ -4873,6 +4874,31 @@ impl Lowered {
             _ => None,
         })
     }
+    /// The rule for a top that joins this module's channel ports, said
+    /// in its header when it has any (#1868). A TxHDL sender offers its
+    /// valid only once it has room, and a TxHDL receiver's ready is its
+    /// take, which waits on valid; so two TxHDL netlists joined wire to
+    /// wire wait on each other and nothing passes. TxHDL's own tops put
+    /// `<top>_txhdl_chan` between, whose ready is a register.
+    fn join_rule(&self, comment: &str) -> String {
+        let chans = self
+            .ports
+            .iter()
+            .any(|(_, k, _, _)| matches!(k, Kind::Tx | Kind::Rx));
+        if !chans {
+            return String::new();
+        }
+        [
+            "txhdl: a channel port here waits on the other side, valid on",
+            "ready and ready on valid. Never join it wire to wire to another",
+            "TxHDL netlist's; join through <top>_txhdl_chan or a FIFO whose",
+            "ready is a register (#1868).",
+        ]
+        .iter()
+        .map(|l| format!("{comment} {l}\n"))
+        .collect()
+    }
+
     /// The pairs of an input port and an output port this unit joins
     /// through wires in one cycle, with no register between: a sending
     /// port's `valid` or `data` that depends on a receiving port's
