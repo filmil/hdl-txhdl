@@ -1,0 +1,33 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{An Array in a Value}
+\label{sec:x-value-arrays}
+
+A record of several like fields, the lanes of a pixel or the bytes of
+a word, is clearer as an array than as fields named one by one, and
+the code over it is then a loop.
+\code{[T; N]} is a field of a struct that derives \code{Value} or
+\code{Transaction}, laid out element 0 highest, as a struct's first
+field is, so an array of \code{N} has the same bits as the \code{N}
+named fields it replaces (issue 1869).
+In a lowered body \code{p.lanes[k]} reads element \code{k} of a port's
+value, with \code{k} a number or a loop's variable, as for
+\code{Regs} in Section~\ref{sec:x-regs}; the lowering folds it into the
+slice of the port's bits that element occupies.
+
+\code{Bright} takes a pixel of four lanes and puts out the brightest
+lane and which it is, the first of equals, going over the lanes in one
+loop; a pixel not shown puts out nought.
+Its netlist is checked against the run under nvc and Verilator, as
+Section~\ref{sec:x-checked} describes.
+
+\begin{figure}[htbp]
+\centering
+\input{value_arrays_timing.tex}
+\caption{Four pixels in, and the brightest lane of each with its
+index; the third pixel is not shown, so its brightest is nought.}
+\label{fig:x-value-arrays}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_value\_arrays.rs}. Run with \code{bazel run //lib/examples:ex\_value\_arrays}.},label={lst:x-value-arrays}]{lib/examples/ex_value_arrays.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_value\_arrays} printed when the build ran it: the brightest lane and which, then the lowering.},label={lst:x-value-arrays-out}]{out_value_arrays.txt}
