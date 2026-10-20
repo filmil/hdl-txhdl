@@ -4881,22 +4881,30 @@ impl Lowered {
     /// wire wait on each other and nothing passes. TxHDL's own tops put
     /// `<top>_txhdl_chan` between, whose ready is a register.
     fn join_rule(&self, comment: &str) -> String {
-        let chans = self
-            .ports
-            .iter()
-            .any(|(_, k, _, _)| matches!(k, Kind::Tx | Kind::Rx));
-        if !chans {
+        let has = |kind: Kind| self.ports.iter().any(|(_, k, ..)| *k == kind);
+        let mut lines: Vec<&str> = Vec::new();
+        if has(Kind::Tx) {
+            lines.extend([
+                "txhdl: a sending port's valid here waits on its ready. Never",
+                "join it wire to wire to a receiver whose ready waits on its",
+                "valid, as every TxHDL netlist's does.",
+            ]);
+        }
+        if has(Kind::Rx) {
+            lines.extend([
+                "txhdl: a receiving port's ready here waits on its valid. Never",
+                "join it wire to wire to a sender whose valid waits on its",
+                "ready, as every TxHDL netlist's does.",
+            ]);
+        }
+        if lines.is_empty() {
             return String::new();
         }
-        [
-            "txhdl: a channel port here waits on the other side, valid on",
-            "ready and ready on valid. Never join it wire to wire to another",
-            "TxHDL netlist's; join through <top>_txhdl_chan or a FIFO whose",
-            "ready is a register (#1868).",
-        ]
-        .iter()
-        .map(|l| format!("{comment} {l}\n"))
-        .collect()
+        lines.extend([
+            "txhdl: join through <top>_txhdl_chan or a FIFO whose ready is a",
+            "register (#1868).",
+        ]);
+        lines.iter().map(|l| format!("{comment} {l}\n")).collect()
     }
 
     /// The pairs of an input port and an output port this unit joins
