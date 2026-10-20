@@ -110,9 +110,9 @@ pub fn set_of(key: u32, b: usize) -> usize {
 }
 
 // begin{state}
-/// `W` ways, at most 256, of `D = 1 << B` rows, `B` from 1 to 32, of a
-/// key of `KW` bits, at most 32, and a value of `VW` bits.
-#[derive(Trace, Default)]
+/// `W` ways, 1 to 256, of `D = 1 << B` rows, `B` from 1 to 32, of a
+/// key of `KW` bits, 1 to 32, and a value of `VW` bits.
+#[derive(Trace)]
 pub struct SetTable<
     const KW: usize,
     const VW: usize,
@@ -146,6 +146,41 @@ pub struct SetTable<
     pub refused: Reg<U<32>>,
 }
 // end{state}
+
+/// Written out rather than derived, so that a table whose parameters
+/// disagree is refused where it is made (#1873). The lowering makes the
+/// unit with `Default` too, so a netlist is refused the same way.
+impl<
+        const KW: usize,
+        const VW: usize,
+        const B: usize,
+        const D: usize,
+        const W: usize,
+    > Default for SetTable<KW, VW, B, D, W>
+{
+    fn default() -> Self {
+        assert!((1..=32).contains(&B), "SetTable: B is {B}, not 1 to 32");
+        // In 64 bits, so that B of 32 does not overflow a 32-bit usize.
+        let rows = 1u64 << B;
+        assert!(D as u64 == rows, "SetTable: D is {D}, not 1 << B = {rows}");
+        assert!((1..=32).contains(&KW), "SetTable: KW is {KW}, not 1 to 32");
+        assert!((1..=256).contains(&W), "SetTable: W is {W}, not 1 to 256");
+        SetTable {
+            key: Mems::default(),
+            val: Mems::default(),
+            used: Mems::default(),
+            busy: Reg::default(),
+            kind: Reg::default(),
+            okey: Reg::default(),
+            oval: Reg::default(),
+            set: Reg::default(),
+            rkey: Regs::default(),
+            rval: Regs::default(),
+            rused: Regs::default(),
+            refused: Reg::default(),
+        }
+    }
+}
 
 // begin{run}
 #[lower]
@@ -520,5 +555,65 @@ mod tests {
         let net = SetTable::<32, 32, 10, 1024, 4>::lowered("large");
         let v = net.verilog();
         assert!(v.contains("val_3 [0:1023]"), "{v}");
+    }
+
+    /// A `D` that is not `1 << B` is refused where the table is made
+    /// (#1873): sixteen rows for eight sets.
+    #[test]
+    #[should_panic(expected = "SetTable: D is 16, not 1 << B = 8")]
+    fn rows_that_are_not_two_to_the_set_bits_are_refused() {
+        let _ = SetTable::<16, 8, 3, 16, 4>::default();
+    }
+
+    /// The same table is refused when it is lowered, since the lowering
+    /// makes the unit the same way.
+    #[test]
+    #[should_panic(expected = "SetTable: D is 16, not 1 << B = 8")]
+    fn a_netlist_of_such_a_table_is_refused() {
+        let _ = SetTable::<16, 8, 3, 16, 4>::lowered("bad");
+    }
+
+    /// Too few rows, the case that would run past the memory: four rows
+    /// for eight sets.
+    #[test]
+    #[should_panic(expected = "SetTable: D is 4, not 1 << B = 8")]
+    fn too_few_rows_for_the_sets_are_refused() {
+        let _ = SetTable::<16, 8, 3, 4, 4>::default();
+    }
+
+    #[test]
+    #[should_panic(expected = "SetTable: B is 0, not 1 to 32")]
+    fn no_set_bits_are_refused() {
+        let _ = SetTable::<16, 8, 0, 1, 4>::default();
+    }
+
+    #[test]
+    #[should_panic(expected = "SetTable: B is 33, not 1 to 32")]
+    fn more_set_bits_than_the_hash_are_refused() {
+        let _ = SetTable::<16, 8, 33, 8, 4>::default();
+    }
+
+    #[test]
+    #[should_panic(expected = "SetTable: KW is 0, not 1 to 32")]
+    fn a_key_of_no_bits_is_refused() {
+        let _ = SetTable::<0, 8, 3, 8, 4>::default();
+    }
+
+    #[test]
+    #[should_panic(expected = "SetTable: KW is 33, not 1 to 32")]
+    fn a_key_wider_than_the_hash_is_refused() {
+        let _ = SetTable::<33, 8, 3, 8, 4>::default();
+    }
+
+    #[test]
+    #[should_panic(expected = "SetTable: W is 0, not 1 to 256")]
+    fn no_ways_are_refused() {
+        let _ = SetTable::<16, 8, 3, 8, 0>::default();
+    }
+
+    #[test]
+    #[should_panic(expected = "SetTable: W is 257, not 1 to 256")]
+    fn more_ways_than_a_byte_numbers_are_refused() {
+        let _ = SetTable::<16, 8, 3, 8, 257>::default();
     }
 }
