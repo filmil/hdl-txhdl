@@ -56,6 +56,7 @@ use txhdl_parts::remote::eth::RemoteLink;
 use txhdl_parts::remote::Remote;
 use txhdl_parts::scanout::{LinePair, ScanCtl, ScanFetch, ScanVideo};
 use txhdl_parts::sd::Sd;
+use txhdl_parts::settable::SetTable;
 use txhdl_parts::spi::Spi;
 use txhdl_parts::station::Station3;
 use txhdl_parts::syscon::Syscon;
@@ -442,6 +443,11 @@ fn main() {
         "Fifo",
         "Fifo<U<8>, 2, 4>",
         Fifo::<U<8>, 2, 4>::lowered("fifo"),
+    );
+    sheet(
+        "SetTable",
+        "SetTable<16, 8, 3, 8, 4>",
+        SetTable::<16, 8, 3, 8, 4>::lowered("settable"),
     );
     sheet(
         "LineBuf",
