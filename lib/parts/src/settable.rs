@@ -554,4 +554,44 @@ mod tests {
         let v = net.verilog();
         assert!(v.contains("val_3 [0:1023]"), "{v}");
     }
+
+    /// A `D` that is not `1 << B` is refused where the table is made
+    /// (#1873): sixteen rows for eight sets.
+    #[test]
+    #[should_panic(expected = "SetTable: D is 16, not 1 << B = 8")]
+    fn rows_that_are_not_two_to_the_set_bits_are_refused() {
+        let _ = SetTable::<16, 8, 3, 16, 4>::default();
+    }
+
+    /// The same table is refused when it is lowered, since the lowering
+    /// makes the unit the same way.
+    #[test]
+    #[should_panic(expected = "SetTable: D is 16, not 1 << B = 8")]
+    fn a_netlist_of_such_a_table_is_refused() {
+        let _ = SetTable::<16, 8, 3, 16, 4>::lowered("bad");
+    }
+
+    #[test]
+    #[should_panic(expected = "SetTable: B is 0, not 1 to 32")]
+    fn no_set_bits_are_refused() {
+        let _ = SetTable::<16, 8, 0, 1, 4>::default();
+    }
+
+    #[test]
+    #[should_panic(expected = "SetTable: KW is 33, more than 32")]
+    fn a_key_wider_than_the_hash_is_refused() {
+        let _ = SetTable::<33, 8, 3, 8, 4>::default();
+    }
+
+    #[test]
+    #[should_panic(expected = "SetTable: W is 0, not 1 to 256")]
+    fn no_ways_are_refused() {
+        let _ = SetTable::<16, 8, 3, 8, 0>::default();
+    }
+
+    #[test]
+    #[should_panic(expected = "SetTable: W is 257, not 1 to 256")]
+    fn more_ways_than_a_byte_numbers_are_refused() {
+        let _ = SetTable::<16, 8, 3, 8, 257>::default();
+    }
 }
