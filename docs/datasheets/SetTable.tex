@@ -61,7 +61,9 @@ values and whether each row is used, each a \code{Mems} of \code{W}.
 An operation reads every way at its set at once, into registers at the
 edge, the synchronous read a block RAM has. The cycle after, a loop
 over the ways finds a hit, the first free way and whether the set is
-full, answers, and writes back the one way that changes. So every
+full, and answers; the one way that changes is written back in the
+cycle the answer goes out, which is that cycle unless the answer
+waits. So every
 memory is read at one address and written at one, which a block RAM
 holds.
 \item \textbf{One operation a cycle.} An operation that reads the set
@@ -79,6 +81,9 @@ the new value with \code{HIT}, or \code{MISS}. A function of the old
 value is the user's: look up, work it out, update.
 \item \textbf{Remove} frees a key present and answers its value with
 \code{HIT}, or \code{MISS}.
+\item An answer's \code{val} is, on \code{HIT}, the value found, put in
+or freed; on \code{EXISTS}, the value the key already has; and on
+\code{MISS} or \code{FULL}, nought.
 \item An operation is taken when its answer has room: when nothing is
 being answered, or the answer is taken that cycle. Its write is made
 once, in the cycle its answer goes out, however long the answer waits.
@@ -106,7 +111,9 @@ Verilog of \code{SetTable<16, 8, 3, 8, 4>}.
 \code{SetTable<32, 32, 10, 1024, 4>}, whose values are 1024 rows of 32
 bits a way, through the check that a memory of more than 4096 bits
 fits a block RAM's ports (issue 1285).
-\item \code{the\_parameters\_agree}.
+\item \code{the\_parameters\_agree}: the tests' table has \code{D} as
+\code{1 << B}, and \code{set\_of} puts each of the first 1000 keys in
+one of its eight sets.
 \end{itemize}
 \item Its netlist is not simulated against a trace.
 \end{itemize}
