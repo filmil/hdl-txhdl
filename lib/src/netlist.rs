@@ -4121,6 +4121,10 @@ impl Lowered {
 /// first free place, the take first. A free place loads whatever is
 /// offered, valid or not, and only its valid bit says whether it holds
 /// anything, so the sender's valid enables no data bit (issue 1321).
+/// An offer is stored only when the tail has room, which is what
+/// `tx_ready` shows the sender: one made while `tx_ready` is low is
+/// left where it is and made again, and storing it as well, in a cycle
+/// the receiver frees a place, would store it twice (#1871).
 /// In Verilog, a module. Its name,
 /// `txhdl_chan` here, is replaced by the netlist's own, `<top>_txhdl_chan`
 /// (issue 979).
@@ -4135,6 +4139,7 @@ module txhdl_chan #(parameter W = 1)(
   reg [W-1:0] tail = 0;
   reg head_v = 0;
   reg tail_v = 0;
+  wire push = tx_valid & ~tail_v;
   wire pop = rx_ready & head_v;
   wire hv1 = pop ? tail_v : head_v;
   wire [W-1:0] h1 = pop ? tail : head;
@@ -4151,9 +4156,9 @@ module txhdl_chan #(parameter W = 1)(
       // on the two valid bits and not on every data bit's enable
       // (issue 1321). What a free register takes is read only once its
       // valid says so.
-      head_v <= hv1 | tx_valid;
+      head_v <= hv1 | push;
       head <= hv1 ? h1 : tx_data;
-      tail_v <= tv1 | (tx_valid & hv1);
+      tail_v <= tv1 | (push & hv1);
       tail <= tv1 ? tail : tx_data;
     end
   end
@@ -4169,7 +4174,8 @@ endmodule
 /// that cycle, `thru`, does not enter the buffer; one it does not take
 /// is buffered as the registered channel's is. `tx_ready` is the tail's
 /// room, a register, so no path runs from the receiver back to the
-/// sender. Named `<top>_txhdl_chan_u`.
+/// sender, and an offer is buffered only when there is that room, as
+/// in the registered channel (#1871). Named `<top>_txhdl_chan_u`.
 const CHAN_VERILOG_U: &str = "`timescale 1ns/1ps
 module txhdl_chan_u #(parameter W = 1)(
   input clk,
@@ -4182,7 +4188,7 @@ module txhdl_chan_u #(parameter W = 1)(
   reg head_v = 0;
   reg tail_v = 0;
   wire thru = tx_valid & ~head_v & rx_ready;
-  wire push = tx_valid & ~thru;
+  wire push = tx_valid & ~thru & ~tail_v;
   wire pop = rx_ready & head_v;
   wire hv1 = pop ? tail_v : head_v;
   wire [W-1:0] h1 = pop ? tail : head;
@@ -4238,7 +4244,7 @@ begin
         head_v <= '0'; tail_v <= '0';
       else
         h := head; t := tail; hv := head_v; tv := tail_v;
-        push := tx_valid;
+        push := tx_valid and not tail_v;
         if tx_valid = '1' and head_v = '0' and rx_ready = '1' then
           push := '0';
         end if;
@@ -4305,7 +4311,8 @@ begin
         -- alone and not on every data bit's enable (issue 1321).
         if hv = '0' then h := tx_data; end if;
         if tv = '0' then t := tx_data; end if;
-        if tx_valid = '1' then
+        -- An offer made with no room is not stored (#1871).
+        if tx_valid = '1' and tail_v = '0' then
           if hv = '0' then hv := '1'; else tv := '1'; end if;
         end if;
         head <= h; tail <= t; head_v <= hv; tail_v <= tv;
