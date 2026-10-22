@@ -23,7 +23,8 @@
 //! framebuffer console copying it, and the model is wrong in opposite
 //! directions there (issue 1561). The `scan-bulk` kinds are the same
 //! with the scanout reading a frame from the DDR3 beside them, as it
-//! does through Linux's boot on the board.
+//! does through Linux's boot on the board, and `scan-icache-miss` is
+//! `icache-miss` with the scanout showing.
 #![no_std]
 #![no_main]
 
@@ -121,9 +122,15 @@ fn in_turn(other: usize) -> i32 {
 /// over `calls` runs of a block, signed, since a figure that should be
 /// nothing may come out a little below it.
 fn say_line(name: &[u8], cycles: i32, calls: i32) {
-    let per = cycles * 100 / (calls * LINES);
     Uart::say(b"costs icache-");
     Uart::say(name);
+    put_line(cycles, calls);
+}
+
+/// A space, then `cycles` over `calls` runs of a block in hundredths of a
+/// cycle a line, signed, and the line's end.
+fn put_line(cycles: i32, calls: i32) {
+    let per = cycles * 100 / (calls * LINES);
     Uart::put(b' ');
     if per < 0 {
         Uart::put(b'-');
@@ -584,7 +591,31 @@ fn scanned() {
     let t0 = mcycle();
     while mcycle().wrapping_sub(t0) < 2 * 1_668_321 {}
     bulk(b"scan-bulk");
+    scan_icache();
     Scan::show(false);
+}
+
+/// `icache`'s miss again with the scanout showing (issue 1561): `A` run
+/// cold and then warm, `scan-icache cold <c> warm <w>`, and `costs
+/// scan-icache-miss <hundredths of a cycle a line>`, beside the same
+/// run's `icache-miss`, which `icache` timed with the scanout off. Every
+/// figure the instruction cache is charged was timed that way, while
+/// Linux's boot fetches with the scanout showing from the shim on.
+fn scan_icache() {
+    if !written(A) {
+        Uart::say(b"costs scan-icache block not written\n");
+        return;
+    }
+    fence_i();
+    let cold = run(A) as i32;
+    let warm = run(A) as i32;
+    Uart::say(b"scan-icache cold ");
+    Uart::put_decimal(cold as u32);
+    Uart::say(b" warm ");
+    Uart::put_decimal(warm as u32);
+    Uart::put(b'\n');
+    Uart::say(b"costs scan-icache-miss");
+    put_line(cold - warm, 1);
 }
 
 /// The page walk's blocks: an Sv32 root table at `PT` and a second-level
