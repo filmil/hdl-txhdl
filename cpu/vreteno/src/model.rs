@@ -345,8 +345,8 @@ pub struct Model {
     /// store's: a load translated, and a translated fetch from a new page.
     pub xlates: std::cell::Cell<u32>,
     /// A store's wait for a translation (issue 1561), which
-    /// `Timing::xlate_store` charges unless the step was `sc.w` or an AMO,
-    /// each of which is translated once, as a store.
+    /// `Timing::xlate_store` charges, or `xlate_amo` when the step was an
+    /// AMO; `sc.w` and each AMO are translated once, as a store.
     pub xlate_stores: std::cell::Cell<u32>,
     pub ifence: std::cell::Cell<bool>,
     /// Whether the step was a `fence`, and the cycle count at the last
@@ -435,16 +435,23 @@ pub struct Timing {
     /// `translation_costs_the_core_what_the_timing_mode_charges` times the
     /// RTL: a page move exactly, a load and a store 4 together with the
     /// fetch's overlap a cycle either way. The board's `costs xlate-load`
-    /// and `xlate-move` say 4 too (96910caf); a plain store is
-    /// `xlate_store`, and `sc.w` and an AMO, which answer as a load does,
-    /// are this.
+    /// and `xlate-move` say 4 too (96910caf); a store and `sc.w` are
+    /// `xlate_store`, and an AMO `xlate_amo`. `lr.w` is a load.
     pub xlate: u64,
-    /// What a plain store waits for the unit's answer under translation
+    /// What a store or `sc.w` waits for the unit's answer under translation
     /// (issue 1561). The board's `costs xlate-store` is 2 (96910caf): the
     /// store is posted, and the core goes on while part of the wait
     /// passes. The RTL's own is 3, into a memory on the core's own path
     /// (`lockstep_test`'s translation test).
     pub xlate_store: u64,
+    /// What an AMO waits for the unit's answer under translation (issue
+    /// 1561): nothing more, in the RTL, whose AMO stalls longer than the
+    /// wait and so hides it (`lockstep_test`'s translation loops with
+    /// `amoadd.w`, 12.0 cycles a round in supervisor mode against 11.9 in
+    /// machine mode). `sc.w` waits as a store does, `xlate_store`: an
+    /// `lr.w` and `sc.w` pair there waits 6.1 more, a load's 4 and a
+    /// store's 2. The board has timed neither.
+    pub xlate_amo: u64,
     /// What a load that fills a line of the data cache costs more while
     /// the scanout shows a frame (issue 1561), which reads the frame
     /// from the same DDR3 controller: the board's `costs scan-bulk-read`
@@ -510,6 +517,7 @@ impl Timing {
             walk: 0,
             xlate: 0,
             xlate_store: 0,
+            xlate_amo: 0,
             scan_fill: 0,
             fence: 0,
             fence_alone: 0,
@@ -571,6 +579,7 @@ impl Timing {
             walk: 86,
             xlate: 4,
             xlate_store: 2,
+            xlate_amo: 0,
             scan_fill: 7,
             fence: 14,
             fence_alone: 1,
@@ -1530,10 +1539,10 @@ impl Model {
         self.prev_loaded = self.loaded.get();
         c += self.walks.get() as u64 * t.walk / 2;
         c += self.xlates.get() as u64 * t.xlate;
-        // `sc.w` and an AMO wait as a load does; a plain store less.
+        // A store and `sc.w` wait less than a load, and an AMO not at all.
         let per_store = match self.excl.get() {
-            Some(_) => t.xlate,
-            None => t.xlate_store,
+            Some((3, _)) => t.xlate_amo,
+            _ => t.xlate_store,
         };
         c += self.xlate_stores.get() as u64 * per_store;
         if self.ifence.get() {
@@ -2602,14 +2611,16 @@ mod tests {
         assert_eq!(Timing::board().scan_fill, 0, "without the cache");
     }
 
-    /// What a translated store, an AMO and a load cost the step (issue
-    /// 1561), each beyond the same untranslated: a store `xlate_store`,
-    /// an AMO and a load `xlate`, once the page's entry is held. The data
+    /// What a translated store, an AMO, a load and an `lr.w` and `sc.w`
+    /// pair cost the step (issue 1561), each beyond the same
+    /// untranslated: a store `xlate_store`, an AMO `xlate_amo`, a load
+    /// and `lr.w` `xlate`, and `sc.w` `xlate_store`, once the page's entry
+    /// is held. The data
     /// is translated through `MPRV`, as the supervisor's, while the
     /// fetches stay machine mode's and untranslated.
     #[test]
     fn a_translated_store_waits_less_than_a_load_or_an_amo() {
-        use crate::isa::{amoadd_w, lw, sw};
+        use crate::isa::{amoadd_w, lr_w, lw, sc_w, sw};
         use txhdl_parts::mmu::pte::{to, A, D, R, V, W, X};
         let root = 0x8000_0000u32;
         let imem = vec![
@@ -2617,6 +2628,8 @@ mod tests {
             sw(3, 2, 4),
             amoadd_w(0, 2, 3),
             lw(3, 2, 8),
+            lr_w(4, 2),
+            sc_w(5, 2, 3),
             halt(),
         ];
         // The cycles of each step, with the data at `base`, translated or
@@ -2650,7 +2663,10 @@ mod tests {
         let (on, off) = (run(true), run(false));
         let t = Timing::board_cached();
         assert_eq!(on[1] - off[1], t.xlate_store, "a store");
-        assert_eq!(on[2] - off[2], t.xlate, "an AMO");
+        assert_eq!(on[2] - off[2], t.xlate_amo, "an AMO");
         assert_eq!(on[3] - off[3], t.xlate, "a load");
+        assert_eq!(on[4] - off[4], t.xlate, "lr.w, a load");
+        assert_eq!(on[5] - off[5], t.xlate_store, "sc.w, a store");
+        assert_eq!((t.xlate_store, t.xlate_amo), (2, 0));
     }
 }
