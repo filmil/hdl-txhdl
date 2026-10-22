@@ -2486,14 +2486,19 @@ fn translation_costs_the_core_what_the_timing_mode_charges() {
         "under translation, from the cache: a load {cached_load}, a store \
          {cached_store}, a page move {cached_moves}"
     );
-    // What the timing mode charges for each, the RTL's. A load's and a
-    // store's wait overlap the fetch by a cycle one way or the other with
-    // where the loop lies on its lines, so each is within one of it and
-    // the two together are twice it; a page move's is it.
-    let xlate = vreteno32::model::Timing::board_cached().xlate as f64;
+    // What the timing mode charges for each. A load's and a store's wait
+    // overlap the fetch by a cycle one way or the other with where the
+    // loop lies on its lines: here the RTL's load waits 5 and its store
+    // 3, 8 together, twice `xlate`, and a page move's is `xlate`. The
+    // board's are 4, 2 and 4 (issue 1561, costs image 96910caf): its
+    // store goes into the DDR3, posted, where this loop's goes into a
+    // memory on the core's own path, so a store is charged the board's
+    // `xlate_store`, within one of the RTL's.
+    let t = vreteno32::model::Timing::board_cached();
+    let (xlate, xlate_store) = (t.xlate as f64, t.xlate_store as f64);
     assert!((cached_load - xlate).abs() <= 1.0, "a load's wait");
-    assert!((cached_store - xlate).abs() <= 1.0, "a store's");
-    assert_eq!(cached_load + cached_store, 2.0 * xlate, "the two");
+    assert!((cached_store - xlate_store).abs() <= 1.0, "a store's");
+    assert_eq!(cached_load + cached_store, 2.0 * xlate, "the RTL's two");
     assert_eq!(cached_moves, xlate, "a page move's, from the cache");
     assert_eq!(moves, xlate, "and from the boot memory over the bus");
 }

@@ -316,6 +316,9 @@ pub struct Model {
     pub wfi_now: std::cell::Cell<bool>,
     pub last_wfi: u64,
     pub contended: bool,
+    /// Whether the scanout shows a frame from the DDR3 (issue 1561),
+    /// which the machine sets before each step, as `contended`.
+    pub scan_on: bool,
     /// The instruction cache's lines in the timing mode, each the line's
     /// address plus one, the line the last instruction was in, and
     /// whether control fell through to this one (issue 1561).
@@ -341,6 +344,9 @@ pub struct Model {
     /// The waits for a translation the step made (issue 1561): a load or
     /// a store translated, and a translated fetch from a new page.
     pub xlates: std::cell::Cell<u32>,
+    /// Of those, the stores (issue 1561), which `Timing::xlate_store`
+    /// charges unless the step was `sc.w` or an AMO.
+    pub xlate_stores: std::cell::Cell<u32>,
     pub ifence: std::cell::Cell<bool>,
     /// Whether the step was a `fence`, and the cycle count at the last
     /// store into the DDR3 (issue 1561).
@@ -427,8 +433,24 @@ pub struct Timing {
     /// through `MPP`'s tables. 4, as
     /// `translation_costs_the_core_what_the_timing_mode_charges` times the
     /// RTL: a page move exactly, a load and a store 4 together with the
-    /// fetch's overlap a cycle either way.
+    /// fetch's overlap a cycle either way. The board's `costs xlate-load`
+    /// and `xlate-move` say 4 too (96910caf); a plain store is
+    /// `xlate_store`, and `sc.w` and an AMO, which answer as a load does,
+    /// are this.
     pub xlate: u64,
+    /// What a plain store waits for the unit's answer under translation
+    /// (issue 1561). The board's `costs xlate-store` is 2 (96910caf): the
+    /// store is posted, and the core goes on while part of the wait
+    /// passes. The RTL's own is 3, into a memory on the core's own path
+    /// (`lockstep_test`'s translation test).
+    pub xlate_store: u64,
+    /// What a load that fills a line of the data cache costs more while
+    /// the scanout shows a frame (issue 1561), which reads the frame
+    /// from the same DDR3 controller: the board's `costs scan-bulk-read`
+    /// against `bulk-read` in the same run, 17.15 against 15.41 a word
+    /// (96910caf), 1.74 a word and so about 7 a line of four. Stores are
+    /// 3% dearer there, and are not charged.
+    pub scan_fill: u64,
     /// What a `fence` waits, at most, for a store into the DDR3 still on
     /// its way (issue 1561): the most, right after the store, less the
     /// cycles since.
@@ -483,6 +505,8 @@ impl Timing {
             icache: None,
             walk: 0,
             xlate: 0,
+            xlate_store: 0,
+            scan_fill: 0,
             fence: 0,
             fence_alone: 0,
         }
@@ -519,7 +543,10 @@ impl Timing {
     /// streams loads from the DDR3 2.57 more, charged as 3. With these the
     /// teapot's list on the model is 35.69M against the board's 37.18M, 4.0%
     /// under, and linked hot first 30.34M against 30.36M (#1752). A page walk
-    /// is two loads that miss.
+    /// is two loads that miss. From the translation and scanout blocks on
+    /// the board (issue 1561, costs image 96910caf, flagship 93a1e1c6): a
+    /// translated store waits 2, and a load that fills a data line while
+    /// the scanout shows costs 7 more, 1.74 a word.
     pub fn board_cached() -> Self {
         let mut t = Timing {
             hit: Some(2),
@@ -539,6 +566,8 @@ impl Timing {
             }),
             walk: 86,
             xlate: 4,
+            xlate_store: 2,
+            scan_fill: 7,
             fence: 14,
             fence_alone: 1,
             ..Self::board()
@@ -603,6 +632,7 @@ impl Default for Model {
             wfi_now: std::cell::Cell::new(false),
             last_wfi: 0,
             contended: false,
+            scan_on: false,
             ic: Vec::new(),
             last_line: u32::MAX,
             fell: false,
@@ -615,6 +645,7 @@ impl Default for Model {
             prev_loaded: 0,
             walks: std::cell::Cell::new(0),
             xlates: std::cell::Cell::new(0),
+            xlate_stores: std::cell::Cell::new(0),
             ifence: std::cell::Cell::new(false),
             fenced: std::cell::Cell::new(false),
             stored_at: 0,
@@ -859,7 +890,9 @@ impl Model {
                 Access::Fetch => self.hw_tlb.borrow_mut().fetch_moves(va),
                 _ => true,
             };
-            if waits {
+            if waits && access == Access::Store {
+                self.xlate_stores.set(self.xlate_stores.get() + 1);
+            } else if waits {
                 self.xlates.set(self.xlates.get() + 1);
             }
         }
@@ -1419,6 +1452,7 @@ impl Model {
         self.loaded.set(0);
         self.walks.set(0);
         self.xlates.set(0);
+        self.xlate_stores.set(0);
         self.ifence.set(false);
         self.fenced.set(false);
         let pc = self.pc;
@@ -1492,6 +1526,12 @@ impl Model {
         self.prev_loaded = self.loaded.get();
         c += self.walks.get() as u64 * t.walk / 2;
         c += self.xlates.get() as u64 * t.xlate;
+        // `sc.w` and an AMO wait as a load does; a plain store less.
+        let per_store = match self.excl.get() {
+            Some(_) => t.xlate,
+            None => t.xlate_store,
+        };
+        c += self.xlate_stores.get() as u64 * per_store;
         if self.ifence.get() {
             self.ic.clear();
             self.last_line = u32::MAX;
@@ -1530,6 +1570,10 @@ impl Model {
             };
             if store && cached(addr) {
                 c += busy * contention.0;
+            }
+            if hit.is_some() && !store && !held && cached(addr) && self.scan_on
+            {
+                c += t.scan_fill;
             }
             if hit.is_some() && !store && cached(addr) {
                 if self.dc.len() != 256 {
@@ -2110,7 +2154,7 @@ mod tests {
     /// page other than the last one fetched from, none for a fetch from
     /// the same page, none in machine mode, and one for a load there that
     /// `MPRV` translates; a write of `satp` and a trap forget the fetch's
-    /// page.
+    /// page. A store's is counted apart, for `xlate_store`.
     #[test]
     fn the_timing_mode_counts_the_waits_for_a_translation() {
         use txhdl_parts::mmu::pte::{to, A, D, R, V, W, X};
@@ -2128,8 +2172,9 @@ mod tests {
         m.csr_write(CSR_SATP, 1 << 31 | root >> 12);
         let waits = |m: &Model, f: &dyn Fn(&Model)| {
             m.xlates.set(0);
+            m.xlate_stores.set(0);
             f(m);
-            m.xlates.get()
+            m.xlates.get() + m.xlate_stores.get()
         };
         let load = |va: u32| {
             move |m: &Model| {
@@ -2148,6 +2193,9 @@ mod tests {
         };
         assert_eq!(waits(&m, &load(0x0080_0010)), 1, "a load");
         assert_eq!(waits(&m, &store(0x0080_0010)), 1, "a store");
+        assert_eq!(m.xlate_stores.get(), 1, "counted as a store's");
+        assert_eq!(waits(&m, &load(0x0080_0010)), 1, "a load");
+        assert_eq!(m.xlate_stores.get(), 0, "not as a store's");
         assert_eq!(waits(&m, &load(0x0080_0014)), 1, "every one, held or not");
         assert_eq!(waits(&m, &fetch(0x0080_1000)), 1, "a fetch's first page");
         assert_eq!(waits(&m, &fetch(0x0080_1ff0)), 0, "the same page");
@@ -2164,7 +2212,9 @@ mod tests {
         m.trap(CAUSE_BREAKPOINT, 0);
         m.prv = 1;
         assert_eq!(waits(&m, &fetch(0x0080_2008)), 1, "a trap forgets it");
-        assert_eq!(m.timing.as_ref().unwrap().xlate, 4, "the RTL's wait");
+        let t = m.timing.as_ref().unwrap();
+        assert_eq!(t.xlate, 4, "the RTL's wait, and the board's");
+        assert_eq!(t.xlate_store, 2, "the board's for a store");
     }
 
     /// The timing mode charges the walks the hart's own buffers make, as
@@ -2514,5 +2564,37 @@ mod tests {
         assert_eq!(run(true) - run(false), 2 * 7, "two fills, each shared");
         assert_eq!(Timing::board_cached().guessed, 5);
         assert_eq!(Timing::board().guessed, 2);
+    }
+
+    /// A load that fills a line of the data cache costs `scan_fill` more
+    /// while the scanout shows a frame (issue 1561), and nothing else
+    /// does: of two loads from two lines of the DDR3, one again from the
+    /// first, which the cache holds, and a store, only the two fills pay.
+    #[test]
+    fn a_fill_while_the_scanout_shows_costs_scan_fill() {
+        use crate::isa::{lw, sw};
+        let imem = vec![
+            lui(2, 0x4010_0000 >> 12),
+            lw(3, 2, 0),
+            lw(3, 2, 16),
+            lw(3, 2, 4),
+            sw(3, 2, 32),
+            halt(),
+        ];
+        let run = |scan_on: bool| {
+            let mut m = Model {
+                timing: Some(Timing::board_cached()),
+                scan_on,
+                ..Model::default()
+            };
+            while m.halted.is_none() {
+                m.step(&imem, None);
+            }
+            m.cycles
+        };
+        let fill = Timing::board_cached().scan_fill;
+        assert_eq!(fill, 7, "the board's, about 1.74 a word");
+        assert_eq!(run(true) - run(false), 2 * fill, "the two fills");
+        assert_eq!(Timing::board().scan_fill, 0, "without the cache");
     }
 }

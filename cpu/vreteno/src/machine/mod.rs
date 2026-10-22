@@ -546,6 +546,9 @@ impl Machine {
         let was = self.model.cycles;
         let pc = self.model.pc;
         self.model.contended = !self.parked1 && Self::working(&self.model1);
+        let scan_on = self.board.0.borrow().scanout().is_some();
+        self.model.scan_on = scan_on;
+        self.model1.scan_on = scan_on;
         if let Some((at, callers)) = &mut self.watch {
             if pc == *at && interrupt.is_none() {
                 let e = callers.entry(self.model.x[1]).or_insert((0, 0));
