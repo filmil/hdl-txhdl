@@ -2981,6 +2981,9 @@ thread_local! {
     /// waits (#1871).
     static AXI: std::cell::RefCell<Vec<String>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// The `#[axi]` ports the loop being lowered puts on (#1871).
+    static AXI_PUT: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
     /// Each field of a value this unit's lowering has written, `p.h`, by
     /// its text, with the value's type, the value's own text and the
     /// fields so far, so that `p.h.lo` goes on from it (issue 1648).
@@ -5635,10 +5638,21 @@ fn axi_hold(
         }
     }
     let mut held = Vec::new();
-    for tx in AXI.with(|a| a.borrow().clone()) {
+    // The ports this loop puts on, each with the one drive of its data
+    // that the lowering of a loop writes; a port put on and not found
+    // is a lowering this does not know, refused rather than left
+    // without its hold.
+    for tx in AXI_PUT.with(|p| p.take()) {
         let head = format!("NlS::Drive(NlT::Name(\"{tx}_data\".to_string()), ");
-        let Some(s) = stmts.iter_mut().find(|s| s.starts_with(&head)) else {
-            continue;
+        let mut drives = stmts.iter_mut().filter(|s| s.starts_with(&head));
+        let (Some(s), None) = (drives.next(), drives.next()) else {
+            return Err(err(
+                span,
+                &format!(
+                    "`{tx}` is marked `#[axi]`, and its data is not one \
+                     drive here, so its hold cannot be written (#1871)"
+                ),
+            ));
         };
         let e = s[head.len()..s.len() - 1].to_string();
         *s = format!(
@@ -5822,6 +5836,12 @@ fn lower_stmts(
             // waits for the take. The marks tell `seq` which drives take
             // the state alone, and are a comment to Rust (#1871).
             if AXI.with(|a| a.borrow().contains(&tx.to_string())) {
+                AXI_PUT.with(|p| {
+                    let mut p = p.borrow_mut();
+                    if !p.contains(&tx.to_string()) {
+                        p.push(tx.to_string());
+                    }
+                });
                 let e = match tr(&value, &cx.subst) {
                     Ok(e) => e,
                     Err(m) => return Err(err(ts[0].span(), &m)),
@@ -8384,6 +8404,8 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // The hidden registers of the processes of several waits: the
     // name and the width of each (issue 501).
     let mut hidden: Vec<(String, String, Span)> = Vec::new();
+    // The `#[axi]` ports put on so far, one process each (#1871).
+    let mut axi_put: Vec<String> = Vec::new();
     for lbody in &loops {
         let toks: Vec<TokenTree> = lbody.stream().into_iter().collect();
         let mut cx = Cx {
@@ -8404,6 +8426,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         // is a state machine, a state per wait, its number in a
         // register the unit does not declare (issue 501).
         let sts = stmts_of(&toks);
+        AXI_PUT.with(|p| p.borrow_mut().clear());
         let waits = seq::waits_in(&sts);
         let mut stmts = if waits > 1 {
             let machines = hidden
@@ -8455,6 +8478,18 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         // two registers of its own, written at every edge whatever the
         // loop waits on, so in a process of their own (#1871).
         for (tx, ty) in held {
+            // One process drives a port's valid; a second would drive it
+            // too, and its hold twice.
+            if axi_put.contains(&tx) {
+                return err(
+                    lbody.span(),
+                    &format!(
+                        "`{tx}` is marked `#[axi]` and put on by two \
+                         processes: one process sends on a port"
+                    ),
+                );
+            }
+            axi_put.push(tx.clone());
             let (w, h) = (format!("{tx}_axi_wait"), format!("{tx}_axi_hold"));
             let regs = [
                 format!(
@@ -8803,7 +8838,7 @@ fn take_axi(
         return Ok((item, Vec::new()));
     };
     let bt: Vec<TokenTree> = body.stream().into_iter().collect();
-    let Some(r) = bt.iter().position(|t| is_ident(t, "run")) else {
+    let Some(r) = fn_run(&bt) else {
         return Ok((item, Vec::new()));
     };
     let mut names: Vec<(String, Span)> = Vec::new();
@@ -8852,7 +8887,15 @@ fn take_axi(
         {
             match part {
                 [] => {}
-                [TokenTree::Ident(n)] => names.push((n.to_string(), n.span())),
+                [TokenTree::Ident(n)] => {
+                    if names.iter().any(|(m, _)| *m == n.to_string()) {
+                        return Err(err(
+                            n.span(),
+                            &format!("`#[axi]` names `{n}` twice"),
+                        ));
+                    }
+                    names.push((n.to_string(), n.span()))
+                }
                 _ => {
                     return Err(err(
                         part[0].span(),
@@ -8877,6 +8920,13 @@ fn take_axi(
     Ok((toks.into_iter().collect(), names))
 }
 
+/// Where `run` is named in an impl's body: the `run` after `fn`, so
+/// that another item's mention of the word is not it.
+fn fn_run(bt: &[TokenTree]) -> Option<usize> {
+    (1..bt.len())
+        .find(|&k| is_ident(&bt[k], "run") && is_ident(&bt[k - 1], "fn"))
+}
+
 /// The impl's tokens with `run`'s body opened by `p.axi();` for each
 /// port `#[axi(..)]` named, so the runtime's `put` on it offers as the
 /// netlist's does (#1871).
@@ -8889,7 +8939,7 @@ fn marking_axi(toks: &[TokenTree], ports: &[String]) -> Vec<TokenTree> {
         return out;
     };
     let mut bt: Vec<TokenTree> = body.stream().into_iter().collect();
-    let Some(r) = bt.iter().position(|t| is_ident(t, "run")) else {
+    let Some(r) = fn_run(&bt) else {
         return out;
     };
     let brace = |t: &TokenTree| match t {
