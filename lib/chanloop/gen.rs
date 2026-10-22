@@ -9,7 +9,12 @@
 //! neither rises first. `Pair` joins them by `chan()`, which lowers to
 //! the two-entry `pair_txhdl_chan`, whose ready is a register.
 //!
-//! Run with three paths: it writes `count.v`, `stage.v` and `pair.v`.
+//! `PairU` is the same pair over an unregistered channel; its netlist
+//! holds both kinds of channel buffer, which `offer_tb` drives with a
+//! sender that does not wait for ready (#1871).
+//!
+//! Run with five paths: it writes `count.v`, `stage.v`, `pair.v`,
+//! `pair_u.v` and `pair_u.vhd`.
 use txhdl::comp::{
     chan, join2, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit,
 };
@@ -66,14 +71,36 @@ impl Unit<(), Tx<U<8>>> for Pair {
     }
 }
 
+/// The same two joined by an unregistered channel, which lowers to
+/// `pair_u_txhdl_chan_u`. Its netlist is here for its two buffers, the
+/// registered and the unregistered, which `offer_tb` drives on their
+/// own (#1871).
+#[derive(Trace, Default)]
+pub struct PairU {
+    pub count: Count,
+    pub stage: Stage,
+}
+
+#[lower]
+impl Unit<(), Tx<U<8>>> for PairU {
+    async fn run(&mut self, _i: (), out: Tx<U<8>>) {
+        #[unregistered]
+        let (tx, rx) = chan::<U<8>, DefaultClock>();
+        join2(self.count.run((), tx), self.stage.run(rx, out)).await;
+    }
+}
+
 fn main() {
     let paths: Vec<String> = std::env::args().skip(1).collect();
-    let [count, stage, pair] = paths.as_slice() else {
-        panic!("usage: gen COUNT.v STAGE.v PAIR.v");
+    let [count, stage, pair, pair_u, pair_u_vhd] = paths.as_slice() else {
+        panic!("usage: gen COUNT.v STAGE.v PAIR.v PAIR_U.v PAIR_U.vhd");
     };
-    std::fs::write(count, Count::lowered("count").verilog()).unwrap();
-    std::fs::write(stage, Stage::lowered("stage").verilog()).unwrap();
-    std::fs::write(pair, Pair::lowered("pair").verilog()).unwrap();
+    let w = |p: &str, s: String| std::fs::write(p, s).unwrap();
+    w(count, Count::lowered("count").verilog());
+    w(stage, Stage::lowered("stage").verilog());
+    w(pair, Pair::lowered("pair").verilog());
+    w(pair_u, PairU::lowered("pair_u").verilog());
+    w(pair_u_vhd, PairU::lowered("pair_u").vhdl());
 }
 
 /// No channel at all: a wire in and a wire out.
