@@ -2928,12 +2928,9 @@ impl<'a> Gl<'a> {
                 fog: self.fogged(&w, [a, b, c], at3),
                 alpha: self.alpha_planed(&w, [a, b, c], s),
             };
-            // No unit textures it when the first is empty, since
-            // `texturing` fills its units in order. The entry is then
-            // drawn as it is, and no texture slots are worked out or
-            // moved (#1825): moving the empty ones cost fourteen calls
-            // of `memcpy` a triangle.
-            if texture[0].is_none() {
+            // With no unit on, the entry is drawn as it is, and no
+            // texture slots are worked out or moved (#1825).
+            if texture.iter().all(Option::is_none) {
                 self.push_drawn(w, slot, planes);
                 continue;
             }
@@ -2949,8 +2946,11 @@ impl<'a> Gl<'a> {
                 .iter()
                 .zip(&tex)
                 .all(|(t, s)| t.is_some() == s.is_some());
-            let tex = if whole { tex } else { [None; UNITS] };
-            self.push_textured(w, slot, tex, planes);
+            if whole {
+                self.push_textured(w, slot, tex, planes);
+            } else {
+                self.push_drawn(w, slot, planes);
+            }
         }
     }
 
