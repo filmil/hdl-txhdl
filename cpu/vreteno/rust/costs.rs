@@ -15,12 +15,22 @@
 //! block of straight-line code written into the DDR3 that times itself,
 //! so that no fetch of this program's own is counted. The cache is
 //! direct-mapped, 1024 lines of sixteen bytes.
+//!
+//! The bulk kinds are a megabyte read, set to zero and copied, a word at
+//! a time as Linux's `memset` and `memcpy` go, from memory no cache
+//! holds: `costs bulk-<kind> <hundredths of a cycle a word>`. Linux's
+//! boot on the board spends its early part setting memory and its
+//! framebuffer console copying it, and the model is wrong in opposite
+//! directions there (issue 1561). The `scan-bulk` kinds are the same
+//! with the scanout reading a frame from the DDR3 beside them, as it
+//! does through Linux's boot on the board, and `scan-icache-miss` is
+//! `icache-miss` with the scanout showing.
 #![no_std]
 #![no_main]
 
 use core::arch::asm;
 use core::sync::atomic::{AtomicU32, Ordering};
-use vreteno_hal::{entry, halt, map, Hart1, Uart};
+use vreteno_hal::{entry, halt, map, Hart1, Scan, Uart};
 
 entry!(main);
 
@@ -112,9 +122,15 @@ fn in_turn(other: usize) -> i32 {
 /// over `calls` runs of a block, signed, since a figure that should be
 /// nothing may come out a little below it.
 fn say_line(name: &[u8], cycles: i32, calls: i32) {
-    let per = cycles * 100 / (calls * LINES);
     Uart::say(b"costs icache-");
     Uart::say(name);
+    put_line(cycles, calls);
+}
+
+/// A space, then `cycles` over `calls` runs of a block in hundredths of a
+/// cycle a line, signed, and the line's end.
+fn put_line(cycles: i32, calls: i32) {
+    let per = cycles * 100 / (calls * LINES);
     Uart::put(b' ');
     if per < 0 {
         Uart::put(b'-');
@@ -479,6 +495,378 @@ fn icache4() {
     say_line(b"scatter-warm", warm[3], 1);
 }
 
+/// The bulk blocks' two megabytes: a read and a set walk `FROM`, and a
+/// copy moves it to `TO`, a word at a time, four words a round, as the
+/// kernel's `memset` and `memcpy` do (issue 1561).
+const FROM: usize = map::DDR3 + 0x40_0000;
+const TO: usize = map::DDR3 + 0x60_0000;
+const BULK: usize = 0x10_0000;
+
+/// The cycles of one pass of `$body`, four words a round from `a0` up
+/// to `a1`, with `a2` the copy's target, and a fence after.
+macro_rules! bulk {
+    ($($body:literal),*) => {{
+        let t0 = mcycle();
+        unsafe {
+            asm!(
+                "1:",
+                $($body,)*
+                "addi a0, a0, 16",
+                "bne a0, a1, 1b",
+                "fence",
+                inout("a0") FROM => _,
+                in("a1") FROM + BULK,
+                inout("a2") TO => _,
+                out("t0") _,
+                out("t1") _,
+                out("t2") _,
+                out("t3") _,
+            )
+        };
+        mcycle().wrapping_sub(t0)
+    }};
+}
+
+/// A megabyte read, set and copied, each from memory the data cache
+/// does not hold: `<tag> read <c> set <c> copy <c>`, the cycles of each,
+/// then `costs <tag>-<kind> <hundredths of a cycle a word>`.
+fn bulk(tag: &[u8]) {
+    let read = bulk!(
+        "lw t0, 0(a0)",
+        "lw t1, 4(a0)",
+        "lw t2, 8(a0)",
+        "lw t3, 12(a0)"
+    );
+    let set = bulk!(
+        "sw x0, 0(a0)",
+        "sw x0, 4(a0)",
+        "sw x0, 8(a0)",
+        "sw x0, 12(a0)"
+    );
+    let copy = bulk!(
+        "lw t0, 0(a0)",
+        "lw t1, 4(a0)",
+        "lw t2, 8(a0)",
+        "lw t3, 12(a0)",
+        "sw t0, 0(a2)",
+        "sw t1, 4(a2)",
+        "sw t2, 8(a2)",
+        "sw t3, 12(a2)",
+        "addi a2, a2, 16"
+    );
+    Uart::say(tag);
+    Uart::say(b" read ");
+    Uart::put_decimal(read);
+    Uart::say(b" set ");
+    Uart::put_decimal(set);
+    Uart::say(b" copy ");
+    Uart::put_decimal(copy);
+    Uart::put(b'\n');
+    let words = (BULK / 4) as u64;
+    for (name, c) in [(&b"read"[..], read), (b"set", set), (b"copy", copy)] {
+        Uart::say(b"costs ");
+        Uart::say(tag);
+        Uart::put(b'-');
+        Uart::say(name);
+        Uart::put(b' ');
+        Uart::put_decimal((c as u64 * 100 / words) as u32);
+        Uart::put(b'\n');
+    }
+}
+
+/// Where the scanned pass shows from: a frame of the DDR3 clear of the
+/// blocks', which the scanout reads whatever it holds.
+const FRAME: u32 = (map::DDR3 + 0x200_0000) as u32;
+
+/// The bulk blocks again with the scanout showing a frame from the DDR3,
+/// as Linux's boot on the board has it from the shim on (issue 1561):
+/// `costs scan-bulk-<kind>`. The scanout reads 640 by 480 words sixty
+/// times a second from the same controller, which the model does not
+/// charge, so the model gives the same figures as `bulk`'s and the board
+/// says what the scanout costs a stream. The scanout takes the frame at
+/// the next vertical blanking, so the pass waits two frames first.
+fn scanned() {
+    Scan::base(FRAME);
+    Scan::show(true);
+    let t0 = mcycle();
+    while mcycle().wrapping_sub(t0) < 2 * 1_668_321 {}
+    bulk(b"scan-bulk");
+    scan_icache();
+    Scan::show(false);
+}
+
+/// `icache`'s miss again with the scanout showing (issue 1561): `A` run
+/// cold and then warm, `scan-icache cold <c> warm <w>`, and `costs
+/// scan-icache-miss <hundredths of a cycle a line>`, beside the same
+/// run's `icache-miss`, which `icache` timed with the scanout off. Every
+/// figure the instruction cache is charged was timed that way, while
+/// Linux's boot fetches with the scanout showing from the shim on.
+fn scan_icache() {
+    if !written(A) {
+        Uart::say(b"costs scan-icache block not written\n");
+        return;
+    }
+    fence_i();
+    let cold = run(A) as i32;
+    let warm = run(A) as i32;
+    Uart::say(b"scan-icache cold ");
+    Uart::put_decimal(cold as u32);
+    Uart::say(b" warm ");
+    Uart::put_decimal(warm as u32);
+    Uart::put(b'\n');
+    Uart::say(b"costs scan-icache-miss");
+    put_line(cold - warm, 1);
+}
+
+/// The page walk's blocks: an Sv32 root table at `PT` and a second-level
+/// table after it, mapping the 4 KiB page at `VA_PAGE` and the 4 MiB
+/// megapage at `VA_MEGA` both onto `WORD`'s.
+const PT: usize = map::DDR3 + 0x70_0000;
+const VA_PAGE: usize = 0x0040_0000;
+const VA_MEGA: usize = 0x0080_0000;
+/// Valid, readable, writable, accessed and dirty.
+const LEAF: u32 = 0xc7;
+
+/// `mstatus`'s `MPRV`, with `MPP` supervisor: a load in machine mode is
+/// translated as the supervisor's, while fetches are not.
+const MPRV_S: usize = (1 << 17) | (1 << 11);
+
+/// The cycles of `N` rounds of `$body` with `MPRV` set, loads at `a3`;
+/// `MPRV` is cleared again inside the same block, so nothing the
+/// compiler writes runs translated.
+macro_rules! walked {
+    ($at:expr, $($body:literal),*) => {{
+        let c: u32;
+        unsafe {
+            asm!(
+                "csrc mstatus, {mpp}",
+                "csrs mstatus, {mprv}",
+                "csrr {t0}, mcycle",
+                "1:",
+                $($body,)*
+                "addi {n}, {n}, -1",
+                "bnez {n}, 1b",
+                "csrr {c}, mcycle",
+                "csrc mstatus, {mprv}",
+                "sub {c}, {c}, {t0}",
+                mpp = in(reg) 3usize << 11,
+                mprv = in(reg) MPRV_S,
+                t0 = out(reg) _,
+                c = out(reg) c,
+                n = inout(reg) N => _,
+                in("a3") $at,
+                out("a2") _,
+            )
+        };
+        c
+    }};
+}
+
+/// A data walk after `sfence.vma`, through a page and through a
+/// megapage, with the tables in a DDR3 row the walks keep open: `walk
+/// page <c> mega <c> sfence <c> hit <c> empty <c>`, the cycles of `N`
+/// rounds of each, then `costs walk-page` and `costs walk-mega`, a
+/// walk's cycles in hundredths: the round less `sfence.vma` alone and a
+/// load the TLB holds, with the loop counted once.
+fn walk() {
+    let root = PT as *mut u32;
+    let second = (PT + 0x1000) as *mut u32;
+    let ppn = |at: usize| (at >> 12) as u32;
+    unsafe {
+        core::ptr::write_volatile(
+            root.add(VA_PAGE >> 22),
+            ppn(PT + 0x1000) << 10 | 1,
+        );
+        core::ptr::write_volatile(
+            root.add(VA_MEGA >> 22),
+            ppn(map::DDR3) << 10 | LEAF,
+        );
+        core::ptr::write_volatile(
+            second.add((VA_PAGE >> 12) & 0x3ff),
+            ppn(WORD) << 10 | LEAF,
+        );
+        asm!("fence", "csrw satp, {0}", "sfence.vma", in(reg) (1 << 31) | ppn(PT));
+    }
+    let page = VA_PAGE + (WORD & 0xfff);
+    let mega = VA_MEGA + (WORD - map::DDR3);
+    let p = walked!(page, "sfence.vma", "lw a2, 0(a3)");
+    let m = walked!(mega, "sfence.vma", "lw a2, 0(a3)");
+    let s = walked!(page, "sfence.vma");
+    let h = walked!(page, "lw a2, 0(a3)");
+    let e = walked!(page,);
+    unsafe { asm!("csrw satp, x0", "sfence.vma") };
+    Uart::say(b"walk page ");
+    for (i, c) in [p, m, s, h, e].into_iter().enumerate() {
+        if i > 0 {
+            Uart::say(
+                [&b" mega "[..], b" sfence ", b" hit ", b" empty "][i - 1],
+            );
+        }
+        Uart::put_decimal(c);
+    }
+    Uart::put(b'\n');
+    for (name, c) in [(&b"page"[..], p), (b"mega", m)] {
+        let per = (c as i32 - s as i32 - h as i32 + e as i32) * 100 / N as i32;
+        Uart::say(b"costs walk-");
+        Uart::say(name);
+        Uart::put(b' ');
+        if per < 0 {
+            Uart::put(b'-');
+        }
+        Uart::put_decimal(per.unsigned_abs());
+        Uart::put(b'\n');
+    }
+}
+
+/// One of the translation blocks' loops, 32 rounds of `$body` twice and
+/// the second kept, timed with `rdcycle`, its cycles stored at `$off`
+/// from `a1`. A round's far side, for the jumps, is placed after the
+/// loop, past `$gap` bytes, and jumps back to the round's end.
+macro_rules! xloop {
+    ($body:literal, $gap:literal, $off:literal) => {
+        concat!(
+            "li t1, 2\n",
+            "30: li t0, 32\n",
+            "rdcycle t2\n",
+            "31: ",
+            $body,
+            "\n",
+            "32: addi t0, t0, -1\n",
+            "bnez t0, 31b\n",
+            "rdcycle t3\n",
+            "addi t1, t1, -1\n",
+            "bnez t1, 30b\n",
+            "sub t3, t3, t2\n",
+            "sw t3, ",
+            $off,
+            "(a1)\n",
+            "j 34f\n",
+            ".skip ",
+            $gap,
+            "\n",
+            "33: j 32b\n",
+            "34:\n",
+        )
+    };
+}
+
+/// The five loops: a load, the empty loop, a store, a jump to a label in
+/// the same page, and one to a label on the next page.
+macro_rules! xloops {
+    ($a:literal, $b:literal, $c:literal, $d:literal, $e:literal) => {
+        concat!(
+            xloop!("lw t4, 0(a0)", "0", $a),
+            xloop!("addi t4, t4, 1", "0", $b),
+            xloop!("sw t4, 0(a0)", "0", $c),
+            xloop!("j 33f", "0", $d),
+            xloop!("j 33f", "4096", $e),
+        )
+    };
+}
+
+/// The cycles of the translation blocks: supervisor mode's five, then
+/// machine mode's.
+static mut XLATE: [u32; 10] = [0; 10];
+
+/// What translation costs the core (issue 1561): the same five loops in
+/// supervisor mode, with this program's own 4 MiB of the DDR3 mapped to
+/// itself by a megapage, and in machine mode, untranslated. Under
+/// translation the core waits for the unit's answer on each load and
+/// store, and each time the fetch moves to another page, which machine
+/// mode never does; the model charges that as `Timing::xlate`, 4 from
+/// the RTL. `smode s <load> <alu> <store> <near> <far> m <...>`, the
+/// cycles of 32 rounds each, then `costs xlate-load`, `xlate-store` and
+/// `xlate-move` in hundredths of a cycle: a load's or a store's round
+/// beyond the empty loop's, and half the far jump's beyond the near
+/// one's, each supervisor mode's less machine mode's.
+fn smode() {
+    let root = (PT + 0x2000) as *mut u32;
+    let ppn = |at: usize| (at >> 12) as u32;
+    unsafe {
+        for i in 0..1024 {
+            core::ptr::write_volatile(root.add(i), 0);
+        }
+        // Valid, readable, writable, runnable, accessed and dirty.
+        core::ptr::write_volatile(
+            root.add(map::DDR3 >> 22),
+            ppn(map::DDR3) << 10 | LEAF | 8,
+        );
+        asm!(
+            "fence",
+            "csrw satp, {0}",
+            "sfence.vma",
+            in(reg) (1 << 31) | ppn(PT + 0x2000)
+        );
+    }
+    let out = core::ptr::addr_of_mut!(XLATE) as usize;
+    unsafe {
+        asm!(
+            // No interrupt while out of machine mode, and the trap that
+            // brings it back to the label after supervisor mode's loops.
+            "csrrw {mie}, mie, x0",
+            "la t0, 5f",
+            "csrrw {mtvec}, mtvec, t0",
+            "csrwi mcounteren, 1",
+            "li t0, 0x1800",
+            "csrc mstatus, t0",
+            "li t0, 0x800",
+            "csrs mstatus, t0",
+            "la t0, 2f",
+            "csrw mepc, t0",
+            "mret",
+            // Each mode's copy of the loops starts a page, so that each
+            // round's lines lie the same for both.
+            ".balign 4096",
+            "2:",
+            xloops!("0", "4", "8", "12", "16"),
+            "ecall",
+            ".balign 4096",
+            "5:",
+            xloops!("20", "24", "28", "32", "36"),
+            "csrw mtvec, {mtvec}",
+            "csrw mie, {mie}",
+            "csrw satp, x0",
+            "sfence.vma",
+            mie = out(reg) _,
+            mtvec = out(reg) _,
+            in("a0") WORD,
+            in("a1") out,
+            out("t0") _,
+            out("t1") _,
+            out("t2") _,
+            out("t3") _,
+            out("t4") _,
+        );
+    }
+    let c: [u32; 10] =
+        unsafe { core::ptr::read_volatile(core::ptr::addr_of!(XLATE)) };
+    Uart::say(b"smode s");
+    for (i, v) in c.iter().enumerate() {
+        if i == 5 {
+            Uart::say(b" m");
+        }
+        Uart::put(b' ');
+        Uart::put_decimal(*v);
+    }
+    Uart::put(b'\n');
+    let d = |k: usize| c[k] as i32 - c[5 + k] as i32;
+    let kinds = [
+        (&b"load"[..], (d(0) - d(1)) * 100 / 32),
+        (b"store", (d(2) - d(1)) * 100 / 32),
+        (b"move", (d(4) - d(3)) * 100 / 64),
+    ];
+    for (name, per) in kinds {
+        Uart::say(b"costs xlate-");
+        Uart::say(name);
+        Uart::put(b' ');
+        if per < 0 {
+            Uart::put(b'-');
+        }
+        Uart::put_decimal(per.unsigned_abs());
+        Uart::put(b'\n');
+    }
+}
+
 fn mcycle() -> u32 {
     let c: u32;
     unsafe { asm!("csrr {0}, mcycle", out(reg) c) };
@@ -554,6 +942,10 @@ fn main() -> ! {
     // goes around it every time. The `lui` is a cycle the row carries on
     // every board alike, so two boards compare.
     say(b"dmem-load", timed!("lui a3, 1", "lw a2, 0(a3)"), empty);
+    bulk(b"bulk");
+    walk();
+    smode();
+    scanned();
     Uart::say(b"costs done\n");
     halt()
 }
