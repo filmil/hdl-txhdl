@@ -336,6 +336,15 @@ wire passes nothing in a hundred cycles, and the same pair joined by a
 channel passes a word a cycle.
 A sender that offers before it has room, as AXI requires of one, would
 make the receiver's wait harmless; that is \#1871.
+Both buffers store an offer only when they have the room their
+\code{tx\_ready} shows, so a sender may offer before it has room: an
+offer made while \code{tx\_ready} is low is not stored, and the sender
+makes it again (\#1871).
+Storing it as well, in a cycle the receiver freed a place, would store
+the word twice.
+\code{offer\_tb} in \code{//lib/chanloop} drives both buffers with such
+a sender, under nvc and under Verilator, and each word passes once, in
+order.
 A child need not be lowered. A unit that implements \code{Lower} by
 hand with \code{netlist::foreign} is a module the netlist does not
 write: its lowering names the module, its ports by their own names in
