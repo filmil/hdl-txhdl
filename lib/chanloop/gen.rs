@@ -72,9 +72,10 @@ impl Unit<(), Tx<U<8>>> for Pair {
 }
 
 /// The same two joined by an unregistered channel, which lowers to
-/// `pair_u_txhdl_chan_u`. Its netlist is here for its two buffers, the
-/// registered and the unregistered, which `offer_tb` drives on their
-/// own (#1871).
+/// `pair_u_txhdl_chan_u`. A netlist with any channel also writes the
+/// registered buffer, `pair_u_txhdl_chan`, so this one netlist holds
+/// both, which `offer_tb` drives on their own (#1871). Were the
+/// registered one ever left out, `offer_tb` would not build.
 #[derive(Trace, Default)]
 pub struct PairU {
     pub count: Count,
