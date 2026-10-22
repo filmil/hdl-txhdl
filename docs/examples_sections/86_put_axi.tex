@@ -34,6 +34,9 @@ and two consumers take when bits of a small shift register say so.
 So a word offered across a stall is the one read at its first edge,
 and the second word of each pair on \code{b}, which no input touches,
 counts up, as the run asserts.
+The reset is held for the first three cycles, and for two more in the
+middle while \code{a}'s offer waits: no \code{valid} rises under it,
+and each port reads its word again after it.
 The netlist is checked against the run under nvc and Verilator, and
 its header names the two ports as AXI's.
 In \code{//lib/chanloop}, the same counter with its port marked passes
