@@ -957,6 +957,22 @@ sh_test(
     ],
 )
 
+# The HAL's memcpy, which every program linking the HAL uses (#1825),
+# copies every length to 100 bytes at every pair of offsets in a word
+# as a byte loop does, on the machine.
+sh_test(
+    name = "memcpy_test",
+    srcs = ["memcpy_test.sh"],
+    args = [
+        "$(rootpath :machine)",
+        "$(rootpath //cpu/vreteno/rust:memcpy_check_ram_bin)",
+    ],
+    data = [
+        ":machine",
+        "//cpu/vreteno/rust:memcpy_check_ram_bin",
+    ],
+)
+
 # The canonical teapot on two harts shows each frame for about as long
 # as the next, counted in the board's blankings (#1639): the program
 # runs on the machine with the board's timing and 60 Hz raster, the

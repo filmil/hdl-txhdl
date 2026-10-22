@@ -682,6 +682,26 @@ vreteno_flat(
     program = ":cpi_ram",
 )
 
+# The HAL's memcpy against a byte loop, every length to 100 bytes at
+# every pair of offsets (#1825), which `//cpu/vreteno:memcpy_test` runs
+# on the machine.
+rust_binary(
+    name = "memcpy_check_ram",
+    srcs = ["memcpy_check.rs"],
+    compile_data = [":vreteno_ram_ld"],
+    edition = "2021",
+    rustc_flags = VRETENO_RAM_FLAGS,
+    tags = ["manual"],
+    target_compatible_with = CORE_ONLY,
+    deps = ["//cpu/vreteno/rust/hal:vreteno_hal"],
+)
+
+vreteno_flat(
+    name = "memcpy_check_ram_bin",
+    platform = ":vreteno",
+    program = ":memcpy_check_ram",
+)
+
 # EGL's machine on the board, through the board's model (issue 996):
 # a rectangle drawn, shown and waited for as a swap does, in the boot
 # memory, which `board_test` runs.
