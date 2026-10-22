@@ -43,14 +43,15 @@ CORE_RUSTC_FLAGS = [
 # a frame of the textured icosahedron where `z` takes 1.1 M; the whole
 # program at level 2 builds its list only 4 per cent faster, likely
 # because the larger code misses more in the instruction cache (#1450).
-# The GL library at level 2 too (#1825): at `z` it moved its small
-# vertex arrays with a call of `memcpy` each, about 21,000 a frame of
-# the teapot and 18 per cent of its cycles; at 2 they are loads and
-# stores, and the teapot's list takes 28.3 M cycles on the machine
-# where it took 35.9 M, the frame drawn the same.
+# The GL library's core crate at level 2 too (#1825): the teapot's list
+# takes 28.3 M cycles on the machine where it took 35.9 M at `z`, and
+# 31.2 M at `s`, the frame drawn the same; on the board 30.4 M against
+# 37.5 M. The gain is level 2's inlining and unrolling. Its small
+# vertex arrays are still moved by `memcpy` calls, about as many as at
+# `z`. The C API, EGL and the machine crates under //gles stay at `z`.
 CORE_PER_CRATE_FLAGS = [
     "//gpu/razboj:tile@-Copt-level=2",
-    "//gles@-Copt-level=2",
+    "//gles:gles@-Copt-level=2",
 ]
 
 def _to_vreteno(settings, attr):
