@@ -2920,7 +2920,23 @@ impl<'a> Gl<'a> {
                 emit::triangle(flat, a, b, c, None, z, screen)
             };
             let w = w.map(|(w, s)| (w, s.map(|s| self.offset_depth(s))));
+            let Some((w, slot)) = w else {
+                continue;
+            };
             let at3 = [poly[0], poly[k], poly[k + 1]];
+            let planes = Planes {
+                fog: self.fogged(&w, [a, b, c], at3),
+                alpha: self.alpha_planed(&w, [a, b, c], s),
+            };
+            // No unit textures it when the first is empty, since
+            // `texturing` fills its units in order. The entry is then
+            // drawn as it is, and no texture slots are worked out or
+            // moved (#1825): moving the empty ones cost fourteen calls
+            // of `memcpy` a triangle.
+            if texture[0].is_none() {
+                self.push_drawn(w, slot, planes);
+                continue;
+            }
             let tex = texture.map(|t| {
                 t.and_then(|(u, lw, lh)| {
                     let t = uvq(at3, u, lw, lh)?;
@@ -2934,14 +2950,7 @@ impl<'a> Gl<'a> {
                 .zip(&tex)
                 .all(|(t, s)| t.is_some() == s.is_some());
             let tex = if whole { tex } else { [None; UNITS] };
-            if let Some((w, slot)) = w {
-                let at = [poly[0], poly[k], poly[k + 1]];
-                let planes = Planes {
-                    fog: self.fogged(&w, [a, b, c], at),
-                    alpha: self.alpha_planed(&w, [a, b, c], s),
-                };
-                self.push_textured(w, slot, tex, planes);
-            }
+            self.push_textured(w, slot, tex, planes);
         }
     }
 
