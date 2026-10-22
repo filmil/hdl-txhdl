@@ -341,11 +341,12 @@ pub struct Model {
     pub loaded: std::cell::Cell<u32>,
     pub prev_loaded: u32,
     pub walks: std::cell::Cell<u32>,
-    /// The waits for a translation the step made (issue 1561): a load or
-    /// a store translated, and a translated fetch from a new page.
+    /// The waits for a translation the step made (issue 1561), but a
+    /// store's: a load translated, and a translated fetch from a new page.
     pub xlates: std::cell::Cell<u32>,
-    /// Of those, the stores (issue 1561), which `Timing::xlate_store`
-    /// charges unless the step was `sc.w` or an AMO.
+    /// A store's wait for a translation (issue 1561), which
+    /// `Timing::xlate_store` charges unless the step was `sc.w` or an AMO,
+    /// each of which is translated once, as a store.
     pub xlate_stores: std::cell::Cell<u32>,
     pub ifence: std::cell::Cell<bool>,
     /// Whether the step was a `fence`, and the cycle count at the last
@@ -449,7 +450,10 @@ pub struct Timing {
     /// from the same DDR3 controller: the board's `costs scan-bulk-read`
     /// against `bulk-read` in the same run, 17.15 against 15.41 a word
     /// (96910caf), 1.74 a word and so about 7 a line of four. Stores are
-    /// 3% dearer there, and are not charged.
+    /// 3% dearer there, and are not charged. Nor yet is an instruction
+    /// fill, nor a walk's table read: the board has timed neither with
+    /// the scanout showing, and `costs scan-icache-miss` asks of the
+    /// first.
     pub scan_fill: u64,
     /// What a `fence` waits, at most, for a store into the DDR3 still on
     /// its way (issue 1561): the most, right after the store, less the
@@ -2596,5 +2600,57 @@ mod tests {
         assert_eq!(fill, 7, "the board's, about 1.74 a word");
         assert_eq!(run(true) - run(false), 2 * fill, "the two fills");
         assert_eq!(Timing::board().scan_fill, 0, "without the cache");
+    }
+
+    /// What a translated store, an AMO and a load cost the step (issue
+    /// 1561), each beyond the same untranslated: a store `xlate_store`,
+    /// an AMO and a load `xlate`, once the page's entry is held. The data
+    /// is translated through `MPRV`, as the supervisor's, while the
+    /// fetches stay machine mode's and untranslated.
+    #[test]
+    fn a_translated_store_waits_less_than_a_load_or_an_amo() {
+        use crate::isa::{amoadd_w, lw, sw};
+        use txhdl_parts::mmu::pte::{to, A, D, R, V, W, X};
+        let root = 0x8000_0000u32;
+        let imem = vec![
+            lw(3, 2, 0), // the page's walk, then held
+            sw(3, 2, 4),
+            amoadd_w(0, 2, 3),
+            lw(3, 2, 8),
+            halt(),
+        ];
+        // The cycles of each step, with the data at `base`, translated or
+        // not.
+        let run = |translated: bool| {
+            let words = std::rc::Rc::new(Words::default());
+            let put = |a: u32, v: u32| assert!(words.store(a, v, u32::MAX));
+            put(root + 8, to(0x4000_0000, V | R | W | X | A | D));
+            // With a bus the program is fetched from it.
+            for (i, w) in imem.iter().enumerate() {
+                put(4 * i as u32, *w);
+            }
+            let mut m = Model {
+                bus: Some(words.clone() as std::rc::Rc<dyn Bus>),
+                timing: Some(Timing::board_cached()),
+                ..Model::default()
+            };
+            if translated {
+                m.csr_write(CSR_SATP, 1 << 31 | root >> 12);
+                m.csr.mstatus |= MPRV | 1 << 11;
+            }
+            m.x[2] = if translated { 0x0080_0010 } else { 0x4000_0010 };
+            let mut each = vec![];
+            while m.halted.is_none() && each.len() < imem.len() {
+                let was = m.cycles;
+                m.step(&imem, None);
+                each.push(m.cycles - was);
+            }
+            each
+        };
+        let (on, off) = (run(true), run(false));
+        let t = Timing::board_cached();
+        assert_eq!(on[1] - off[1], t.xlate_store, "a store");
+        assert_eq!(on[2] - off[2], t.xlate, "an AMO");
+        assert_eq!(on[3] - off[3], t.xlate, "a load");
     }
 }

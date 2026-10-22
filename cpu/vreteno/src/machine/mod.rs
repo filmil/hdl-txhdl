@@ -673,6 +673,23 @@ mod tests {
 
     use super::*;
 
+    /// Each hart's model is told before its step whether the scanout
+    /// shows a frame (issue 1561), for `Timing::scan_fill`.
+    #[test]
+    fn both_harts_know_whether_the_scanout_shows() {
+        use crate::model::Bus;
+        let mut m = Machine::new();
+        m.load(0x4000_0000, &0x0000_006fu32.to_le_bytes()); // j .
+        m.boot(0x4000_0000, 0);
+        let video = m.board.0.borrow().map.video.0;
+        m.step();
+        assert!(!m.model.scan_on && !m.model1.scan_on, "not shown");
+        assert!(m.board.store(video + 0x80, 0x4200_0000, !0));
+        assert!(m.board.store(video + 0x84, 1, !0));
+        m.step();
+        assert!(m.model.scan_on && m.model1.scan_on, "shown");
+    }
+
     /// The scanout takes the base it was last given as each vertical
     /// blanking begins, not when it is written, and the flips say each
     /// base it took once, with the frame it took it in (#1639). A raster
