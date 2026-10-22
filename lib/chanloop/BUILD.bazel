@@ -3,6 +3,7 @@
 # the sender's valid waits on its ready and the receiver's ready on its
 # valid (#1868); joined by TxHDL's own channel they do not.
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_nvc//nvc:rules.bzl", "vhdl_test")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
 load("@rules_verilator//verilator:defs.bzl", "verilator_cc_library")
 load("@rules_verilog//verilog:defs.bzl", "verilog_library")
@@ -24,8 +25,8 @@ rust_test(
 
 genrule(
     name = "netlists",
-    outs = ["count.v", "stage.v", "pair.v"],
-    cmd = "$(location :gen) $(location count.v) $(location stage.v) $(location pair.v)",
+    outs = ["count.v", "stage.v", "pair.v", "pair_u.v", "pair_u.vhd"],
+    cmd = "$(location :gen) $(OUTS)",
     tools = [":gen"],
 )
 
@@ -74,4 +75,33 @@ cc_test(
     name = "buffered_vsim_test",
     srcs = ["//tools/vlcheck:main.cc"],
     deps = [":buffered_verilated"],
+)
+
+# Both channel buffers under a sender that does not wait for ready, as
+# AXI requires: each word passes once, in order (#1871).
+verilog_library(
+    name = "offer_vl",
+    srcs = ["pair_u.v", "offer_tb.v"],
+    top_module = "offer_tb",
+)
+
+verilator_cc_library(
+    name = "offer_verilated",
+    module = ":offer_vl",
+    copts = ["-Wno-sign-compare"],
+    timing = True,
+    vopts = ["--main"],
+)
+
+cc_test(
+    name = "offer_vsim_test",
+    srcs = ["//tools/vlcheck:main.cc"],
+    deps = [":offer_verilated"],
+)
+
+vhdl_test(
+    name = "offer_sim_test",
+    srcs = ["pair_u.vhd", "offer_tb.vhd"],
+    deps = [],
+    entities = ["offer_tb"],
 )
