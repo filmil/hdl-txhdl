@@ -404,7 +404,12 @@ impl Unit<EthRxLines, (Tx<EthByte>, Out<U<16>>, Out<U<48>>)> for EthRx {
     /// it passes. The offerer is the sequence: wait for a full frame,
     /// then its bytes without the check sequence, one per turn, each
     /// held until the consumer takes it, and then the frame is given
-    /// back.
+    /// back. `rx` is marked `#[axi]`: each byte is offered from the
+    /// first edge it waits at, not once there is room, so `rx_valid`
+    /// does not wait on `rx_ready`, and the module may be joined wire
+    /// to wire to a stage whose ready waits on its valid (#1868,
+    /// #1871).
+    #[axi(rx)]
     async fn run(
         &mut self,
         EthRxLines { rxd, rx_dv, rx_er }: EthRxLines,
