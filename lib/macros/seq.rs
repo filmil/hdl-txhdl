@@ -825,7 +825,15 @@ pub(crate) fn lower(
                     }
                 }
                 for s in rest {
-                    g.sort(s, piece, &cond, &mut seq);
+                    // An `#[axi]` port's offer: its `valid` and `data`
+                    // are the state's, whether or not the channel has
+                    // room, which only the move on waits for (#1871).
+                    match s.strip_prefix("/*axi*/") {
+                        Some(s) => {
+                            g.sort(s.to_string(), piece, &at(k), &mut seq)
+                        }
+                        None => g.sort(s, piece, &cond, &mut seq),
+                    }
                 }
                 // A wait on a channel names no clock and takes the
                 // process's; the waits that name one name the same.

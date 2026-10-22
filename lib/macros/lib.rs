@@ -2976,6 +2976,11 @@ thread_local! {
     /// value's type, so a field of a port's value can be sliced out.
     static PTYPES: std::cell::RefCell<Vec<(String, String)>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// The sending ports `#[axi(..)]` on `run` names: each offers its
+    /// `valid` without waiting for `ready`, and holds its data while it
+    /// waits (#1871).
+    static AXI: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
     /// Each field of a value this unit's lowering has written, `p.h`, by
     /// its text, with the value's type, the value's own text and the
     /// fields so far, so that `p.h.lo` goes on from it (issue 1648).
@@ -5615,6 +5620,59 @@ fn with_lowered(cx: &mut Cx, es: &[Entry]) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
+/// A loop's statements with the marks of `#[axi]` offers taken off,
+/// and each such port's data chosen between what the state offers and
+/// what it held from the first edge of the wait, so the data holds
+/// while the offer waits, as AXI requires (#1871). The ports, each
+/// with the text of its value's type, whose registers the caller adds.
+fn axi_hold(
+    stmts: &mut [String],
+    span: Span,
+) -> Result<Vec<(String, String)>, TokenStream> {
+    for s in stmts.iter_mut() {
+        if let Some(t) = s.strip_prefix("/*axi*/") {
+            *s = t.to_string();
+        }
+    }
+    let mut held = Vec::new();
+    for tx in AXI.with(|a| a.borrow().clone()) {
+        let head = format!("NlS::Drive(NlT::Name(\"{tx}_data\".to_string()), ");
+        let Some(s) = stmts.iter_mut().find(|s| s.starts_with(&head)) else {
+            continue;
+        };
+        let e = s[head.len()..s.len() - 1].to_string();
+        *s = format!(
+            "{head}NlE::Cond(Box::new({}), Box::new({}), Box::new({e})))",
+            ename(&format!("{tx}_axi_wait")),
+            ename(&format!("{tx}_axi_hold"))
+        );
+        let ty = PTYPES.with(|p| {
+            p.borrow()
+                .iter()
+                .find(|(n, _)| *n == tx)
+                .map(|(_, t)| t.clone())
+        });
+        let Some(ty) = ty else {
+            return Err(err(span, &format!("the type of `{tx}` is not known")));
+        };
+        held.push((tx, ty));
+    }
+    Ok(held)
+}
+
+/// What refuses a `send` on a port `#[axi]` marks, if `tx` is one: a
+/// send offers only once there is room, which is the wait AXI forbids
+/// a source, so the port sends with `put` alone (#1871).
+fn axi_send(tx: &str) -> Option<String> {
+    AXI.with(|a| a.borrow().iter().any(|p| p == tx)).then(|| {
+        format!(
+            "`{tx}` is marked `#[axi]`, so it sends with \
+             `{tx}.put(|| v).await`, which offers without waiting for \
+             `ready`; a `send` offers only once there is room"
+        )
+    })
+}
+
 /// `tx.put(|| v).await`: the channel and the tokens of `v`, the
 /// closure's body, when the statement is one (issue 755).
 fn put_parts(ts: &[TokenTree]) -> Option<(Ident, Vec<TokenTree>)> {
@@ -5754,8 +5812,39 @@ fn lower_stmts(
                 Ok(c) => c,
                 Err(m) => return Err(err(ts[0].span(), &m)),
             };
+            let before = cx.guard.clone();
             cx.guard = Some(cond.clone());
             stmts.push(format!("NlS::Guard({cond})"));
+            // On an `#[axi]` port the offer does not wait for room: its
+            // `valid` is the condition the process is in this wait under,
+            // without the ready, which a loop of one wait always is and
+            // a state machine is when at this state; what follows still
+            // waits for the take. The marks tell `seq` which drives take
+            // the state alone, and are a comment to Rust (#1871).
+            if AXI.with(|a| a.borrow().contains(&tx.to_string())) {
+                let e = match tr(&value, &cx.subst) {
+                    Ok(e) => e,
+                    Err(m) => return Err(err(ts[0].span(), &m)),
+                };
+                let base = before.unwrap_or_else(|| {
+                    "NlE::Bits(1, \"1\".to_string())".into()
+                });
+                // Low through a reset, as AXI requires of a source.
+                let base = ebin(
+                    "&&",
+                    &base,
+                    "NlE::Not(Box::new(NlE::Name(\
+                     ::txhdl::comp::RESET_NAME.to_string())))",
+                );
+                stmts.push(format!(
+                    "/*axi*/NlS::Drive(NlT::Name(\"{tx}_data\".to_string()), {e})"
+                ));
+                stmts.push(format!(
+                    "/*axi*/NlS::Drive(NlT::Name(\"{tx}_valid\".to_string()), \
+                     {base})"
+                ));
+                continue;
+            }
             let span = ts[0].span();
             let send: Vec<TokenTree> = vec![
                 TokenTree::Ident(tx),
@@ -6361,6 +6450,9 @@ fn lower_stmts(
                             Ok(t) => t,
                             Err(m) => return Err(err(ts[0].span(), &m)),
                         };
+                        if let Some(m) = axi_send(&tx) {
+                            return Err(err(ts[0].span(), &m));
+                        }
                         let at: Vec<TokenTree> =
                             g.stream().into_iter().collect();
                         let e = match tr(&at, &cx.subst) {
@@ -6427,6 +6519,9 @@ fn lower_stmts(
                         Ok(t) => t,
                         Err(m) => return Err(err(ts[0].span(), &m)),
                     };
+                    if let Some(m) = axi_send(&tx) {
+                        return Err(err(ts[0].span(), &m));
+                    }
                     // A send drives `valid` with the condition it is
                     // under: an `if`'s, or the guard of a wait that has
                     // one. A plain `C::rising()` gives none, and a send
@@ -7824,6 +7919,16 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     HELPERS.with(|h| {
         *h.borrow_mut() = find_helpers(Span::call_site().local_file())
     });
+    // `#[axi(a, b)]` on `run`: read, and taken out of what is compiled,
+    // since Rust has no such attribute (#1871).
+    let (item, axi) = match take_axi(item) {
+        Ok(x) => x,
+        Err(e) => return e,
+    };
+    let toks: Vec<TokenTree> = item.clone().into_iter().collect();
+    AXI.with(|a| {
+        *a.borrow_mut() = axi.iter().map(|(n, _)| n.clone()).collect()
+    });
     PTYPES.with(|p| p.borrow_mut().clear());
     FIELDS.with(|f| f.borrow_mut().clear());
     BUNDLES.with(|p| p.borrow_mut().clear());
@@ -8173,6 +8278,32 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             .with(|p| p.borrow_mut().push((pname.clone(), inner.to_string())));
         PNAMES.with(|p| p.borrow_mut().push(pname.clone()));
     }
+    // What `#[axi(..)]` names is a sending port of this unit: a
+    // receiver's `ready` waits on `valid`, which AXI allows, so there is
+    // nothing to turn on there (#1871).
+    for (n, span) in &axi {
+        match pkinds.iter().find(|(p, _)| p == n) {
+            Some((_, k)) if k == "Tx" => {}
+            Some((_, k)) => {
+                return err(
+                    *span,
+                    &format!(
+                        "`#[axi]` marks a sending port, a `Tx`, and `{n}` is \
+                         `{k}`: a receiver's `ready` may wait on its `valid` \
+                         under AXI, so there is nothing to mark"
+                    ),
+                )
+            }
+            None => {
+                return err(
+                    *span,
+                    &format!(
+                        "`#[axi]` names `{n}`, which is not a port of `run`"
+                    ),
+                )
+            }
+        }
+    }
     // run's body: the brace group after its parameters; inside it, the loop.
     fn is_brace(t: &&TokenTree) -> bool {
         matches!(t, TokenTree::Group(g) if g.delimiter() == Delimiter::Brace)
@@ -8297,6 +8428,10 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         };
         stmts.append(&mut cx.hoisted);
+        let held = match axi_hold(&mut stmts, lbody.span()) {
+            Ok(h) => h,
+            Err(e) => return e,
+        };
         // A loop whose waits name no clock, only channels', is clocked
         // by the first channel it waits on (issue 881).
         let (clock, falling) = if cx.clock.is_empty() {
@@ -8316,6 +8451,40 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          body: {} }}",
             body_code(&stmts, &mut helpers)
         ));
+        // Each `#[axi]` port this loop puts on holds what it offers in
+        // two registers of its own, written at every edge whatever the
+        // loop waits on, so in a process of their own (#1871).
+        for (tx, ty) in held {
+            let (w, h) = (format!("{tx}_axi_wait"), format!("{tx}_axi_hold"));
+            let regs = [
+                format!(
+                    "NlS::Drive(NlT::Name(\"{w}\".to_string()), {})",
+                    ebin(
+                        "&&",
+                        &ename(&format!("{tx}_valid")),
+                        &format!(
+                            "NlE::Not(Box::new({}))",
+                            ename(&format!("{tx}_ready"))
+                        )
+                    )
+                ),
+                format!(
+                    "NlS::Drive(NlT::Name(\"{h}\".to_string()), {})",
+                    ename(&format!("{tx}_data"))
+                ),
+            ];
+            procs.push(format!(
+                "::txhdl::netlist::Process {{ clock: {clock}, falling: \
+                 {falling}, body: {} }}",
+                body_code(&regs, &mut helpers)
+            ));
+            hidden.push((w, "1".to_string(), lbody.span()));
+            hidden.push((
+                h,
+                format!("<{ty} as ::txhdl::types::Value>::WIDTH"),
+                lbody.span(),
+            ));
+        }
     }
     // A `let` whose name a target reserves is not refused: the wire
     // takes another name, by the rule above, and the netlist says so
@@ -8450,6 +8619,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
          // (issue 890).\n\
          init_regs: ::txhdl::netlist::starts::<Self>(),\n\
          async_regs: <Self as ::txhdl::netlist::Fields>::ASYNC_REGS.to_vec(),\n\
+         axi_ports: vec![{axi_ports}],\n\
          distributed: ::txhdl::netlist::per_memory::<Self>(\
          <Self as ::txhdl::netlist::Fields>::DISTRIBUTED),\n\
          ram_styles: ::txhdl::netlist::styles_per_memory::<Self>(\
@@ -8545,6 +8715,11 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             .collect::<Vec<_>>()
             .join(",\n"),
         procs = procs.join(",\n"),
+        axi_ports = axi
+            .iter()
+            .map(|(n, _)| format!("\"{n}\""))
+            .collect::<Vec<_>>()
+            .join(", "),
         hidden_fields = hidden
             .iter()
             .map(|(reg, w, _)| {
@@ -8573,6 +8748,11 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         answering_reset(&toks).into_iter().collect()
     } else {
         item
+    };
+    let item: TokenStream = {
+        let it: Vec<TokenTree> = item.into_iter().collect();
+        let ports: Vec<String> = axi.iter().map(|(n, _)| n.clone()).collect();
+        marking_axi(&it, &ports).into_iter().collect()
     };
     // `#[unregistered]` is read above, for the netlist; the Rust that
     // runs makes the channel with `chan_unregistered` (issue 1293).
@@ -8608,6 +8788,130 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let header: TokenStream = format!("impl{generics} {unit}").parse().unwrap();
     out.extend(header);
     out.extend([TokenTree::Group(Group::new(Delimiter::Brace, checks))]);
+    out
+}
+
+/// `#[axi(a, b)]` before `run` in the impl: the sending ports it
+/// names, each with where it is named, and the impl without it, since
+/// Rust has no such attribute to compile (#1871). Several are one list.
+#[allow(clippy::type_complexity)]
+fn take_axi(
+    item: TokenStream,
+) -> Result<(TokenStream, Vec<(String, Span)>), TokenStream> {
+    let mut toks: Vec<TokenTree> = item.clone().into_iter().collect();
+    let Some(TokenTree::Group(body)) = toks.last().cloned() else {
+        return Ok((item, Vec::new()));
+    };
+    let bt: Vec<TokenTree> = body.stream().into_iter().collect();
+    let Some(r) = bt.iter().position(|t| is_ident(t, "run")) else {
+        return Ok((item, Vec::new()));
+    };
+    let mut names: Vec<(String, Span)> = Vec::new();
+    let mut kept: Vec<TokenTree> = Vec::new();
+    let mut k = 0;
+    while k < bt.len() {
+        let attr = match (&bt[k], bt.get(k + 1)) {
+            (TokenTree::Punct(h), Some(TokenTree::Group(g)))
+                if k < r
+                    && h.as_char() == '#'
+                    && g.delimiter() == Delimiter::Bracket =>
+            {
+                let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+                match inner.as_slice() {
+                    [TokenTree::Ident(a), rest @ ..]
+                        if a.to_string() == "axi" =>
+                    {
+                        Some((a.span(), rest.to_vec()))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let Some((span, rest)) = attr else {
+            kept.push(bt[k].clone());
+            k += 1;
+            continue;
+        };
+        let list = match rest.as_slice() {
+            [TokenTree::Group(l)]
+                if l.delimiter() == Delimiter::Parenthesis =>
+            {
+                l.stream().into_iter().collect::<Vec<_>>()
+            }
+            _ => {
+                return Err(err(
+                    span,
+                    "`#[axi]` names the sending ports it marks: \
+                     `#[axi(tx)]` or `#[axi(a, b)]`",
+                ))
+            }
+        };
+        for part in list
+            .split(|t| matches!(t, TokenTree::Punct(p) if p.as_char() == ','))
+        {
+            match part {
+                [] => {}
+                [TokenTree::Ident(n)] => names.push((n.to_string(), n.span())),
+                _ => {
+                    return Err(err(
+                        part[0].span(),
+                        "`#[axi(..)]` names ports by the names `run` binds \
+                         them to, one name each",
+                    ))
+                }
+            }
+        }
+        if names.is_empty() {
+            return Err(err(span, "`#[axi()]` names no port"));
+        }
+        k += 2;
+    }
+    if names.is_empty() {
+        return Ok((item, Vec::new()));
+    }
+    let mut ng = Group::new(body.delimiter(), kept.into_iter().collect());
+    ng.set_span(body.span());
+    let n = toks.len() - 1;
+    toks[n] = TokenTree::Group(ng);
+    Ok((toks.into_iter().collect(), names))
+}
+
+/// The impl's tokens with `run`'s body opened by `p.axi();` for each
+/// port `#[axi(..)]` named, so the runtime's `put` on it offers as the
+/// netlist's does (#1871).
+fn marking_axi(toks: &[TokenTree], ports: &[String]) -> Vec<TokenTree> {
+    let mut out = toks.to_vec();
+    if ports.is_empty() {
+        return out;
+    }
+    let Some(TokenTree::Group(body)) = out.last().cloned() else {
+        return out;
+    };
+    let mut bt: Vec<TokenTree> = body.stream().into_iter().collect();
+    let Some(r) = bt.iter().position(|t| is_ident(t, "run")) else {
+        return out;
+    };
+    let brace = |t: &TokenTree| match t {
+        TokenTree::Group(g) => g.delimiter() == Delimiter::Brace,
+        _ => false,
+    };
+    let Some(b) = (r + 2..bt.len()).find(|&k| brace(&bt[k])) else {
+        return out;
+    };
+    let TokenTree::Group(f) = &bt[b] else {
+        return out;
+    };
+    let marks: String = ports.iter().map(|p| format!("{p}.axi();")).collect();
+    let mut fs: TokenStream = marks.parse().unwrap();
+    fs.extend(f.stream());
+    let mut g = Group::new(Delimiter::Brace, fs);
+    g.set_span(f.span());
+    bt[b] = TokenTree::Group(g);
+    let mut ng = Group::new(body.delimiter(), bt.into_iter().collect());
+    ng.set_span(body.span());
+    let n = out.len() - 1;
+    out[n] = TokenTree::Group(ng);
     out
 }
 

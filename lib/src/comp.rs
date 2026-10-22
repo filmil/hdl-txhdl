@@ -237,6 +237,9 @@ struct ChanCell<T: Copy> {
     looked_at: Cell<u64>,
     /// The receiver took this step's offer through the bypass.
     through: Cell<bool>,
+    /// The sender's port is marked `#[axi]`: its `put` offers from the
+    /// first edge it waits at, not only once there is room (#1871).
+    axi: Cell<bool>,
     /// The channel's clock, at whose rising edges a reset empties it.
     clk: clock::Clk,
 }
@@ -254,6 +257,7 @@ impl<T: Copy + Default> ChanCell<T> {
             unreg: Cell::new(None),
             looked_at: Cell::new(u64::MAX),
             through: Cell::new(false),
+            axi: Cell::new(false),
             clk,
         }
     }
@@ -593,6 +597,16 @@ impl<T: Transaction, C: Clock> Tx<T, C> {
     /// share one end therefore arbitrate, as they must in hardware.
     pub fn send(&self, v: impl Into<T>) {
         assert!(self.ready().to_bool(), "send on a channel with no room");
+        self.offer(v.into());
+        self.0.push.set(Some(self.0.offered.get()));
+        commit(self.0.clone());
+    }
+    /// The wires of an offer, `valid` and `data`, for this step, and
+    /// nothing put into the channel: what a send is before its room is
+    /// known, and all an `#[axi]` port's `put` does at an edge with no
+    /// room (#1871). The netlist's channel stores no offer made while
+    /// its `ready` is low, so the receiver never sees it.
+    fn offer(&self, v: T) {
         assert!(!self.0.offering(), "two sends on one channel in one step");
         if let Some(at) = self.0.unreg.get() {
             assert!(
@@ -602,11 +616,16 @@ impl<T: Transaction, C: Clock> Tx<T, C> {
                  sender first in the join that runs them (issue 1293)"
             );
         }
-        let v = v.into();
         self.0.offered.set(v);
         self.0.offer_at.set(now());
-        self.0.push.set(Some(v));
-        commit(self.0.clone());
+    }
+    /// Mark this port as AXI's, as `#[axi(port)]` on a lowered unit's
+    /// `run` does first thing: from now on its [`put`](Self::put)
+    /// offers from the first edge it waits at, holding the value it
+    /// read there until the transaction is taken, as AXI requires of a
+    /// source, instead of waiting for room before it offers (#1871).
+    pub fn axi(&self) {
+        self.0.axi.set(true);
     }
     /// Whether the channel has room for an offer at this step: the
     /// backpressure, as the edge left it.
@@ -628,7 +647,35 @@ impl<T: Transaction, C: Clock> Tx<T, C> {
     ///
     /// It is `until(C::rising, || tx.ready().to_bool()).await` and then
     /// `tx.send(v())`, in that order.
-    pub async fn put<V: Into<T>>(&self, v: impl FnOnce() -> V) {
+    ///
+    /// On a port marked [`axi`](Self::axi) it offers at every edge it
+    /// waits at, not only at the one with room, so its `valid` does not
+    /// wait on `ready`, as AXI requires of a source (#1871). The closure
+    /// is read once, at the first of those edges, and that value is
+    /// offered until it is taken, since AXI also requires the data to
+    /// hold while it waits; a reset clears it, and nothing is offered
+    /// while the reset is high, as AXI requires too. What follows
+    /// still happens in the step it is taken.
+    pub async fn put<V: Into<T>>(&self, mut v: impl FnMut() -> V) {
+        if self.0.axi.get() {
+            // The value offered, read at the first edge of the wait and
+            // again after a reset, which clears what the netlist holds.
+            let mut held: Option<T> = None;
+            loop {
+                rising::<C>().await;
+                // AXI keeps a source's valid low through a reset.
+                if reset() {
+                    held = None;
+                    continue;
+                }
+                let x = *held.get_or_insert_with(|| v().into());
+                if self.ready().to_bool() {
+                    self.send(x);
+                    return;
+                }
+                self.offer(x);
+            }
+        }
         loop {
             rising::<C>().await;
             if self.ready().to_bool() {

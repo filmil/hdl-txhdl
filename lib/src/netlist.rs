@@ -1127,6 +1127,9 @@ pub struct Lowered {
     /// The registers the netlist marks `ASYNC_REG`, as
     /// [`Fields::ASYNC_REGS`] names them: a synchroniser's stages.
     pub async_regs: Vec<&'static str>,
+    /// The sending ports `#[axi(..)]` marks, whose `valid` does not
+    /// wait on `ready` (#1871); the header says so.
+    pub axi_ports: Vec<&'static str>,
     /// The memories [`Fields::DISTRIBUTED`] names: meant to be LUT RAM,
     /// so not held to a block RAM's ports (issue 1285).
     pub distributed: Vec<&'static str>,
@@ -1309,6 +1312,7 @@ pub fn foreign(
         init: Vec::new(),
         init_regs: Vec::new(),
         async_regs: Vec::new(),
+        axi_ports: Vec::new(),
         distributed: Vec::new(),
         ram_styles: Vec::new(),
         arrays: Vec::new(),
@@ -4889,8 +4893,31 @@ impl Lowered {
     /// `<top>_txhdl_chan` between, whose ready is a register.
     fn join_rule(&self, comment: &str) -> String {
         let has = |kind: Kind| self.ports.iter().any(|(_, k, ..)| *k == kind);
-        let mut lines: Vec<&str> = Vec::new();
-        if has(Kind::Tx) {
+        // The sending ports `#[axi]` marks offer without waiting, so
+        // only the others wait on their ready (#1871).
+        let axi: Vec<&str> = self
+            .ports
+            .iter()
+            .filter(|(p, k, ..)| {
+                *k == Kind::Tx && self.axi_ports.contains(&p.as_str())
+            })
+            .map(|(p, ..)| p.as_str())
+            .collect();
+        let waits = self.ports.iter().any(|(p, k, ..)| {
+            *k == Kind::Tx && !self.axi_ports.contains(&p.as_str())
+        });
+        let first = if axi.is_empty() {
+            None
+        } else {
+            Some(format!(
+                "txhdl: AXI sending ports, whose valid does not wait on its \
+                 ready: {}.",
+                axi.join(", ")
+            ))
+        };
+        let mut lines: Vec<&str> = first.iter().map(|l| l.as_str()).collect();
+        let axi_only = lines.len();
+        if waits {
             lines.extend([
                 "txhdl: a sending port's valid here waits on its ready. Never",
                 "join it wire to wire to a receiver whose ready waits on its",
@@ -4907,10 +4934,13 @@ impl Lowered {
         if lines.is_empty() {
             return String::new();
         }
-        lines.extend([
-            "txhdl: join through <top>_txhdl_chan or a FIFO whose ready is a",
-            "register (#1868).",
-        ]);
+        if lines.len() > axi_only {
+            lines.extend([
+                "txhdl: join through <top>_txhdl_chan or a FIFO whose ready \
+                 is a",
+                "register (#1868).",
+            ]);
+        }
         lines.iter().map(|l| format!("{comment} {l}\n")).collect()
     }
 
@@ -5408,6 +5438,7 @@ mod tests {
             init: Vec::new(),
             init_regs: Vec::new(),
             async_regs: Vec::new(),
+            axi_ports: Vec::new(),
             distributed: Vec::new(),
             ram_styles: Vec::new(),
             arrays: Vec::new(),
