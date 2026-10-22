@@ -96,6 +96,9 @@ rust_binary(
         "probe_closure_move",          # the macro's own message (issue 1838)
         "probe_closure_pattern",       # the macro's own message (issue 1838)
         "probe_closure_value",         # the macro's own message (issue 1838)
+        "probe_axi_send",              # the macro's own message (#1871)
+        "probe_axi_rx",                # the macro's own message (#1871)
+        "probe_axi_name",              # the macro's own message (#1871)
     ]
 ]
 

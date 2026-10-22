@@ -25,7 +25,7 @@ rust_test(
 
 genrule(
     name = "netlists",
-    outs = ["count.v", "stage.v", "pair.v", "pair_u.v", "pair_u.vhd"],
+    outs = ["count.v", "stage.v", "pair.v", "pair_u.v", "pair_u.vhd", "axi_count.v"],
     cmd = "$(location :gen) $(OUTS)",
     tools = [":gen"],
 )
@@ -52,6 +52,28 @@ cc_test(
     name = "direct_vsim_test",
     srcs = ["//tools/vlcheck:main.cc"],
     deps = [":direct_verilated"],
+)
+
+# The sender marked `#[axi]`, joined wire to wire: every word passes,
+# in order (#1871).
+verilog_library(
+    name = "direct_axi_vl",
+    srcs = ["axi_count.v", "stage.v", "direct_axi_tb.v"],
+    top_module = "direct_axi_tb",
+)
+
+verilator_cc_library(
+    name = "direct_axi_verilated",
+    module = ":direct_axi_vl",
+    copts = ["-Wno-sign-compare"],
+    timing = True,
+    vopts = ["--main"],
+)
+
+cc_test(
+    name = "direct_axi_vsim_test",
+    srcs = ["//tools/vlcheck:main.cc"],
+    deps = [":direct_axi_verilated"],
 )
 
 # Joined by TxHDL's own channel: every word passes, in order.

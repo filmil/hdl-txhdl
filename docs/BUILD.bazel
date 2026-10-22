@@ -1101,6 +1101,8 @@ latex_document(
         ":mesh_timing",
         ":put_run",
         ":put_timing",
+        ":axi_put_run",
+        ":axi_put_timing",
         ":chanwait_run",
         ":chanwait_timing",
         ":dtm_run",
@@ -2989,6 +2991,27 @@ waveform(
         "//out/tx_valid=>out_valid",
         "//out/tx_ready=>out_ready",
         "//out/tx_data=>out",
+    ],
+    until = 59,
+)
+
+# Two sending ports marked `#[axi]`, each offering from the first edge
+# it waits at and holding the word until it is taken, against
+# consumers that stall at random and an input that changes every
+# cycle (#1871).
+waveform(
+    name = "axi_put",
+    example = "//lib/examples:ex_axi_put",
+    lowered = ("offers", "offers"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//seed=>seed",
+        "//a/tx_valid=>a_valid",
+        "//a/tx_ready=>a_ready",
+        "//a/tx_data=>a",
+        "//b/tx_valid=>b_valid",
+        "//b/tx_ready=>b_ready",
+        "//b/tx_data=>b",
     ],
     until = 59,
 )

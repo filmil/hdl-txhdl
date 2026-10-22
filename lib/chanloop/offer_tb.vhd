@@ -11,6 +11,9 @@ entity offer_lane is
   port (
     clk : in std_logic;
     rst : in std_logic;
+    -- At the end: no new offer, and the receiver always ready, so the
+    -- buffer drains.
+    stop : in std_logic;
     sent : out natural;
     got : out natural
   );
@@ -19,7 +22,7 @@ end entity;
 architecture sim of offer_lane is
   signal word : unsigned(7 downto 0) := (others => '0');
   signal tv : std_logic := '0';
-  signal tr, rv, rr : std_logic;
+  signal tr, rv, rr, go : std_logic;
   signal rd : unsigned(7 downto 0);
   -- The same shift register as offer_tb.v: bit 0 and bit 3 decide
   -- whether the sender offers after a word, bits 1 and 2 whether the
@@ -27,7 +30,8 @@ architecture sim of offer_lane is
   signal lfsr : unsigned(15 downto 0) := SEED;
   signal nsent, ngot : natural := 0;
 begin
-  rr <= lfsr(1) or lfsr(2);
+  rr <= stop or lfsr(1) or lfsr(2);
+  go <= not stop and (lfsr(0) or lfsr(3));
   sent <= nsent;
   got <= ngot;
   u : if UNREG generate
@@ -61,9 +65,9 @@ begin
         if tv = '1' and tr = '1' then
           word <= word + 1;
           nsent <= nsent + 1;
-          tv <= lfsr(0) or lfsr(3);
+          tv <= go;
         elsif tv = '0' then
-          tv <= lfsr(0) or lfsr(3);
+          tv <= go;
         end if;
         -- The receiver: each word it takes is the next one.
         if rv = '1' and rr = '1' then
@@ -88,17 +92,22 @@ end entity;
 architecture sim of offer_tb is
   signal clk : std_logic := '0';
   signal rst : std_logic := '1';
+  signal stop : std_logic := '0';
   signal rsent, rgot, usent, ugot : natural;
 begin
   reg_lane : entity work.offer_lane
     generic map (UNREG => false, SEED => x"ace1")
-    port map (clk => clk, rst => rst, sent => rsent, got => rgot);
+    port map (clk => clk, rst => rst, stop => stop, sent => rsent,
+              got => rgot);
   unreg_lane : entity work.offer_lane
     generic map (UNREG => true, SEED => x"beef")
-    port map (clk => clk, rst => rst, sent => usent, got => ugot);
+    port map (clk => clk, rst => rst, stop => stop, sent => usent,
+              got => ugot);
   process
   begin
-    for cycle in 0 to 3999 loop
+    -- 4000 cycles of traffic, then ten to drain: the last offer is
+    -- taken and the buffer empties.
+    for cycle in 0 to 4009 loop
       wait for 5 ns;
       clk <= '1';
       wait for 5 ns;
@@ -106,11 +115,14 @@ begin
       if cycle = 2 then
         rst <= '0';
       end if;
+      if cycle = 3999 then
+        stop <= '1';
+      end if;
     end loop;
     wait for 1 ns;
-    -- Nothing lost: what was taken from the sender and not yet by the
-    -- receiver is in the buffer, two words at most.
-    assert rsent - rgot <= 2 and usent - ugot <= 2
+    -- Nothing lost and nothing extra: once drained, every word taken
+    -- from the sender has reached the receiver.
+    assert rsent = rgot and usent = ugot
       report "offer: sent " & integer'image(rsent) & " and " &
              integer'image(usent) & ", got " & integer'image(rgot) &
              " and " & integer'image(ugot)

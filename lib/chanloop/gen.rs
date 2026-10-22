@@ -37,6 +37,26 @@ impl Unit<(), Tx<U<8>>> for Count {
     }
 }
 
+/// `Count` with its port marked `#[axi]`: it offers its count from
+/// the first edge it waits at, and holds it until it is taken, so its
+/// `valid` does not wait on its `ready` (#1871). Joined wire to wire to
+/// `Stage`, the words pass.
+#[derive(Trace, Default)]
+pub struct AxiCount {
+    pub n: Reg<U<8>>,
+}
+
+#[lower]
+impl Unit<(), Tx<U<8>>> for AxiCount {
+    #[axi(out)]
+    async fn run(&mut self, _i: (), out: Tx<U<8>>) {
+        loop {
+            out.put(|| self.n.get()).await;
+            self.n.set(self.n + 1);
+        }
+    }
+}
+
 /// Passes a word on in the cycle it is offered, when there is room.
 #[derive(Trace, Default)]
 pub struct Stage {}
@@ -72,9 +92,10 @@ impl Unit<(), Tx<U<8>>> for Pair {
 }
 
 /// The same two joined by an unregistered channel, which lowers to
-/// `pair_u_txhdl_chan_u`. Its netlist is here for its two buffers, the
-/// registered and the unregistered, which `offer_tb` drives on their
-/// own (#1871).
+/// `pair_u_txhdl_chan_u`. A netlist with any channel also writes the
+/// registered buffer, `pair_u_txhdl_chan`, so this one netlist holds
+/// both, which `offer_tb` drives on their own (#1871). Were the
+/// registered one ever left out, `offer_tb` would not build.
 #[derive(Trace, Default)]
 pub struct PairU {
     pub count: Count,
@@ -92,8 +113,11 @@ impl Unit<(), Tx<U<8>>> for PairU {
 
 fn main() {
     let paths: Vec<String> = std::env::args().skip(1).collect();
-    let [count, stage, pair, pair_u, pair_u_vhd] = paths.as_slice() else {
-        panic!("usage: gen COUNT.v STAGE.v PAIR.v PAIR_U.v PAIR_U.vhd");
+    let [count, stage, pair, pair_u, pair_u_vhd, axi_count] = paths.as_slice()
+    else {
+        panic!(
+            "usage: gen COUNT.v STAGE.v PAIR.v PAIR_U.v PAIR_U.vhd AXI_COUNT.v"
+        );
     };
     let w = |p: &str, s: String| std::fs::write(p, s).unwrap();
     w(count, Count::lowered("count").verilog());
@@ -101,6 +125,7 @@ fn main() {
     w(pair, Pair::lowered("pair").verilog());
     w(pair_u, PairU::lowered("pair_u").verilog());
     w(pair_u_vhd, PairU::lowered("pair_u").vhdl());
+    w(axi_count, AxiCount::lowered("axi_count").verilog());
 }
 
 /// No channel at all: a wire in and a wire out.
@@ -138,6 +163,7 @@ mod tests {
     const SENDS: &str = "// txhdl: a sending port's valid here waits";
     const TAKES: &str = "// txhdl: a receiving port's ready here waits";
     const JOIN: &str = "// txhdl: join through <top>_txhdl_chan";
+    const AXI: &str = "// txhdl: AXI sending ports, whose valid does not";
 
     /// The header of module `name` in `v`: what comes before its line.
     fn header<'a>(v: &'a str, name: &str) -> &'a str {
@@ -164,6 +190,12 @@ mod tests {
         assert!(h.contains(SENDS) && h.contains(TAKES), "{h}");
         let v = Plain::lowered("plain").verilog();
         assert!(!v.contains("txhdl:"), "{v}");
+        // A port marked `#[axi]` does not wait on its ready, so the
+        // header names it and states no rule for a top (#1871).
+        let v = AxiCount::lowered("axi_count").verilog();
+        let h = header(&v, "axi_count");
+        assert!(h.contains(AXI) && h.contains(": out."), "{h}");
+        assert!(!h.contains(SENDS) && !h.contains(JOIN), "{h}");
     }
 
     /// A unit of units' file holds its children's modules, and each

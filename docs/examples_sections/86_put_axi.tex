@@ -1,0 +1,54 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{An Offer That Does Not Wait for Room}
+\label{sec:x-put-axi}
+
+A \code{put} waits for room before it raises \code{valid}, so its
+\code{valid} waits on its \code{ready}.
+Inside TxHDL that is harmless, since every join goes through a channel
+whose \code{ready} is a register.
+AXI forbids it of a source, though, and a sender that waits on
+\code{ready} joined wire to wire to a receiver that waits on
+\code{valid} passes nothing (\#1868).
+\code{\#[axi(a, b)]} on \code{run} marks sending ports whose
+\code{put} offers from the first edge it waits at, without waiting for
+room (\#1871).
+Its \code{valid} is the state's condition alone, low while the reset
+is high, as AXI also requires; the state is still left on
+\code{ready}, so what follows the \code{put} happens on the take, as
+before.
+The word is read at the first edge of the wait and held until it is
+taken, since AXI requires the data to hold while it waits; in the
+netlist that is two registers per marked port, \code{<port>\_axi\_wait}
+and \code{<port>\_axi\_hold}, and no cycle of latency.
+A port the attribute does not name is as in the last section.
+A marked port sends with \code{put} alone, since a \code{send} offers
+only once there is room, and \code{\#[axi]} on a receiving port is
+refused, since a receiver's \code{ready} may wait on \code{valid}
+under AXI.
+
+\code{Offers} has two marked ports.
+On \code{a} it puts its count in a loop of one wait; on \code{b} it
+puts a pair in a sequence of three waits.
+Every word mixes in \code{seed}, an input the run changes every cycle,
+and two consumers take when bits of a small shift register say so.
+So a word offered across a stall is the one read at its first edge,
+and the second word of each pair on \code{b}, which no input touches,
+counts up, as the run asserts.
+The netlist is checked against the run under nvc and Verilator, and
+its header names the two ports as AXI's.
+In \code{//lib/chanloop}, the same counter with its port marked passes
+a word a cycle joined wire to wire to a stage whose \code{ready} waits
+on \code{valid}, where the unmarked one passes none.
+
+\begin{figure}[htbp]
+\centering
+\input{axi_put_timing.tex}
+\caption{Two marked ports: \code{a\_valid} and \code{b\_valid} up from
+the first edge of each wait, each word held while \code{a\_ready} or
+\code{b\_ready} is low, though \code{seed} changes every cycle.}
+\label{fig:x-put-axi}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_axi\_put.rs}. Run with \code{bazel run //lib/examples:ex\_axi\_put}.},label={lst:x-put-axi}]{lib/examples/ex_axi_put.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_axi\_put} printed when the build ran it: \code{seed} and each word as it was taken, then the netlist.},label={lst:x-put-axi-out}]{out_axi_put.txt}
