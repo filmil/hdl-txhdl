@@ -316,6 +316,9 @@ pub struct Model {
     pub wfi_now: std::cell::Cell<bool>,
     pub last_wfi: u64,
     pub contended: bool,
+    /// Whether the scanout shows a frame from the DDR3 (issue 1561),
+    /// which the machine sets before each step, as `contended`.
+    pub scan_on: bool,
     /// The instruction cache's lines in the timing mode, each the line's
     /// address plus one, the line the last instruction was in, and
     /// whether control fell through to this one (issue 1561).
@@ -441,6 +444,13 @@ pub struct Timing {
     /// passes. The RTL's own is 3, into a memory on the core's own path
     /// (`lockstep_test`'s translation test).
     pub xlate_store: u64,
+    /// What a load that fills a line of the data cache costs more while
+    /// the scanout shows a frame (issue 1561), which reads the frame
+    /// from the same DDR3 controller: the board's `costs scan-bulk-read`
+    /// against `bulk-read` in the same run, 17.15 against 15.41 a word
+    /// (96910caf), 1.74 a word and so about 7 a line of four. Stores are
+    /// 3% dearer there, and are not charged.
+    pub scan_fill: u64,
     /// What a `fence` waits, at most, for a store into the DDR3 still on
     /// its way (issue 1561): the most, right after the store, less the
     /// cycles since.
@@ -496,6 +506,7 @@ impl Timing {
             walk: 0,
             xlate: 0,
             xlate_store: 0,
+            scan_fill: 0,
             fence: 0,
             fence_alone: 0,
         }
@@ -532,9 +543,10 @@ impl Timing {
     /// streams loads from the DDR3 2.57 more, charged as 3. With these the
     /// teapot's list on the model is 35.69M against the board's 37.18M, 4.0%
     /// under, and linked hot first 30.34M against 30.36M (#1752). A page walk
-    /// is two loads that miss. From the translation block on the board
-    /// (issue 1561, costs image 96910caf, flagship 93a1e1c6): a translated
-    /// store waits 2.
+    /// is two loads that miss. From the translation and scanout blocks on
+    /// the board (issue 1561, costs image 96910caf, flagship 93a1e1c6): a
+    /// translated store waits 2, and a load that fills a data line while
+    /// the scanout shows costs 7 more, 1.74 a word.
     pub fn board_cached() -> Self {
         let mut t = Timing {
             hit: Some(2),
@@ -555,6 +567,7 @@ impl Timing {
             walk: 86,
             xlate: 4,
             xlate_store: 2,
+            scan_fill: 7,
             fence: 14,
             fence_alone: 1,
             ..Self::board()
@@ -619,6 +632,7 @@ impl Default for Model {
             wfi_now: std::cell::Cell::new(false),
             last_wfi: 0,
             contended: false,
+            scan_on: false,
             ic: Vec::new(),
             last_line: u32::MAX,
             fell: false,
@@ -1556,6 +1570,10 @@ impl Model {
             };
             if store && cached(addr) {
                 c += busy * contention.0;
+            }
+            if hit.is_some() && !store && !held && cached(addr) && self.scan_on
+            {
+                c += t.scan_fill;
             }
             if hit.is_some() && !store && cached(addr) {
                 if self.dc.len() != 256 {
@@ -2546,5 +2564,37 @@ mod tests {
         assert_eq!(run(true) - run(false), 2 * 7, "two fills, each shared");
         assert_eq!(Timing::board_cached().guessed, 5);
         assert_eq!(Timing::board().guessed, 2);
+    }
+
+    /// A load that fills a line of the data cache costs `scan_fill` more
+    /// while the scanout shows a frame (issue 1561), and nothing else
+    /// does: of two loads from two lines of the DDR3, one again from the
+    /// first, which the cache holds, and a store, only the two fills pay.
+    #[test]
+    fn a_fill_while_the_scanout_shows_costs_scan_fill() {
+        use crate::isa::{lw, sw};
+        let imem = vec![
+            lui(2, 0x4010_0000 >> 12),
+            lw(3, 2, 0),
+            lw(3, 2, 16),
+            lw(3, 2, 4),
+            sw(3, 2, 32),
+            halt(),
+        ];
+        let run = |scan_on: bool| {
+            let mut m = Model {
+                timing: Some(Timing::board_cached()),
+                scan_on,
+                ..Model::default()
+            };
+            while m.halted.is_none() {
+                m.step(&imem, None);
+            }
+            m.cycles
+        };
+        let fill = Timing::board_cached().scan_fill;
+        assert_eq!(fill, 7, "the board's, about 1.74 a word");
+        assert_eq!(run(true) - run(false), 2 * fill, "the two fills");
+        assert_eq!(Timing::board().scan_fill, 0, "without the cache");
     }
 }
