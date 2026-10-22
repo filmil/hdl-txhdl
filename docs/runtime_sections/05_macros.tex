@@ -327,15 +327,34 @@ hand-written, and for its receiving port joined to any sender whose
 \code{valid} waits on its \code{ready}.
 So the rule for a top is plain: never join a lowered unit's channel
 port wire to wire to one that waits the other way, which every lowered
-unit's does; join them through \code{txhdl\_chan}, as a unit of units
-does, or through a FIFO whose \code{ready} is a register.
+unit's does but a sending port marked \code{\#[axi]}; join them through
+\code{txhdl\_chan}, as a unit of units does, or through a FIFO whose
+\code{ready} is a register.
 Every module with a channel port says what its ports wait on in a
 comment above it, and
 \code{//lib/chanloop} shows both under Verilator: a pair joined wire to
 wire passes nothing in a hundred cycles, and the same pair joined by a
 channel passes a word a cycle.
-A sender that offers before it has room, as AXI requires of one, would
-make the receiver's wait harmless; that is \#1871.
+A sending port that \code{\#[axi(port)]} on \code{run} marks offers
+before it has room, as AXI requires of a source, and that makes the
+receiver's wait harmless (\#1871).
+Its \code{put} lowers with the state's condition alone as
+\code{valid}, gated low by the reset, and the state is left on
+\code{ready}, as before.
+The data it offers is held from the first edge of the wait in two
+registers of a clocked block of their own, \code{<port>\_axi\_wait},
+set while an offer waits, and \code{<port>\_axi\_hold}, the word; the
+port's \code{data} is the held word while one waits and the state's
+otherwise.
+In the run, \code{\#[lower]} opens \code{run} with \code{port.axi()},
+which marks the channel, and \code{Tx::put} on a marked channel reads
+its closure once, at the first edge, offers that word at each edge
+without storing it until there is room, and reads it again after a
+reset.
+The header of such a module names its AXI ports, and a module whose
+only channel ports are those has no rule to state.
+A marked port's \code{send} and \code{\#[axi]} on a receiving port are
+refused where the unit is lowered.
 Both buffers store an offer only when they have the room their
 \code{tx\_ready} shows, so a sender may offer before it has room: an
 offer made while \code{tx\_ready} is low is not stored, and the sender
