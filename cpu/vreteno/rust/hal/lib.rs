@@ -19,6 +19,8 @@
 //!   registered;
 //! * [`entry!`], which owns the reset path, and [`halt`], which is how
 //!   a program says it is done.
+//! * `memcpy`, four words a round, in place of `compiler_builtins`'
+//!   word at a time (#1825).
 //!
 //! Nothing here allocates, formats or unwinds: the crate is `no_std`,
 //! the panic handler halts the core, and a program that links this
@@ -665,3 +667,65 @@ macro_rules! entry {
 fn panic(_: &PanicInfo) -> ! {
     halt()
 }
+
+// `memcpy` for every program that links this crate (#1825), in place of
+// `compiler_builtins`' weak one, which copies a word a round. The GL
+// library moves its small vertex and colour arrays by value, and LLVM
+// makes each move a call: about 16,000 a frame of the teapot, 24 words
+// each on average. Theirs costs about 16 cycles a word in the timing
+// mode, its loop one word a round and its taken branch paid each word.
+// This one copies four words a round when both ends are word aligned,
+// about 8 cycles a word, then the words left, then bytes. An end that
+// is not word aligned is copied a byte at a time; the teapot has 34 of
+// 540,000. Eight words a round measured slower, 8.7 a word, since most
+// copies are 52 to 64 bytes. Written in assembly so that the compiler
+// cannot make the loop a call of itself.
+core::arch::global_asm!(
+    ".section .text.memcpy, \"ax\", @progbits",
+    ".globl memcpy",
+    ".type memcpy, @function",
+    ".p2align 4",
+    "memcpy:",
+    "mv a3, a0",
+    "or a4, a0, a1",
+    "andi a4, a4, 3",
+    "bnez a4, 3f",
+    "li a7, 16",
+    "bltu a2, a7, 2f",
+    ".p2align 4",
+    "1:",
+    "lw a4, 0(a1)",
+    "lw a5, 4(a1)",
+    "lw a6, 8(a1)",
+    "lw t0, 12(a1)",
+    "addi a2, a2, -16",
+    "addi a1, a1, 16",
+    "sw a4, 0(a3)",
+    "sw a5, 4(a3)",
+    "sw a6, 8(a3)",
+    "sw t0, 12(a3)",
+    "addi a3, a3, 16",
+    "bgeu a2, a7, 1b",
+    "2:",
+    "li a7, 4",
+    "bltu a2, a7, 3f",
+    "21:",
+    "lw a4, 0(a1)",
+    "addi a2, a2, -4",
+    "addi a1, a1, 4",
+    "sw a4, 0(a3)",
+    "addi a3, a3, 4",
+    "bgeu a2, a7, 21b",
+    "3:",
+    "beqz a2, 4f",
+    "31:",
+    "lbu a4, 0(a1)",
+    "addi a2, a2, -1",
+    "addi a1, a1, 1",
+    "sb a4, 0(a3)",
+    "addi a3, a3, 1",
+    "bnez a2, 31b",
+    "4:",
+    "ret",
+    ".size memcpy, . - memcpy",
+);
