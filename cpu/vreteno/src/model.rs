@@ -2622,15 +2622,42 @@ mod tests {
         assert_eq!(Timing::board().scan_fill, 0, "without the cache");
     }
 
+    /// Both of the instruction cache's fills pay `scan_fill` while the
+    /// scanout shows a frame (issue 1561): a cold run whose `jal`, its
+    /// line's last word, fills its own line, and the line after it for
+    /// the word after the jump, costs two `scan_fill` more.
+    #[test]
+    fn both_instruction_fills_pay_the_scanout() {
+        use crate::isa::jal;
+        let mut imem = vec![addi(1, 1, 1), addi(1, 1, 1), addi(1, 1, 1)];
+        imem.push(jal(0, 20 - 12)); // 12, line 0's last word, to 20
+        imem.resize(6, halt());
+        let run = |scan_on: bool| {
+            let mut m = Model {
+                timing: Some(Timing::board_cached()),
+                scan_on,
+                ..Model::default()
+            };
+            while m.halted.is_none() {
+                m.step(&imem, None);
+            }
+            (m.cycles, m.ic_fills)
+        };
+        let ((on, fills), (off, _)) = (run(true), run(false));
+        assert_eq!(fills, 2, "the jump's line and the line after it");
+        assert_eq!(on - off, 2 * Timing::board_cached().scan_fill);
+    }
+
     /// What a translated store, an AMO, a load and an `lr.w` and `sc.w`
     /// pair cost the step (issue 1561), each beyond the same
     /// untranslated: a store `xlate_store`, an AMO `xlate_amo`, a load
     /// and `lr.w` `xlate`, and `sc.w` `xlate_store`, once the page's entry
-    /// is held. The data
+    /// is held. `xlate_amo` is set to 9 here, since the board's 0 would
+    /// pass whether or not an AMO were charged it. The data
     /// is translated through `MPRV`, as the supervisor's, while the
     /// fetches stay machine mode's and untranslated.
     #[test]
-    fn a_translated_store_waits_less_than_a_load_or_an_amo() {
+    fn translation_waits_by_the_kind_of_access() {
         use crate::isa::{amoadd_w, lr_w, lw, sc_w, sw};
         use txhdl_parts::mmu::pte::{to, A, D, R, V, W, X};
         let root = 0x8000_0000u32;
@@ -2643,8 +2670,12 @@ mod tests {
             sc_w(5, 2, 3),
             halt(),
         ];
-        // The cycles of each step, with the data at `base`, translated or
-        // not.
+        // The cycles of each step, translated or not, with `xlate_amo` set
+        // to 9 so that its charge shows.
+        let timing = Timing {
+            xlate_amo: 9,
+            ..Timing::board_cached()
+        };
         let run = |translated: bool| {
             let words = std::rc::Rc::new(Words::default());
             let put = |a: u32, v: u32| assert!(words.store(a, v, u32::MAX));
@@ -2655,7 +2686,7 @@ mod tests {
             }
             let mut m = Model {
                 bus: Some(words.clone() as std::rc::Rc<dyn Bus>),
-                timing: Some(Timing::board_cached()),
+                timing: Some(timing.clone()),
                 ..Model::default()
             };
             if translated {
@@ -2672,12 +2703,13 @@ mod tests {
             each
         };
         let (on, off) = (run(true), run(false));
-        let t = Timing::board_cached();
+        let t = &timing;
         assert_eq!(on[1] - off[1], t.xlate_store, "a store");
         assert_eq!(on[2] - off[2], t.xlate_amo, "an AMO");
         assert_eq!(on[3] - off[3], t.xlate, "a load");
         assert_eq!(on[4] - off[4], t.xlate, "lr.w, a load");
         assert_eq!(on[5] - off[5], t.xlate_store, "sc.w, a store");
-        assert_eq!((t.xlate_store, t.xlate_amo), (2, 0));
+        let board = Timing::board_cached();
+        assert_eq!((board.xlate_store, board.xlate_amo), (2, 0), "the RTL's");
     }
 }
