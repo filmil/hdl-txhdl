@@ -452,15 +452,16 @@ pub struct Timing {
     /// `lr.w` and `sc.w` pair there waits 6.1 more, a load's 4 and a
     /// store's 2. The board has timed neither.
     pub xlate_amo: u64,
-    /// What a load that fills a line of the data cache costs more while
-    /// the scanout shows a frame (issue 1561), which reads the frame
-    /// from the same DDR3 controller: the board's `costs scan-bulk-read`
+    /// What a fill of a line of either cache costs more while the scanout
+    /// shows a frame (issue 1561), which reads the frame from the same
+    /// DDR3 controller. A data fill: the board's `costs scan-bulk-read`
     /// against `bulk-read` in the same run, 17.15 against 15.41 a word
-    /// (96910caf), 1.74 a word and so about 7 a line of four. Stores are
-    /// 3% dearer there, and are not charged. Nor yet is an instruction
-    /// fill, nor a walk's table read: the board has timed neither with
-    /// the scanout showing, and `costs scan-icache-miss` asks of the
-    /// first.
+    /// (96910caf), and 16.73 against 14.80 (112618f3, flagship
+    /// 94a2a105), about 7 and 7.7 a line of four. An instruction fill:
+    /// `costs scan-icache-miss` against `icache-miss` in that second run,
+    /// 49.55 against 41.98 a line, 7.6. Stores are 3% dearer there, and
+    /// are not charged; nor is a walk's table read, which the board has
+    /// not timed with the scanout showing.
     pub scan_fill: u64,
     /// What a `fence` waits, at most, for a store into the DDR3 still on
     /// its way (issue 1561): the most, right after the store, less the
@@ -1499,6 +1500,9 @@ impl Model {
                     if self.contended {
                         c += shared;
                     }
+                    if self.scan_on {
+                        c += t.scan_fill;
+                    }
                     self.ic[slot] = line + 1;
                     self.ic_fills += 1;
                 } else if self.fell {
@@ -1518,6 +1522,9 @@ impl Model {
                     c += after.1;
                     if self.contended {
                         c += shared;
+                    }
+                    if self.scan_on {
+                        c += t.scan_fill;
                     }
                     self.ic[slot] = next + 1;
                     self.ic_fills += 1;
@@ -2579,10 +2586,11 @@ mod tests {
         assert_eq!(Timing::board().guessed, 2);
     }
 
-    /// A load that fills a line of the data cache costs `scan_fill` more
-    /// while the scanout shows a frame (issue 1561), and nothing else
-    /// does: of two loads from two lines of the DDR3, one again from the
-    /// first, which the cache holds, and a store, only the two fills pay.
+    /// A fill of either cache costs `scan_fill` more while the scanout
+    /// shows a frame (issue 1561), and nothing else does: of two loads
+    /// from two lines of the DDR3, one again from the first, which the
+    /// cache holds, and a store, only the two data fills pay, and each
+    /// line of the program the instruction cache fills.
     #[test]
     fn a_fill_while_the_scanout_shows_costs_scan_fill() {
         use crate::isa::{lw, sw};
@@ -2603,11 +2611,14 @@ mod tests {
             while m.halted.is_none() {
                 m.step(&imem, None);
             }
-            m.cycles
+            (m.cycles, m.ic_fills)
         };
         let fill = Timing::board_cached().scan_fill;
-        assert_eq!(fill, 7, "the board's, about 1.74 a word");
-        assert_eq!(run(true) - run(false), 2 * fill, "the two fills");
+        assert_eq!(fill, 7, "the board's, about 7 a line either cache");
+        let ((on, ic), (off, ic_off)) = (run(true), run(false));
+        assert_eq!(ic, ic_off, "the same lines filled");
+        assert!(ic > 0, "the program's lines filled");
+        assert_eq!(on - off, (2 + ic) * fill, "two data fills and the lines");
         assert_eq!(Timing::board().scan_fill, 0, "without the cache");
     }
 
