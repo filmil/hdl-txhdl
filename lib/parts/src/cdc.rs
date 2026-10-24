@@ -32,8 +32,10 @@
 //!
 //! `lib/board/chan_cdc.v` is the hand-written Verilog this is shaped
 //! after, nine instances of which are in the flagship. Replacing it
-//! is a separate decision (issue 370): that file is proven on
-//! hardware and this one is not.
+//! is a separate decision (issue 370). The lowered board holds two of
+//! this one, `dreq` and `dans` in `cpu/vreteno/src/board.rs`, which
+//! carry the debug transport's accesses from the cable's clock to the
+//! board's and its answers back.
 use txhdl::comp::{join2, Clock, Mem, Reg, Rx, Tx, Unit};
 use txhdl::types::{Transaction, Value, U};
 use txhdl::{lower, with, Trace};

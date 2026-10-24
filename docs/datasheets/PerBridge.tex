@@ -78,10 +78,11 @@ write response, or the last beat of a read, under that identifier.
 \subsection*{Verification}
 
 \begin{itemize}
-\item Three tests in \code{lib/parts/src/bus/noc.rs}, in
+\item Eight of the ten tests in \code{lib/parts/src/bus/noc.rs}, in
 \code{//lib/parts:parts\_test}, put a
 \code{PerBridge<1, 1, 2, 2, 16, 32, 4, 2, 4>} in front of the memory
-at 1,1.
+at 1,1, behind host bridges; the other two run a switch alone.
+Among them,
 \code{a\_burst\_crosses\_the\_lattice\_and\_its\_answer\_comes\_back}
 writes and reads one word from one host.
 \code{two\_hosts\_share\_a\_memory\_and\_each\_answer\_goes\_home} checks
@@ -90,6 +91,8 @@ that this test failed before the renaming was written.
 \code{four\_peripherals\_share\_one\_node} puts a router of four
 memories behind the bridge, and checks each word and the router's
 \code{DecErr} for an address none of them has.
+Two send write bursts across: one of two beats from one host, and
+one of sixteen beats from each of two hosts at once.
 \item \code{a\_core\_draws\_a\_solid\_and\_a\_gpu\_fills\_it}, in
 \code{//soc:demo\_test}, runs a bridge at 0,1 for the memory and one at
 1,1 for the serial port.
@@ -108,8 +111,9 @@ memory's \code{AxiPer}, and at 1,1 in front of the serial port, behind
 
 \subsection*{Limits}
 
-A write request is one packet with one beat, so a burst of more than
-one beat does not cross the network. At most \code{NIDS} bursts are in
+A write request is one packet with one beat. A write burst crosses as
+several: \code{HostBridge} splits it into single-beat writes, and the
+peripheral sees each as a write of its own. At most \code{NIDS} bursts are in
 flight at the peripheral. \code{turn} is a register of \code{I} bits
 and \code{busy} has \code{NIDS} bits. Every use in the tree sets
 \code{NIDS} to 4 with \code{I} of 2. The bridge sends one answer per

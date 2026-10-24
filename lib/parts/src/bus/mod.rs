@@ -13,6 +13,13 @@
 //!   peripheral's pins.
 //! - [`arbiter`]: several hosts merged onto one link, and
 //!   [`router`]: one host fanned out to several peripherals.
+//! - [`exmon`]: the exclusive monitor, which makes `lr.w`, `sc.w`
+//!   and the AMOs atomic across the hosts on one memory.
+//! - [`lite_split`]: one AXI-Lite slot split in two by an address bit.
+//! - [`noc`]: a network on chip, and the bridges that put an AXI link
+//!   across it.
+//! - [`wb`]: a bridge from a link's peripheral end to a pipelined
+//!   Wishbone bus.
 pub mod arbiter;
 pub mod axi;
 pub mod axi_lite;

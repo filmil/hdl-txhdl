@@ -18,8 +18,9 @@ use crate::bus::axi::{BurstKind, Resp};
 /// Which of AXI's five channels a packet carries.
 #[derive(ValueDerive, Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub enum Chan {
-    /// A write address phase. In this network it carries its single
-    /// data beat with it, so there is no separate `W`.
+    /// A write address phase alone. Nothing sends it: a write travels
+    /// as `W`, its address and its one beat together. It is kept as
+    /// the default.
     #[default]
     Aw,
     /// A read address phase.

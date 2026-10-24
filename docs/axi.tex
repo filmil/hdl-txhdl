@@ -102,7 +102,9 @@ write data, and write response operate over \code{aw}, \code{w}, and
 write transaction consists of an address beat, one or more data beats
 terminated by an asserted \code{last} flag, and a completion response. A
 read transaction pairs an address beat with a sequence of data beats.
-Each beat holds a transaction identifier. Interleaving beats with distinct
+Each address, read data and response beat holds a transaction identifier;
+a write data beat does not, and belongs to the oldest write address that
+has not finished. Interleaving beats with distinct
 identifiers allows multiple concurrent transactions in flight.
 
 TxHDL shields client code from channel-level bookkeeping. The \code{axi()}
@@ -146,7 +148,7 @@ preventing mismatches between declared length and submitted beats. The
 \code{write} helper automatically asserts \code{last} on the final beat.
 Hardware tracking logic allocates identifiers dynamically, keeping
 identifier assignment transparent to the client. The client specifies only
-addresses, data words, and strobes.
+addresses and data words; every write enables all of its byte strobes.
 
 The peripheral interface exposes a single entry point. The \code{accept}
 method blocks until a complete transaction arrives and yields a decoded
@@ -451,8 +453,9 @@ Listing~\ref{lst:a-ram} defines a memory model backed by a standard heap
 vector. Test code populates program binaries into this model before
 execution and inspects resulting state after simulation completes.
 Implementing the model in standard Rust avoids hardware synthesis overheads:
-a megabyte occupies a native \code{Vec<u8>} rather than an expensive array
-of synthesized registers. Burst handling, byte strobes, and boundary bounds
+a megabyte occupies a native vector of words, \code{Vec<U<D>>}, rather
+than an expensive array of synthesized registers. Burst handling, byte
+strobes, and boundary bounds
 resolve in concise software logic. In-bounds transfers complete with
 \code{Okay}, while out-of-bounds accesses return \code{SlvErr}.
 
@@ -507,8 +510,10 @@ and \code{ar\_data}. Field definitions pack into single bus vectors rather
 than disjoint wires such as \code{awaddr} and \code{awlen}; unpacking them
 requires only slice index definitions.
 
-Sequential state comprises a four-bit allocation register, an active mask,
-and a one-bit arbitration register. Step logic assigns clear names to
+For \code{ex\_axi}'s \code{AxiHost<16, 32, 4, 2, 4>}, the host's state is
+a two-bit register holding the identifier the next burst takes and a
+four-bit mask of the identifiers outstanding; the peripheral's is a
+one-bit arbitration register. Step logic assigns clear names to
 internal control nets: \code{free}, \code{go}, \code{wr\_go}, \code{rel\_go},
 \code{take\_ar}, and \code{take\_aw}. The test target \code{ex\_axi} emits
 both netlists during execution, and Bazel validates them against cycle
@@ -532,8 +537,9 @@ to 4 concurrent transactions and awaiting responses out of order. A companion
 peripheral processes up to 4 concurrent transactions with randomized delays,
 returning \code{SlvErr} for accesses within an unmapped test window.
 Stalling relays instrument all 15 active channels (the 5 physical AXI buses
-and the 10 internal client channels), injecting single-cycle stalls during
-25\% of clock ticks and burst stalls lasting 8 to 47 cycles intermittently.
+and the 10 internal client channels). Each cycle a relay skips a beat with
+a chance of 15 in 64, about 23\%, and with a chance of 1 in 64 starts a
+stall of 8 to 47 cycles.
 
 \fuzzpart{relay}{A relay, from
 \code{lib/parts/src/bus/axi/fuzz.rs}.}{lst:a-relay}
@@ -695,8 +701,10 @@ controllers alongside processor cores.
 The module \code{Arbiter<N, ..>} supports up to 8 host interfaces through port
 arrays (\code{Arbiter2} through \code{Arbiter8}). It implements round-robin
 scheduling by default, advancing the grant token past the winning port to
-prevent host starvation. Setting the priority parameter activates
-fixed-priority arbitration, giving precedence to lower-indexed hosts.
+prevent host starvation. Setting \code{FIXED} to a value other than zero
+activates fixed-priority arbitration, giving precedence to lower-indexed
+hosts. \code{PRIO} is different: it names one host whose read address
+phase goes ahead of the round robin, and it leaves writes alone.
 
 \subsection{Response Routing via Tag Extension}
 
@@ -809,8 +817,9 @@ The unit tests in \code{lib/parts/src/bus/exmon.rs} run two hosts, an
 arbiter and the monitor before a memory that takes a read's words at
 its address: a pair with nothing between stores; a write between, with
 the hold not built, breaks it; a read that comes while a burst over
-its line is still writing reads the burst's word, and does not when
-the wait is removed; the failed write's answer comes after the
+its line is still writing reads the burst's word, which is what the
+wait is for, though no test removes the wait to show the other side;
+the failed write's answer comes after the
 earlier one; and after a failed \code{sc} of another word the
 reservation is gone. Every run checks that no watched host sent a
 write under the identifier its exclusive write's answer will carry.
@@ -860,7 +869,7 @@ On its upstream interface, the bridge accepts \code{aw}, \code{ar}, and
 topological position of an \code{AxiPer} unit, attaching either directly to a
 host tracker or behind a downstream router port.
 
-The bridge enforces four invariant rules:
+The bridge enforces five invariant rules:
 
 First, it serializes incoming bursts. Because AXI-Lite lacks identifiers,
 the bridge blocks subsequent transactions until the active burst retires

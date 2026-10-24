@@ -422,8 +422,8 @@ fn sheet(key: &str, ty: &str, net: Lowered) {
 }
 
 /// A second clock, so that the crossing can be lowered with the two
-/// domains it is for. Its rate is the pixel clock's in `ex_cdc`; the
-/// sheet's tables only need the two to be different types.
+/// domains it is for. Its rate is the pixel clock's in `ex_scanout`;
+/// the sheet's tables only need the two to be different types.
 pub struct ClkPix;
 impl Clock for ClkPix {
     const NAME: &'static str = "clk_pix";

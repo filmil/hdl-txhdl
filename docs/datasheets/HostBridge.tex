@@ -35,8 +35,7 @@ the node at \code{X0}, \code{Y0}. \\
 \code{B1}, \code{M1}, \code{X1}, \code{Y1} & The second range, in the
 same way. The first range wins where both match. \\
 \code{B2}, \code{M2}, \code{X2}, \code{Y2} & The third range, the
-default route. The doc comment says to give it a mask of zero. The
-bridge's \code{run} does not read \code{B2} or \code{M2}: it sends
+default route. The \code{run} does not read \code{B2} or \code{M2}: it sends
 every address the first two ranges miss to \code{X2}, \code{Y2}. \\
 \bottomrule
 \end{tabular}

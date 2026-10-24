@@ -54,7 +54,8 @@ mod tests {
 
     /// The map every host bridge uses here: everything goes to the
     /// node at 1, 1, which is where the memory is. The last entry is
-    /// the default route, so its mask is zero.
+    /// the default route, which takes whatever the first two miss; its
+    /// base and mask are not read.
     type Bridge = HostBridge<
         0,
         0,

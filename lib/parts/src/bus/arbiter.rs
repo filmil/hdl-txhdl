@@ -67,8 +67,10 @@ use txhdl::{lower, with, Trace};
 ///
 /// `PRIO` names a host whose read address phase wins whenever it offers
 /// one, ahead of the round robin, which goes on as before among the
-/// others (issue 1523): the flagship's scanout, whose line has a
-/// deadline the others' reads do not. Eight, the default, names none.
+/// others (issue 1523), for a host whose reads have a deadline the
+/// others' do not. Eight, the default, names none. The board tried it
+/// for the scanout and sets none (`SCAN_PRIO` in
+/// `cpu/vreteno/src/board.rs` says why).
 /// Writes are not affected.
 #[derive(Trace, Default)]
 pub struct Arbiter<
