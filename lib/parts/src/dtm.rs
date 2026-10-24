@@ -310,8 +310,10 @@ pub struct DtmBridge<const DM: usize, const I: usize> {
     pub width: Reg<U<3>>,
     /// `sberror`, cleared by writing ones to it.
     pub sberror: Reg<U<3>>,
-    /// `sbbusyerror`: an access was asked for while one ran.
-    pub busyerr: Reg<Bit>,
+    // No `sbbusyerror`: it is set when an access is asked for while one
+    // runs, and the bridge takes no access from the transport while one
+    // runs (`take` waits on `busy`), so the transport waits instead and
+    // the error cannot arise. Its bit, 22, reads 0 (#1894).
 }
 // end{bridge}
 
@@ -342,7 +344,6 @@ impl<const DM: usize, const I: usize> Unit for DtmBridge<DM, I> {
             let fordmi = self.fordmi.get();
             let sbaddr = self.sbaddr.get();
             let sberror = self.sberror.get();
-            let busyerr = self.busyerr.get();
             // An access from the transport, taken when nothing is on
             // the link and an answer could go at once.
             let q = dmi.head();
@@ -355,9 +356,12 @@ impl<const DM: usize, const I: usize> Unit for DtmBridge<DM, I> {
             let is_ad = Bit::from(a == SBADDRESS0);
             let is_da = Bit::from(a == SBDATA0);
             let is_sb = is_cs | is_ad | is_da;
-            // What the system bus registers read as.
+            // What the system bus registers read as. `sbbusy`, bit 21, is
+            // `busy`, as the specification has it (#1894); the transport
+            // can read `sbcs` only once the access is done, since nothing
+            // is taken while one runs, so it reads 0 there.
             let sbcs = U::<32>::from(SBCS_FIXED)
-                | (busyerr.zext::<32>() << 22u32)
+                | (busy.zext::<32>() << 21u32)
                 | (self.rdonaddr.get().zext::<32>() << 20u32)
                 | (self.sbaccess.get().zext::<32>() << 17u32)
                 | (self.autoinc.get().zext::<32>() << 16u32)
@@ -374,7 +378,7 @@ impl<const DM: usize, const I: usize> Unit for DtmBridge<DM, I> {
             // it under `sbreadondata`. It goes only with no error
             // standing, at a width served, 8, 16 or 32 bits, and at an
             // address aligned to it (issue 873).
-            let clear = (sberror == 0) & !busyerr;
+            let clear = sberror == 0;
             let acc = self.sbaccess.get();
             let sb_rd_addr = take & is_ad & wr & self.rdonaddr.get();
             let sb_wr = take & is_da & wr;
@@ -480,7 +484,6 @@ impl<const DM: usize, const I: usize> Unit for DtmBridge<DM, I> {
                     rdondata: d.bit(15),
                     sberror: sberror & !d.slice::<12, 3>(),
                 },
-                take & is_cs & wr & d.bit(22) ? busyerr: Bit::Zero,
                 take & is_ad & wr ? sbaddr: d,
                 take & is_da & wr ? sbdata: d,
                 sb_bad ? sberror: U::<3>::from(SBERROR_SIZE),
@@ -950,6 +953,35 @@ mod bridge_tests {
         assert_eq!(cs >> 29, 1, "sbversion 1");
         assert_eq!((cs >> 5) & 0x7f, 32, "sbasize 32");
         assert_eq!(cs & 0x1f, 0b111, "8, 16 and 32-bit accesses");
+    }
+
+    /// `sbbusy` and `sbbusyerror` as the transport sees them (#1894): a
+    /// write of `sbdata0` starts a write on the link, and the read of
+    /// `sbcs` behind it is taken only once that access is done, so
+    /// `sbbusy`, bit 21, reads 0. Nothing can be asked for while an
+    /// access runs, so `sbbusyerror`, bit 22, reads 0 too, and writing
+    /// one to it changes nothing.
+    #[test]
+    fn sbbusy_and_sbbusyerror_read_0_to_the_transport() {
+        let m = mem(&[(0x600, 0)]);
+        let got = with_bridge(
+            m.clone(),
+            vec![
+                (SBCS, 2 << 17, OP_WRITE),
+                (SBADDRESS0, 0x600, OP_WRITE),
+                (SBDATA0, 0x1234_5678, OP_WRITE),
+                (SBCS, 0, OP_READ),
+                (SBCS, (2 << 17) | (1 << 22), OP_WRITE),
+                (SBCS, 0, OP_READ),
+            ],
+        );
+        for i in [3, 5] {
+            let cs = got[i].0;
+            assert_eq!((cs >> 21) & 1, 0, "sbbusy, read {i}");
+            assert_eq!((cs >> 22) & 1, 0, "sbbusyerror, read {i}");
+            assert_eq!((cs >> 12) & 7, 0, "no error, read {i}");
+        }
+        assert_eq!(m.borrow()[&0x600], 0x1234_5678, "the write went");
     }
 
     /// `sbcs` for reads on a write of the address, at width `access`:
