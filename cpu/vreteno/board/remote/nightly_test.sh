@@ -59,4 +59,9 @@ printf '00:00:01.000Z rx dma 60 got 0 of 0 lost 0 other 0 ticks 0 cycles/frame 0
 # Listening with no load before it is not a time.
 printf '00:00:01.000Z fastboot: listening on port 5554\n' >"$bad"
 [[ "$(read_fastboot "$bad" yes | head -1 | cut -f5)" == fail ]]
+# A binary run bare sees none of this script's runfiles variables, so a
+# wrapper finds its own files and not the nightly's (#1898).
+[[ "$(RUNFILES_DIR=/x RUNFILES_MANIFEST_FILE=/y JAVA_RUNFILES=/z bare bash -c \
+  'echo "${RUNFILES_DIR-unset} ${RUNFILES_MANIFEST_FILE-unset} ${JAVA_RUNFILES-unset}"')" \
+  == "unset unset unset" ]]
 echo "nightly readers: pass"

@@ -52,6 +52,17 @@ read_demo() {
   fi
 }
 
+# Runs a binary Bazel built, as it is and outside this script's own
+# runfiles. The nightly runs under `bazel run`, which exports
+# RUNFILES_DIR, RUNFILES_MANIFEST_FILE and JAVA_RUNFILES for the
+# nightly, and runfiles.bash reads all three; a wrapper
+# started with them looks for its own files in the nightly's runfiles,
+# finds none, and goes on with an empty path, as //eth/hil:run did with
+# its tester (#1898). Without them it finds its own, beside itself.
+bare() {
+  env -u RUNFILES_DIR -u RUNFILES_MANIFEST_FILE -u JAVA_RUNFILES "$@"
+}
+
 # The PHY's registers as phyregs prints them, `rNN a b c d`: the link up
 # (r1 bit 2, from `r01 again` where the log has it: the bit latches
 # low, so the dump's read is low if the link dropped at any time since

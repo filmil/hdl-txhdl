@@ -290,10 +290,19 @@ if [[ -z "$dry" ]]; then
     while (( answered_waits < waits )); do
       answered_waits=$((answered_waits + 1))
       size="$(grep -a 'rx waiting' "$dir/ethperf.log" | sed -n "${answered_waits}p" | awk '{print $NF}')"
-      # Built above; run as it is, with no Bazel in the board's wait.
-      [[ -n "$size" ]] && BUILD_WORKSPACE_DIRECTORY="$ws" "$ethtest" \
+      # Built above; run as it is, with no Bazel in the board's wait,
+      # and with its own runfiles rather than the nightly's (#1898).
+      sent=0
+      [[ -n "$size" ]] && { BUILD_WORKSPACE_DIRECTORY="$ws" bare "$ethtest" \
         --server="$server" --mode=send --count=1000 --size="$size" \
-        >>"$dir/ethtest.log" 2>&1 || true
+        >>"$dir/ethtest.log" 2>&1 || sent=$?; }
+      # Exit 2 is the sender unable to start at all, no tester or a bad
+      # argument, which no later burst will mend: say so and stop
+      # waiting, and the receive rows fail as they read (#1898).
+      if (( sent == 2 )); then
+        echo "[nightly] the ethperf sender cannot run; see ethtest.log" >&2
+        break 2
+      fi
     done
     (( answered_waits >= 4 )) && grep -aq 'rx copy 1514' "$dir/ethperf.log" && break
     sleep 1
