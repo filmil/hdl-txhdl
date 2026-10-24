@@ -46,5 +46,22 @@ grep -qE "^tx copy 1514 .* cycles/frame 20144\$" "$out" ||
   { echo "FAIL: tx copy 1514 is not 20144 cycles a frame" >&2; fail=1; }
 grep -qE "^tx copy 60 .* cycles/frame 852\$" "$out" ||
   { echo "FAIL: tx copy 60 is not 852 cycles a frame" >&2; fail=1; }
+# The default, with the data cache, is pinned too, so that a change to
+# it says so: cpi 7092 warm, and the copies 6474 and 283, which today's
+# board does in 4578 and 206 (#1918).
+"$machine" --image "$PWD/$cpi" --at 0x40000000 --steps 20000000 --timing \
+  >"$out" 2>&1 || true
+grep "^cpi" "$out"
+for want in "cpi dmem warm 7092 3004" "cpi ddr3 warm 7092 3004"; do
+  grep -q "^$want\$" "$out" ||
+    { echo "FAIL: cached, no '$want'" >&2; fail=1; }
+done
+"$machine" --image "$PWD/$ethperf" --at 0x40000000 --steps 40000000 \
+  --timing >"$out" 2>&1 || true
+grep "^tx" "$out"
+grep -qE "^tx copy 1514 .* cycles/frame 6474\$" "$out" ||
+  { echo "FAIL: cached, tx copy 1514 is not 6474 cycles a frame" >&2; fail=1; }
+grep -qE "^tx copy 60 .* cycles/frame 283\$" "$out" ||
+  { echo "FAIL: cached, tx copy 60 is not 283 cycles a frame" >&2; fail=1; }
 [ "$fail" -eq 0 ] && echo "PASS: the timing mode gives the calibrated cycles"
 exit "$fail"
