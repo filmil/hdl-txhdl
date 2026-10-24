@@ -52,6 +52,16 @@ read_demo() {
   fi
 }
 
+# Runs a binary Bazel built, as it is and outside this script's own
+# runfiles. The nightly runs under `bazel run`, which exports
+# RUNFILES_DIR and RUNFILES_MANIFEST_FILE for the nightly; a wrapper
+# started with them looks for its own files in the nightly's runfiles,
+# finds none, and goes on with an empty path, as //eth/hil:run did with
+# its tester (#1898). Without them it finds its own, beside itself.
+bare() {
+  env -u RUNFILES_DIR -u RUNFILES_MANIFEST_FILE -u JAVA_RUNFILES "$@"
+}
+
 # The PHY's registers as phyregs prints them, `rNN a b c d`: the link up
 # (r1 bit 2), and a 1000BASE-T full-duplex link: both sides advertise
 # 1000 full (r9 bit 9, r10 bit 11) and both receivers are OK (r10 bits

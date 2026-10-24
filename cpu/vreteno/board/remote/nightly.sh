@@ -290,8 +290,9 @@ if [[ -z "$dry" ]]; then
     while (( answered_waits < waits )); do
       answered_waits=$((answered_waits + 1))
       size="$(grep -a 'rx waiting' "$dir/ethperf.log" | sed -n "${answered_waits}p" | awk '{print $NF}')"
-      # Built above; run as it is, with no Bazel in the board's wait.
-      [[ -n "$size" ]] && BUILD_WORKSPACE_DIRECTORY="$ws" "$ethtest" \
+      # Built above; run as it is, with no Bazel in the board's wait,
+      # and with its own runfiles rather than the nightly's (#1898).
+      [[ -n "$size" ]] && BUILD_WORKSPACE_DIRECTORY="$ws" bare "$ethtest" \
         --server="$server" --mode=send --count=1000 --size="$size" \
         >>"$dir/ethtest.log" 2>&1 || true
     done
