@@ -2147,7 +2147,7 @@ waveform(
 )
 
 # The system control block: the reset a program asked for, held for
-# eight cycles, with the cause and the scratch word coming through it.
+# nine cycles, with the cause and the scratch word coming through it.
 waveform(
     name = "syscon",
     example = "//lib/examples:ex_syscon",
@@ -2167,7 +2167,7 @@ waveform(
 
 # The watchdog, at the end of its second timeout: the count reaching
 # zero with the warning already standing, the reset asked for, and the
-# count reloaded so that the request is eight cycles and not forever.
+# count reloaded so that the request is nine cycles and not forever.
 waveform(
     name = "wdog",
     example = "//lib/examples:ex_wdog",
