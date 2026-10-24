@@ -3038,6 +3038,22 @@ waveform(
     ],
 )
 
+waveform(
+    name = "seq_reset",
+    example = "//lib/examples:ex_seq_reset",
+    lowered = ("stepper_r", "stepper_r"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//words/rx_valid=>word_valid",
+        "//words/rx_data=>word",
+        "//words/rx_ready=>word_ready",
+        "//go=>go",
+        "//stepper/held=>held",
+        "//sums/tx_valid=>sum_valid",
+        "//sums/tx_data=>sum",
+    ],
+)
+
 # A for of a constant count that waits, a counted loop: its states once
 # and a register counting the turns (issue 501).
 waveform(
