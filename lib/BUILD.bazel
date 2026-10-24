@@ -22,7 +22,8 @@ rust_proc_macro(
     edition = "2021",
 )
 
-# The macros' own tests: the reserved words a netlist cannot hold.
+# The macros' own tests: the reserved words a netlist cannot hold, and
+# `seq.rs`'s tests of the lowering of a loop of several waits.
 rust_test(
     name = "macros_test",
     crate = ":txhdl_macros",
@@ -30,7 +31,8 @@ rust_test(
 )
 
 # The library's own unit tests: what the two emitters write for a
-# declaration, which no example can assert as directly. See issue #359.
+# declaration, which no example can assert as directly (see issue #359),
+# and `regmap.rs`'s tests of a register map.
 rust_test(
     name = "netlist_test",
     crate = ":txhdl",

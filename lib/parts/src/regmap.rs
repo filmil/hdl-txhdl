@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The register map declaration, exercised: `regmap!` is the macro in
-//! `txhdl`, its data types are `txhdl::regmap`, and this module is the
-//! test that the two agree, on a map with fields (issues 499 and 569).
+//! `txhdl_macros`, re-exported by `txhdl`, its data types are
+//! `txhdl::regmap`, and this module is the test that the two agree,
+//! on a map with fields (issues 499 and 569).
 //! The peripherals that declare maps are the users; `sd` is the first.
 
 #[cfg(test)]

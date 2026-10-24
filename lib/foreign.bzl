@@ -74,9 +74,10 @@ def vhdl_unit(name, src, entity, clock = "clk"):
     `src` is the VHDL file, `entity` the entity in it, `clock` its
     clock port. `//tools/vshim` writes a testbench around the entity
     that takes a step per line on its standard input and answers with
-    the outputs; `vhdl_test` analyses and elaborates the two and makes
-    the script that runs nvc on them, tagged manual since it waits on
-    its input; and the crate `name` holds the unit, which starts the
+    the outputs; `vhdl_library` analyses the two, `vhdl_elaborate`
+    elaborates them, and the local `nvc_runner` rule makes the script
+    that runs nvc on them as a plain executable; and the crate `name`
+    holds the unit, which starts the
     script and speaks the lines. The unit's ports are as
     `verilog_unit()` makes them."""
     tb = name + "_cosim"

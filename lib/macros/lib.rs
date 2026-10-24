@@ -197,8 +197,9 @@ fn field_names(body: &Group) -> Vec<String> {
 
 /// Whether each field of a braced struct body carries the bare
 /// attribute `#[key]`, in the order `field_idents` gives them.
-/// `#[async_reg]` is the one read so far: a register that samples
-/// another clock's value, which the netlist marks `ASYNC_REG` (#884).
+/// `#[async_reg]` marks a register that samples another clock's value,
+/// which the netlist marks `ASYNC_REG` (#884); `#[distributed]` is
+/// read the same way.
 fn field_flags(body: &Group, key: &str) -> Vec<bool> {
     let toks: Vec<TokenTree> = body.stream().into_iter().collect();
     let mut out = Vec::new();

@@ -887,8 +887,9 @@ pub enum Expr {
     Num(u128),
     /// A sized value, from an enum variant or a `Bit`.
     Bits(usize, String),
-    /// `+ - * & | && || == != < > <= >=`, spelled as Verilog spells
-    /// them.
+    /// `+ - * / % & | ^ << >> >>> && || == != < > <= >=`, spelled as
+    /// Verilog spells them, and `<s`, a signed less-than, which each
+    /// netlist writes in its own way.
     Bin(&'static str, Box<Expr>, Box<Expr>),
     /// Bitwise negation.
     Not(Box<Expr>),
@@ -900,8 +901,6 @@ pub enum Expr {
     Slice(Box<Expr>, usize, usize),
     /// `concat`: the first above the second.
     Cat(Box<Expr>, Box<Expr>),
-    /// `sext::<M>` and `zext::<M>`: to `M` bits, by the top bit or by
-    /// zeros.
     /// Sign extension to the stated width.
     Sext(Box<Expr>, usize),
     /// Zero extension, or truncation, to the stated width.
