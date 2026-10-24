@@ -64,7 +64,8 @@ pub enum Resp {
     /// The burst was served.
     #[default]
     Okay,
-    /// An exclusive access succeeded. Nothing here makes one.
+    /// An exclusive access succeeded. Nothing in `bus::axi` makes one;
+    /// `bus::exmon::ExMon` does.
     ExOkay,
     /// The peripheral was reached and refused, or failed.
     SlvErr,
@@ -119,8 +120,9 @@ pub struct Addr<const A: usize, const I: usize> {
     pub size: U<3>,
     /// How the address moves from beat to beat.
     pub burst: BurstKind,
-    /// An exclusive or locked access. Nothing here implements one;
-    /// it is carried so that a peripheral which does can see it.
+    /// An exclusive or locked access. Nothing in `bus::axi` implements
+    /// one; it is carried so that a unit which does, such as
+    /// `bus::exmon::ExMon`, can see it.
     pub lock: Bit,
     /// What a cache between here and memory may do with this burst:
     /// buffer it, allocate on it. AXI4's `AxCACHE`. Carried, not

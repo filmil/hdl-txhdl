@@ -11,11 +11,11 @@
 //! from, which the packet carries so that nothing has to keep a table
 //! of who asked.
 //!
-//! The map's last entry is the default route: give it a mask of zero
-//! and every address that matched nothing else goes there. A design
-//! states its map that way and there is no such thing as an address
-//! the network does not know, which is why neither bridge has to
-//! answer for one.
+//! The map's last entry is the default route: every address that
+//! matched neither of the first two goes to its node, whatever its base
+//! and mask say, since the bridge never reads them. So there is no
+//! such thing as an address the network does not know, which is why
+//! neither bridge has to answer for one.
 //!
 //! A write of one beat is one packet, carrying its address phase and
 //! its data together, and a write of more is that many packets: the
@@ -42,8 +42,9 @@ use crate::bus::axi::{Addr, BurstKind, Resp, B, R, W};
 ///
 /// `B0`, `M0`, `X0` and `Y0`, and their two fellows, are the address
 /// map: an address whose bits under the mask `M0` equal `B0` goes to
-/// the node at `X0`, `Y0`. The last entry is the default route, so a
-/// mask of zero there takes everything that matched nothing else.
+/// the node at `X0`, `Y0`. The last entry is the default route: `X2`,
+/// `Y2` take everything the first two did not match, and `B2` and `M2`
+/// are not read.
 ///
 /// The widths are the AXI link's, and they are the same everywhere in
 /// the network: `A` is the address width, `D` the data width, `S` the

@@ -5,8 +5,9 @@
 //! bytes, and a slot is one AXI-Lite link. [`LiteSplit`] puts two
 //! peripherals in one slot: a transaction whose address has bit `BIT`
 //! low goes to the first, `lo`, and one whose bit is high to the
-//! second, `hi`. Neither peripheral sees the bit, since each decodes
-//! only the low bits of its own words.
+//! second, `hi`. The whole address goes to either side, bit and all;
+//! neither peripheral decodes the bit, since each decodes only the low
+//! bits of its own words.
 //!
 //! One read and one write are in flight at a time, each remembered by
 //! the side it went to, so an answer comes back from the side that owes

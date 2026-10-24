@@ -8,8 +8,10 @@
 //! words on the Wishbone lines as its own request: `cyc` and `stb` held until the
 //! peripheral takes it, a cycle with `cyc`, `stb` and no `stall`; then
 //! `cyc` alone until `ack`; then the answer on the link. Every line it
-//! drives is a register, so nothing combinational crosses from the link
-//! to the peripheral or back.
+//! drives comes from its own registers: `adr`, `dat` and `sel` are
+//! registers, and `cyc`, `stb` and `we` are decoded from its state, so
+//! nothing combinational crosses from the link to the peripheral or
+//! back.
 //!
 //! Words are thirty-two bits with four lanes, and the Wishbone address
 //! is a word address: the burst's byte address shifted down by two and
@@ -305,7 +307,7 @@ mod tests {
         assert_eq!(mem.word(4), 0xdead_beef);
     }
 
-    /// A burst of eight words, written and read back as one burst
+    /// A burst of sixteen words, written and read back as one burst
     /// each way.
     ///
     /// This is what a direct memory access engine issues, and it is
