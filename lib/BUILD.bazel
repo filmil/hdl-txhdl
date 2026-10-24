@@ -64,6 +64,8 @@ filegroup(
     name = "sources",
     srcs = [
         "macros/lib.rs",
+        "macros/regmap.rs",
+        "macros/seq.rs",
         "src/comp.rs",
         "src/foreign.rs",
         "src/formal.rs",
@@ -90,6 +92,10 @@ exports_files([
     # the netlist does (issue 497).
     "src/reserved.rs",
     "macros/lib.rs",
+    "macros/regmap.rs",
+    "macros/seq.rs",
+    # For a document built outside the tree to quote (#1892).
+    "foreign.bzl",
 ])
 
 # A field of a struct literal passed to a child joins the port of its

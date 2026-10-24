@@ -127,3 +127,9 @@ vhdl_test(
     deps = [],
     entities = ["offer_tb"],
 )
+
+# For a document built outside the tree to quote (#1892).
+exports_files([
+    "BUILD.bazel",
+    "gen.rs",
+])

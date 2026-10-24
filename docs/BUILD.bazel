@@ -361,7 +361,11 @@ genrule(
 
 # The canonical demos, which //cpu/vreteno/board/remote:demos runs (issue
 # 1592).
-exports_files(["demos.tsv"])
+exports_files([
+    "demos.tsv",
+    # For a document built outside the tree to quote (#1892).
+    "waveform.bzl",
+])
 
 # The specification as an IEEE two-column article, set in Computer Modern.
 # Built against the hermetic LaTeX toolchain registered in MODULE.bazel, so
