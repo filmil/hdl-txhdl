@@ -62,7 +62,9 @@ low and takes nothing.
 \subsection*{Verification}
 
 \begin{itemize}
-\item \code{EthLite} has no \code{\#[test]} of its own.
+\item \code{a\_bit\_of\_a\_channel\_field\_is\_one\_select\_in\_both\_netlists}
+in \code{lib/parts/src/eth.rs} lowers \code{EthLite} and checks its
+netlists.
 \item \code{ex\_eth} puts it behind \code{LiteBridge<1, ..>} and an
 \code{AxiHost}, in front of \code{EthTx} and \code{EthRx} on a looped
 wire. The host sends three frames, each as one fixed burst to the

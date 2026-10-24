@@ -82,7 +82,8 @@ the netlist of \code{EthTx} against that run under nvc and Verilator:
 \subsection*{Used by}
 
 The example \code{ex\_eth}. The echo design for the AX7A200B:
-\code{//eth:netlist} writes the Verilog of \code{eth\_tx}, and
+\code{//eth:mac\_v} runs \code{//eth:netlist} to write
+\code{eth\_mac.v}, the Verilog of \code{eth\_tx}, and
 \code{eth/board/eth\_echo.v} instantiates it on the 125~MHz transmit
 clock. \code{//eth:echo\_synth} and \code{//eth:echo\_pnr} put that
 design through Vivado to a bitstream. \code{//docs:eth} states that it

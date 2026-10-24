@@ -68,9 +68,12 @@ a walk drops what the walk finds.
 \item A walk that ends in a fault answers for that page while its port
 goes on asking for it, which the core does until it takes the trap,
 and is not kept after.
-\item Physical addresses are thirty-two bits. An entry or a
-\code{satp} whose page number reaches past them is an access fault, as
-is a table read that nothing answers.
+\item Physical addresses are thirty-two bits. A \code{satp} or a
+pointer to the next table whose page number reaches past them is an
+access fault, as is a table read that nothing answers. A leaf that
+reaches past them is an access fault only when the access would be
+allowed; otherwise it is a page fault, since translation fails before
+the access is made.
 \end{itemize}
 
 \subsection*{Verification}
