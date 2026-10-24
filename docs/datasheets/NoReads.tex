@@ -20,14 +20,15 @@ interconnects wire every instantiated channel to a destination endpoint,
 Parameter & Meaning \\
 \midrule
 \code{I} & The host identifier width: the response type is \code{R<32, I>}.
-It specifies no default because the derive macro rejects one (issue 1044). \\
+It has no default value, so every use states it. \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-The board instantiates two instances: \code{NoReads<2>} for the Ethernet DMA store
-engine, and \code{NoReads<1>} for the SD host engine whose shared host
-allocates one bit of transaction identifier. The tables list \code{NoReads<2>}.
+The board instantiates two, both \code{NoReads<1>}: one for the
+Ethernet DMA store engine and one for the SD host engine, each behind a
+host with one bit of transaction identifier. The tables list
+\code{NoReads<1>}.
 
 \dstables{NoReads}
 
@@ -49,7 +50,7 @@ synthesis netlist in \code{cpu/vreteno/tests/board.rs}.
 
 \subsection*{Used by}
 
-\code{Board}, twice: as \code{snoreads} (\code{NoReads<2>}) on the read-data channel
+\code{Board}, twice: as \code{snoreads} (\code{NoReads<1>}) on the read-data channel
 of the Ethernet store engine host \code{shost}, and as \code{sdnoreads} (\code{NoReads<1>})
 on the SD host engine interconnect \code{sdshost}.
 

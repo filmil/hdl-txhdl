@@ -43,8 +43,10 @@ inverters in a ring, and the lowering passes \code{RINGS}, eight, and
 
 \subsection*{Register map}
 
-The four words of \code{Trng}: \code{data}, \code{status},
-\code{ctrl} and \code{raw}, at \code{0x0} to \code{0xc}.
+The seven words of \code{Trng}: \code{data}, \code{status},
+\code{ctrl} and \code{raw}, at \code{0x0} to \code{0xc}, and the
+capture's \code{cap}, \code{capidx} and \code{capword}, at
+\code{0x10} to \code{0x18}.
 
 \dstables{Entropy}
 
@@ -54,8 +56,8 @@ The four words of \code{Trng}: \code{data}, \code{status},
 \item The rings run while \code{Trng}'s run bit is set and are held
 still otherwise, their samples at zero.
 \item Each ring's sample is a flip-flop that may go metastable, which
-is the point of it; \code{Trng} registers the bit again before it
-reads it.
+is the point of it. The module registers the bit a second time
+itself, into \code{raw}, and \code{Trng} reads that.
 \item The join runs the rings before the peripheral, so a sample the
 rings drive in a step is what the peripheral folds in that step.
 \end{itemize}

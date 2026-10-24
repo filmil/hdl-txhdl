@@ -480,8 +480,9 @@ impl Unit<(), Tx<W<32, 4>>> for NoBeats {
 /// and takes nothing from it. Nothing is ever sent on it either, since
 /// a client that issues no reads is answered with no read data, so
 /// never taking is never a stall. `I` is the host's identifier width,
-/// two for the Ethernet port's store engine and one for the SD host's.
-/// It has no default, since the derive refuses one (issue 1044).
+/// one on the board for both the Ethernet port's store engine and the
+/// SD host's. `I` has no default value, so every use states it; the
+/// derive refused one when this was written (issue 1044, since fixed).
 #[derive(Trace, Default)]
 pub struct NoReads<const I: usize> {
     /// As for [`NoBeats`]: a unit is a struct of registers.

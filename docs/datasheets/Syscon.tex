@@ -61,7 +61,8 @@ software reads both bits until a program clears them, so the case
 where two things went wrong is not lost.
 \item A write of \code{KEY} to \code{0x14} sets \code{hold} to eight.
 While \code{hold} is not zero it counts down by one a cycle. The reset
-is held for eight cycles rather than one so that every part of a
+is high in the cycle of the write and for the eight cycles of
+\code{hold}, nine in all, rather than one, so that every part of a
 design sees it.
 \item \code{srst} is high while any of \code{por}, \code{button},
 \code{wdog} or the key write is asserting, or while \code{hold} is not
@@ -98,7 +99,7 @@ issue 135 would use \code{scratch}.
 
 The four constants are type parameters, so putting a real commit in
 them wants a build that generates the instantiation; this part offers
-the words and does not fill them. The reset is eight cycles, not a
+the words and does not fill them. The reset is nine cycles, not a
 parameter. There is no lock, so a program can clear a cause another
 program wanted to read. \code{reset} reads as zero rather than as what
 was last written.

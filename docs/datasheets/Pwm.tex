@@ -107,8 +107,10 @@ Verilator: \code{//docs:pwm\_sim\_pwm\_tb\_test} and
 
 \subsection*{Used by}
 
-Nothing in the tree yet. Issue 248 asks for a program on the board that
-fades an LED with it.
+The board, as \code{pwm} in \code{cpu/vreteno/src/board.rs}, on the
+peripheral page at \code{0x3100}. \code{cpu/vreteno/rust/fade.rs} is
+the program issue 248 asked for: it fades the board's first LED with
+channel 0.
 
 \subsection*{Limits}
 

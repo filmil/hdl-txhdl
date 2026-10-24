@@ -38,7 +38,8 @@ not restart the machine, and the cheapest defence is to make the
 value improbable. The example writes a zero and checks that nothing
 happened.
 
-The reset is held for eight cycles rather than one, because a reset
+The reset is held for nine cycles rather than one, the cycle of the
+write and eight while \code{hold} counts down, because a reset
 that lasted a single cycle would be a pulse that some parts of a
 design saw and others did not.
 
@@ -58,8 +59,9 @@ sits outside whatever the reset line drives.
 \centering
 \input{syscon_timing.tex}
 \caption{A reset the program asked for: the key written, the line
-held for eight cycles while \code{hold} counts down, the cause coming
-back with the software bit, and the scratch word untouched through
+held for nine cycles, the last eight while \code{hold} counts down,
+the cause coming back with the software bit, and the scratch word
+untouched through
 all of it.}
 \label{fig:x-syscon}
 \end{figure}

@@ -3,9 +3,10 @@
 //!
 //! `LineFetch` is a host on the bus. Told an address and a count, it
 //! issues read bursts and puts the words that come back into a
-//! channel. The alternative, which is what the video peripheral and
-//! the MAC do today, is the core reading a word at a time over
-//! AXI-Lite and writing it on: a full address phase per word.
+//! channel. The alternative is the core reading a word at a time over
+//! AXI-Lite and writing it on: a full address phase per word. The
+//! board's scanout fetches with `LineFetch`, and its Ethernet port
+//! fetches and stores with `LineFetch` and `LineStore`.
 //!
 //! The run below fetches sixty-four words through sixteen-beat
 //! bursts, so four address phases carry what would otherwise take

@@ -10,7 +10,7 @@
 //! samples before the extractor, which is what a measurement on a
 //! board reads in a loop. Last it stops the source and drains what
 //! the buffer holds, which shows the count in `status` going down.
-//! Then it starts the source again and takes a capture: 2048 samples
+//! Then it starts the source again and takes a capture: 8192 samples
 //! in a row, read back a word at a time, which the run checks are a
 //! stretch of the samples the model gave with none missing (#817).
 //!
