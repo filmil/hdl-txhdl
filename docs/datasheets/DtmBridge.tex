@@ -70,8 +70,9 @@ clears the rest. \code{sbautoincrement} steps by the width.
 one wider than 32 bits to 4, and one the bus refuses to 7, other,
 since the bus does not say which kind of refusal it was. The first two
 never reach the bus.
-\item The width is kept with the access, so a write of \code{sbcs}
-while it runs does not change it.
+\item The width is kept with the access in a register of its own. A
+write of \code{sbcs} cannot meet a running access in any case, since
+the bridge takes no access from the transport while one runs.
 \end{itemize}
 
 \subsection*{Verification}
