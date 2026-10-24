@@ -88,7 +88,9 @@ pub const CTRL_WARN: u32 = regs::ctrl_warn.mask();
 /// `ctrl` bit 3: `ctrl`, `load` and `sill` are read only from now on.
 pub const CTRL_LOCK: u32 = regs::ctrl_lock.mask();
 /// `ctrl` bits 4 to 7: a tick is 2^`scale` cycles.
-pub const CTRL_SCALE_SHIFT: u32 = 4;
+pub const CTRL_SCALE: u32 = regs::ctrl_scale.mask();
+/// Where `scale` sits in `ctrl`.
+pub const CTRL_SCALE_SHIFT: u32 = regs::ctrl_scale.shift;
 
 /// `status` bit 0: the warning timeout has happened.
 pub const STATUS_WARNED: u32 = regs::status_warned.mask();
@@ -229,9 +231,13 @@ impl<const KEY: usize> Unit for Wdog<KEY> {
                     & (count != 0) ? count: count - 1,
                 // A refresh, a warning and a failure start a whole tick;
                 // otherwise `pre` counts while enabled, back to 0 at
-                // each tick.
+                // each tick. A write to `ctrl` starts one too, so that
+                // a smaller `scale` never finds `pre` past the end of
+                // its tick, and enabling again never starts on a part
+                // of one.
                 enabled ? pre: mux(tick, U::<16>::from(0u16), pre + 1),
-                refresh | warning | failing ? pre: U::<16>::from(0u16),
+                refresh | warning | failing | (writable & we.bit(0))
+                    ? pre: U::<16>::from(0u16),
                 status: (status | warning.zext::<2>()
                     | (failing.zext::<2>() << 1))
                     & mux(
