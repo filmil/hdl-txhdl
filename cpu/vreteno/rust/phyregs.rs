@@ -13,6 +13,10 @@
 //!   them; register 31 selects the page, and this program leaves it
 //!   alone. JLSemi's Linux driver puts the receive delay on page 3336,
 //!   which a dump of page 0 cannot show (#864).
+//! * `r01 again` and register 1 read a second time. Its link bit
+//!   latches low: the first read says whether the link dropped since
+//!   the last read, as it does while the FPGA is programmed, and the
+//!   second says whether it is up now (IEEE 802.3 22.2.4.2.13, #1897).
 //!
 //! The program only reads. It never writes a register, not even a
 //! page select, so it leaves the PHY as it found it. A read of
@@ -84,5 +88,8 @@ fn main() -> ! {
         }
         Uart::put(b'\n');
     }
+    Uart::say(b"r01 again ");
+    put_word(read(phy, 1));
+    Uart::put(b'\n');
     halt()
 }
