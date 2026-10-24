@@ -812,11 +812,12 @@ pub struct ScanState {
 /// and stuck bits, read and cleared, with the address of a line that
 /// did not come.
 ///
-/// Its three outputs are registers, for [`LinePair`] and the video
-/// multiplexer to read. The underflow bit comes back from [`LinePair`]
-/// over a channel, through [`ScanTap`], rather than on a wire: this
-/// unit drives `clear`, which [`LinePair`] reads, so it runs before
-/// [`LinePair`], and a wire back from it would be read a step stale.
+/// Its four outputs, `base`, `mode`, `clear` and `two`, are registers,
+/// for [`LinePair`] and the video multiplexer to read. The underflow
+/// bit comes back from [`LinePair`] over a channel, through
+/// [`ScanTap`], rather than on a wire: this unit drives `clear`, which
+/// [`LinePair`] reads, so it runs before [`LinePair`], and a wire back
+/// from it would be read a step stale.
 /// A channel commits at the end of the step whichever ran first. The
 /// bit read here is therefore up to three cycles behind the pair's,
 /// in the run and the netlist alike, which a host reading it after a

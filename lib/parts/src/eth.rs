@@ -56,7 +56,8 @@ pub const CRC_POLY: u32 = 0xedb8_8320;
 pub const CRC_RESIDUE: u32 = 0xdebb_20e3;
 /// The same register complemented. The receiver compared this while
 /// the lowering wrote a constant of 2 to the 31 or more as an unsized
-/// integer, which is issue 130; it compares the residue itself now.
+/// integer, which is issue 130; it compares the residue itself now,
+/// and nothing in the tree reads this.
 pub const CRC_GOOD: u32 = !CRC_RESIDUE;
 /// The largest frame a half stores, check sequence included.
 pub const FRAME_MAX: usize = 2048;
@@ -325,8 +326,8 @@ pub struct EthRxLines {
 /// them, and a reader slower than the wire takes longer to empty a
 /// frame than the next takes to arrive: with one frame's room, the
 /// second of every such pair was lost. A frame that arrives while both
-/// are held is dropped and counted, since the wire cannot wait; so is
-/// the rest of a frame whose start was missed.
+/// are held is dropped and counted, since the wire cannot wait. The
+/// rest of a frame whose start was missed is skipped, and not counted.
 // begin{rxstate}
 #[derive(Trace, Default)]
 pub struct EthRx {

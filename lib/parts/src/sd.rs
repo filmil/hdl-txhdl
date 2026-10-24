@@ -14,7 +14,7 @@
 //! The host here does one command at a time, and with it at most one
 //! block. A program writes the argument and the command word, and the
 //! command word says what follows: no response, a short one or a long
-//! one; a block to read after it or a block to write; whether to waited
+//! one; a block to read after it or a block to write; whether to wait
 //! for the card's busy line afterwards; and whether to check the
 //! response's CRC. The host sends the command, takes the response,
 //! moves the block through a buffer of 128 words that the program
@@ -38,7 +38,7 @@
 //! | `0x00` | `ctrl` | divider, four lines, interrupt enable; bit 10 clears |
 //! | `0x04` | `cmd` | index, response, transfer, checks; written, it starts |
 //! | `0x08` | `arg` | the argument |
-//! | `0x0c` | `status` | busy, done, faults, CRC status, busy line, pointers |
+//! | `0x0c` | `status` | busy, done, faults, CRC status, busy line, index, pointers |
 //! | `0x10` to `0x1c` | `resp0` to `resp3` | the response |
 //! | `0x20` | `data` | read: the next word out; written: the next word in |
 //! | `0x24` | `dma` | where in memory the next command's blocks start |
@@ -203,8 +203,7 @@ pub struct SdLines {
     pub dma_out: Tx<U<32>>,
     /// Where in memory the engines start, for one command's blocks.
     pub dma_at: Out<U<32>>,
-    /// The store engine's length in bytes, and the fetch engine's in
-    /// words.
+    /// The store engine's length in bytes.
     pub dma_bytes: Out<U<16>>,
     /// The fetch engine's length in words.
     pub dma_words: Out<U<16>>,
@@ -631,7 +630,6 @@ impl Unit for Sd {
                 after_resp,
                 mux(rbad, U::<4>::from(FINISH), after_resp),
             );
-            // The registers a program reads.
             // The registers a program reads, packed from their fields as
             // the map declares them.
             let ctrl = regs_ctrl_pack(div, wide, ie, Bit::Zero);
