@@ -652,9 +652,9 @@ takes 7000 cycles where the board took 7036 from the data memory and
 7088 from the DDR3, and \code{ethperf.rs} copies a full frame into a
 DDR3 slot in 20\,142 where the board took 19\,926. With the cache, the
 board copies the frame in 4\,578 and the model in 6\,474, which
-issue~\#1918 is open for. A cold run misses
-by the instruction cache's fills, which the model does not have, and a
-transmit by the engine, which it does not time.
+issue~\#1918 is open for. Under the fit, a cold run misses by the
+instruction cache's fills, which those costs leave out, and a transmit
+by the engine, which the model does not time.
 An \code{lr.w}, \code{sc.w} or AMO on the DDR3 is an exclusive pair on
 the bus, and is charged what \code{board\_test} measures one at: 34
 cycles, 17 and 50, a step included. While the other hart works beside
@@ -664,9 +664,9 @@ measured it on the board, one loop an instruction: its data cache and
 instruction cache, a multiply and a division, a load's word used at
 once, a page walk and a fence that waits for a store (issue~\#1561).
 Each of the program's ten loops then takes within five per cent of the
-board's time. \code{--no-dcache} leaves those out and charges every
-load the DDR3's forty, as the fit above does. A walk is
-charged when the hart's own buffers would miss, as the RTL has them:
+board's time. \code{--no-dcache} leaves all of those out and charges
+the fit above alone, so a load from the DDR3 costs its forty. With
+them, a walk is charged when the hart's own buffers would miss, as the RTL has them:
 eight entries for fetches and eight for loads and stores, filled in
 turn, each a page or a 4\,MiB megapage, and a megapage's walk reads
 one entry where a page's reads two. The machine's own translation
@@ -686,7 +686,8 @@ each boot, Linux's console waiting on the port. From OpenSBI's banner
 to Linux's \code{/init}, a boot with the kernel's timestamps on comes
 out 1.5 per cent under the board's for the uniprocessor kernel, 1.2
 per cent under for the SMP one on one hart and 1.0 per cent under on
-two; with \code{--no-dcache} it comes out 12 to 32 per cent over. The timing mode stays a flag, since a step of the machine
+two; with \code{--no-dcache} it comes out 12 to 32 per cent over.
+The timing mode stays a flag, since a step of the machine
 is otherwise an instruction, which is what lockstep compares.
 With \code{--profile} the machine writes what each address cost, and
 with \code{--watch} who reached an address and with what length; against
