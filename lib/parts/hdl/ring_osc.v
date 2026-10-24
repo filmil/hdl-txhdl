@@ -52,7 +52,8 @@ module ring_osc #(
         );
       end
       // The sample. The flop may go metastable, which is the point of
-      // it; the peripheral registers the bit again before it reads it.
+      // it; the second flop, `raw`, is here, and the peripheral reads
+      // that.
       (* ASYNC_REG = "TRUE" *)
       reg sample;
       always @(posedge clk) begin

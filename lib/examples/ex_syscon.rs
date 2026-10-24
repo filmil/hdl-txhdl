@@ -9,7 +9,7 @@
 //! power-on line for the first cycles, so the answer is the power.
 //!
 //! Then it leaves a word in `scratch`, clears the cause, and asks for
-//! a reset by writing the key. The reset line goes high for the eight
+//! a reset by writing the key. The reset line goes high for the nine
 //! cycles the block holds it, the cause comes back with the software
 //! bit set, and the word in `scratch` is still there, which is the
 //! whole point of the register: a bootloader leaves something for the

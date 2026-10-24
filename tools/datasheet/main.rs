@@ -499,7 +499,7 @@ fn main() {
         >::lowered("scan_video"),
     );
     sheet("NoBeats", "NoBeats", NoBeats::lowered("nobeats"));
-    sheet("NoReads", "NoReads", NoReads::<2>::lowered("noreads"));
+    sheet("NoReads", "NoReads", NoReads::<1>::lowered("noreads"));
     sheet(
         "Station",
         "Station3<4, 16, U<2>, U<16>, U<16>>",

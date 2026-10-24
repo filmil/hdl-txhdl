@@ -54,8 +54,9 @@ use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 
 // begin{state}
-/// A platform-level interrupt controller of `N` sources and two
-/// targets, machine and supervisor, `N` from 1 to 31, the most one word
+/// A platform-level interrupt controller of `N` sources and four
+/// targets, the machine and supervisor modes of each of two harts, `N`
+/// from 1 to 31, the most one word
 /// of pending bits holds.
 /// `EDGE` has a bit per source, set for a source that asks on a rising
 /// edge rather than while its line is high. One unit for every count:
