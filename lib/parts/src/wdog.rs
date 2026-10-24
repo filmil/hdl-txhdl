@@ -323,6 +323,17 @@ mod tests {
     /// count, then `ctrl` written; then fed with the key at each cycle in
     /// `feeds`, counted from the `ctrl` write, for `cycles` cycles.
     fn run(load: u32, ctrl: u32, feeds: &[u32], cycles: u32) -> Seen {
+        run_with(load, 0, ctrl, feeds, cycles)
+    }
+
+    /// `run`, with the window's `sill` set as well.
+    fn run_with(
+        load: u32,
+        sill: u32,
+        ctrl: u32,
+        feeds: &[u32],
+        cycles: u32,
+    ) -> Seen {
         let link = axi_lite::<32, 32, 4>();
         let bus: LitePort<32, 32, 4> = link.per.into();
         let host = link.host;
@@ -333,6 +344,7 @@ mod tests {
         let feeds = feeds.to_vec();
         let client = async move {
             write(&host, regs::load, load).await;
+            write(&host, regs::sill, sill).await;
             write(&host, regs::feed, KEY as u32).await;
             write(&host, regs::ctrl, ctrl).await;
             for t in 0..cycles {
@@ -396,6 +408,58 @@ mod tests {
         let feeds: Vec<u32> = (1..10).map(|k| 60 * k).collect();
         let s = run(10, CTRL_ENABLE | scale(3), &feeds, 600);
         assert_eq!(s.rst, None, "fed in time, no reset");
+    }
+
+    /// In window mode the sill counts in ticks too: at `scale` 2, `load`
+    /// 20 and `sill` 10, a refresh ten cycles in has 18 ticks left and
+    /// is early, and one sixty cycles in has 5 left and is in time.
+    #[test]
+    fn the_window_counts_in_ticks() {
+        let ctrl = CTRL_ENABLE | CTRL_WINDOW | scale(2);
+        let early = run_with(20, 10, ctrl, &[10], 200);
+        let late = run_with(20, 10, ctrl, &[60], 200);
+        let at = early.rst.expect("early is a failure");
+        assert!(at < 40, "failed at the refresh: {at}");
+        let at = late.rst.expect("bites a timeout later");
+        assert!(at > 120, "in time, so a whole timeout more: {at}");
+    }
+
+    /// A smaller `scale` written in the middle of a long tick starts a
+    /// new tick at once (agy on PR 1917): from `scale` 15 down to 0, a
+    /// hundred cycles into a tick of 32,768, the reset comes `load`
+    /// cycles after the write and not when `pre` wraps.
+    #[test]
+    fn a_smaller_scale_starts_a_new_tick() {
+        let link = axi_lite::<32, 32, 4>();
+        let bus: LitePort<32, 32, 4> = link.per.into();
+        let host = link.host;
+        let (rst_req, rst_in) = signal::<Bit, DefaultClock>();
+        let (irq, _) = signal::<Bit, DefaultClock>();
+        let seen: Rc<RefCell<Option<u32>>> = Rc::default();
+        let log = seen.clone();
+        let client = async move {
+            write(&host, regs::load, 20).await;
+            write(&host, regs::feed, KEY as u32).await;
+            write(&host, regs::ctrl, CTRL_ENABLE | scale(15)).await;
+            for _ in 0..100 {
+                DefaultClock::rising().await;
+            }
+            write(&host, regs::ctrl, CTRL_ENABLE).await;
+            for t in 0..200 {
+                if rst_in.get().to_bool() {
+                    *log.borrow_mut() = Some(t);
+                    return;
+                }
+                DefaultClock::rising().await;
+            }
+        };
+        let mut dog = Wdog::<KEY>::default();
+        let mut sim = Running::new(join2(dog.run(bus, (rst_req, irq)), client));
+        for _ in 0..1000 {
+            sim.cycle();
+        }
+        let at = seen.borrow().expect("bites at the new scale");
+        assert!((18..=22).contains(&at), "about 20 cycles: {at}");
     }
 
     /// `lock` freezes `scale` with the rest of `ctrl`: a locked
