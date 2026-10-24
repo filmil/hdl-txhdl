@@ -52,7 +52,14 @@ done
   exit 2
 }
 
-tester="$(rlocation _main/eth/hil/ethtest_/ethtest)"
+tester="$(rlocation _main/eth/hil/ethtest_/ethtest || true)"
+# Started with another binary's runfiles in the environment, the lookup
+# finds nothing; say so here rather than hash an empty path (#1898).
+[[ -n "$tester" && -f "$tester" ]] || {
+  echo "[ethtest] no tester in the runfiles; run this with bazel run, or" \
+    "without another target's RUNFILES_DIR in the environment" >&2
+  exit 2
+}
 dir='~/txhdl_ethtest'
 # The binary is uploaded only when it differs from the one already
 # there. A file's capabilities belong to the file, so `setcap
