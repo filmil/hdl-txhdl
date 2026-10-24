@@ -355,4 +355,45 @@ mod tests {
             assert_eq!(write(&h, 0x44, 2).await, Resp::SlvErr);
         });
     }
+
+    #[test]
+    fn a_timeout_is_answered_once_the_bus_has_room() {
+        run(0, true, |h| async move {
+            let (aw, _, w, b, _) = &h;
+            let offer = |addr: u32| {
+                aw.send(LiteAw {
+                    addr: U::from(addr),
+                    prot: U::from(0u8),
+                });
+                w.send(LiteW {
+                    data: U::from(0u32),
+                    strb: U::from(0xfu8),
+                });
+            };
+            let wait = |n: usize| async move {
+                for _ in 0..n {
+                    DefaultClock::rising().await;
+                }
+            };
+            // Three writes, each waiting out its forty cycles, and no
+            // answer read: the response channel holds two, so the
+            // third's wait runs out while the channel has no room.
+            for i in 0..3u32 {
+                offer(0x40 + 4 * i);
+                wait(60).await;
+            }
+            // The channel gets room only later, and every write is
+            // still answered.
+            wait(100).await;
+            for _ in 0..3 {
+                let resp = loop {
+                    DefaultClock::rising().await;
+                    if let Some(v) = b.recv() {
+                        break v.resp;
+                    }
+                };
+                assert_eq!(resp, Resp::SlvErr);
+            }
+        });
+    }
 }
