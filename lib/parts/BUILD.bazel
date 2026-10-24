@@ -90,8 +90,9 @@ rust_test(
     tags = ["manual"],
 )
 
-# The sources by name, for the documents' API extraction.
-exports_files(glob(["src/*.rs", "src/bus/*.rs", "src/bus/axi/*.rs", "src/bus/noc/*.rs", "src/bus/wb/*.rs"]))
+# The sources by name, for the documents' API extraction, and this
+# file, for a document built outside the tree to quote (#1892).
+exports_files(glob(["src/**/*.rs"]) + ["BUILD.bazel"])
 
 # The hand-written Verilog the netlists instantiate and do not
 # write: the ring oscillators of the entropy source, the
@@ -122,7 +123,7 @@ filegroup(
 
 filegroup(
     name = "sources",
-    srcs = glob(["src/*.rs", "src/bus/*.rs", "src/bus/axi/*.rs", "src/bus/noc/*.rs", "src/bus/wb/*.rs"]),
+    srcs = glob(["src/**/*.rs"]),
     visibility = ["//visibility:public"],
 )
 
@@ -142,6 +143,7 @@ genrule(
     outs = ["node.v"],
     cmd = "$(location :noc_netlist) node > $@",
     tools = [":noc_netlist"],
+    visibility = ["//visibility:public"],
 )
 
 genrule(
@@ -149,6 +151,7 @@ genrule(
     outs = ["switch.v"],
     cmd = "$(location :noc_netlist) switch > $@",
     tools = [":noc_netlist"],
+    visibility = ["//visibility:public"],
 )
 
 filegroup(
