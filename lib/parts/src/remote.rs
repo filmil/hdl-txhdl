@@ -356,44 +356,74 @@ mod tests {
         });
     }
 
-    #[test]
-    fn a_timeout_is_answered_once_the_bus_has_room() {
-        run(0, true, |h| async move {
-            let (aw, _, w, b, _) = &h;
+    /// Three transactions to a device that answers after `delay` (or
+    /// never), with no response read until long after each has timed
+    /// out. A channel holds two, so the third's wait runs out while the
+    /// response channel has no room (#1896). All three come back
+    /// `SlvErr`.
+    fn three_timeouts_unread(delay: usize, deaf: bool, reads: bool) {
+        run(delay, deaf, move |h| async move {
+            let (aw, ar, w, b, r) = &h;
             let offer = |addr: u32| {
-                aw.send(LiteAw {
-                    addr: U::from(addr),
-                    prot: U::from(0u8),
-                });
-                w.send(LiteW {
-                    data: U::from(0u32),
-                    strb: U::from(0xfu8),
-                });
+                if reads {
+                    ar.send(LiteAr {
+                        addr: U::from(addr),
+                        prot: U::from(0u8),
+                    });
+                } else {
+                    aw.send(LiteAw {
+                        addr: U::from(addr),
+                        prot: U::from(0u8),
+                    });
+                    w.send(LiteW {
+                        data: U::from(0u32),
+                        strb: U::from(0xfu8),
+                    });
+                }
             };
             let wait = |n: usize| async move {
                 for _ in 0..n {
                     DefaultClock::rising().await;
                 }
             };
-            // Three writes, each waiting out its forty cycles, and no
-            // answer read: the response channel holds two, so the
-            // third's wait runs out while the channel has no room.
             for i in 0..3u32 {
                 offer(0x40 + 4 * i);
-                wait(60).await;
+                wait(100).await;
             }
-            // The channel gets room only later, and every write is
-            // still answered.
+            // The channel gets room only later.
             wait(100).await;
             for _ in 0..3 {
                 let resp = loop {
                     DefaultClock::rising().await;
-                    if let Some(v) = b.recv() {
+                    if reads {
+                        if let Some(v) = r.recv() {
+                            break v.resp;
+                        }
+                    } else if let Some(v) = b.recv() {
                         break v.resp;
                     }
                 };
                 assert_eq!(resp, Resp::SlvErr);
             }
         });
+    }
+
+    #[test]
+    fn a_timeout_is_answered_once_the_bus_has_room() {
+        three_timeouts_unread(0, true, false);
+    }
+
+    #[test]
+    fn a_read_timeout_is_answered_once_the_bus_has_room() {
+        three_timeouts_unread(0, true, true);
+    }
+
+    /// The device answers each write sixty cycles after it is asked,
+    /// after the forty the bridge waits, so each answer comes while the
+    /// timed-out write is still waiting for room on the bus. The answer
+    /// is too late to count, and the bus is still told `SlvErr`.
+    #[test]
+    fn an_answer_after_the_timeout_does_not_undo_it() {
+        three_timeouts_unread(60, false, false);
     }
 }
