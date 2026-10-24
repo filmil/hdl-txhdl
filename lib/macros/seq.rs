@@ -55,6 +55,42 @@ use proc_macro::{
 
 /// The name of the hidden register of the `k`th process of several
 /// waits in a unit, counted from one.
+/// What a register the netlist adds and the unit does not declare
+/// holds, so that a field of the same name is refused with words that
+/// say so (#1888).
+pub(crate) enum Hidden {
+    /// The wait a loop of several waits is at.
+    Wait,
+    /// The count of a `for` whose body waits.
+    Counter,
+    /// What the named output port was last set to.
+    Held(String),
+    /// What the named `#[axi]` port offers while it waits for `ready`.
+    Axi(String),
+}
+
+impl Hidden {
+    /// The start of the message for a field that takes its name.
+    pub(crate) fn what(&self) -> String {
+        match self {
+            Hidden::Wait => "the loop waits more than once, so the netlist \
+                             keeps the wait it is at in a register"
+                .to_string(),
+            Hidden::Counter => "the loop counts a `for` whose body waits, so \
+                                the netlist keeps its count in a register"
+                .to_string(),
+            Hidden::Held(port) => format!(
+                "the loop waits more than once, so the netlist keeps what \
+                 port `{port}` was last set to in a register"
+            ),
+            Hidden::Axi(port) => format!(
+                "`#[axi]` port `{port}` holds its offer while it waits for \
+                 `ready`, so the netlist keeps that in a register"
+            ),
+        }
+    }
+}
+
 pub(crate) fn reg_name(k: usize) -> String {
     if k == 1 {
         "at_wait".to_string()
@@ -768,7 +804,7 @@ pub(crate) fn lower(
     reg: &str,
     pnames: &[String],
     span: Span,
-) -> Result<(Vec<String>, usize, Vec<(String, String)>), TokenStream> {
+) -> Result<(Vec<String>, usize, Vec<(String, String, Hidden)>), TokenStream> {
     // The states, one per wait, and what follows the last wait goes
     // back to the first.
     let sts: Vec<Vec<TokenTree>> = sts.to_vec();
@@ -1001,7 +1037,7 @@ pub(crate) fn lower(
     }
     // A held output's register is as wide as the port, which the
     // generated code asks the value's type for.
-    let mut regs: Vec<(String, String)> = Vec::new();
+    let mut regs: Vec<(String, String, Hidden)> = Vec::new();
     for net in &held {
         let ty = super::PTYPES.with(|p| {
             p.borrow()
@@ -1018,9 +1054,14 @@ pub(crate) fn lower(
         regs.push((
             format!("{net}_held"),
             format!("<{ty} as ::txhdl::types::Value>::WIDTH"),
+            Hidden::Held(net.clone()),
         ));
     }
-    regs.extend(plan.counters.iter().cloned());
+    regs.extend(
+        plan.counters
+            .iter()
+            .map(|(r, w)| (r.clone(), w.clone(), Hidden::Counter)),
+    );
     stmts.extend(arms);
     Ok((stmts, width, regs))
 }

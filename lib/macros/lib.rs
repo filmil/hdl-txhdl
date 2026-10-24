@@ -8412,7 +8412,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut helpers: Vec<String> = Vec::new();
     // The hidden registers of the processes of several waits: the
     // name and the width of each (issue 501).
-    let mut hidden: Vec<(String, String, Span)> = Vec::new();
+    let mut hidden: Vec<(String, String, Span, seq::Hidden)> = Vec::new();
     // The `#[axi]` ports put on so far, one process each (#1871).
     let mut axi_put: Vec<String> = Vec::new();
     for lbody in &loops {
@@ -8440,14 +8440,19 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         let mut stmts = if waits > 1 {
             let machines = hidden
                 .iter()
-                .filter(|(r, _, _)| r.starts_with("at_wait"))
+                .filter(|(_, _, _, k)| matches!(k, seq::Hidden::Wait))
                 .count();
             let reg = seq::reg_name(machines + 1);
             match seq::lower(&mut cx, &sts, &reg, &pnames, lbody.span()) {
                 Ok((s, w, regs)) => {
-                    hidden.push((reg, w.to_string(), lbody.span()));
-                    for (r, w) in regs {
-                        hidden.push((r, w, lbody.span()));
+                    hidden.push((
+                        reg,
+                        w.to_string(),
+                        lbody.span(),
+                        seq::Hidden::Wait,
+                    ));
+                    for (r, w, k) in regs {
+                        hidden.push((r, w, lbody.span(), k));
                     }
                     s
                 }
@@ -8522,11 +8527,17 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                  {falling}, body: {} }}",
                 body_code(&regs, &mut helpers)
             ));
-            hidden.push((w, "1".to_string(), lbody.span()));
+            hidden.push((
+                w,
+                "1".to_string(),
+                lbody.span(),
+                seq::Hidden::Axi(tx.clone()),
+            ));
             hidden.push((
                 h,
                 format!("<{ty} as ::txhdl::types::Value>::WIDTH"),
                 lbody.span(),
+                seq::Hidden::Axi(tx.clone()),
             ));
         }
     }
@@ -8556,28 +8567,9 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // The hidden register of a process of several waits is a field of
     // the netlist the struct does not have, so a field of that name
     // would be declared twice (issue 501).
-    // The message says what the register holds, by its name (#1888).
-    for (reg, _, span) in &hidden {
-        let what = if reg.starts_with("at_wait") {
-            "the loop waits more than once, so the netlist keeps the wait \
-             it is at in a register"
-                .to_string()
-        } else if reg.starts_with("for")
-            && reg[3..].chars().all(|c| c.is_ascii_digit())
-        {
-            "the loop counts a `for` whose body waits, so the netlist keeps \
-             its count in a register"
-                .to_string()
-        } else if let Some(port) = reg.strip_suffix("_held") {
-            format!(
-                "the loop waits more than once, so the netlist keeps what \
-                 port `{port}` was last set to in a register"
-            )
-        } else {
-            "an `#[axi]` port holds its offer while it waits for `ready`, \
-             so the netlist keeps that in a register"
-                .to_string()
-        };
+    // The message says what the register holds (#1888).
+    for (reg, _, span, kind) in &hidden {
+        let what = kind.what();
         named_nets.push((
             reg.clone(),
             format!(
@@ -8786,7 +8778,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             .join(", "),
         hidden_fields = hidden
             .iter()
-            .map(|(reg, w, _)| {
+            .map(|(reg, w, _, _)| {
                 format!(
                     "f.push((\"{reg}\", Some(::txhdl::comp::trace::Kind::Reg), \
                      {w}, 0));"
