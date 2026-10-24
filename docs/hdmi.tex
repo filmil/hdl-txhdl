@@ -169,7 +169,8 @@ transaction comprises 29 four-quarter intervals: START framing, 7-bit slave
 address plus write flag with ACK, register index with ACK, payload data with
 ACK, and STOP framing. Control outputs \code{scl\_low} and \code{sda\_low}
 pull bus lines low actively. Inbound signal \code{sda\_in} allows the master
-to sample ACK status at the midpoint of the third quarter.
+to sample ACK status at the end of the clock's high half, as it pulls the
+clock low.
 
 The controller partitions into two concurrent processes. The timing
 process maintains a divider counter modulo \code{DIV}, generating

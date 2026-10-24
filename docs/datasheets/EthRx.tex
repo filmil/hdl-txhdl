@@ -146,7 +146,8 @@ core's clock through \code{chan\_cdc}, and samples \code{rx\_counts}
 there through two flip-flops into the board's \code{mac\_drops}, which
 \code{EthSlots} reads at words 14 and 15. The echo design for the
 AX7A200B:
-\code{//eth:netlist} writes the Verilog of \code{eth\_rx}, and
+\code{//eth:mac\_v} runs \code{//eth:netlist} to write
+\code{eth\_mac.v}, the Verilog of \code{eth\_rx}, and
 \code{eth/board/eth\_echo.v} instantiates it on the PHY's receive
 clock. \code{eth/board/eth\_cdc.v} takes its bytes across to the
 transmit clock. \code{//eth:echo\_synth} and \code{//eth:echo\_pnr} put

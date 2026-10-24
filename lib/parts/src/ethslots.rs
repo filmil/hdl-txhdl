@@ -414,10 +414,11 @@ mod tests {
 
     /// Word 13 reads its bit, and nothing else reads it: not the
     /// write-only words 6, 9 and 10, which read zero rather than an
-    /// unrelated bit, not the counts at 2, 8 and 11 that nothing here
-    /// keeps, and not the unnamed tail 14 and 15. LiteX's offsets
-    /// (issue 1203); the slot length written to word 10 must not show
-    /// either.
+    /// unrelated bit, not the counts at 2, 8 and 11, which read zero
+    /// here (word 2 reads `rx_drops`, which this test never drives,
+    /// and nothing keeps 8 or 11), and not the MAC's drop counts at 14
+    /// and 15, which LiteEth leaves unnamed. LiteX's offsets (issue
+    /// 1203); the slot length written to word 10 must not show either.
     #[test]
     fn only_word_13_reads_tx_ev_enable() {
         let link = axi_lite::<32, 32, 4>();

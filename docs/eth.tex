@@ -192,12 +192,14 @@ A read straight onto the channel is not a block RAM's, whose read is a
 register, and on the flagship it had left the store in LUT RAM: about
 384 LUTs for one frame, and 768 for two.
 
-Counter \code{dropped} records discarded frames across three distinct
-error conditions. First, frames failing the CRC residue check are dropped
-immediately. Second, frames arriving while previous data remains pending
-on the client channel while both frames are held are discarded. Third,
-incomplete frame fragments encountered without a valid preamble and start
-delimiter are ignored until \code{rx\_dv} deasserts.
+Counter \code{dropped} records discarded frames under two error
+conditions. First, frames that fail the CRC residue check, carry a
+receive error, or are of the wrong size are dropped as they end.
+Second, frames arriving while previous data remains pending
+on the client channel while both frames are held are discarded. Apart
+from these, incomplete frame fragments encountered without a valid
+preamble and start delimiter are skipped until \code{rx\_dv} deasserts,
+and \code{dropped} does not count them.
 
 The dropped frames are also counted by cause (issue~1404): no room, both
 frames held; a failed check or a receive error; and a frame of four bytes
@@ -282,7 +284,8 @@ one was dropped.
 \input{eth_timing.tex}
 \caption{The first frame: its bytes offered to the transmitter, the
 frame whole and then sent, \code{tx\_en}, the receiver's
-\code{rx\_dv}, the frame being received and then full, and the bytes
+\code{rx\_dv}, the frame being received and then stored in the first
+half, \code{full0}, and the bytes
 offered back, with the interrupt line.}
 \label{fig:e-run}
 \end{figure*}

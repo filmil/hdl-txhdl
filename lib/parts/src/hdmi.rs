@@ -463,7 +463,8 @@ fn table_byte(e: U<3>, b: U<2>) -> U<8> {
 /// `done` out from their registers. The second is the sequence: the
 /// two holds as counted loops, then each entry's transaction quarter
 /// by quarter, a line set at the start of a quarter and held to its
-/// end, and the acknowledge read at the end of its second quarter.
+/// end, and the acknowledge read at the end of the clock's high half,
+/// as the clock is pulled low.
 /// Its last wait never returns, since `written` stays up.
 // begin{i2cstate}
 #[derive(Trace, Default)]

@@ -32,9 +32,11 @@
 //! * A flush, on a write of `satp` or an `sfence.vma`, empties both.
 //!   Address space identifiers are not kept, which the specification
 //!   allows, so `satp.ASID` is ignored.
-//! * Physical addresses are thirty-two bits, the board's. A page table
-//!   entry or a `satp` whose page number reaches past them is an access
-//!   fault, as an address where nothing is.
+//! * Physical addresses are thirty-two bits, the board's. A `satp` or a
+//!   pointer to the next table whose page number reaches past them is
+//!   an access fault, as an address where nothing is. A leaf that
+//!   reaches past them is an access fault when the access would be
+//!   allowed, and a page fault when it would not.
 //!
 //! [`translate`] is the reference: the specification's walk, with no
 //! TLB, which the unit must agree with whenever the tables have not

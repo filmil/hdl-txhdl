@@ -7,7 +7,8 @@ data line, which is what the SPI master of Section~\ref{sec:x-spi}
 gives. The card's native protocol offers higher bandwidth: a command
 line conveys 48-bit commands out and 48- or 136-bit responses back, and
 one or four data lines that transfer blocks of 512 bytes bidirectionally,
-each line with an independent CRC-16, at 25 or 50~MHz once the card is up.
+each line with an independent CRC-16. A card runs at up to 50~MHz once it
+is up; this host clocks it at 25~MHz at most, from a 100~MHz system clock.
 Every command includes a CRC-7 checksum, as does every response except one.
 
 \code{Sd} is a host for that protocol behind AXI-Lite, and it does one

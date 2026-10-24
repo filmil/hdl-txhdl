@@ -79,8 +79,10 @@ runs, and 0 runs as 1 (issue 929).
 \begin{itemize}
 \item \textbf{A write to \code{cmd} while a command runs is ignored.}
 A program reads \code{status} first.
-\item The host drives its lines on the falling edge of the clock it
-makes and samples the card's on the rising edge. The clock runs only
+\item The host drives its lines a system cycle after the falling edge
+of the clock it makes, and samples the card's two system cycles after
+the rising edge, from input registers that pack into the IOB
+(issue 929). The clock runs only
 while a command runs, and is low otherwise.
 \item A response that has not started 64 card clocks after the command
 ends is a timeout. A block, the CRC status token after a written

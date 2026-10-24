@@ -1953,7 +1953,7 @@ waveform(
         "//tx_en=>tx_en",
         "//rx_dv=>rx_dv",
         "//mac_rx/receiving=>receiving",
-        "//mac_rx/full=>full",
+        "//mac_rx/full0=>full0",
         "//rx/rx_valid=>rx_valid",
         "//irq=>irq",
     ],
