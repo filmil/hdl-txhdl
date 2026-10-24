@@ -2469,7 +2469,15 @@ pub fn pipeline(attr: TokenStream, item: TokenStream) -> TokenStream {
         else {
             return err(Span::call_site(), "expected `op = latency`");
         };
-        latency.push((op.to_string(), n.to_string().parse().unwrap_or(0)));
+        // A latency that is not a whole number of cycles is refused
+        // here: read as zero, it made a combinational stage (#1888).
+        let Ok(cycles) = n.to_string().parse() else {
+            return err(
+                n.span(),
+                &format!("a latency is a whole number of cycles, not `{n}`"),
+            );
+        };
+        latency.push((op.to_string(), cycles));
         i += 4;
     }
     // The function: `[pub] async fn NAME(params) -> U<R> { body }`.
