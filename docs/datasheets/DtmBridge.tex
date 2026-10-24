@@ -45,8 +45,13 @@ Parameter & What it is \\
 \code{sbcs} reads version 1, a 32-bit address, and accesses of 8, 16
 and 32 bits. Its settings are \code{sbreadonaddr} (bit 20),
 \code{sbaccess} (bits 17 to 19), \code{sbautoincrement} (bit 16) and
-\code{sbreadondata} (bit 15); \code{sberror} (bits 12 to 14) and
-\code{sbbusyerror} (bit 22) are cleared by writing ones to them.
+\code{sbreadondata} (bit 15); \code{sberror} (bits 12 to 14) is cleared
+by writing ones to it. \code{sbbusy} (bit 21) is set while an access
+runs on the link. The bridge takes no access from the transport while
+one runs, so the transport reads \code{sbcs} only once the access is
+done, and reads \code{sbbusy} as 0. For the same reason no access can
+be asked for while one runs, so \code{sbbusyerror} (bit 22) is never
+set and reads 0.
 
 \dstables{DtmBridge}
 
@@ -65,8 +70,9 @@ clears the rest. \code{sbautoincrement} steps by the width.
 one wider than 32 bits to 4, and one the bus refuses to 7, other,
 since the bus does not say which kind of refusal it was. The first two
 never reach the bus.
-\item The width is kept with the access, so a write of \code{sbcs}
-while it runs does not change it.
+\item The width is kept with the access in a register of its own. A
+write of \code{sbcs} cannot meet a running access in any case, since
+the bridge takes no access from the transport while one runs.
 \end{itemize}
 
 \subsection*{Verification}
@@ -75,7 +81,8 @@ while it runs does not change it.
 \item \code{//lib/parts:parts\_test} runs the bridge against a model
 memory that honours the strobes and checks that the link transmits word
 addresses: a module register as a word at four times its number;
-\code{sbcs}; reads following the address and the data; a write
+\code{sbcs}, and \code{sbbusy} and \code{sbbusyerror} reading 0 to the
+transport; reads following the address and the data; a write
 landing; a byte and a halfword read and written on every lane;
 autoincrement by the width; the misaligned and oversized refusals;
 OpenOCD's \code{c.ebreak} round trip, which leaves the word as it was;
