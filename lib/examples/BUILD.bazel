@@ -1655,6 +1655,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_nested.rs",
         "ex_link.rs",
         "ex_seq.rs",
+        "ex_seq_reset.rs",
         "ex_put.rs",
         "ex_axi_put.rs",
         "ex_formal.rs",
