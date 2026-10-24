@@ -150,7 +150,11 @@ comes from the engine, so that a frame lands somewhere the driver is
 not reading.
 \item \code{irq} is high while any frame waits and
 \code{rx\_ev\_enable} is set, or while \code{tx\_ev\_pending} and
-\code{tx\_ev\_enable} are both set. It is a level, and the board's
+\code{tx\_ev\_enable} are both set.
+\item \code{tx\_ev\_pending} is set in the cycle \code{tx\_busy}
+falls, which is a transmit's end. A write with its bit set clears it,
+unless a transmit ends in the same cycle, when it stays set; a write
+of zero leaves it alone. \code{tx\_ev\_status} reads the same bit. It is a level, and the board's
 interrupt controller asks again for a level still high on the
 complete.
 \end{itemize}
