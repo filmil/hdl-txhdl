@@ -486,4 +486,79 @@ mod tests {
             assert_eq!(*v, want, "word {word}");
         }
     }
+
+    /// A transmit sets its event as the transmitter falls idle, and
+    /// the event raises the line only while `tx_ev_enable` is set
+    /// (#1895): `tx_ev_status` and `tx_ev_pending` read one after a
+    /// send, the line stays low until the enable is written, and
+    /// acknowledging the event clears the bit and the line.
+    #[test]
+    fn a_transmit_sets_its_event_and_raises_the_line_when_enabled() {
+        let link = axi_lite::<32, 32, 4>();
+        let bus: LitePort<32, 32, 4> = link.per.into();
+        let host = link.host;
+        let (tx_busy_o, tx_busy) = signal::<Bit, DefaultClock>();
+        let (_rx_busy_o, rx_busy) = signal::<Bit, DefaultClock>();
+        let (_rx_len_o, rx_len) = signal::<U<16>, DefaultClock>();
+        let (_rx_which_o, rx_which) = signal::<U<1>, DefaultClock>();
+        let (_rx_drops_o, rx_drops) = signal::<U<32>, DefaultClock>();
+        let (_rx_mac_o, rx_mac) = signal::<U<48>, DefaultClock>();
+        let (tx_base, _) = signal::<U<32>, DefaultClock>();
+        let (tx_bytes, _) = signal::<U<16>, DefaultClock>();
+        let (tx_start, _) = signal::<Bit, DefaultClock>();
+        let (rx_base, _) = signal::<U<32>, DefaultClock>();
+        let (irq, irq_in) = signal::<Bit, DefaultClock>();
+        let (rx_full, _) = signal::<Bit, DefaultClock>();
+        let done = Rc::new(RefCell::new(false));
+        let d = done.clone();
+        let client = async move {
+            let line = || irq_in.get().to_bool();
+            assert_eq!(read(&host, 12).await, 0, "nothing sent yet");
+            // A transmit: the transmitter busy for ten cycles, then idle.
+            tx_busy_o.set(Bit::One);
+            for _ in 0..10 {
+                DefaultClock::rising().await;
+            }
+            tx_busy_o.set(Bit::Zero);
+            for _ in 0..3 {
+                DefaultClock::rising().await;
+            }
+            assert_eq!(read(&host, 11).await, 1, "the event's status");
+            assert_eq!(read(&host, 12).await, 1, "the event is pending");
+            assert!(!line(), "the line stays low while disabled");
+            write(&host, 13, 1).await;
+            DefaultClock::rising().await;
+            assert!(line(), "enabled, the pending event raises the line");
+            write(&host, 12, 1).await;
+            DefaultClock::rising().await;
+            assert_eq!(read(&host, 12).await, 0, "acknowledged");
+            assert!(!line(), "and the line falls with it");
+            *d.borrow_mut() = true;
+        };
+        let mut slots = EthSlots::<0x4100_0000>::default();
+        let mut sim = Running::new(join2(
+            slots.run(
+                bus,
+                SlotsMac {
+                    tx_busy,
+                    rx_busy,
+                    rx_len,
+                    rx_which,
+                    rx_drops,
+                    rx_mac,
+                    tx_base,
+                    tx_bytes,
+                    tx_start,
+                    rx_base,
+                    irq,
+                    rx_full,
+                },
+            ),
+            client,
+        ));
+        for _ in 0..400 {
+            sim.cycle();
+        }
+        assert!(*done.borrow(), "the client finished");
+    }
 }
