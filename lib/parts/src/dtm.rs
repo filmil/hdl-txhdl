@@ -955,6 +955,35 @@ mod bridge_tests {
         assert_eq!(cs & 0x1f, 0b111, "8, 16 and 32-bit accesses");
     }
 
+    /// `sbbusy` and `sbbusyerror` as the transport sees them (#1894): a
+    /// write of `sbdata0` starts a write on the link, and the read of
+    /// `sbcs` behind it is taken only once that access is done, so
+    /// `sbbusy`, bit 21, reads 0. Nothing can be asked for while an
+    /// access runs, so `sbbusyerror`, bit 22, reads 0 too, and writing
+    /// one to it changes nothing.
+    #[test]
+    fn sbbusy_and_sbbusyerror_read_0_to_the_transport() {
+        let m = mem(&[(0x600, 0)]);
+        let got = with_bridge(
+            m.clone(),
+            vec![
+                (SBCS, 2 << 17, OP_WRITE),
+                (SBADDRESS0, 0x600, OP_WRITE),
+                (SBDATA0, 0x1234_5678, OP_WRITE),
+                (SBCS, 0, OP_READ),
+                (SBCS, (2 << 17) | (1 << 22), OP_WRITE),
+                (SBCS, 0, OP_READ),
+            ],
+        );
+        for i in [3, 5] {
+            let cs = got[i].0;
+            assert_eq!((cs >> 21) & 1, 0, "sbbusy, read {i}");
+            assert_eq!((cs >> 22) & 1, 0, "sbbusyerror, read {i}");
+            assert_eq!((cs >> 12) & 7, 0, "no error, read {i}");
+        }
+        assert_eq!(m.borrow()[&0x600], 0x1234_5678, "the write went");
+    }
+
     /// `sbcs` for reads on a write of the address, at width `access`:
     /// 0 for 8 bits, 1 for 16, 2 for 32.
     fn rd_cs(access: u32) -> u32 {
