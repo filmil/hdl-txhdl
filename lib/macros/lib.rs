@@ -8800,10 +8800,12 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // its netlist adds no clearing branch; its `run` starts by saying
     // so to the runtime, whose reset then leaves the unit's registers
     // to the body (issue 878).
+    // Any other unit's loops restart on a reset, as the netlist's
+    // machine goes back to its first wait (issue 1883).
     let item: TokenStream = if own_rst {
         answering_reset(&toks).into_iter().collect()
     } else {
-        item
+        restarting_on_reset(&toks).into_iter().collect()
     };
     let item: TokenStream = {
         let it: Vec<TokenTree> = item.into_iter().collect();
@@ -9011,6 +9013,102 @@ fn answering_reset(toks: &[TokenTree]) -> Vec<TokenTree> {
         "::txhdl::comp::answers_reset(&*self);".parse().unwrap();
     fs.extend(f.stream());
     let mut g = Group::new(Delimiter::Brace, fs);
+    g.set_span(f.span());
+    bt[b] = TokenTree::Group(g);
+    let mut ng = Group::new(body.delimiter(), bt.into_iter().collect());
+    ng.set_span(body.span());
+    let n = out.len() - 1;
+    out[n] = TokenTree::Group(ng);
+    out
+}
+
+/// The impl's tokens with each outermost `loop` of several waits in
+/// `run`'s body made to run its turns through
+/// `::txhdl::comp::restart_on_reset`, so a reset sends the process back
+/// to its first wait, as the netlist's `at_wait` does (issue 1883). The
+/// loops are the ones `find_loops` reads for the netlist, every `loop`
+/// in `run` under `join2` or not, and of those the ones the lowering
+/// makes a state machine.
+fn restarting_on_reset(toks: &[TokenTree]) -> Vec<TokenTree> {
+    fn wrap(ts: Vec<TokenTree>) -> Vec<TokenTree> {
+        let mut out = Vec::with_capacity(ts.len());
+        let mut i = 0;
+        while i < ts.len() {
+            match (&ts[i], ts.get(i + 1)) {
+                // Only a loop of several waits: it alone is a machine
+                // with `at_wait`. A loop of one wait is one clocked
+                // block, whose run already agrees with its netlist
+                // under the reset, outputs and all.
+                (TokenTree::Ident(id), Some(TokenTree::Group(g)))
+                    if id.to_string() == "loop"
+                        && g.delimiter() == Delimiter::Brace
+                        && seq::waits_in(&stmts_of(
+                            &g.stream().into_iter().collect::<Vec<_>>(),
+                        )) > 1 =>
+                {
+                    // `restart_on_reset(async { .. }).await;`
+                    let mut arg: TokenStream = "async".parse().unwrap();
+                    arg.extend([TokenTree::Group(g.clone())]);
+                    let mut turn: TokenStream =
+                        "::txhdl::comp::restart_on_reset".parse().unwrap();
+                    turn.extend([TokenTree::Group(Group::new(
+                        Delimiter::Parenthesis,
+                        arg,
+                    ))]);
+                    turn.extend(".await;".parse::<TokenStream>().unwrap());
+                    let mut ng = Group::new(Delimiter::Brace, turn);
+                    ng.set_span(g.span());
+                    out.push(ts[i].clone());
+                    out.push(TokenTree::Group(ng));
+                    i += 2;
+                    continue;
+                }
+                // Any other loop is a process of its own; it is not
+                // searched for loops inside it, as `find_loops` does not.
+                (TokenTree::Ident(id), Some(TokenTree::Group(g)))
+                    if id.to_string() == "loop"
+                        && g.delimiter() == Delimiter::Brace =>
+                {
+                    out.push(ts[i].clone());
+                    out.push(TokenTree::Group(g.clone()));
+                    i += 2;
+                    continue;
+                }
+                (TokenTree::Group(g), _) => {
+                    let inner = wrap(g.stream().into_iter().collect());
+                    let mut ng =
+                        Group::new(g.delimiter(), inner.into_iter().collect());
+                    ng.set_span(g.span());
+                    out.push(TokenTree::Group(ng));
+                }
+                (t, _) => out.push(t.clone()),
+            }
+            i += 1;
+        }
+        out
+    }
+    let mut out = toks.to_vec();
+    let Some(TokenTree::Group(body)) = out.last().cloned() else {
+        return out;
+    };
+    let mut bt: Vec<TokenTree> = body.stream().into_iter().collect();
+    let Some(r) = bt.iter().position(|t| is_ident(t, "run")) else {
+        return out;
+    };
+    let brace = |t: &TokenTree| match t {
+        TokenTree::Group(g) => g.delimiter() == Delimiter::Brace,
+        _ => false,
+    };
+    let Some(b) = (r + 2..bt.len()).find(|&k| brace(&bt[k])) else {
+        return out;
+    };
+    let TokenTree::Group(f) = &bt[b] else {
+        return out;
+    };
+    let mut g = Group::new(
+        Delimiter::Brace,
+        wrap(f.stream().into_iter().collect()).into_iter().collect(),
+    );
     g.set_span(f.span());
     bt[b] = TokenTree::Group(g);
     let mut ng = Group::new(body.delimiter(), bt.into_iter().collect());
