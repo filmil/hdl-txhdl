@@ -22,13 +22,14 @@
 //! writes a frame there and then writes `tx_start`. What changes is
 //! who moves the bytes from there to the wire.
 //!
-//! # No transmit interrupt
+//! # The transmit event
 //!
-//! LiteEth's driver disables it and polls `tx_ready` instead, because
-//! Zephyr's send is allowed to block. So the transmit side is a ready
-//! bit and a start bit, and only receive raises a line. `tx_ev_pending`
-//! and `tx_ev_enable` exist because the driver acknowledges them, and
-//! do nothing else.
+//! A transmit sets `tx_ev_pending` when the transmitter falls idle at
+//! its end, and raises the line while `tx_ev_enable` is set, as
+//! LiteEth's does (#1895). Zephyr's and Linux's drivers leave the
+//! enable clear and poll `tx_ready` instead, because a send is allowed
+//! to block; Zephyr's acknowledges the pending bit after each send, and
+//! Linux's never reads it.
 use txhdl::comp::{Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, regmap, with, Trace};
@@ -79,13 +80,13 @@ regmap! { regs (regs_read, regs_we), 4: [
     (10, tx_length, wo, "how many bytes of it to send", [
         (length, 0, 16, wo, 0, "the length"),
     ]),
-    (11, tx_ev_status, ro, "the transmit event; it is never raised", [
+    (11, tx_ev_status, ro, "a transmit has ended and is not acknowledged", [
         (status, 0, 1, ro, 0, "the event"),
     ]),
-    (12, tx_ev_pending, w1c, "acknowledged by the driver, otherwise unused", [
-        (pending, 0, 1, w1c, 0, "the event"),
+    (12, tx_ev_pending, w1c, "a transmit ended and is not acknowledged", [
+        (pending, 0, 1, w1c, 0, "set as a transmit ends; written one, cleared"),
     ]),
-    (13, tx_ev_enable, rw, "kept for the driver; it raises nothing", [
+    (13, tx_ev_enable, rw, "whether a transmit's end raises the line", [
         (enable, 0, 1, rw, 0, "the enable"),
     ]),
     (14, rx_mac_check, ro, "frames the MAC dropped for their check", [
@@ -135,11 +136,13 @@ pub struct EthSlots<const BASE: usize> {
     pub tx_length: Reg<U<16>>,
     /// Set by a write to `tx_start`, cleared when the engine takes it.
     pub tx_go: Reg<Bit>,
-    /// Acknowledged by the driver and otherwise unused.
+    /// A transmit has ended and the driver has not acknowledged it.
     pub tx_pending: Reg<Bit>,
-    /// Whether a transmit completion would raise the line, which it
-    /// never does: the driver polls `tx_ready` instead.
+    /// Whether a transmit's end raises the line.
     pub tx_enable: Reg<Bit>,
+    /// The transmitter's `tx_busy` as it was at the last edge, so that
+    /// its fall, the end of a transmit, can be seen.
+    pub tx_was: Reg<Bit>,
     /// The store engine's `running` as it was at the last edge, so
     /// that its fall can be seen.
     pub rx_was: Reg<Bit>,
@@ -216,6 +219,9 @@ impl<const BASE: usize> Unit for EthSlots<BASE> {
             let busy = tx_busy.get();
             let go = self.tx_go.get();
             let taken = go & busy;
+            // A transmit ends when the transmitter falls idle, as an
+            // arrival is the store engine's fall (#1895).
+            let sent = self.tx_was.get() & !busy;
 
             // An arrival is the store engine falling idle, not the
             // frame being received. `LineStore` holds `running` high
@@ -272,7 +278,10 @@ impl<const BASE: usize> Unit for EthSlots<BASE> {
             let one = Bit::from(q == 1);
             let two = Bit::from(q == 2);
             let held = !none;
-            irq.set(held & self.rx_enable.get());
+            irq.set(
+                (held & self.rx_enable.get())
+                    | (self.tx_pending.get() & self.tx_enable.get()),
+            );
             rx_full.set(two | (one & self.rx_was.get()));
 
             // An acknowledgement takes the oldest frame off, and an
@@ -299,7 +308,9 @@ impl<const BASE: usize> Unit for EthSlots<BASE> {
                 },
                 arrived & !pop & !two ? queued: q + 1,
                 pop & !arrived ? queued: q - 1,
-                tx_ack ? tx_pending: Bit::Zero,
+                sent ? tx_pending: Bit::One,
+                tx_ack & !sent ? tx_pending: Bit::Zero,
+                tx_was: busy,
                 rx_was: now_busy,
                 taken ? tx_go: Bit::Zero,
                 we.bit(5) ? rx_enable: regs_rx_ev_enable_enable(data),
@@ -332,7 +343,7 @@ impl<const BASE: usize> Unit for EthSlots<BASE> {
                     zero,
                     zero,
                     zero,
-                    zero,
+                    regs_tx_ev_status_pack(self.tx_pending.get()),
                     regs_tx_ev_pending_pack(self.tx_pending.get()),
                     regs_tx_ev_enable_pack(self.tx_enable.get()),
                     regs_rx_mac_check_pack(ungray16(mac.slice::<16, 16>())),
@@ -474,5 +485,111 @@ mod tests {
             };
             assert_eq!(*v, want, "word {word}");
         }
+    }
+
+    /// A transmit sets its event as the transmitter falls idle, and
+    /// the event raises the line only while `tx_ev_enable` is set
+    /// (#1895): `tx_ev_status` and `tx_ev_pending` read one after a
+    /// send, the line stays low until the enable is written, and
+    /// acknowledging the event clears the bit and the line.
+    #[test]
+    fn a_transmit_sets_its_event_and_raises_the_line_when_enabled() {
+        let link = axi_lite::<32, 32, 4>();
+        let bus: LitePort<32, 32, 4> = link.per.into();
+        let host = link.host;
+        let (tx_busy_o, tx_busy) = signal::<Bit, DefaultClock>();
+        let (_rx_busy_o, rx_busy) = signal::<Bit, DefaultClock>();
+        let (_rx_len_o, rx_len) = signal::<U<16>, DefaultClock>();
+        let (_rx_which_o, rx_which) = signal::<U<1>, DefaultClock>();
+        let (_rx_drops_o, rx_drops) = signal::<U<32>, DefaultClock>();
+        let (_rx_mac_o, rx_mac) = signal::<U<48>, DefaultClock>();
+        let (tx_base, _) = signal::<U<32>, DefaultClock>();
+        let (tx_bytes, _) = signal::<U<16>, DefaultClock>();
+        let (tx_start, _) = signal::<Bit, DefaultClock>();
+        let (rx_base, _) = signal::<U<32>, DefaultClock>();
+        let (irq, irq_in) = signal::<Bit, DefaultClock>();
+        let (rx_full, _) = signal::<Bit, DefaultClock>();
+        let done = Rc::new(RefCell::new(false));
+        let d = done.clone();
+        let client = async move {
+            let line = || irq_in.get().to_bool();
+            assert_eq!(read(&host, 12).await, 0, "nothing sent yet");
+            // A transmit: the transmitter busy for ten cycles, then idle.
+            tx_busy_o.set(Bit::One);
+            for _ in 0..10 {
+                DefaultClock::rising().await;
+            }
+            tx_busy_o.set(Bit::Zero);
+            for _ in 0..3 {
+                DefaultClock::rising().await;
+            }
+            assert_eq!(read(&host, 11).await, 1, "the event's status");
+            assert_eq!(read(&host, 12).await, 1, "the event is pending");
+            assert!(!line(), "the line stays low while disabled");
+            write(&host, 13, 1).await;
+            DefaultClock::rising().await;
+            assert!(line(), "enabled, the pending event raises the line");
+            // Disabled again, the line falls and the event stays.
+            write(&host, 13, 0).await;
+            DefaultClock::rising().await;
+            assert!(!line(), "disabled, the line falls");
+            assert_eq!(read(&host, 12).await, 1, "and the event stays");
+            write(&host, 13, 1).await;
+            DefaultClock::rising().await;
+            assert!(line(), "enabled again, it rises");
+            write(&host, 12, 1).await;
+            DefaultClock::rising().await;
+            assert_eq!(read(&host, 12).await, 0, "acknowledged");
+            assert_eq!(read(&host, 11).await, 0, "its status too");
+            assert!(!line(), "and the line falls with it");
+            // An acknowledgement written in the cycle a transmit ends:
+            // the end wins, so the event is not lost. The transmitter
+            // falls and the write is offered in the same step, so the
+            // slots see both at the same edge.
+            let (aw, _, w, b, _) = &host;
+            tx_busy_o.set(Bit::One);
+            for _ in 0..10 {
+                DefaultClock::rising().await;
+            }
+            tx_busy_o.set(Bit::Zero);
+            aw.send(LiteAw {
+                addr: U::from(4 * 12u32),
+                prot: U::from(0u8),
+            });
+            w.send(LiteW {
+                data: U::from(1u32),
+                strb: U::from(0xfu8),
+            });
+            while b.recv().is_none() {
+                DefaultClock::rising().await;
+            }
+            assert_eq!(read(&host, 12).await, 1, "the end outlives the ack");
+            *d.borrow_mut() = true;
+        };
+        let mut slots = EthSlots::<0x4100_0000>::default();
+        let mut sim = Running::new(join2(
+            slots.run(
+                bus,
+                SlotsMac {
+                    tx_busy,
+                    rx_busy,
+                    rx_len,
+                    rx_which,
+                    rx_drops,
+                    rx_mac,
+                    tx_base,
+                    tx_bytes,
+                    tx_start,
+                    rx_base,
+                    irq,
+                    rx_full,
+                },
+            ),
+            client,
+        ));
+        for _ in 0..400 {
+            sim.cycle();
+        }
+        assert!(*done.borrow(), "the client finished");
     }
 }
