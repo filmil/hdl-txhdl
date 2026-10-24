@@ -137,7 +137,9 @@ impl<const T: usize> Unit for Remote<T> {
             let _ = back.recv_if(taking);
             let mine = taking & busy & (ans.tag == tag);
             // The wait, and its end. A transaction answered late is
-            // answered `SlvErr` here rather than held any longer.
+            // answered `SlvErr` here rather than held any longer. The
+            // wait stops counting at `T`, so `late` holds until the bus
+            // has room for the answer, however long that takes (#1896).
             let waited = self.waited.get();
             let late = busy & (waited == U::<32>::from(T as u32));
             let have = (answered | mine) | late;
@@ -158,7 +160,7 @@ impl<const T: usize> Unit for Remote<T> {
                          tag: tag + 1 },
                 mine & !done ? { answered: Bit::One, word: ans.data,
                                  failed: ans.err },
-                busy & !go & !done ? waited: waited + 1,
+                busy & !go & !done & !late ? waited: waited + 1,
             });
             if go.to_bool() {
                 out.send(Ask {
