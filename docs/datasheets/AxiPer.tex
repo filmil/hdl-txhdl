@@ -78,13 +78,16 @@ and \code{resp} when \code{b} has room. A read beat passes from
 \subsection*{Verification}
 
 \begin{itemize}
-\item Four tests in \code{bus::axi} run \code{AxiHost<16, 32, 4, 2, 4>}
+\item Six tests in \code{bus::axi} run \code{AxiHost<16, 32, 4, 2, 4>}
 and \code{AxiPer<16, 32, 4, 2>} with a client on each end:
 \begin{itemize}
 \item \code{a\_read\_reads\_what\_the\_write\_wrote};
 \item \code{answers\_come\_back\_out\_of\_order};
 \item \code{a\_transaction\_is\_answered\_by\_another\_process};
-\item \code{every\_burst\_is\_answered\_and\_reads\_agree\_with\_writes}.
+\item \code{every\_burst\_is\_answered\_and\_reads\_agree\_with\_writes};
+\item \code{a\_burst\_says\_it\_carries\_words}, which checks that a
+burst the client gave no size says a word a beat;
+\item \code{a\_size\_the\_client\_states\_is\_left\_alone}.
 \end{itemize}
 \item \code{bus::axi::fuzz} runs the two trackers with a relay that
 stalls at random in every channel and a seeded client and peripheral

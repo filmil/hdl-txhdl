@@ -70,8 +70,9 @@ against that run under nvc and Verilator:
 
 \subsection*{Used by}
 
-The example \code{ex\_queue}. \code{ex\_fifo} is a different unit: an
-asynchronous FIFO of its own, defined in the example.
+The example \code{ex\_queue}. \code{ex\_fifo} uses a different unit:
+its \code{Fifo} is a name for \code{ChanCdc<U<8>, 2, 4, 3, ClkW, ClkR>},
+the asynchronous FIFO, and defines no FIFO of its own.
 
 \subsection*{Limits}
 

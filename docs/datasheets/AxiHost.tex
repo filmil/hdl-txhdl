@@ -84,7 +84,7 @@ says a client sends a burst's beats before it issues the next burst.
 \subsection*{Verification}
 
 \begin{itemize}
-\item Four tests in \code{bus::axi} run \code{AxiHost<16, 32, 4, 2, 4>}
+\item Six tests in \code{bus::axi} run \code{AxiHost<16, 32, 4, 2, 4>}
 and \code{AxiPer<16, 32, 4, 2>} with a host client and a peripheral
 client on the two ends:
 \begin{itemize}
@@ -93,7 +93,10 @@ client on the two ends:
 \item \code{a\_transaction\_is\_answered\_by\_another\_process};
 \item \code{every\_burst\_is\_answered\_and\_reads\_agree\_with\_writes},
 which issues 24 bursts of one to four words to a peripheral that
-\code{serve} runs with four slots.
+\code{serve} runs with four slots;
+\item \code{a\_burst\_says\_it\_carries\_words}, which checks that a
+burst the client gave no size says a word a beat;
+\item \code{a\_size\_the\_client\_states\_is\_left\_alone}.
 \end{itemize}
 \item \code{bus::axi::fuzz} runs the two trackers with a relay that
 stalls at random in every channel, a seeded client that holds up to
@@ -142,5 +145,6 @@ At most \code{NIDS} bursts are in flight at once. A client that never
 releases an identifier stops the unit when the turn reaches that
 identifier. It sends \code{lock}, \code{cache}, \code{qos} and
 \code{region} as the client gave them and acts on none of them; nothing
-in \code{bus::axi} makes an exclusive access. It does not check
+in \code{bus::axi} makes an exclusive access, which is
+\code{bus::exmon}'s work. It does not check
 \code{S} and \code{NIDS} against \code{D} and \code{I}.

@@ -40,8 +40,9 @@ Parameter & Meaning \\
 expression in a const parameter's position needs nightly Rust, which
 is the same reason \code{Fifo} takes both \code{AW} and \code{D}. The
 tables below use \code{ChanCdc<U<32>, 4, 16, 5, DefaultClock,
-ClkPix>}, the crossing of \code{ex\_cdc}: sixteen words of thirty-two
-bits.
+ClkPix>}, the crossing of \code{ex\_scanout} and \code{ex\_scanpair}
+from the system clock to the pixel clock: sixteen words of thirty-two
+bits. \code{ex\_cdc} crosses words of eight bits.
 
 \dstables{ChanCdc}
 
@@ -106,6 +107,8 @@ paragraph is here rather than in a comment.
 and nothing checks either.
 
 It does not replace \code{lib/board/chan\_cdc.v}, of which the
-flagship holds five instances. That is a separate decision and a
-separate change: the hand-written file is proven on hardware and this
-one is proven in simulation, and those are not the same claim.
+flagship holds nine instances. That is a separate decision and a
+separate change (issue 370). The lowered board holds two of this one,
+\code{dreq} and \code{dans} in \code{cpu/vreteno/src/board.rs}, which
+carry the debug transport's accesses from the cable's clock to the
+board's and its answers back.
