@@ -404,6 +404,50 @@ because a \code{macro\_rules!} \code{expr} fragment may be followed
 only by \code{=>}, \code{,} or \code{;}, so \code{lhs <= rhs} cannot be
 matched declaratively at all.
 
+\textbf{Type parameters given by name.}
+\code{\#[named\_type\_params]} on a struct makes, for each type
+parameter \code{P} with bounds \code{B}, a marker
+\code{struct P<T>(PhantomData<T>)} and a sealed role
+\code{trait IsP \{ type Repr: B; \}}, which \code{P<T>} alone
+implements, with \code{Repr = T} (\#1899).
+The struct's parameter becomes \code{\_\_PParam: IsP}, so it does not
+hide the marker, and each use of \code{P} in the fields and the
+\code{where} clause becomes \code{<\_\_PParam as IsP>::Repr}, into
+generics, arrays and tuples; a name after \code{::} or \code{.} is a
+path's or a field's and is left alone.
+A default carries over as its marker, and lifetimes and const
+parameters pass through.
+The seal is a hidden module beside the struct, \code{\_\_named\_<name>},
+so no other type can take a role.
+The macro is written on the tokens, as every macro here is, in
+\code{lib/macros/named.rs}.
+\code{comp::Signal} is the first runtime type written this way:
+\code{Signal<Data<T>, Domain<C>>}.
+\code{interface!}, which makes a role's \code{Signal} member an
+\code{Out} or an \code{In}, takes the arguments out of their markers
+for the ends.
+The attribute also writes a \code{macro\_rules!} of the struct's own
+name, which takes every parameter but a lifetime by name, in any order,
+\code{Bus![Word = u64, Addr = u32]}, and writes them out in the
+struct's order.
+It fills a slot per parameter, the slot of one with a default starting
+as that default, and refuses a name given twice, one the struct does
+not have, or one left out with no default, with a
+\code{compile\_error!}.
+That is how a const parameter is given by name.
+Stable Rust does not let a generic parameter stand in a const
+expression, so a number cannot be read out of a marker the way a type
+is (\code{probe\_named\_const}).
+The positional form of a const parameter therefore still compiles, and
+the macro is what checks.
+It is exported at the crate's root under the struct's name, calls
+itself and writes the struct and the markers by their bare names, since
+Rust lets no path reach a macro another macro made from inside its own
+crate; so a use has them in scope, and another crate imports it by its
+name.
+
 \lstinputlisting[caption={\code{lib/macros/lib.rs}.},label={lst:r-macros}]{lib/macros/lib.rs}
+
+\lstinputlisting[caption={\code{lib/macros/named.rs}: \code{\#[named\_type\_params]}.},label={lst:r-named}]{lib/macros/named.rs}
 
 \lstinputlisting[caption={\code{lib/src/reserved.rs}: the words the two targets reserve, shared by the macros and the runtime.},label={lst:r-reserved}]{lib/src/reserved.rs}
