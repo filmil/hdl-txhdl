@@ -529,10 +529,41 @@ mod tests {
             write(&host, 13, 1).await;
             DefaultClock::rising().await;
             assert!(line(), "enabled, the pending event raises the line");
+            // Disabled again, the line falls and the event stays.
+            write(&host, 13, 0).await;
+            DefaultClock::rising().await;
+            assert!(!line(), "disabled, the line falls");
+            assert_eq!(read(&host, 12).await, 1, "and the event stays");
+            write(&host, 13, 1).await;
+            DefaultClock::rising().await;
+            assert!(line(), "enabled again, it rises");
             write(&host, 12, 1).await;
             DefaultClock::rising().await;
             assert_eq!(read(&host, 12).await, 0, "acknowledged");
+            assert_eq!(read(&host, 11).await, 0, "its status too");
             assert!(!line(), "and the line falls with it");
+            // An acknowledgement written in the cycle a transmit ends:
+            // the end wins, so the event is not lost. The transmitter
+            // falls and the write is offered in the same step, so the
+            // slots see both at the same edge.
+            let (aw, _, w, b, _) = &host;
+            tx_busy_o.set(Bit::One);
+            for _ in 0..10 {
+                DefaultClock::rising().await;
+            }
+            tx_busy_o.set(Bit::Zero);
+            aw.send(LiteAw {
+                addr: U::from(4 * 12u32),
+                prot: U::from(0u8),
+            });
+            w.send(LiteW {
+                data: U::from(1u32),
+                strb: U::from(0xfu8),
+            });
+            while b.recv().is_none() {
+                DefaultClock::rising().await;
+            }
+            assert_eq!(read(&host, 12).await, 1, "the end outlives the ack");
             *d.borrow_mut() = true;
         };
         let mut slots = EthSlots::<0x4100_0000>::default();
