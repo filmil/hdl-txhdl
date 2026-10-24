@@ -9,10 +9,16 @@
 //! the machine restarts.
 //!
 //! Its six words are `regmap!`'s `regs`, below: `ctrl` (enable, window,
-//! warn, lock), `load` (the timeout, in cycles), `count` (what is left
-//! of it, read only), `feed` (write `KEY` to say software is still
+//! warn, lock, scale), `load` (the timeout, in ticks), `count` (what is
+//! left of it, read only), `feed` (write `KEY` to say software is still
 //! there), `status` (warned, failed; write ones to clear) and `sill`
 //! (the window opens when `count` falls to this), at `0x00` to `0x14`.
+//!
+//! A tick is 2^`scale` cycles (#1884). `scale` resets to 0, a tick a
+//! cycle, so a program that never writes it sees the watchdog it always
+//! did; at 15 a tick is 32,768 cycles, and the longest timeout at
+//! 100 MHz goes from 655 µs to about 21.5 s. `count`, `sill` and the
+//! warning all count in ticks, and a refresh starts a whole tick.
 //!
 //! Three things make it a watchdog rather than a timer, and each is
 //! there because a hung program can do more than stop.
@@ -40,7 +46,7 @@
 use txhdl::comp::{mux, Clock, DefaultClock, Out, Reg, Unit};
 use txhdl::regmap;
 use txhdl::types::{Bit, U};
-use txhdl::{lower, with, Trace};
+use txhdl::{lower, select, with, Trace};
 
 use crate::bus::axi::Resp;
 use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
@@ -49,17 +55,18 @@ use crate::bus::axi_lite::{LiteB, LitePort, LiteR};
 // The map: six words, three address bits above the byte bits selecting
 // one, and the other two read zero (issues 499 and 670).
 regmap! { regs (regs_read, regs_we), 3: [
-    (0, ctrl, rw, "enable, window, warn and lock", [
+    (0, ctrl, rw, "enable, window, warn, lock and scale", [
         (enable, 0, 1, rw, 0, "the watchdog counts"),
         (window, 1, 1, rw, 0, "a refresh above sill is a failure"),
         (warn, 2, 1, rw, 0, "the first timeout warns instead of resetting"),
         (lock, 3, 1, rw, 0, "set, ctrl, load and sill are read only"),
+        (scale, 4, 4, rw, 0, "a tick is two to this many cycles"),
     ]),
     (1, load, rw, "the timeout a refresh loads", [
-        (cycles, 0, 16, rw, 0, "the timeout, in cycles"),
+        (cycles, 0, 16, rw, 0, "the timeout, in ticks"),
     ]),
     (2, count, ro, "what is left of the timeout", [
-        (cycles, 0, 16, ro, 0, "what is left, in cycles"),
+        (cycles, 0, 16, ro, 0, "what is left, in ticks"),
     ]),
     (3, feed, wo, "written with KEY: software is still there"),
     (4, status, w1c, "warned and failed; write ones to clear", [
@@ -67,7 +74,7 @@ regmap! { regs (regs_read, regs_we), 3: [
         (failed, 1, 1, w1c, 0, "the watchdog asked for a reset"),
     ]),
     (5, sill, rw, "the window opens when count falls to this", [
-        (cycles, 0, 16, rw, 0, "the sill, in cycles"),
+        (cycles, 0, 16, rw, 0, "the sill, in ticks"),
     ]),
 ] }
 // end{map}
@@ -80,6 +87,8 @@ pub const CTRL_WINDOW: u32 = regs::ctrl_window.mask();
 pub const CTRL_WARN: u32 = regs::ctrl_warn.mask();
 /// `ctrl` bit 3: `ctrl`, `load` and `sill` are read only from now on.
 pub const CTRL_LOCK: u32 = regs::ctrl_lock.mask();
+/// `ctrl` bits 4 to 7: a tick is 2^`scale` cycles.
+pub const CTRL_SCALE_SHIFT: u32 = 4;
 
 /// `status` bit 0: the warning timeout has happened.
 pub const STATUS_WARNED: u32 = regs::status_warned.mask();
@@ -93,8 +102,8 @@ pub const STATUS_FAILED: u32 = regs::status_failed.mask();
 /// `feed` is a failure rather than a refresh.
 #[derive(Trace, Default)]
 pub struct Wdog<const KEY: usize> {
-    /// Enable, window, warn and lock.
-    pub ctrl: Reg<U<4>>,
+    /// Enable, window, warn, lock and scale.
+    pub ctrl: Reg<U<8>>,
     /// The timeout a refresh loads.
     pub load: Reg<U<16>>,
     /// What is left of it.
@@ -105,6 +114,8 @@ pub struct Wdog<const KEY: usize> {
     pub status: Reg<U<2>>,
     /// Cycles of reset request left to drive.
     pub hold: Reg<U<4>>,
+    /// Cycles since the last tick (#1884).
+    pub pre: Reg<U<16>>,
 }
 // end{state}
 
@@ -124,6 +135,7 @@ impl<const KEY: usize> Unit for Wdog<KEY> {
             let sill = self.sill.get();
             let status = self.status.get();
             let hold = self.hold.get();
+            let pre = self.pre.get();
             // The bus.
             let arh = bus.ar.head();
             let awh = bus.aw.head();
@@ -145,6 +157,28 @@ impl<const KEY: usize> Unit for Wdog<KEY> {
             let window = ctrl.bit(1);
             let warn = ctrl.bit(2);
             let locked = ctrl.bit(3);
+            // A tick ends when `pre` reaches 2^`scale` - 1 (#1884).
+            let scale = ctrl.slice::<4, 4>();
+            let last = select!(scale.raw() => {
+                0 => U::<16>::from(0u16),
+                1 => U::<16>::from(1u16),
+                2 => U::<16>::from(3u16),
+                3 => U::<16>::from(7u16),
+                4 => U::<16>::from(15u16),
+                5 => U::<16>::from(31u16),
+                6 => U::<16>::from(63u16),
+                7 => U::<16>::from(127u16),
+                8 => U::<16>::from(255u16),
+                9 => U::<16>::from(511u16),
+                10 => U::<16>::from(1023u16),
+                11 => U::<16>::from(2047u16),
+                12 => U::<16>::from(4095u16),
+                13 => U::<16>::from(8191u16),
+                14 => U::<16>::from(16383u16),
+                15 => U::<16>::from(32767u16),
+                _ => U::<16>::from(0u16),
+            });
+            let tick = pre == last;
             let warned = status.bit(0);
             // A write to `feed`, and whether it was a refresh or a
             // failure. Too early counts as a failure only in window
@@ -170,6 +204,7 @@ impl<const KEY: usize> Unit for Wdog<KEY> {
                     ctrl.bit(1),
                     ctrl.bit(2),
                     ctrl.bit(3),
+                    scale,
                 ),
                 regs_load_pack(load),
                 regs_count_pack(count),
@@ -180,8 +215,8 @@ impl<const KEY: usize> Unit for Wdog<KEY> {
             with!(self <= {
                 // The lock bit sets and does not clear, so that a
                 // program cannot take back what it locked.
-                writable & we.bit(0) ? ctrl: written.slice::<0, 4>()
-                    | (ctrl & U::<4>::from(8u8)),
+                writable & we.bit(0) ? ctrl: written.slice::<0, 8>()
+                    | (ctrl & U::<8>::from(8u8)),
                 writable & we.bit(1) ? load: regs_load_cycles(written),
                 writable & we.bit(5) ? sill: regs_sill_cycles(written),
                 // A refresh, a warning and a failure all reload. The
@@ -190,8 +225,13 @@ impl<const KEY: usize> Unit for Wdog<KEY> {
                 // for a reset on every cycle from then on, and hold
                 // the machine down rather than restart it.
                 refresh | warning | failing ? count: load,
-                enabled & !refresh & !warning & !failing & (count != 0)
-                    ? count: count - 1,
+                enabled & tick & !refresh & !warning & !failing
+                    & (count != 0) ? count: count - 1,
+                // A refresh, a warning and a failure start a whole tick;
+                // otherwise `pre` counts while enabled, back to 0 at
+                // each tick.
+                enabled ? pre: mux(tick, U::<16>::from(0u16), pre + 1),
+                refresh | warning | failing ? pre: U::<16>::from(0u16),
                 status: (status | warning.zext::<2>()
                     | (failing.zext::<2>() << 1))
                     & mux(
