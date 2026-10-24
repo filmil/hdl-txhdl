@@ -261,3 +261,164 @@ impl<const KEY: usize> Unit for Wdog<KEY> {
     }
 }
 // end{run}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bus::axi_lite::{axi_lite, LiteAr, LiteAw, LiteHost, LiteW};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use txhdl::comp::{join2, signal, Running};
+
+    type Host = LiteHost<32, 32, 4>;
+    const KEY: usize = 0x5744_4f47;
+
+    async fn write(h: &Host, at: u32, data: u32) {
+        let (aw, _, w, b, _) = h;
+        aw.send(LiteAw {
+            addr: U::from(at),
+            prot: U::from(0u8),
+        });
+        w.send(LiteW {
+            data: U::from(data),
+            strb: U::from(0xfu8),
+        });
+        loop {
+            DefaultClock::rising().await;
+            if b.recv().is_some() {
+                return;
+            }
+        }
+    }
+
+    async fn read(h: &Host, at: u32) -> u32 {
+        let (_, ar, _, _, r) = h;
+        ar.send(LiteAr {
+            addr: U::from(at),
+            prot: U::from(0u8),
+        });
+        loop {
+            DefaultClock::rising().await;
+            if let Some(v) = r.recv() {
+                return v.data.raw() as u32;
+            }
+        }
+    }
+
+    /// What a run saw: the cycle after `ctrl` is written in which the
+    /// warning line first rose, and the reset request, if they did.
+    #[derive(Default, Debug, Clone, Copy)]
+    struct Seen {
+        irq: Option<u32>,
+        rst: Option<u32>,
+    }
+
+    /// The watchdog with `load` set and a first refresh, which loads the
+    /// count, then `ctrl` written; then fed with the key at each cycle in
+    /// `feeds`, counted from the `ctrl` write, for `cycles` cycles.
+    fn run(load: u32, ctrl: u32, feeds: &[u32], cycles: u32) -> Seen {
+        let link = axi_lite::<32, 32, 4>();
+        let bus: LitePort<32, 32, 4> = link.per.into();
+        let host = link.host;
+        let (rst_req, rst_in) = signal::<Bit, DefaultClock>();
+        let (irq, irq_in) = signal::<Bit, DefaultClock>();
+        let seen: Rc<RefCell<Seen>> = Rc::default();
+        let log = seen.clone();
+        let feeds = feeds.to_vec();
+        let client = async move {
+            write(&host, regs::load, load).await;
+            write(&host, regs::feed, KEY as u32).await;
+            write(&host, regs::ctrl, ctrl).await;
+            for t in 0..cycles {
+                {
+                    let mut s = log.borrow_mut();
+                    if s.irq.is_none() && irq_in.get().to_bool() {
+                        s.irq = Some(t);
+                    }
+                    if s.rst.is_none() && rst_in.get().to_bool() {
+                        s.rst = Some(t);
+                    }
+                }
+                if feeds.contains(&t) {
+                    write(&host, regs::feed, KEY as u32).await;
+                } else {
+                    DefaultClock::rising().await;
+                }
+            }
+        };
+        let mut dog = Wdog::<KEY>::default();
+        let mut sim = Running::new(join2(dog.run(bus, (rst_req, irq)), client));
+        for _ in 0..(cycles * 4 + 200) {
+            sim.cycle();
+        }
+        let s = *seen.borrow();
+        s
+    }
+
+    fn scale(k: u32) -> u32 {
+        k << CTRL_SCALE_SHIFT
+    }
+
+    /// At `scale` 0 a tick is a cycle, so the timeout is `load` cycles,
+    /// as it was before the prescaler (#1884); at `scale` 3 a tick is
+    /// eight, and the same `load` lasts eight times as long, give or
+    /// take a tick.
+    #[test]
+    fn a_tick_is_two_to_the_scale_cycles() {
+        let at0 = run(40, CTRL_ENABLE, &[], 200).rst.expect("bites");
+        let at3 = run(40, CTRL_ENABLE | scale(3), &[], 600)
+            .rst
+            .expect("bites");
+        assert!((39..=42).contains(&at0), "about 40 cycles: {at0}");
+        assert!(at3.abs_diff(8 * at0) <= 8, "eight times: {at3} vs {at0}");
+    }
+
+    /// The warning comes after `load` ticks and the reset after `load`
+    /// more, both in ticks of 2^`scale` cycles.
+    #[test]
+    fn the_warning_and_the_reset_count_in_ticks() {
+        let s = run(20, CTRL_ENABLE | CTRL_WARN | scale(2), &[], 400);
+        let (irq, rst) = (s.irq.expect("warns"), s.rst.expect("bites"));
+        assert!(irq.abs_diff(80) <= 4, "the warning at 20 ticks: {irq}");
+        assert!(rst.abs_diff(160) <= 8, "the reset at 40 ticks: {rst}");
+    }
+
+    /// Refreshes inside each timeout keep the reset away at any scale:
+    /// at `scale` 3 and `load` 10, eighty cycles, fed every sixty.
+    #[test]
+    fn a_refresh_inside_the_timeout_keeps_the_reset_away() {
+        let feeds: Vec<u32> = (1..10).map(|k| 60 * k).collect();
+        let s = run(10, CTRL_ENABLE | scale(3), &feeds, 600);
+        assert_eq!(s.rst, None, "fed in time, no reset");
+    }
+
+    /// `lock` freezes `scale` with the rest of `ctrl`: a locked
+    /// watchdog cannot be slowed.
+    #[test]
+    fn lock_freezes_the_scale() {
+        let link = axi_lite::<32, 32, 4>();
+        let bus: LitePort<32, 32, 4> = link.per.into();
+        let host = link.host;
+        let (rst_req, _) = signal::<Bit, DefaultClock>();
+        let (irq, _) = signal::<Bit, DefaultClock>();
+        let got: Rc<RefCell<Vec<u32>>> = Rc::default();
+        let log = got.clone();
+        let client = async move {
+            write(&host, regs::ctrl, scale(2)).await;
+            let v = read(&host, regs::ctrl).await;
+            log.borrow_mut().push(v);
+            write(&host, regs::ctrl, scale(2) | CTRL_LOCK).await;
+            write(&host, regs::ctrl, scale(9) | CTRL_LOCK).await;
+            let v = read(&host, regs::ctrl).await;
+            log.borrow_mut().push(v);
+        };
+        let mut dog = Wdog::<KEY>::default();
+        let mut sim = Running::new(join2(dog.run(bus, (rst_req, irq)), client));
+        for _ in 0..200 {
+            sim.cycle();
+        }
+        let got = got.borrow();
+        assert_eq!(got[0], scale(2), "scale reads back");
+        assert_eq!(got[1], scale(2) | CTRL_LOCK, "locked, it stays 2");
+    }
+}
