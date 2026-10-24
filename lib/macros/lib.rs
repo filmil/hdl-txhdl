@@ -8443,7 +8443,20 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 .filter(|(_, _, _, k)| matches!(k, seq::Hidden::Wait))
                 .count();
             let reg = seq::reg_name(machines + 1);
-            match seq::lower(&mut cx, &sts, &reg, &pnames, lbody.span()) {
+            // The counters of the earlier processes' counted loops, so
+            // this one's are numbered after them (#1893).
+            let counters = hidden
+                .iter()
+                .filter(|(_, _, _, k)| matches!(k, seq::Hidden::Counter))
+                .count();
+            match seq::lower(
+                &mut cx,
+                &sts,
+                &reg,
+                &pnames,
+                counters,
+                lbody.span(),
+            ) {
                 Ok((s, w, regs)) => {
                     hidden.push((
                         reg,
