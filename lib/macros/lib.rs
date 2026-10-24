@@ -8555,13 +8555,33 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // The hidden register of a process of several waits is a field of
     // the netlist the struct does not have, so a field of that name
     // would be declared twice (issue 501).
+    // The message says what the register holds, by its name (#1888).
     for (reg, _, span) in &hidden {
+        let what = if reg.starts_with("at_wait") {
+            "the loop waits more than once, so the netlist keeps the wait \
+             it is at in a register"
+                .to_string()
+        } else if reg.starts_with("for")
+            && reg[3..].chars().all(|c| c.is_ascii_digit())
+        {
+            "the loop counts a `for` whose body waits, so the netlist keeps \
+             its count in a register"
+                .to_string()
+        } else if let Some(port) = reg.strip_suffix("_held") {
+            format!(
+                "the loop waits more than once, so the netlist keeps what \
+                 port `{port}` was last set to in a register"
+            )
+        } else {
+            "an `#[axi]` port holds its offer while it waits for `ready`, \
+             so the netlist keeps that in a register"
+                .to_string()
+        };
         named_nets.push((
             reg.clone(),
             format!(
-                "the loop waits more than once, so the netlist keeps the \
-                 wait it is at in a register `{reg}`, and the unit has a \
-                 field `{reg}`: rename the field"
+                "{what} `{reg}`, and the unit has a field `{reg}`: rename \
+                 the field"
             ),
             *span,
         ));
