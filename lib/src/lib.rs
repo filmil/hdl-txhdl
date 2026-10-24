@@ -50,8 +50,8 @@ mod reserved;
 pub mod types;
 
 pub use txhdl_macros::{
-    case, interface, lower, pipeline, regmap, station, when, with, Bus, Link,
-    Ports, Trace, Transaction, Value,
+    case, interface, lower, named_type_params, pipeline, regmap, station, when,
+    with, Bus, Link, Ports, Trace, Transaction, Value,
 };
 
 /// `select!(value => { pattern => expr, .., _ => expr })`: a value

@@ -1183,6 +1183,16 @@ use reserved::{escaped, reserved_by};
 // A process of several waits
 
 mod seq;
+// `#[named_type_params]`: type parameters given by name (#1899).
+mod named;
+
+/// `#[named_type_params]` on a struct: each type parameter `P` given by
+/// name at every use, as `P<T>`, so two of them cannot be swapped
+/// (#1899). See `named.rs`.
+#[proc_macro_attribute]
+pub fn named_type_params(attr: TokenStream, item: TokenStream) -> TokenStream {
+    named::named_type_params(attr, item)
+}
 
 /// `ts` with every token given `span`: a check the macro writes then
 /// reports at the name it checks. Every path in such a check is
