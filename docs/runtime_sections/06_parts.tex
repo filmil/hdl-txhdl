@@ -10,8 +10,11 @@ other side from the trace. The channel itself, the elastic buffer of
 two between two units, is not in either unit, so two lowered units
 wired port to port would have no buffer between them, and their
 handshakes would form a combinational loop, which a placer refuses.
-\code{Buffer<W>} is the channel as hardware, one per channel of a run
-wherever two lowered units meet, on a board or in a larger netlist.
+\code{Buffer<W>} is the channel as hardware, written as a unit.
+The netlist does not use it: where two lowered units meet on a
+channel of the run, it puts the hand-written channel module
+\code{<top>\_txhdl\_chan} between them, which keeps the same rules.
+\code{Buffer<W>} is what \code{ex\_buffer} and the datasheets show.
 
 Its rules are the runtime's, from Section~\ref{sec:r-comp}, with no
 freedom taken. A take moves the tail into the head. A push goes into

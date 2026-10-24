@@ -247,9 +247,9 @@ channel handshakes and network packets.}
 \end{figure}
 
 The host bridge encodes address beats into packets using a three-entry
-address map. The final map entry specifies a default route with a zero mask,
-directing unmatched addresses to a designated fallback node and eliminating
-unroutable address exceptions.
+address map. The final map entry is the default route: the bridge sends
+every address the first two entries miss to its node, and never reads its
+base or mask, which eliminates unroutable address exceptions.
 
 Single-beat writes assemble into single packets containing both address and
 data payloads. Multi-beat write bursts are decomposed by the host bridge:
@@ -290,11 +290,12 @@ peripheral.
 \section{What Is Checked}
 \label{sec:n-tests}
 
-The test suite in \code{noc.rs} comprises ten verification targets. Three
-end-to-end integration tests instantiate four network nodes, both bridge
-types, protocol trackers, and memory modules. The remaining unit tests
-validate burst decomposition, wrapping burst rejections, and fair arbitration
-across switch inputs.
+The test suite in \code{noc.rs} comprises ten verification targets. Eight
+are end-to-end: they instantiate four network nodes, both bridge types,
+protocol trackers, and memory modules, and between them check single
+words, burst decomposition, wrapping burst rejections and several hosts.
+The remaining two run one switch alone and check fair arbitration across
+its inputs.
 
 The first integration test transmits bursts across the diagonal of a 2 by 2
 mesh, exercising horizontal and vertical routing before verifying readback
@@ -367,15 +368,16 @@ network lattice.}
 \toprule
  & link & lattice \\
 \midrule
-The core writes the list & & 12\,364 \\
-The GPU draws the list & 45\,468 & 82\,438 \\
+The core writes the list & & 13\,833 \\
+The GPU draws the list & 22\,890 & 44\,150 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 The benchmark logs rendering duration across both topologies. Running the
-identical display list across a dedicated AXI link requires 45\,468 cycles,
-compared to 82\,438 cycles across the network mesh.
+identical display list across a dedicated AXI link requires 22\,890 cycles,
+compared to 44\,150 cycles across the network mesh, as \code{//soc:demo}
+printed them on October 24, 2026.
 
 This latency disparity reflects throughput constraints rather than hop delay.
 A store-and-forward hop adds minimal latency to round-trip times. While the

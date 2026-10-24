@@ -97,7 +97,8 @@ until issue 384.}
 \subsection{What it does not replace}
 
 \code{lib/board/chan\_cdc.v} is the hand-written Verilog this is
-shaped after, and the flagship holds five instances of it. Whether
-those become this is a separate decision and a separate change: that
-file is proven on hardware and this one is proven in simulation, and
-those are not the same claim.
+shaped after, and the flagship holds nine instances of it. Whether
+those become this is a separate decision and a separate change
+(issue 370). The lowered board already holds two of this one, which
+carry the debug transport's accesses between the cable's clock and
+the board's.
