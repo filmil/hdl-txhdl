@@ -54,7 +54,8 @@ read_demo() {
 
 # Runs a binary Bazel built, as it is and outside this script's own
 # runfiles. The nightly runs under `bazel run`, which exports
-# RUNFILES_DIR and RUNFILES_MANIFEST_FILE for the nightly; a wrapper
+# RUNFILES_DIR, RUNFILES_MANIFEST_FILE and JAVA_RUNFILES for the
+# nightly, and runfiles.bash reads all three; a wrapper
 # started with them looks for its own files in the nightly's runfiles,
 # finds none, and goes on with an empty path, as //eth/hil:run did with
 # its tester (#1898). Without them it finds its own, beside itself.

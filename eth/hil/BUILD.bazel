@@ -16,6 +16,7 @@
 # capabilities belong to the file.
 load("@rules_go//go:def.bzl", "go_binary")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -37,6 +38,19 @@ sh_binary(
         "@bazel_tools//tools/bash/runfiles",
     ],
     tags = ["manual"],
+)
+
+# Where run.sh finds its tester: in its own runfiles, and not in
+# another target's, which it refuses with exit 2 (#1898). It names a
+# server that cannot resolve, so it sends nothing.
+sh_test(
+    name = "run_test",
+    size = "small",
+    srcs = ["run_test.sh"],
+    data = [
+        ":run",
+        "@bazel_tools//tools/bash/runfiles",
+    ],
 )
 
 filegroup(
