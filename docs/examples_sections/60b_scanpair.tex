@@ -50,9 +50,10 @@ MT41K256M16 at 2.5\,ns a clock. Its refresh takes $t_{RFC}$ =
 260\,ns once every $t_{REFI}$ = 7.8\,$\mu$s, and a bank
 miss costs $t_{RP} + t_{RCD}$ = 27.5\,ns before a CAS latency of
 six clocks. The video mode is 640 by 480, 31.8\,$\mu$s a line,
-and a visible line is 640 words, forty bursts of sixteen. Since a
+and a visible line is 640 words, which the board's
+\code{LineFetch<32, 2, 64, 16>} reads as ten bursts of 64. Since a
 line is fetched during the one before it, what it must survive is
-forty bursts and the four refreshes that land in a line, against the
+ten bursts and the four refreshes that land in a line, against the
 line's time, not one burst's latency against one pixel.
 
 \subsection{What the run checks}
