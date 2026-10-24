@@ -20,11 +20,14 @@
 //! the board's costs (issue 1392), so `mcycle` reads cycles and the
 //! machine says the total when it stops. `--ddr3-store N` charges a
 //! store into the DDR3 `N` cycles instead of the board's, to ask what a
-//! dearer store would cost a run (issue 1408). A load the core's data
-//! cache would hold is charged as a hit rather than the DDR3's 40, now
-//! that the costs it once left out are modelled (#1561); `--no-dcache`
-//! charges every load the DDR3's, as before, and `--dcache` is still
-//! accepted and changes nothing.
+//! dearer store would cost a run (issue 1408). The costs are
+//! `Timing::board_cached`'s by default (#1561): a load the core's data
+//! cache would hold is charged as a hit rather than the DDR3's 40, with
+//! the costs that once hid, an instruction line's fill, a multiply and a
+//! division, a load's word used at once, a page walk and a fence's wait.
+//! `--no-dcache` gives `Timing::board`, the fit without any of those;
+//! `--dcache` asks for the default again, so the last of the two given
+//! wins.
 //!
 //! `--flips` says, when the run stops, every base the scanout took and
 //! the stand-in raster's frame it took it in, so that how long each
