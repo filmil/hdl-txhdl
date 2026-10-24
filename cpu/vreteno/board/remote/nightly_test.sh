@@ -47,6 +47,12 @@ printf '00:00:01.000Z demo ico 5 tx_dropped 3\n' >"$bad"
 # The PHY with the link down and no 1000BASE-T partner.
 printf '00:00:01.000Z r00 1140 7969 937c 4032\n00:00:01.000Z r08 0000 0200 0000 0000\n' >"$bad"
 [[ "$(read_phy "$bad" | cut -f5 | tr '\n' ' ')" == "fail fail " ]]
+# The dump's read of r1 says down, as after programming, and the second
+# read says up: the second is the link (#1897). And the other way.
+printf '00:00:01.000Z r00 1140 7969 937c 4032\n00:00:01.000Z r08 0000 0200 7800 0000\n00:00:01.000Z r01 again 796d\n' >"$bad"
+[[ "$(read_phy "$bad" | head -1 | cut -f3,5)" == "up	pass" ]]
+printf '00:00:01.000Z r00 1140 796d 937c 4032\n00:00:01.000Z r08 0000 0200 7800 0000\n00:00:01.000Z r01 again 7969\n' >"$bad"
+[[ "$(read_phy "$bad" | head -1 | cut -f3,5)" == "down	fail" ]]
 # A receive with nothing sent is not a pass.
 printf '00:00:01.000Z rx dma 60 got 0 of 0 lost 0 other 0 ticks 0 cycles/frame 0\n' >"$bad"
 [[ "$(read_ethperf "$bad" | cut -f5)" == fail ]]

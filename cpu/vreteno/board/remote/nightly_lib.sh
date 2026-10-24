@@ -53,21 +53,25 @@ read_demo() {
 }
 
 # The PHY's registers as phyregs prints them, `rNN a b c d`: the link up
-# (r1 bit 2), and a 1000BASE-T full-duplex link: both sides advertise
+# (r1 bit 2, from `r01 again` where the log has it: the bit latches
+# low, so the dump's read is low if the link dropped at any time since
+# the last read, as it does while the part is programmed, #1897),
+# and a 1000BASE-T full-duplex link: both sides advertise
 # 1000 full (r9 bit 9, r10 bit 11) and both receivers are OK (r10 bits
 # 13 and 12).
 read_phy() {
   local log="$1"
   perl -e '
-    my %r;
+    my (%r, $again);
     open my $f, "<", $ARGV[0] or die;
     while (<$f>) {
+      $again = hex $1 if /\br01 again ([0-9a-f]{4})/;
       next unless /\br(\d\d) ((?:[0-9a-f]{4} ?){4})/;
       my @w = split " ", $2;
       $r{$1 + $_} = hex $w[$_] for 0 .. 3;
     }
     if (!defined $r{1} || !defined $r{10}) { print "ethernet\tphy registers\t-\t-\tfail\n"; exit }
-    my $up = ($r{1} >> 2) & 1;
+    my $up = ((defined $again ? $again : $r{1}) >> 2) & 1;
     my $g = ($r{9} >> 9 & 1) && ($r{10} >> 11 & 1) && ($r{10} >> 13 & 1) && ($r{10} >> 12 & 1);
     printf "ethernet\tlink\t%s\t-\t%s\n", $up ? "up" : "down", $up ? "pass" : "fail";
     printf "ethernet\t1000 full\t%s\t-\t%s\n", $g ? "yes" : "no", $g ? "pass" : "fail";

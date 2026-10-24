@@ -1616,7 +1616,8 @@ fn run_phy(text: &[u32], data: &[u8], limit: u64, phy: MdioPhy) -> Ran {
 
 /// The Ethernet PHY's management registers on the board (issue 864):
 /// the core finds the PHY at the first address whose register 2 is
-/// not all ones and prints its 32 registers, four to a line. The PHY
+/// not all ones and prints its 32 registers, four to a line, and then
+/// register 1 again, whose link bit latches low (#1897). The PHY
 /// is the model, holding what the JL2121 answered on the board, so the
 /// run prints what the board printed. The program only reads: every
 /// frame the PHY took is a read.
@@ -1632,11 +1633,14 @@ fn the_phy_registers_read_on_the_board() {
         }
         want.push('\n');
     }
+    // Register 1 again, for its link bit as it is now (#1897).
+    want += &format!("r01 again {:04x}\n", regs[1]);
     assert_eq!(ran.said, want);
     // Address 0's identifier, which answers, then the 32 registers in
-    // order; no write.
+    // order and register 1 again; no write.
     let mut frames = vec![(0, 2, None)];
     frames.extend((0..32).map(|r| (0, r, None)));
+    frames.push((0, 1, None));
     assert_eq!(ran.phy_frames, frames);
     assert!(ran.halted_at.is_some(), "and halted");
 }
