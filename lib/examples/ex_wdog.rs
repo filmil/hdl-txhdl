@@ -20,6 +20,9 @@
 //! program looping tightly on its own refresh is as stuck as one that
 //! has stopped, and a plain countdown cannot tell them apart.
 //!
+//! Then it sets `scale` to 2, a tick of four cycles (#1884), and the
+//! count falls a quarter as fast; and last it locks the watchdog on.
+//!
 //! The block is lowered, and the build simulates its netlist against
 //! this run under nvc and Verilator.
 use txhdl::comp::trace::{stop, Wave};
@@ -29,8 +32,8 @@ use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Host, Link, Rd, Reply, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::wdog::{
-    regs, Wdog, CTRL_ENABLE, CTRL_LOCK, CTRL_WARN, CTRL_WINDOW, STATUS_FAILED,
-    STATUS_WARNED,
+    regs, Wdog, CTRL_ENABLE, CTRL_LOCK, CTRL_SCALE_SHIFT, CTRL_WARN,
+    CTRL_WINDOW, STATUS_FAILED, STATUS_WARNED,
 };
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
@@ -212,6 +215,29 @@ fn main() {
         );
         assert_eq!(shut, STATUS_FAILED as u128, "too early is a failure");
 
+        // A tick of four cycles (#1884): `scale` 2, and the count falls
+        // a quarter as fast. Two reads with nothing between them take
+        // the same cycles as the two at the start, so the fall between
+        // them is a quarter of what it was there, give or take a tick.
+        host.write(Wr::at(R_STATUS), &word(3)).await.done().await;
+        let scaled = CTRL_ENABLE | (2 << CTRL_SCALE_SHIFT);
+        host.write(Wr::at(R_CTRL), &word(scaled)).await.done().await;
+        host.write(Wr::at(R_FEED), &word(KEY as u32))
+            .await
+            .done()
+            .await;
+        let a = read(&host, R_COUNT).await.data[0].raw();
+        let b = read(&host, R_COUNT).await.data[0].raw();
+        println!(
+            "{:3}  scale 2: count {a}, then {b}; at scale 0 it fell {}",
+            now(),
+            first - fallen
+        );
+        assert!(
+            (4 * (a - b)).abs_diff(first - fallen) <= 4,
+            "a quarter as fast"
+        );
+
         // The lock: once it is set, the watchdog cannot be turned off.
         host.write(Wr::at(R_STATUS), &word(3)).await.done().await;
         host.write(Wr::at(R_CTRL), &word(CTRL_ENABLE | CTRL_LOCK))
@@ -240,7 +266,7 @@ fn main() {
     ));
 
     println!("  t  what the program saw");
-    for _ in 0..1600 {
+    for _ in 0..1800 {
         sim.cycle();
     }
     stop();
