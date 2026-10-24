@@ -24,7 +24,9 @@ receives them: \code{tx\_busy}, \code{rx\_busy}, \code{rx\_len},
 \code{tx\_base},
 \code{tx\_bytes}, \code{tx\_start}, \code{rx\_base} and
 \code{rx\_full} out. \code{irq} is high while a received frame is
-unacknowledged and the receive interrupt is enabled.
+unacknowledged and the receive interrupt is enabled, or while a
+transmit's end is unacknowledged and the transmit interrupt is
+enabled.
 
 It holds no frame's bytes. There are two slots each way, used in turn,
 and each is a flat buffer of 2048 bytes in main memory rather than
@@ -76,16 +78,16 @@ those that found both of the MAC's frames held in its low half and
 those too short or too long in its high half. \code{rx\_mac} brings
 them, sixteen bits each in Gray code from \code{EthRx}'s
 \code{rx\_counts}, sampled onto this clock by the top; the block decodes
-them with \code{ungray16} as it answers. Three words exist for the drivers and
-hold nothing here: \code{tx\_level} reads zero, since one transmit
-runs at a time, and \code{tx\_ev\_status} reads zero, since the
-transmit raises no event. \code{rx\_errors} reads \code{rx\_drops},
+them with \code{ungray16} as it answers. One word exists for the drivers and
+holds nothing here: \code{tx\_level} reads zero, since one transmit
+runs at a time. \code{tx\_ev\_status} reads the same bit as
+\code{tx\_ev\_pending}. \code{rx\_errors} reads \code{rx\_drops},
 the frames the receiving side dropped because both slots held a frame
 the driver had not acknowledged; it read zero, and said none were
 dropped, before issue 1313. \code{rx\_ev\_status} reads the same bit as
-\code{rx\_ev\_pending}. \code{tx\_ev\_pending} is never set, as
-the behaviour below says, and \code{tx\_ev\_enable} is kept so the
-driver can write it.
+\code{rx\_ev\_pending}. \code{tx\_ev\_pending} is set at the end of
+a transmit, as the behaviour below says, and \code{tx\_ev\_enable}
+says whether that raises the line.
 
 The write-only words, \code{tx\_start}, \code{tx\_slot} and
 \code{tx\_length}, read zero. They once
@@ -94,12 +96,12 @@ driver that wrote \code{tx\_length} and read it back got an unrelated
 bit (issue 454); every word the read names now, and the rest are
 zero.
 
-\emph{The transmit side has no interrupt.} LiteEth's driver disables
-it and polls \code{tx\_ready}, because Zephyr's send may block, so
-\code{tx\_ev\_pending} is never set by anything and
-\code{tx\_ev\_enable} gates nothing. Both words exist because the
-driver acknowledges them. A driver that waited on
-\code{tx\_ev\_pending} would wait for ever.
+\emph{The transmit event.} A transmit sets \code{tx\_ev\_pending}
+when the transmitter falls idle at its end, and raises the line while
+\code{tx\_ev\_enable} is set, as LiteEth's does (issue 1895). Zephyr's
+and Linux's drivers leave the enable clear and poll \code{tx\_ready}
+instead, because a send is allowed to block; Zephyr's acknowledges the
+pending bit after each send, and Linux's never reads it.
 
 \dstables{EthSlots}
 
@@ -147,7 +149,8 @@ is told where the slot it is filling begins, and which slot that is
 comes from the engine, so that a frame lands somewhere the driver is
 not reading.
 \item \code{irq} is high while any frame waits and
-\code{rx\_ev\_enable} is set. It is a level, and the board's
+\code{rx\_ev\_enable} is set, or while \code{tx\_ev\_pending} and
+\code{tx\_ev\_enable} are both set. It is a level, and the board's
 interrupt controller asks again for a level still high on the
 complete.
 \end{itemize}
@@ -183,6 +186,10 @@ being a serialisation point.
 every word, so a word that mirrored it again would fail (issue 454).
 It gives \code{rx\_mac} room 3, check 5 and size 7 in Gray code, and
 reads them back decoded from words 14 and 15 (issue 1404).
+\item \code{a\_transmit\_sets\_its\_event\_and\_raises\_the\_line\_when\_enabled},
+in the same module: \code{tx\_ev\_status} and \code{tx\_ev\_pending}
+read one after a send, the line stays low until the enable is written,
+and acknowledging the event clears the bit and the line (issue 1895).
 \item \code{ex\_ethslots} drives the map as
 \code{eth\_litex\_liteeth.c} will, in the order that driver does it:
 \code{tx\_ready} one while idle and zero while a frame is going, no
