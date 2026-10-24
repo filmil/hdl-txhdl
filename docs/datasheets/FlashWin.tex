@@ -35,8 +35,8 @@ so the flash is clocked at the system's rate over
 \code{2 * (DIV + 1)}. The tables use 1, as the example does; a board
 divides further. \\
 \code{I} & The width of the AXI identifier on \code{bus\_req},
-\code{bus\_ans} and \code{bus\_r}, in bits. The tables use 2, as every
-design here does. \\
+\code{bus\_ans} and \code{bus\_r}, in bits. The tables use 2, as the
+example does; the board uses 5. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -55,8 +55,9 @@ rather than the part's, as it is for the data memory.
 \item A read is taken when nothing is on the wires and no answer is
 waiting. Its address is kept with the low two bits cleared, since a
 word is what the bus asks for.
-\item The nine bytes go out under one select. The select is low from
-the cycle the read is taken and rises when the ninth byte is done, so
+\item The nine bytes go out under one select. The select falls the
+cycle after the read is taken, since it follows the \code{busy}
+register the take sets, and rises when the ninth byte is done, so
 each read is a command the chip sees whole, which is what a real chip
 requires.
 \item The wires are mode 0, and only mode 0: the clock idles low, the
@@ -66,8 +67,9 @@ neither the master's two mode bits nor a register to hold them.
 \item The four bytes of data are assembled as they arrive, the first
 into the low eight bits. The answer goes out on \code{bus\_r} in the first
 cycle the channel has room after the ninth byte.
-\item A write is taken, its beat is dropped and it is answered
-\code{SLVERR}. The window is read only, and saying so is what makes it
+\item A write is taken with every beat of its burst, and answered once,
+\code{SLVERR}, after the last beat (issue 1208). The window is read
+only, and saying so is what makes it
 safe to fetch from: nothing on the bus can change what the instruction
 stream is reading, so the question of what a fetch sees when a write
 lands in the same cycle does not arise. That question is issue 268.
@@ -108,9 +110,9 @@ is meant to read programs out of it.
 
 A word costs nine bytes on the wires, which is about three hundred
 cycles at the divider the example uses: slow beside a memory and fast
-beside a resynthesis. There is no cache in front of it and no burst:
-every word is a command of its own, and a read of several beats is not
-served. Only mode 0, and only the fast read command, so a chip that
+beside a resynthesis. There is no cache in front of it. An incrementing
+read burst is served a word at a time, each word a command of its own
+(issue 1208). Only mode 0, and only the fast read command, so a chip that
 wants another command for another purpose wants the master instead.
 The address is 24 bits, matching the three address bytes the command specifies, so the
 window reaches 16\,MiB. Nothing is refused by address: every address

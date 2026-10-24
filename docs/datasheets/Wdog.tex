@@ -77,7 +77,8 @@ happened, the warning bit sets, \code{irq} rises and the count
 reloads, which gives a program that is merely slow one more timeout to
 notice. Otherwise it is a failure.
 \item A failure sets the failed bit, drives \code{rst\_req} and holds it
-for eight cycles, and reloads the count. The reload matters: the count
+for nine cycles, the failing one and eight while \code{hold} counts
+down, and reloads the count. The reload matters: the count
 is at zero when a timeout fails, so a watchdog that did not reload
 would ask for a reset on every cycle from then on and hold the machine
 down rather than restart it.
@@ -110,7 +111,7 @@ and reads \code{watchdog} as the cause after it restarts.
 \subsection*{Limits}
 
 \code{count} and \code{load} are sixteen bits, so the timeout is at
-most 65535 cycles. The reset request is eight cycles and not a
+most 65535 cycles. The reset request is nine cycles and not a
 parameter. \code{feed} reads as zero rather than as what was last
 written. There is no second stage: the warning and the reset are the
 only two things a timeout can do.
