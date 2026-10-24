@@ -199,9 +199,16 @@ impl<T: Copy> Cellf<T> {
 }
 
 /// One wire, in a clock domain. Never held by a unit; split into ends.
-pub struct Signal<T: Copy + Default, C: Clock = DefaultClock>(
-    Rc<Cellf<T>>,
-    PhantomData<C>,
+///
+/// Its two type parameters are given by name (#1899): `Signal<Data<T>>`
+/// is a wire of `T` in the default clock domain, and
+/// `Signal<Data<T>, Domain<C>>` one in `C`'s. `Data` and `Domain` are
+/// the markers `#[named_type_params]` makes, so the two cannot be
+/// swapped.
+#[txhdl_macros::named_type_params]
+pub struct Signal<Data: Copy + Default, Domain: Clock = DefaultClock>(
+    Rc<Cellf<Data>>,
+    PhantomData<Domain>,
 );
 
 /// A channel's state. An elastic buffer of two entries, so a sender
@@ -764,7 +771,7 @@ pub trait Member {
     fn split(self) -> (Self::Driver, Self::Reader);
 }
 
-impl<T: Copy + Default, C: Clock> Member for Signal<T, C> {
+impl<T: Copy + Default, C: Clock> Member for Signal<Data<T>, Domain<C>> {
     type Driver = Out<T, C>;
     type Reader = In<T, C>;
     fn new() -> Self {
@@ -798,7 +805,7 @@ impl<T: Transaction, C: Clock> Member for Chan<T, C> {
 
 /// Create a wire and get its two ends. The whole point.
 pub fn signal<T: Copy + Default, C: Clock>() -> (Out<T, C>, In<T, C>) {
-    Signal::<T, C>::new().split()
+    Signal::<Data<T>, Domain<C>>::new().split()
 }
 
 /// A wire held at `v` for good: what a unit of units passes a child

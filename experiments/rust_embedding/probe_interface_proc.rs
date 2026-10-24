@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Probe 19. The library's `interface!`, a procedural macro: any number
 // of roles, `in` as written, and a completeness check.
-use txhdl::comp::{Chan, Signal};
+use txhdl::comp::{Chan, Data, Signal};
 use txhdl::interface;
 use txhdl::types::{Bit, U};
 use txhdl::Transaction;
@@ -13,7 +13,11 @@ pub struct Beat {
 }
 
 interface! {
-    Wishbone { adr: Signal<U<32>>, ack: Signal<Bit>, dat: Chan<Beat> }
+    Wishbone {
+        adr: Signal<Data<U<32>>>,
+        ack: Signal<Data<Bit>>,
+        dat: Chan<Beat>,
+    }
     role Initiator { out adr, in ack,  out dat }
     role Target    { in adr,  out ack, in dat }
     role Monitor   { in adr,  in ack,  in dat }
