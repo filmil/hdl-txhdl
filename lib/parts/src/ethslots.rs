@@ -22,13 +22,14 @@
 //! writes a frame there and then writes `tx_start`. What changes is
 //! who moves the bytes from there to the wire.
 //!
-//! # No transmit interrupt
+//! # The transmit event
 //!
-//! LiteEth's driver disables it and polls `tx_ready` instead, because
-//! Zephyr's send is allowed to block. So the transmit side is a ready
-//! bit and a start bit, and only receive raises a line. `tx_ev_pending`
-//! and `tx_ev_enable` exist because the driver acknowledges them, and
-//! do nothing else.
+//! A transmit sets `tx_ev_pending` when the transmitter falls idle at
+//! its end, and raises the line while `tx_ev_enable` is set, as
+//! LiteEth's does (#1895). Zephyr's and Linux's drivers leave the
+//! enable clear and poll `tx_ready` instead, because a send is allowed
+//! to block; Zephyr's acknowledges the pending bit after each send, and
+//! Linux's never reads it.
 use txhdl::comp::{Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, regmap, with, Trace};
@@ -79,13 +80,13 @@ regmap! { regs (regs_read, regs_we), 4: [
     (10, tx_length, wo, "how many bytes of it to send", [
         (length, 0, 16, wo, 0, "the length"),
     ]),
-    (11, tx_ev_status, ro, "the transmit event; it is never raised", [
+    (11, tx_ev_status, ro, "a transmit has ended and is not acknowledged", [
         (status, 0, 1, ro, 0, "the event"),
     ]),
-    (12, tx_ev_pending, w1c, "acknowledged by the driver, otherwise unused", [
-        (pending, 0, 1, w1c, 0, "the event"),
+    (12, tx_ev_pending, w1c, "a transmit ended and is not acknowledged", [
+        (pending, 0, 1, w1c, 0, "set as a transmit ends; written one, cleared"),
     ]),
-    (13, tx_ev_enable, rw, "kept for the driver; it raises nothing", [
+    (13, tx_ev_enable, rw, "whether a transmit's end raises the line", [
         (enable, 0, 1, rw, 0, "the enable"),
     ]),
     (14, rx_mac_check, ro, "frames the MAC dropped for their check", [
@@ -135,11 +136,13 @@ pub struct EthSlots<const BASE: usize> {
     pub tx_length: Reg<U<16>>,
     /// Set by a write to `tx_start`, cleared when the engine takes it.
     pub tx_go: Reg<Bit>,
-    /// Acknowledged by the driver and otherwise unused.
+    /// A transmit has ended and the driver has not acknowledged it.
     pub tx_pending: Reg<Bit>,
-    /// Whether a transmit completion would raise the line, which it
-    /// never does: the driver polls `tx_ready` instead.
+    /// Whether a transmit's end raises the line.
     pub tx_enable: Reg<Bit>,
+    /// The transmitter's `tx_busy` as it was at the last edge, so that
+    /// its fall, the end of a transmit, can be seen.
+    pub tx_was: Reg<Bit>,
     /// The store engine's `running` as it was at the last edge, so
     /// that its fall can be seen.
     pub rx_was: Reg<Bit>,
@@ -216,6 +219,9 @@ impl<const BASE: usize> Unit for EthSlots<BASE> {
             let busy = tx_busy.get();
             let go = self.tx_go.get();
             let taken = go & busy;
+            // A transmit ends when the transmitter falls idle, as an
+            // arrival is the store engine's fall (#1895).
+            let sent = self.tx_was.get() & !busy;
 
             // An arrival is the store engine falling idle, not the
             // frame being received. `LineStore` holds `running` high
@@ -272,7 +278,10 @@ impl<const BASE: usize> Unit for EthSlots<BASE> {
             let one = Bit::from(q == 1);
             let two = Bit::from(q == 2);
             let held = !none;
-            irq.set(held & self.rx_enable.get());
+            irq.set(
+                (held & self.rx_enable.get())
+                    | (self.tx_pending.get() & self.tx_enable.get()),
+            );
             rx_full.set(two | (one & self.rx_was.get()));
 
             // An acknowledgement takes the oldest frame off, and an
@@ -299,7 +308,9 @@ impl<const BASE: usize> Unit for EthSlots<BASE> {
                 },
                 arrived & !pop & !two ? queued: q + 1,
                 pop & !arrived ? queued: q - 1,
-                tx_ack ? tx_pending: Bit::Zero,
+                sent ? tx_pending: Bit::One,
+                tx_ack & !sent ? tx_pending: Bit::Zero,
+                tx_was: busy,
                 rx_was: now_busy,
                 taken ? tx_go: Bit::Zero,
                 we.bit(5) ? rx_enable: regs_rx_ev_enable_enable(data),
@@ -332,7 +343,7 @@ impl<const BASE: usize> Unit for EthSlots<BASE> {
                     zero,
                     zero,
                     zero,
-                    zero,
+                    regs_tx_ev_status_pack(self.tx_pending.get()),
                     regs_tx_ev_pending_pack(self.tx_pending.get()),
                     regs_tx_ev_enable_pack(self.tx_enable.get()),
                     regs_rx_mac_check_pack(ungray16(mac.slice::<16, 16>())),

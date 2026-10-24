@@ -59,17 +59,17 @@
 #define ETHSLOTS_TX_LENGTH_LENGTH_MASK 0xffff
 #define ETHSLOTS_TX_LENGTH_LENGTH_WIDTH 16
 #define ETHSLOTS_TX_LENGTH_LENGTH_RESET 0x0
-#define ETHSLOTS_TX_EV_STATUS 0x2c /* read only: the transmit event; it is never raised */
+#define ETHSLOTS_TX_EV_STATUS 0x2c /* read only: a transmit has ended and is not acknowledged */
 #define ETHSLOTS_TX_EV_STATUS_STATUS_SHIFT 0 /* read only: the event */
 #define ETHSLOTS_TX_EV_STATUS_STATUS_MASK 0x1
 #define ETHSLOTS_TX_EV_STATUS_STATUS_WIDTH 1
 #define ETHSLOTS_TX_EV_STATUS_STATUS_RESET 0x0
-#define ETHSLOTS_TX_EV_PENDING 0x30 /* read, write one to clear: acknowledged by the driver, otherwise unused */
-#define ETHSLOTS_TX_EV_PENDING_PENDING_SHIFT 0 /* read, write one to clear: the event */
+#define ETHSLOTS_TX_EV_PENDING 0x30 /* read, write one to clear: a transmit ended and is not acknowledged */
+#define ETHSLOTS_TX_EV_PENDING_PENDING_SHIFT 0 /* read, write one to clear: set as a transmit ends; written one, cleared */
 #define ETHSLOTS_TX_EV_PENDING_PENDING_MASK 0x1
 #define ETHSLOTS_TX_EV_PENDING_PENDING_WIDTH 1
 #define ETHSLOTS_TX_EV_PENDING_PENDING_RESET 0x0
-#define ETHSLOTS_TX_EV_ENABLE 0x34 /* read, write: kept for the driver; it raises nothing */
+#define ETHSLOTS_TX_EV_ENABLE 0x34 /* read, write: whether a transmit's end raises the line */
 #define ETHSLOTS_TX_EV_ENABLE_ENABLE_SHIFT 0 /* read, write: the enable */
 #define ETHSLOTS_TX_EV_ENABLE_ENABLE_MASK 0x1
 #define ETHSLOTS_TX_EV_ENABLE_ENABLE_WIDTH 1
