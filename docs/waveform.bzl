@@ -6,8 +6,10 @@ its FST as well; turns the FST into a signals database (vcdcvt, which
 reads FST by the file's extension) and the
 chosen signals into drawtiming text (sqlite2drawtiming), both prebuilt
 tools pinned in //:multitool.lock.json; and draws the text as TikZ
-(//tools/dt2tikz), in colour. Produces out_NAME.txt, NAME.dt and
-NAME_timing.tex.
+(//tools/dt2tikz), in colour. Produces out_NAME.txt, NAME.fst,
+NAME.fst.names, NAME.db, NAME.dt and NAME_timing.tex, and with
+`lowered` the testbenches and simulation targets `waveform()`
+describes.
 """
 
 load("//tools:quiet.bzl", "quiet_cmd")

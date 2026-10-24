@@ -197,8 +197,9 @@ fn field_names(body: &Group) -> Vec<String> {
 
 /// Whether each field of a braced struct body carries the bare
 /// attribute `#[key]`, in the order `field_idents` gives them.
-/// `#[async_reg]` is the one read so far: a register that samples
-/// another clock's value, which the netlist marks `ASYNC_REG` (#884).
+/// `#[async_reg]` marks a register that samples another clock's value,
+/// which the netlist marks `ASYNC_REG` (#884); `#[distributed]` is
+/// read the same way.
 fn field_flags(body: &Group, key: &str) -> Vec<bool> {
     let toks: Vec<TokenTree> = body.stream().into_iter().collect();
     let mut out = Vec::new();
@@ -2469,7 +2470,15 @@ pub fn pipeline(attr: TokenStream, item: TokenStream) -> TokenStream {
         else {
             return err(Span::call_site(), "expected `op = latency`");
         };
-        latency.push((op.to_string(), n.to_string().parse().unwrap_or(0)));
+        // A latency that is not a whole number of cycles is refused
+        // here: read as zero, it made a combinational stage (#1888).
+        let Ok(cycles) = n.to_string().parse() else {
+            return err(
+                n.span(),
+                &format!("a latency is a whole number of cycles, not `{n}`"),
+            );
+        };
+        latency.push((op.to_string(), cycles));
         i += 4;
     }
     // The function: `[pub] async fn NAME(params) -> U<R> { body }`.
@@ -8403,7 +8412,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut helpers: Vec<String> = Vec::new();
     // The hidden registers of the processes of several waits: the
     // name and the width of each (issue 501).
-    let mut hidden: Vec<(String, String, Span)> = Vec::new();
+    let mut hidden: Vec<(String, String, Span, seq::Hidden)> = Vec::new();
     // The `#[axi]` ports put on so far, one process each (#1871).
     let mut axi_put: Vec<String> = Vec::new();
     for lbody in &loops {
@@ -8431,14 +8440,19 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
         let mut stmts = if waits > 1 {
             let machines = hidden
                 .iter()
-                .filter(|(r, _, _)| r.starts_with("at_wait"))
+                .filter(|(_, _, _, k)| matches!(k, seq::Hidden::Wait))
                 .count();
             let reg = seq::reg_name(machines + 1);
             match seq::lower(&mut cx, &sts, &reg, &pnames, lbody.span()) {
                 Ok((s, w, regs)) => {
-                    hidden.push((reg, w.to_string(), lbody.span()));
-                    for (r, w) in regs {
-                        hidden.push((r, w, lbody.span()));
+                    hidden.push((
+                        reg,
+                        w.to_string(),
+                        lbody.span(),
+                        seq::Hidden::Wait,
+                    ));
+                    for (r, w, k) in regs {
+                        hidden.push((r, w, lbody.span(), k));
                     }
                     s
                 }
@@ -8513,11 +8527,17 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
                  {falling}, body: {} }}",
                 body_code(&regs, &mut helpers)
             ));
-            hidden.push((w, "1".to_string(), lbody.span()));
+            hidden.push((
+                w,
+                "1".to_string(),
+                lbody.span(),
+                seq::Hidden::Axi(tx.clone()),
+            ));
             hidden.push((
                 h,
                 format!("<{ty} as ::txhdl::types::Value>::WIDTH"),
                 lbody.span(),
+                seq::Hidden::Axi(tx.clone()),
             ));
         }
     }
@@ -8547,13 +8567,14 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // The hidden register of a process of several waits is a field of
     // the netlist the struct does not have, so a field of that name
     // would be declared twice (issue 501).
-    for (reg, _, span) in &hidden {
+    // The message says what the register holds (#1888).
+    for (reg, _, span, kind) in &hidden {
+        let what = kind.what();
         named_nets.push((
             reg.clone(),
             format!(
-                "the loop waits more than once, so the netlist keeps the \
-                 wait it is at in a register `{reg}`, and the unit has a \
-                 field `{reg}`: rename the field"
+                "{what} `{reg}`, and the unit has a field `{reg}`: rename \
+                 the field"
             ),
             *span,
         ));
@@ -8757,7 +8778,7 @@ pub fn lower(_attr: TokenStream, item: TokenStream) -> TokenStream {
             .join(", "),
         hidden_fields = hidden
             .iter()
-            .map(|(reg, w, _)| {
+            .map(|(reg, w, _, _)| {
                 format!(
                     "f.push((\"{reg}\", Some(::txhdl::comp::trace::Kind::Reg), \
                      {w}, 0));"

@@ -17,17 +17,17 @@ it. Its grammar is the one \code{mac} needs and no wider, and it
 refuses the rest with its own message. \code{\#[lower]} on an
 \code{impl Unit for Unit} does the same for a unit with state,
 filling the header's \code{<In, Out>} in from \code{run}'s signature,
-so the ports are named once: it reads \code{run} as one loop, or
-several under
-\code{join2}, each a process that waits for the rising or the falling
-edge of its clock, reads registers and ports into names, predicates
-drives with
-\code{with!}, \code{case!} and \code{if}, chooses values
-with
-\code{select!},
-and drives registers, words of memories and output ports, and writes
-\code{Unit::lowered(name)}, \code{verilog} and \code{vhdl} beside
-the impl. Ports come from \code{run}'s signature, a side of several
+so the ports are named once: it finds every \code{loop} in
+\code{run}, under \code{join2} or not, and reads each as a process.
+A loop whose first statement waits for the rising or the falling edge
+of its clock is one clocked block; a loop whose only wait is a
+channel's takes that channel's clock; and a loop of several waits is
+a state machine with a state per wait. Each process reads registers
+and ports into names, predicates drives with \code{with!},
+\code{case!} and \code{if}, chooses values with \code{select!}, and
+drives registers, words of memories and output ports. The macro
+writes \code{Unit::lowered(name)}, \code{verilog} and \code{vhdl}
+beside the impl. Ports come from \code{run}'s signature, a side of several
 written as a tuple or as a struct whose fields are the ports;
 registers, memories and widths come from the
 struct through the \code{Trace} derive, which also derives

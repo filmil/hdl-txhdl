@@ -99,6 +99,9 @@ rust_binary(
         "probe_axi_send",              # the macro's own message (#1871)
         "probe_axi_rx",                # the macro's own message (#1871)
         "probe_axi_name",              # the macro's own message (#1871)
+        "probe_pipeline_latency",      # the macro's own message (#1888)
+        "probe_hidden_for",            # the macro's own message (#1888)
+        "probe_hidden_held",           # the macro's own message (#1888)
     ]
 ]
 

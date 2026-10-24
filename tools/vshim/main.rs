@@ -221,6 +221,16 @@ fn parse_ports(text: &str, top: &str) -> Vec<Port> {
     let mut out = Vec::new();
     for entry in list.split(',') {
         let toks: Vec<&str> = entry.split_whitespace().collect();
+        // A testbench that takes a step per line can drive an input and
+        // read an output, and has no way to do either with a port that
+        // is both, so one is refused rather than skipped (#1888).
+        if toks.iter().any(|t| t.starts_with("inout")) {
+            panic!(
+                "`module {top}` has an inout port, `{}`, which the shim \
+                 cannot drive or read; give the unit inputs and outputs",
+                toks.last().unwrap_or(&"?")
+            );
+        }
         let Some(dir) =
             toks.iter().position(|t| *t == "input" || *t == "output")
         else {
@@ -595,4 +605,37 @@ fn unit(
         param(&in_nm, &in_ty),
         param(&out_nm, &out_ty),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_ports;
+
+    /// Inputs and outputs are read, with their widths (#1888).
+    #[test]
+    fn inputs_and_outputs_are_read() {
+        let v = "module m(input clk, input [7:0] a, output [3:0] y);\n";
+        let p = parse_ports(v, "m");
+        let got: Vec<(&str, bool, usize)> = p
+            .iter()
+            .map(|p| (p.name.as_str(), p.input, p.width))
+            .collect();
+        assert_eq!(got, [("clk", true, 1), ("a", true, 8), ("y", false, 4)]);
+    }
+
+    /// An inout port is refused by name, not skipped (#1888).
+    #[test]
+    #[should_panic(expected = "has an inout port, `sda`")]
+    fn an_inout_port_is_refused() {
+        let v = "module m(input clk, inout sda, output y);\n";
+        parse_ports(v, "m");
+    }
+
+    /// The same with its range written against the keyword.
+    #[test]
+    #[should_panic(expected = "has an inout port, `bus`")]
+    fn an_inout_port_with_a_range_is_refused() {
+        let v = "module m(input clk, inout[7:0] bus, output y);\n";
+        parse_ports(v, "m");
+    }
 }

@@ -1143,7 +1143,8 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
-# A for of a constant count that waits, a state per turn:  bazel run //lib/examples:ex_serial
+# A for of a constant count that waits, a counted loop:
+#   bazel run //lib/examples:ex_serial
 rust_binary(
     name = "ex_serial",
     srcs = ["ex_serial.rs"],

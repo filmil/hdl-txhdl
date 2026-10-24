@@ -13,8 +13,8 @@
 //! holds both kinds of channel buffer, which `offer_tb` drives with a
 //! sender that does not wait for ready (#1871).
 //!
-//! Run with five paths: it writes `count.v`, `stage.v`, `pair.v`,
-//! `pair_u.v` and `pair_u.vhd`.
+//! Run with six paths: it writes `count.v`, `stage.v`, `pair.v`,
+//! `pair_u.v`, `pair_u.vhd` and `axi_count.v`.
 use txhdl::comp::{
     chan, join2, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit,
 };
