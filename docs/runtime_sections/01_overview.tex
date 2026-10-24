@@ -20,7 +20,7 @@ crate hold everything:
   \code{logic::Vec<N>}, and the two marker traits \code{Transaction}
   and \code{Tag}.
 \item \code{txhdl::comp}: clocks, wires and channels and their ends,
-  interfaces, crossings, registers and memories, units, configurations,
+  interfaces, registers and memories, units, configurations,
   and the executor.
 \item \code{txhdl::pipeline}: operators that take a cycle, all
   \code{async}.
@@ -35,7 +35,7 @@ crate hold everything:
   stands for at run time.
 \item \code{txhdl::formal}: \code{check!}, \code{assume!} and
   \code{cover!}.
-\item \code{txhdl\_macros}: the five derives, \code{interface!},
+\item \code{txhdl\_macros}: the six derives, \code{interface!},
   \code{with!}, \code{when!}, \code{case!}, \code{station!},
   \code{regmap!}, \code{\#[pipeline]} and \code{\#[lower]}, without \code{syn} or \code{quote}; and
   \code{select!}, a \code{macro\_rules!} in the crate root.
@@ -183,7 +183,8 @@ seen in a waveform, and checked in the netlist, with no port for it.
 crossed an edge at this step cannot cross it again, so a second wait
 written after a first waits for the next edge, as an operator does.
 Waits that share one edge are written inside \code{parallel!}, which
-polls its futures together and returns their outputs as a tuple; that
+polls two to six futures together and returns their outputs as a tuple;
+that
 is the one case the executor treats specially. Once one wait of the
 group has crossed the edge at this step, the others in the group are
 free, each once, so the group is one wait. State read before a wait,
@@ -225,8 +226,8 @@ A design can be watched as a waveform. \code{comp::trace} holds a
 registry of probes, each a dotted path, a width and a closure that
 reads the signal; \code{\#[derive(Trace)]} on a unit registers every
 field under its field name, so the hierarchy is the nesting of units
-and nothing is named at construction. Registers, wire ends, channel
-ends and crossings register themselves, plain values register nothing,
+and nothing is named at construction. Registers, wire ends and channel
+ends register themselves, plain values register nothing,
 and \code{\#[derive(Value)]} gives a struct or a fieldless enum of the
 design's own its width and bits. \code{Vcd} is the sink: the executor
 calls it at the end of every tick, after the drives have committed,

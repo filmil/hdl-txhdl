@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The macros of the runtime: five derives, `Transaction`, `Bus`,
-//! `Value`, `Ports` and `Trace`; `interface!`, `with!`, `when!`,
+//! The macros of the runtime: six derives, `Transaction`, `Bus`,
+//! `Value`, `Ports`, `Trace` and `Link`; `interface!`, `with!`, `when!`,
 //! `case!`, `station!` and `regmap!`; `#[pipeline]`; and `#[lower]`,
 //! on a unit's impl and on a function it inlines. Written
 //! against `proc_macro` alone, without syn or quote, because the

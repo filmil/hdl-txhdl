@@ -135,7 +135,9 @@ impl Logic {
         }
     }
 
-    /// The IEEE 1164 resolution table, for two drivers on one wire.
+    /// The resolution of two drivers on one wire: IEEE 1164's table,
+    /// except that `U` with anything other than `U` resolves to `X`
+    /// here, where IEEE 1164 keeps it `U`.
     pub fn resolve(self, other: Logic) -> Logic {
         const T: [[usize; 9]; 9] = [
             [0, 1, 1, 1, 1, 1, 1, 1, 1],
@@ -1047,7 +1049,7 @@ impl Transaction for Bit {}
 ///
 /// The policy is declared and not implemented: nothing in the runtime
 /// or the lowering reads either constant, and [`Raw`] is the only tag
-/// in the tree. What moves data between units is the channel, which
+/// in `lib/`. What moves data between units is the channel, which
 /// always handshakes, and a crossing between clocks is a unit of its
 /// own.
 pub trait Tag {

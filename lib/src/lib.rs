@@ -24,7 +24,8 @@
 //!   `run`, checked by the run and written into the netlist.
 //! - `#[lower]`, `with!`, `when!`, `case!`, `#[pipeline]`, `station!`,
 //!   `regmap!`, `interface!` and the derives `Transaction`, `Bus`,
-//!   `Value`, `Trace` and `Ports`, re-exported from `txhdl_macros`;
+//!   `Value`, `Trace`, `Ports` and `Link`, re-exported from
+//!   `txhdl_macros`;
 //!   and `select!`, a value chosen by pattern, defined here.
 //!
 //! A unit simulates as Rust, and `#[lower]` writes the same unit as

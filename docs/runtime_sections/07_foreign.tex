@@ -5,9 +5,10 @@
 A module written in Verilog as a unit. Verilator compiles the module
 into a C++ model, and \code{//tools/vshim} writes two things from the
 module's port list: a C shim over the model, and the Rust that makes
-a \code{Unit} of it. The shim is four calls and a handle: settle the
-combinational logic on the inputs as they stand, pulse the clock,
-set an input port by index, read a port by index, values as four
+a \code{Unit} of it. The shim is four calls a step and two that make
+and free the handle: settle the combinational logic on the inputs as
+they stand, pulse the clock, set an input port by index, read a port
+by index, values as four
 words of thirty-two bits, so a port up to 128 bits wide crosses.
 \code{Model} holds the handle and the shim's functions and frees the
 model when dropped. The generated unit has an \code{In} or

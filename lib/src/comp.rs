@@ -871,8 +871,9 @@ pub fn chan_unregistered<T: Transaction, C: Clock>() -> (Tx<T, C>, Rx<T, C>) {
 /// is a drive and is plain: it states the next value. A read is the
 /// value latched at the last edge: `get`, or the register itself in
 /// an expression, `self.count + 1`, `self.count == 8`, `!self.busy`,
-/// `x.set(self.count)`, since a register is `Copy` and has the
-/// operators and conversions of its value. The cell lives as long as
+/// `x.set(self.count)`, since a register is `Copy` and has its value's
+/// conversions and its `+ - & | ^ << >>` and `!`, but not `*`, `%` or
+/// a unary `-`, which read `get()` first. The cell lives as long as
 /// the program, which is what lets a handle be a plain copy; a unit
 /// makes its registers once.
 pub struct Reg<T: Copy + 'static, C: Clock = DefaultClock>(
@@ -1298,8 +1299,9 @@ pub trait Bus {}
 
 /// A unit. Inputs and outputs are type parameters rather than
 /// associated types, so one struct may implement this more than once
-/// with different shapes. Synthesis calls `run`; a unit with several
-/// processes starts one `async fn` per process and joins them.
+/// with different shapes. The simulation calls `run`, and `#[lower]`
+/// reads its source; a unit with several processes starts one
+/// `async fn` per process and joins them.
 #[allow(async_fn_in_trait)]
 pub trait Unit<In, Out> {
     /// The unit's behaviour: a loop that waits for an edge, reads,
@@ -1592,8 +1594,9 @@ pub async fn join_all<F: Future<Output = ()>>(fs: impl IntoIterator<Item = F>) {
     .await
 }
 
-/// Several waits at once. `parallel!(a, b, ..)` polls every future each
-/// step and completes when all have, with their outputs as a tuple. Two
+/// Several waits at once. `parallel!(a, b, ..)` takes two to six
+/// futures, polls every one each step and completes when all have,
+/// with their outputs as a tuple. Two
 /// waits inside it share an edge, and the executor knows it: a wait
 /// polled inside a group after another wait of the group has crossed
 /// the edge is free. The same two waits written one after the other are
@@ -2061,8 +2064,8 @@ pub fn elaborate<C: Config>() -> C::Top {
 /// Waveforms. A signal's name is the field it lives in, the hierarchy
 /// is the nesting of units, and a testbench names what it holds when it
 /// adds it. `#[derive(Trace)]` on a unit registers every field; the
-/// ends of wires and channels, registers and crossings know how to
-/// register themselves, and plain values register nothing. The sink is
+/// ends of wires and channels and registers know how to register
+/// themselves, and plain values register nothing. The sink is
 /// FST, which the build's waveforms use, or VCD, which is text; Surfer
 /// and GTKWave open both, and `Wave::from_env` takes whichever the
 /// environment names, `TXHDL_FST` first.
@@ -2348,7 +2351,8 @@ pub mod trace {
             parts(scope, Kind::Out, cell, move || c.get());
         }
     }
-    /// A channel is two signals: the transaction and its valid bit.
+    /// A channel is six signals: data, valid and ready, on the
+    /// receiver's side and on the sender's.
     #[rustfmt::skip]
     impl<T: Value + super::Transaction + 'static, C: Clock> Traceable
         for Rx<T, C>
@@ -2527,8 +2531,10 @@ pub mod trace {
         }
     }
 
-    /// Stop recording, so the sink is finished and flushed. A VCD needs
-    /// only dropping; an FST is told to write its tail first.
+    /// Stop recording, so the sink is finished and flushed. The sink is
+    /// called with `u64::MAX` whatever its format: an FST writes its tail
+    /// then, and a VCD writes it as its last time stamp,
+    /// `#18446744073709551615`.
     pub fn stop() {
         clock::TRACER.with(|tr| {
             if let Some(f) = tr.borrow_mut().as_mut() {
