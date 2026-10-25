@@ -23,23 +23,28 @@ with its netlist under the reset. A unit that declares \code{rst}
 answers the reset in its own body, and its netlist adds no clearing of
 its own (Section~\ref{sec:x-reset}).
 
-The stepper below is Section~\ref{sec:x-seq}'s, with the reset held
-for two cycles while it waits for \code{go}, after it has taken 5 and
-added one. The reset clears \code{held} and sends the stepper back to
-wait for a word. The reset empties the word channel too, so the 40
-and the 200 offered while the stepper was busy are gone, no word comes
-after it, and when \code{go} comes the stepper offers nothing. Before
-this change the run stayed at its third wait and sent the cleared
-\code{held}, 0, while the netlist waited for a word. The build checks the
+The stepper below is Section~\ref{sec:x-seq}'s, reset twice.
+The first reset, of two cycles, comes while it waits for \code{go},
+after it has taken 5 and added one: its third wait. The reset clears
+\code{held}, empties the word channel of the 40 and the 200 it had
+not taken, and sends the stepper back to wait for a word, so the
+\code{go} that follows finds nothing to offer. Before this change the
+run stayed at its third wait and sent the cleared \code{held}, 0,
+while the netlist waited for a word.
+Then 77 comes, and the stepper takes it, adds one, and sends 78 at the
+next \code{go}, so the restart lost nothing but the turn it cut short.
+The second reset, of one cycle, comes just after it has taken 9, at
+its second wait, and sends it back to the first in the same way.
+The build checks the
 netlist against this run under nvc and Verilator, through the reset
 and out the other side.
 
 \begin{figure}[htbp]
 \centering
 \input{seq_reset_timing.tex}
-\caption{The stepper reset while it waits for \code{go}: \code{held}
-goes back to zero and the stepper waits for a word again, so \code{go}
-finds nothing to offer.}
+\caption{The stepper reset at its third wait and later at its
+second: each time \code{held} goes back to zero and the stepper waits
+for a word again. Between the two it takes 77 and sends 78.}
 \label{fig:x-seq-reset}
 \end{figure}
 

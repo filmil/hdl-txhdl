@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! A state machine and its run under a reset in the middle (#1883).
 //!
-//! `ex_seq`'s stepper, with the reset held for two cycles while it waits
-//! for `go`, after it has taken a word and added one.
+//! `ex_seq`'s stepper, reset twice: for two cycles while it waits for
+//! `go`, after it has taken a word and added one, and for one cycle
+//! just after it has taken another, while it adds one. Each time it goes
+//! back to waiting for a word, as its netlist's machine does, and in
+//! between it takes a word and sends its sum, to show that it does.
 //!
 //! A loop of one wait lowers to one clocked block, and every protocol
 //! of several steps in the tree so far was written as a hand-numbered
@@ -69,25 +72,33 @@ fn main() {
         w.start();
     }
     let mut sim = Running::new(stepper.run((words, go), sums));
-    // Three words, each offered until taken; `go` comes late for the
-    // first, at once for the second, and never for the third, which
-    // the run ends holding.
+    // Words offered until taken: 5, 40 and 200 before the first
+    // reset, which empties the channel of the two the stepper had not
+    // taken; 77 after it, to show the stepper waiting for a word again
+    // and sending its sum; then 9, caught by a reset of one cycle.
+    let words_at = |t: u32| match t {
+        0..=2 => Some(()),
+        7 | 13 => Some(()),
+        _ => None,
+    };
     let mut next = 0usize;
     let mut taken = 0;
     println!(" t word go held sum");
-    for t in 0..16u32 {
-        let word = if next < 3 && word_tx.ready().to_bool() {
-            let v = U::<8>::from([5u8, 40, 200][next]);
+    for t in 0..24u32 {
+        let word = if words_at(t).is_some() && word_tx.ready().to_bool() {
+            let v = U::<8>::from([5u8, 40, 200, 77, 9][next]);
             word_tx.send(v);
             next += 1;
             format!("{:>3}", v.raw())
         } else {
             "  -".to_string()
         };
-        // The reset, at cycles 3 and 4: the stepper has taken 5, added
-        // one, and waits for `go`.
-        set_reset(matches!(t, 3 | 4));
-        let go = matches!(t, 6 | 8);
+        // The reset at cycles 3 and 4, when the stepper has taken 5,
+        // added one and waits for `go`: its third wait. And for one
+        // cycle at 15, when it has taken 9 and is adding one: its
+        // second.
+        set_reset(matches!(t, 3 | 4 | 15));
+        let go = matches!(t, 6 | 10 | 18);
         go_out.set(go);
         let sum = match sum_rx.recv() {
             Some(s) => {
