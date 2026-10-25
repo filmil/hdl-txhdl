@@ -4,7 +4,7 @@
 // role that omits a member compiles silently. Against the library's
 // `Member`, `Signal` and `Chan`. The library's `interface!` is a
 // procedural macro for these three reasons; see probe 19.
-use txhdl::comp::{Chan, Member, Signal};
+use txhdl::comp::{Chan, Data, Member, Signal};
 use txhdl::types::{Bit, Transaction, U};
 
 #[derive(Clone, Copy, Default)]
@@ -48,7 +48,11 @@ macro_rules! interface_rules {
 }
 
 interface_rules! {
-    Wishbone { adr: Signal<U<32>>, ack: Signal<Bit>, dat: Chan<Beat> }
+    Wishbone {
+        adr: Signal<Data<U<32>>>,
+        ack: Signal<Data<Bit>>,
+        dat: Chan<Beat>,
+    }
     role Initiator { out adr, inp ack, out dat }
     role Target    { inp adr, out ack, inp dat }
 }

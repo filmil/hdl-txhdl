@@ -2,7 +2,7 @@
 //! An interface is declared once. The roles are generated, and a role
 //! that omits a member, or two roles that both drive one, are refused
 //! by the macro with a message naming them.
-use txhdl::comp::{settle, Chan, Signal};
+use txhdl::comp::{settle, Chan, Data, Signal};
 use txhdl::interface;
 use txhdl::types::{Bit, U};
 use txhdl::Transaction;
@@ -15,8 +15,8 @@ pub struct Beat {
 
 interface! {
     Wishbone {
-        adr: Signal<U<32>>,
-        ack: Signal<Bit>,
+        adr: Signal<Data<U<32>>>,
+        ack: Signal<Data<Bit>>,
         dat: Chan<Beat>,
     }
     role Initiator { out adr, in ack,  out dat }

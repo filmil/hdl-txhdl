@@ -15,6 +15,8 @@ rust_proc_macro(
         "macros/regmap.rs",
         # A process of several waits, lowered to a state machine (issue 501).
         "macros/seq.rs",
+        # `#[named_type_params]` (#1899).
+        "macros/named.rs",
         # The reserved words, shared with the runtime (issue 485).
         "src/reserved.rs",
     ],
@@ -66,6 +68,7 @@ filegroup(
     name = "sources",
     srcs = [
         "macros/lib.rs",
+        "macros/named.rs",
         "macros/regmap.rs",
         "macros/seq.rs",
         "src/comp.rs",
@@ -132,6 +135,15 @@ rust_test(
 rust_test(
     name = "counters_test",
     srcs = ["tests/counters.rs"],
+    edition = "2021",
+    proc_macro_deps = [":txhdl_macros"],
+    deps = [":txhdl"],
+)
+
+# Type parameters given by name, `#[named_type_params]` (#1899).
+rust_test(
+    name = "named_params_test",
+    srcs = ["tests/named_params.rs"],
     edition = "2021",
     proc_macro_deps = [":txhdl_macros"],
     deps = [":txhdl"],

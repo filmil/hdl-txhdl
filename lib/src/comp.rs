@@ -199,9 +199,16 @@ impl<T: Copy> Cellf<T> {
 }
 
 /// One wire, in a clock domain. Never held by a unit; split into ends.
-pub struct Signal<T: Copy + Default, C: Clock = DefaultClock>(
-    Rc<Cellf<T>>,
-    PhantomData<C>,
+///
+/// Its two type parameters are given by name (#1899): `Signal<Data<T>>`
+/// is a wire of `T` in the default clock domain, and
+/// `Signal<Data<T>, Domain<C>>` one in `C`'s. `Data` and `Domain` are
+/// the markers `#[named_type_params]` makes, so the two cannot be
+/// swapped.
+#[txhdl_macros::named_type_params]
+pub struct Signal<Data: Copy + Default, Domain: Clock = DefaultClock>(
+    Rc<Cellf<Data>>,
+    PhantomData<Domain>,
 );
 
 /// A channel's state. An elastic buffer of two entries, so a sender
@@ -764,7 +771,7 @@ pub trait Member {
     fn split(self) -> (Self::Driver, Self::Reader);
 }
 
-impl<T: Copy + Default, C: Clock> Member for Signal<T, C> {
+impl<T: Copy + Default, C: Clock> Member for Signal<Data<T>, Domain<C>> {
     type Driver = Out<T, C>;
     type Reader = In<T, C>;
     fn new() -> Self {
@@ -798,7 +805,7 @@ impl<T: Transaction, C: Clock> Member for Chan<T, C> {
 
 /// Create a wire and get its two ends. The whole point.
 pub fn signal<T: Copy + Default, C: Clock>() -> (Out<T, C>, In<T, C>) {
-    Signal::<T, C>::new().split()
+    Signal::<Data<T>, Domain<C>>::new().split()
 }
 
 /// A wire held at `v` for good: what a unit of units passes a child
@@ -1512,6 +1519,51 @@ impl<T: Copy + 'static, const N: usize, C: Clock> Mem<T, N, C> {
 
 // ---------------------------------------------------------------------
 // Parallelism
+
+/// One turn of a process's loop, restarted by the reset (issue 1883).
+///
+/// The netlist of a process of several waits keeps the wait it is at in
+/// a register, `at_wait`, and the reset puts that register back to the
+/// first wait: a reset is a restart. A Rust future cannot be rewound, so
+/// `#[lower]` runs each turn of such a loop through this instead:
+/// while the reset is asserted the turn is dropped where it stands and
+/// does nothing, and once the reset is released the loop begins a fresh
+/// turn, at its first wait, as the netlist's machine does. A turn that
+/// the reset never touches runs exactly as it would have.
+///
+/// A loop of one wait is one clocked block with no such register, and
+/// its run already agrees with its netlist under the reset, so it is
+/// left as it was written; so is the loop of a unit that declares
+/// `rst`, which answers the reset in its own body (issue 878).
+pub fn restart_on_reset<F: Future<Output = ()>>(turn: F) -> RestartOnReset<F> {
+    RestartOnReset { turn: Some(turn) }
+}
+
+/// The future `restart_on_reset` returns.
+pub struct RestartOnReset<F> {
+    turn: Option<F>,
+}
+
+impl<F: Future<Output = ()>> Future for RestartOnReset<F> {
+    type Output = ();
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        // Safety: the turn is never moved out while pinned, only
+        // dropped in place, and `self` is pinned.
+        let t = unsafe { self.get_unchecked_mut() };
+        if reset() {
+            // Dropped where it stands: nothing it was about to do
+            // happens, as the netlist's state does nothing under reset.
+            t.turn = None;
+            return Poll::Pending;
+        }
+        match t.turn.as_mut() {
+            // The reset has been and gone: this turn is over, and the
+            // loop starts the next at its first wait.
+            None => Poll::Ready(()),
+            Some(f) => unsafe { Pin::new_unchecked(f) }.poll(cx),
+        }
+    }
+}
 
 /// Run two processes concurrently. A unit does not terminate, so this
 /// completes only if both do.

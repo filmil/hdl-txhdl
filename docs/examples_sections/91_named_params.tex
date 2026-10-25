@@ -1,0 +1,35 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{Type Parameters Given by Name}
+\label{sec:x-named-params}
+
+Rust has no named type arguments.
+A struct of two type parameters with overlapping bounds, such as an
+address and a data word, takes its arguments in either order, and a
+swap compiles.
+\code{\#[named\_type\_params]} on the struct makes a marker for each
+type parameter, named for it, and every use names each argument with
+its marker: \code{Bus<Addr<u32>, Word<u64>>} (\#1899).
+A marker in the wrong place, or a bare type where a marker belongs, is
+refused by the compiler, since the marker of one parameter does not
+fill the role of another.
+The fields are still the plain types the use named, so \code{show}
+takes a \code{u32} and a \code{u64}, and the markers take no room:
+the struct is as large as its fields.
+
+Each such struct also has a macro of its own name, which takes every
+parameter by name and in any order, \code{Bus![Word = u64, Addr =
+u32]}, and refuses a parameter given twice, one the struct does not
+have, or one left out that has no default.
+That is how a const parameter is given by name: stable Rust cannot read
+a number out of a marker, so \code{Lanes![COUNT = 4, WIDTH = 8]} is
+the way to write \code{Lanes<8, 4>} with each number named.
+The positional form still compiles for a const parameter, so the macro
+is a discipline there and not a guarantee.
+
+The runtime's \code{Signal} is written this way, so a wire of eight
+bits is \code{Signal<Data<U<8>>>}, and one in a named clock domain
+\code{Signal<Data<U<8>>, Domain<C>>}.
+
+\lstinputlisting[caption={\code{ex\_named\_params.rs}. Run with \code{bazel run //lib/examples:ex\_named\_params}.},label={lst:x-named-params}]{lib/examples/ex_named_params.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_named\_params} printed when the build ran it.},label={lst:x-named-params-out}]{out_named_params.txt}

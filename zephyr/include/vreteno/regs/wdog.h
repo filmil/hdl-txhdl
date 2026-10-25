@@ -4,7 +4,7 @@
 #define WDOG_REGS_H
 
 #define WDOG_SPAN 0x20
-#define WDOG_CTRL 0x00 /* read, write: enable, window, warn and lock */
+#define WDOG_CTRL 0x00 /* read, write: enable, window, warn, lock and scale */
 #define WDOG_CTRL_ENABLE_SHIFT 0 /* read, write: the watchdog counts */
 #define WDOG_CTRL_ENABLE_MASK 0x1
 #define WDOG_CTRL_ENABLE_WIDTH 1
@@ -21,13 +21,17 @@
 #define WDOG_CTRL_LOCK_MASK 0x8
 #define WDOG_CTRL_LOCK_WIDTH 1
 #define WDOG_CTRL_LOCK_RESET 0x0
+#define WDOG_CTRL_SCALE_SHIFT 4 /* read, write: a tick is two to this many cycles */
+#define WDOG_CTRL_SCALE_MASK 0xf0
+#define WDOG_CTRL_SCALE_WIDTH 4
+#define WDOG_CTRL_SCALE_RESET 0x0
 #define WDOG_LOAD 0x04 /* read, write: the timeout a refresh loads */
-#define WDOG_LOAD_CYCLES_SHIFT 0 /* read, write: the timeout, in cycles */
+#define WDOG_LOAD_CYCLES_SHIFT 0 /* read, write: the timeout, in ticks */
 #define WDOG_LOAD_CYCLES_MASK 0xffff
 #define WDOG_LOAD_CYCLES_WIDTH 16
 #define WDOG_LOAD_CYCLES_RESET 0x0
 #define WDOG_COUNT 0x08 /* read only: what is left of the timeout */
-#define WDOG_COUNT_CYCLES_SHIFT 0 /* read only: what is left, in cycles */
+#define WDOG_COUNT_CYCLES_SHIFT 0 /* read only: what is left, in ticks */
 #define WDOG_COUNT_CYCLES_MASK 0xffff
 #define WDOG_COUNT_CYCLES_WIDTH 16
 #define WDOG_COUNT_CYCLES_RESET 0x0
@@ -42,7 +46,7 @@
 #define WDOG_STATUS_FAILED_WIDTH 1
 #define WDOG_STATUS_FAILED_RESET 0x0
 #define WDOG_SILL 0x14 /* read, write: the window opens when count falls to this */
-#define WDOG_SILL_CYCLES_SHIFT 0 /* read, write: the sill, in cycles */
+#define WDOG_SILL_CYCLES_SHIFT 0 /* read, write: the sill, in ticks */
 #define WDOG_SILL_CYCLES_MASK 0xffff
 #define WDOG_SILL_CYCLES_WIDTH 16
 #define WDOG_SILL_CYCLES_RESET 0x0

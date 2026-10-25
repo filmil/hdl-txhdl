@@ -482,7 +482,8 @@ DHCP client needs, IPv6, a root file system over NFS with the kernel's
 own DHCP to find it, a console on a simple framebuffer, and the calls
 an ssh server's daemons use, pseudo-terminals, epoll, eventfd,
 signalfd, timerfd and inotify. Each was built alone over the old
-fragment and booted on the model in its timing mode, to the line
+fragment and booted on the model in its timing mode, as it was before
+the data cache was charged, to the line
 \code{/init} says when userspace is up; \code{--until} stops the
 machine there and gives the count.
 
@@ -518,7 +519,8 @@ under a mutex. All three must come to 40\,000, and the test waits for
 the line that says so. With the machine's reservations never broken by
 the other hart's store, the swaps and the mutex lose about 1\,100 each.
 Measured the same way, in cycles to userspace, on the machine's
-timing:
+timing as it was before the exclusive pairs (issue~\#1554) and the data
+cache (issue~\#1561) were charged:
 
 \begin{center}\footnotesize
 \begin{tabular}{@{}llrr@{}}
@@ -544,8 +546,9 @@ uniprocessor, 12.70~s SMP on a tree of one hart, +20.0 per cent, and
 11.54~s SMP on two, +9.0 per cent. The second hart does not pay back
 SMP's own cost. On the board every \code{sc.w} and AMO of the kernel's
 locks is an exclusive pair that waits for its write's answer, and the
-two harts share one path to the DDR3; the machine's timing charges
-neither (issue~\#1554). The tree is the board's two harts by default,
+two harts share one path to the DDR3; the machine's timing charged
+neither when the table was measured, and now charges both
+(issue~\#1554). The tree is the board's two harts by default,
 and \code{boot\_image}'s \code{harts} gives one.
 
 The board can also keep its root on srv, over NFS, so that what is
@@ -642,23 +645,28 @@ one cycle an instruction and four more when control does not fall
 through, and for a data access forty more from the DDR3, three into
 it, nine from a memory on the bus and one from the core's own, eight
 from a peripheral and two into one. \code{mcycle} and the timer count
-those cycles. The costs are fitted to the board's own programs, and
-\code{timing\_test} holds the model to the fit: \code{cpi.rs}'s warm
-loop takes 7000 cycles where the board took 7036 from the data memory
-and 7088 from the DDR3, and \code{ethperf.rs} copies a full frame into
-a DDR3 slot in 20\,142 where the board took 19\,926. A cold run misses
-by the instruction cache's fills, which the model does not have, and a
-transmit by the engine, which it does not time.
+those cycles. The costs are fitted to the board's own programs, run
+before the core had its data cache, and \code{timing\_test} holds the
+model to the fit with \code{--no-dcache}: \code{cpi.rs}'s warm loop
+takes 7000 cycles where the board took 7036 from the data memory and
+7088 from the DDR3, and \code{ethperf.rs} copies a full frame into a
+DDR3 slot in 20\,142 where the board took 19\,926. With the cache, the
+board copies the frame in 4\,578 and the model in 6\,474, which
+issue~\#1918 is open for. Under the fit, a cold run misses by the
+instruction cache's fills, which those costs leave out, and a transmit
+by the engine, which the model does not time.
 An \code{lr.w}, \code{sc.w} or AMO on the DDR3 is an exclusive pair on
 the bus, and is charged what \code{board\_test} measures one at: 34
 cycles, 17 and 50, a step included. While the other hart works beside
 it, a store costs 1 more, an \code{sc.w} 11 and an AMO 8 (issue~\#1554).
-\code{--dcache} charges the core as \code{costs.rs} measured it on the
-board, one loop an instruction: its data cache and instruction cache, a
-multiply and a division, a load's word used at once, a page walk and a
-fence that waits for a store (issue~\#1561). Each of the program's ten
-loops then takes within five per cent of the board's time. A walk is
-charged when the hart's own buffers would miss, as the RTL has them:
+By default the timing mode also charges the core as \code{costs.rs}
+measured it on the board, one loop an instruction: its data cache and
+instruction cache, a multiply and a division, a load's word used at
+once, a page walk and a fence that waits for a store (issue~\#1561).
+Each of the program's ten loops then takes within five per cent of the
+board's time. \code{--no-dcache} leaves all of those out and charges
+the fit above alone, so a load from the DDR3 costs its forty. With
+them, a walk is charged when the hart's own buffers would miss, as the RTL has them:
 eight entries for fetches and eight for loads and stores, filled in
 turn, each a page or a 4\,MiB megapage, and a megapage's walk reads
 one entry where a page's reads two. The machine's own translation
@@ -675,14 +683,17 @@ line, each takes ten bit times of the divider's \code{div} plus one
 cycles, \code{txdata} reads full while eight wait, and a byte written
 then is dropped and counted in \code{txdrop}. That is about 0.8\,s of
 each boot, Linux's console waiting on the port. From OpenSBI's banner
-to Linux's \code{/init}, a boot comes out 2 per cent under the board's
-for the uniprocessor kernel and 3 per cent under for the SMP one on
-two harts. The timing mode stays a flag, since a step of the machine
+to Linux's \code{/init}, a boot with the kernel's timestamps on comes
+out 1.5 per cent under the board's for the uniprocessor kernel, 1.2
+per cent under for the SMP one on one hart and 1.0 per cent under on
+two; with \code{--no-dcache} it comes out 12 to 32 per cent over.
+The timing mode stays a flag, since a step of the machine
 is otherwise an instruction, which is what lockstep compares.
 With \code{--profile} the machine writes what each address cost, and
 with \code{--watch} who reached an address and with what length; against
 a program's symbols they say where its time goes whatever the cable's
-pacing (issue~1434). They showed the fastboot server's receive path
+pacing (issue~1434). They showed, without the data cache, the
+fastboot server's receive path
 paying per fragment of a frame: at Zephyr's default buffers of 128 bytes
 a segment was a dozen allocations, cursor steps and locks. A buffer a
 frame, and room in \code{recv} for more than one segment, took the

@@ -940,8 +940,9 @@ rust_test(
 
 # The machine model's timing mode (issue 1392) against the board's own
 # programs: cpi.rs's warm loop and ethperf.rs's copies, run with
-# `--timing`, give the cycles the calibrated costs give, which are
-# within about one per cent of what the board measured.
+# `--timing --no-dcache`, give the cycles the calibrated costs give,
+# which are within about one per cent of what the board measured
+# before it had a data cache (#1561).
 sh_test(
     name = "timing_test",
     srcs = ["timing_test.sh"],
