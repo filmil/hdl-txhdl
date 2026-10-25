@@ -1183,6 +1183,16 @@ use reserved::{escaped, reserved_by};
 // A process of several waits
 
 mod seq;
+// `#[named_type_params]`: type parameters given by name (#1899).
+mod named;
+
+/// `#[named_type_params]` on a struct: each type parameter `P` given by
+/// name at every use, as `P<T>`, so two of them cannot be swapped
+/// (#1899). See `named.rs`.
+#[proc_macro_attribute]
+pub fn named_type_params(attr: TokenStream, item: TokenStream) -> TokenStream {
+    named::named_type_params(attr, item)
+}
 
 /// `ts` with every token given `span`: a check the macro writes then
 /// reports at the name it checks. Every path in such a check is
@@ -3580,6 +3590,63 @@ fn angle_args(ts: &[TokenTree], at: usize) -> (Vec<Vec<TokenTree>>, usize) {
     (out, j)
 }
 
+/// A generic argument list, `<..>`, with each argument given by name,
+/// `Data<T>` or `Domain<C>`, as `Signal`'s are (#1899), taken out of
+/// its marker: `<Data<U<8>>, Domain<C>>` is `<U<8>, C>`, and a marker
+/// named by its path, `comp::Data<T>`, is read the same. An argument
+/// that is not one of those is left as it is; `Signal![..]` is not read
+/// here, and a role's member is written `Signal<Data<T>, ..>`.
+fn unmarked(args: &[TokenTree]) -> Vec<TokenTree> {
+    let punct = |t: &TokenTree, c: char| matches!(t, TokenTree::Punct(p) if p.as_char() == c);
+    let (Some(first), Some(last)) = (args.first(), args.last()) else {
+        return args.to_vec();
+    };
+    if !punct(first, '<') || !punct(last, '>') {
+        return args.to_vec();
+    }
+    let inner = &args[1..args.len() - 1];
+    let mut parts: Vec<Vec<TokenTree>> = vec![Vec::new()];
+    let mut depth = 0i32;
+    for t in inner {
+        if punct(t, '<') {
+            depth += 1;
+        } else if punct(t, '>') {
+            depth -= 1;
+        } else if punct(t, ',') && depth == 0 {
+            parts.push(Vec::new());
+            continue;
+        }
+        parts.last_mut().unwrap().push(t.clone());
+    }
+    let mut out = vec![first.clone()];
+    for (k, p) in parts.iter().enumerate() {
+        if k > 0 {
+            out.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
+        }
+        // `Data<T>`, or a path to it, `comp::Data<T>`: the marker's
+        // name just before the first `<`, and only path segments before
+        // that.
+        let lt = p.iter().position(|t| punct(t, '<'));
+        let marked = lt.is_some_and(|m| {
+            m >= 1
+                && (is_ident(&p[m - 1], "Data")
+                    || is_ident(&p[m - 1], "Domain"))
+                && p[..m - 1]
+                    .iter()
+                    .all(|t| matches!(t, TokenTree::Ident(_)) || punct(t, ':'))
+                && punct(&p[p.len() - 1], '>')
+        });
+        match lt {
+            Some(m) if marked => {
+                out.extend(p[m + 1..p.len() - 1].iter().cloned())
+            }
+            _ => out.extend(p.iter().cloned()),
+        }
+    }
+    out.push(last.clone());
+    out
+}
+
 /// The structs of a file, and the roles of its `interface!`s, which
 /// are structs too: a role's member of `Signal<T>` is an `Out<T>` where
 /// the role drives it and an `In<T>` where it reads it, and of
@@ -3737,7 +3804,13 @@ fn interface_roles(g: &Group, out: &mut Vec<PortStruct>) {
                 _ => break,
             };
             let mut port = vec![TokenTree::Ident(Ident::new(kind, m.span()))];
-            port.extend(ty[lt..].iter().cloned());
+            // `Signal<Data<T>, Domain<C>>` names its arguments (#1899);
+            // its ends take them bare, `Out<T, C>`.
+            if is_ident(&ty[lt - 1], "Signal") {
+                port.extend(unmarked(&ty[lt..]));
+            } else {
+                port.extend(ty[lt..].iter().cloned());
+            }
             fields.push((m.to_string(), port));
         }
         if fields.len() == split_commas(ends).len() {

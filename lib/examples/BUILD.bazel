@@ -1144,6 +1144,15 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# Type parameters given by name:  bazel run //lib/examples:ex_named_params
+rust_binary(
+    name = "ex_named_params",
+    srcs = ["ex_named_params.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A check, an assumption and a cover point:  bazel run //lib/examples:ex_formal
 rust_binary(
     name = "ex_formal",
@@ -1658,6 +1667,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_seq_reset.rs",
         "ex_put.rs",
         "ex_axi_put.rs",
+        "ex_named_params.rs",
         "ex_formal.rs",
         "ex_serial.rs",
         "ex_frame.rs",
