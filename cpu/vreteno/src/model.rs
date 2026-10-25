@@ -505,10 +505,12 @@ impl Timing {
             // hart storing all the while a store 0.9 more, the pair 11
             // and the AMO 8.
             excl: (33, 16, 49),
-            // The cache is not charged by default: without the costs it
-            // hides, a missed instruction line, a page walk, a division,
-            // the board's cycles an instruction come out well under
-            // (issue 1554); `machine --dcache` asks for it.
+            // The cache is not charged here: without the costs it hides,
+            // a missed instruction line, a page walk, a division, the
+            // board's cycles an instruction come out well under (issue
+            // 1554). `board_cached` charges it with those costs, and
+            // the machine uses that by default (#1561); `machine
+            // --no-dcache` asks for this.
             hit: None,
             contention: (1, 11, 8),
             mul: 0,
