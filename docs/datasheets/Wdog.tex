@@ -31,6 +31,13 @@ Third, the configuration lock bit is write-once. Once asserted, \code{ctrl},
 \code{load}, and \code{sill} become read-only until hardware reset, protecting
 critical timing thresholds from corruption.
 
+The count runs in ticks rather than cycles: \code{ctrl}'s \code{scale}
+makes a tick 2 to the \code{scale} cycles, from one up to 32\,768, so
+that a timeout of sixteen bits reaches about 21.5~s at 100~MHz rather
+than 655~\textmu s (issue~1884). \code{scale} resets to 0, a tick a
+cycle, so software that never writes it sees a watchdog counting
+cycles.
+
 \subsection*{Parameters}
 
 \begin{center}\footnotesize
@@ -52,7 +59,9 @@ Offsets from the block's base. The block selects the word by bits 4 to
 \dsregs{Wdog}
 
 Once \code{lock} is set, writes to \code{ctrl}, \code{load} and
-\code{sill} are ignored, and the lock bit itself only ever sets. A write
+\code{sill} are ignored, \code{scale} with the rest of \code{ctrl},
+and the lock bit itself only ever sets. \code{load}, \code{count} and
+\code{sill} are in ticks. A write
 of \code{KEY} to \code{feed} refreshes the count, and a write of
 anything else is a failure; \code{feed} reads zero. In window mode, a
 refresh while \code{count} is above \code{sill} is a failure too.
@@ -68,7 +77,14 @@ part was written (issue 77). It now escapes one instead, to
 
 \begin{itemize}
 \item While \code{ctrl} bit 0 is set, \code{count} falls by one a
-cycle. A refresh loads it from \code{load}.
+tick, and \code{pre} counts the cycles of a tick: a tick ends when
+\code{pre} reaches 2 to the \code{scale}, less one, and \code{pre}
+goes back to zero. A refresh loads \code{count} from \code{load}.
+\item A refresh, a warning, a failure and a write to \code{ctrl} each
+start a whole tick, setting \code{pre} to zero. So a timeout is
+\code{load} whole ticks from the refresh, a smaller \code{scale}
+never finds \code{pre} past the end of its tick, and enabling the
+watchdog again never starts on part of one.
 \item A write of \code{KEY} to \code{feed} is a refresh, unless window
 mode is on and \code{count} is above \code{sill}, in which case it is
 a failure. A write of anything else is a failure in either mode.
@@ -78,7 +94,7 @@ reloads, which gives a program that is merely slow one more timeout to
 notice. Otherwise it is a failure.
 \item A failure sets the failed bit, drives \code{rst\_req} and holds it
 for nine cycles, the failing one and eight while \code{hold} counts
-down, and reloads the count. The reload matters: the count
+down, cycles whatever \code{scale} is, and reloads the count. The reload matters: the count
 is at zero when a timeout fails, so a watchdog that did not reload
 would ask for a reset on every cycle from then on and hold the machine
 down rather than restart it.
@@ -97,9 +113,20 @@ fall between two reads and come back after a refresh, stops refreshing
 and takes the warning and then the reset, writes a wrong key, refreshes
 while the window is shut, and locks the watchdog on and fails to turn
 it off.
+\item It then sets \code{scale} to 2 and reads \code{count} twice in
+a row: it falls 2 between the reads, against 8 between the same two
+reads at \code{scale} 0.
 \item The build simulates the netlist against that run under nvc and
 Verilator: \code{//docs:wdog\_sim\_wdog\_tb\_test} and
 \code{//docs:wdog\_vsim\_test}.
+\item \code{//lib/parts:parts\_test} drives the block on its bus
+(\code{wdog::tests}): the reset about \code{load} cycles after the
+enable at \code{scale} 0 and eight times later at 3; the warning and
+the reset in ticks at 2; the window's \code{sill} in ticks at 2;
+refreshes in time keeping the reset away at 3; \code{scale} written
+down from 15 to 0 in the middle of a tick, the reset coming about
+\code{load} cycles later; and a locked \code{ctrl} keeping its
+\code{scale}.
 \end{itemize}
 
 \subsection*{Used by}
@@ -111,7 +138,12 @@ and reads \code{watchdog} as the cause after it restarts.
 \subsection*{Limits}
 
 \code{count} and \code{load} are sixteen bits, so the timeout is at
-most 65535 cycles. The reset request is nine cycles and not a
+most 65535 ticks: 65535 cycles at \code{scale} 0 and about $2.1 \times
+10^9$ at 15, 21.5~s at 100~MHz. A timeout is a whole number of ticks,
+so at a large \code{scale} it is coarse. The field names in the
+register map and the generated header still say \code{cycles}
+(\code{WDOG\_LOAD\_CYCLES} and the rest), though the words count
+ticks; renaming them changes the header's names under any driver. The reset request is nine cycles and not a
 parameter. \code{feed} reads as zero rather than as what was last
 written. There is no second stage: the warning and the reset are the
 only two things a timeout can do.
