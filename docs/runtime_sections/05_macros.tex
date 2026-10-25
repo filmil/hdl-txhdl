@@ -445,6 +445,25 @@ itself and writes the struct and the markers by their bare names, since
 Rust lets no path reach a macro another macro made from inside its own
 crate; so a use has them in scope, and another crate imports it by its
 name.
+A private struct's macro is not exported, and a lifetime is given by
+name too, \code{'a = 'static}, so the macro can stand in a type alias.
+
+What the attribute cannot do, it refuses or the compiler does.
+A bound that names another parameter goes in the \code{where} clause,
+since a role is a trait with no parameters to name; the attribute says
+so.
+\code{P::Name} is refused for the same reason a projection cannot be
+followed by \code{::}, and is written \code{<P as Trait>::Name}.
+A field's own name and an attribute are left alone.
+A \code{\#[derive]} goes below the attribute: one above it sees the
+struct as written, before the rewrite.
+A derive bounds the renamed parameters, which the markers meet, since
+each implements \code{Clone}, \code{Copy}, \code{Debug},
+\code{Default}, \code{PartialEq}, \code{Eq} and \code{Hash} whatever
+it names; the fields meet the derived traits only if the parameters'
+bounds say so, which they then carry over to the roles.
+Two structs of one module cannot share a parameter's name, since each
+makes the marker of that name (\#1914).
 
 \lstinputlisting[caption={\code{lib/macros/lib.rs}.},label={lst:r-macros}]{lib/macros/lib.rs}
 
