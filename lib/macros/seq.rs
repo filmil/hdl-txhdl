@@ -53,8 +53,6 @@ use proc_macro::{
     TokenTree,
 };
 
-/// The name of the hidden register of the `k`th process of several
-/// waits in a unit, counted from one.
 /// What a register the netlist adds and the unit does not declare
 /// holds, so that a field of the same name is refused with words that
 /// say so (#1888).
@@ -91,6 +89,8 @@ impl Hidden {
     }
 }
 
+/// The name of the hidden register of the `k`th process of several
+/// waits in a unit, counted from one.
 pub(crate) fn reg_name(k: usize) -> String {
     if k == 1 {
         "at_wait".to_string()
