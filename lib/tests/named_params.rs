@@ -110,3 +110,102 @@ fn the_structs_macro_gives_every_parameter_by_name() {
     assert_eq!(l.lanes.len(), 3);
     assert_eq!(size_of::<Lanes![WIDTH = 2, COUNT = 3]>(), 6);
 }
+
+/// More shapes of field type: a function pointer, a reference, a slice,
+/// a projection written `<P as Trait>::..`, and a field named like a
+/// parameter, which keeps its name, after a field attribute, which is
+/// left as it is.
+#[named_type_params]
+#[allow(non_snake_case)]
+pub struct Shapes<'a, Arg: Copy, Ret, Src: IntoIterator> {
+    pub f: fn(Arg) -> Ret,
+    pub r: &'a Arg,
+    pub s: &'a [Ret],
+    pub first: Option<<Src as IntoIterator>::Item>,
+    #[doc = "Named like the parameter `Ret`, and still a `u8`."]
+    pub Ret: u8,
+}
+
+fn double(x: u32) -> u64 {
+    2 * u64::from(x)
+}
+
+#[test]
+fn fn_pointers_references_slices_and_projections() {
+    let arg = 21u32;
+    let rets = [1u64, 2];
+    let s: Shapes<'_, Arg<u32>, Ret<u64>, Src<Vec<i8>>> = Shapes {
+        f: double,
+        r: &arg,
+        s: &rets,
+        first: Some(-1i8),
+        Ret: 9,
+    };
+    assert_eq!(
+        ((s.f)(*s.r), s.s[1], s.first, s.Ret),
+        (42u64, 2u64, Some(-1i8), 9u8)
+    );
+}
+
+/// A derive below the macro reaches the struct as rewritten: its
+/// bounds on the renamed parameters are met by the markers, and the
+/// fields' types meet the derived traits because the parameters' bounds
+/// say so, and carry over to the roles. One above the macro would see
+/// the struct as written, before the rewrite, and fail, so a derive
+/// goes below it.
+#[named_type_params]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Point<
+    X: Copy + std::fmt::Debug + Default + PartialEq,
+    Y: Copy + std::fmt::Debug + Default + PartialEq,
+> {
+    pub x: X,
+    pub y: Y,
+}
+
+#[test]
+fn attributes_and_derives_reach_the_struct() {
+    let p: Point<X<u8>, Y<i16>> = Point { x: 1, y: -2 };
+    let q = p;
+    assert_eq!(p, q);
+    assert_eq!(Point::<X<u8>, Y<i16>>::default(), Point { x: 0, y: 0 });
+    assert_eq!(format!("{:?}", p), "Point { x: 1, y: -2 }");
+}
+
+/// A lifetime by name, so the macro can be used where `'_` cannot, in
+/// a type alias.
+type Statics = Window!['a = 'static, N = 2, Item = u16];
+
+#[test]
+fn a_lifetime_by_name() {
+    static TWO: [u16; 2] = [3, 4];
+    let w: Statics = Window { items: &TWO };
+    assert_eq!(w.items[1], 4u16);
+}
+
+mod wires {
+    //! `interface!` with a `Signal` given its clock domain by name, and
+    //! one whose marker is named by its path: the ends take the bare
+    //! arguments.
+    use txhdl::comp::{settle, Data, DefaultClock, Domain, Signal};
+    use txhdl::interface;
+    use txhdl::types::{Bit, U};
+
+    interface! {
+        Link {
+            go: Signal<Data<Bit>, Domain<DefaultClock>>,
+            word: Signal<txhdl::comp::Data<U<8>>>,
+        }
+        role Left { out go, in word }
+        role Right { in go, out word }
+    }
+
+    #[test]
+    fn a_domain_and_a_path_through_interface() {
+        let (l, r) = Link::new();
+        l.go.set(Bit::One);
+        r.word.set(U::<8>::from(5u8));
+        settle();
+        assert_eq!((r.go.get(), l.word.get().raw()), (Bit::One, 5));
+    }
+}

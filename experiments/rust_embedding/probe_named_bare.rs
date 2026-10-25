@@ -4,8 +4,7 @@
 //! `Data<Bit>`:
 //!
 //! ```text
-//! error[E0277]: the trait bound `txhdl::types::Bit:
-//!        txhdl::comp::IsData` is not satisfied
+//! error[E0277]: the trait bound `Bit: IsData` is not satisfied
 //! ```
 use txhdl::comp::Signal;
 use txhdl::types::Bit;

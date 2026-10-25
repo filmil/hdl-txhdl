@@ -3592,8 +3592,10 @@ fn angle_args(ts: &[TokenTree], at: usize) -> (Vec<Vec<TokenTree>>, usize) {
 
 /// A generic argument list, `<..>`, with each argument given by name,
 /// `Data<T>` or `Domain<C>`, as `Signal`'s are (#1899), taken out of
-/// its marker: `<Data<U<8>>, Domain<C>>` is `<U<8>, C>`. An argument
-/// that is not one of those is left as it is.
+/// its marker: `<Data<U<8>>, Domain<C>>` is `<U<8>, C>`, and a marker
+/// named by its path, `comp::Data<T>`, is read the same. An argument
+/// that is not one of those is left as it is; `Signal![..]` is not read
+/// here, and a role's member is written `Signal<Data<T>, ..>`.
 fn unmarked(args: &[TokenTree]) -> Vec<TokenTree> {
     let punct = |t: &TokenTree, c: char| matches!(t, TokenTree::Punct(p) if p.as_char() == c);
     let (Some(first), Some(last)) = (args.first(), args.last()) else {
@@ -3621,14 +3623,24 @@ fn unmarked(args: &[TokenTree]) -> Vec<TokenTree> {
         if k > 0 {
             out.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
         }
-        let marked = p.len() >= 3
-            && (is_ident(&p[0], "Data") || is_ident(&p[0], "Domain"))
-            && punct(&p[1], '<')
-            && punct(&p[p.len() - 1], '>');
-        if marked {
-            out.extend(p[2..p.len() - 1].iter().cloned());
-        } else {
-            out.extend(p.iter().cloned());
+        // `Data<T>`, or a path to it, `comp::Data<T>`: the marker's
+        // name just before the first `<`, and only path segments before
+        // that.
+        let lt = p.iter().position(|t| punct(t, '<'));
+        let marked = lt.is_some_and(|m| {
+            m >= 1
+                && (is_ident(&p[m - 1], "Data")
+                    || is_ident(&p[m - 1], "Domain"))
+                && p[..m - 1]
+                    .iter()
+                    .all(|t| matches!(t, TokenTree::Ident(_)) || punct(t, ':'))
+                && punct(&p[p.len() - 1], '>')
+        });
+        match lt {
+            Some(m) if marked => {
+                out.extend(p[m + 1..p.len() - 1].iter().cloned())
+            }
+            _ => out.extend(p.iter().cloned()),
         }
     }
     out.push(last.clone());
