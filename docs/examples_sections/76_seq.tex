@@ -17,7 +17,9 @@ at, and the statements after a wait happen at the edge that leaves
 it, when the register holds that wait's number and the wait's own
 condition holds. The register then moves to the next wait, and after
 the last one back to the first, which is the loop. The register is a
-field of the netlist and is reset with the others; it is not in the
+field of the netlist and is reset with the others, and the run
+restarts the process at its first wait to match
+(Section~\ref{sec:x-seq-reset}); it is not in the
 trace, so the testbench does not check it, and checks everything the
 unit does through it.
 

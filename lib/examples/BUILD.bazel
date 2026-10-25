@@ -1124,6 +1124,16 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A state machine and its run under a reset in the middle (#1883):
+#   bazel run //lib/examples:ex_seq_reset
+rust_binary(
+    name = "ex_seq_reset",
+    srcs = ["ex_seq_reset.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # Sending ports that offer without waiting for room, as AXI requires:
 #   bazel run //lib/examples:ex_axi_put
 rust_binary(
@@ -1645,6 +1655,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_nested.rs",
         "ex_link.rs",
         "ex_seq.rs",
+        "ex_seq_reset.rs",
         "ex_put.rs",
         "ex_axi_put.rs",
         "ex_formal.rs",

@@ -1169,6 +1169,8 @@ latex_document(
         ":link_timing",
         ":seq_run",
         ":seq_timing",
+        ":seq_reset_run",
+        ":seq_reset_timing",
         ":formal_run",
         ":formal_timing",
         ":serial_run",
@@ -3026,6 +3028,22 @@ waveform(
     name = "seq",
     example = "//lib/examples:ex_seq",
     lowered = ("stepper", "stepper"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//words/rx_valid=>word_valid",
+        "//words/rx_data=>word",
+        "//words/rx_ready=>word_ready",
+        "//go=>go",
+        "//stepper/held=>held",
+        "//sums/tx_valid=>sum_valid",
+        "//sums/tx_data=>sum",
+    ],
+)
+
+waveform(
+    name = "seq_reset",
+    example = "//lib/examples:ex_seq_reset",
+    lowered = ("stepper_r", "stepper_r"),
     signals = [
         "//clocks/clk=>clk",
         "//words/rx_valid=>word_valid",
