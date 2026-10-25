@@ -495,6 +495,107 @@ fn icache4() {
     say_line(b"scatter-warm", warm[3], 1);
 }
 
+/// Four loops of two lines for #1918, each the shape of `ethperf.rs`'s
+/// copy into a transmit slot: six compressed instructions, the first two
+/// at the end of one line and the other four at the start of the next,
+/// the last a taken branch back whose next word is in its own line. The
+/// model charges ethperf's copy 17 cycles a round where the board takes
+/// 12, and the blocks already here cannot say which charge is wrong:
+///
+/// * `CROSS`: no-ops, so a round is the crossing, the branch and the
+///   counter alone.
+/// * `ST_CROSS`: a store into the DDR3 just before the crossing.
+/// * `CROSS_ST`: the crossing landing on the store.
+/// * `COPY`: `copy_in`'s loop exactly, a load the data cache holds and
+///   a store into the DDR3 a round, with the crossing on the store.
+///
+/// Each runs 64 rounds, cold and then warm, the warm one reported:
+/// `icache5 cross <cold> <warm> st-cross .. cross-st .. copy ..`, then
+/// `costs loop2-<kind> <hundredths of a cycle a round>`.
+const CROSS: usize = map::DDR3 + 0x39_2000;
+const ST_CROSS: usize = map::DDR3 + 0x3a_2000;
+const CROSS_ST: usize = map::DDR3 + 0x3b_2000;
+const COPY: usize = map::DDR3 + 0x3c_2000;
+const _: () = assert!((CROSS - map::DDR3) % 0x4000 == 0x2000);
+const _: () = assert!((ST_CROSS - map::DDR3) % 0x4000 == 0x2000);
+const _: () = assert!((CROSS_ST - map::DDR3) % 0x4000 == 0x2000);
+const _: () = assert!((COPY - map::DDR3) % 0x4000 == 0x2000);
+/// `addi a1, zero, 64`; `lui a2, 0x40101`, the copy's source, a page past
+/// `WORD`; `lui a5, 0x40102`, where every store goes, a page further.
+const LI_A1: u32 = 0x0400_0593;
+const LUI_A2: u32 = 0x4010_1637;
+const LUI_A5: u32 = 0x4010_27b7;
+/// The compressed instructions, as `ethperf.rs` compiles to them:
+/// `c.lw a4, 0(a2)`, `c.addi a2, 4`, `c.sw a4, 0(a5)`, `c.addi a5, 4`,
+/// `c.addi a1, -1`, `c.bnez a1, -10` and `c.nop`.
+const C_LW: u32 = 0x4218;
+const C_ADD_A2: u32 = 0x0611;
+const C_SW: u32 = 0xc398;
+const C_ADD_A5: u32 = 0x0791;
+const C_DEC_A1: u32 = 0x15fd;
+const C_BNEZ_A1: u32 = 0xf9fd;
+const C_NOP: u32 = 0x0001;
+
+/// Two compressed instructions in one word, the first at the lower half.
+const fn pair(lo: u32, hi: u32) -> u32 {
+    lo | (hi << 16)
+}
+
+/// A loop of two lines at `at`: the header, three no-ops, then `a` and
+/// `b` in the first line's last word, and `c`, `d`, the counter and the
+/// branch in the second line's first two words, which falls through to
+/// the end.
+fn loop2(at: usize, [a, b, c, d]: [u32; 4]) {
+    put(at, [CSRR_T0, LI_A1, LUI_A2, LUI_A5]);
+    put(at + 16, [NOP, NOP, NOP, pair(a, b)]);
+    put(
+        at + 32,
+        [pair(c, d), pair(C_DEC_A1, C_BNEZ_A1), CSRR_T1, SUB_A0],
+    );
+    put(at + 48, [RET, NOP, NOP, NOP]);
+}
+
+/// The four loops of two lines (#1918).
+fn icache5() {
+    loop2(CROSS, [C_NOP, C_NOP, C_NOP, C_NOP]);
+    loop2(ST_CROSS, [C_NOP, C_SW, C_NOP, C_NOP]);
+    loop2(CROSS_ST, [C_NOP, C_NOP, C_SW, C_NOP]);
+    loop2(COPY, [C_LW, C_ADD_A2, C_SW, C_ADD_A5]);
+    fence_i();
+    for at in [CROSS, ST_CROSS, CROSS_ST, COPY] {
+        let ret = (at + 48) as *const u32;
+        if unsafe { core::ptr::read_volatile(ret) != RET } {
+            Uart::say(b"costs loop2 blocks not written\n");
+            return;
+        }
+    }
+    let names = [&b"cross"[..], b"st-cross", b"cross-st", b"copy"];
+    let mut cold = [0u32; 4];
+    let mut warm = [0u32; 4];
+    for (i, at) in [CROSS, ST_CROSS, CROSS_ST, COPY].into_iter().enumerate() {
+        fence_i();
+        cold[i] = run(at);
+        warm[i] = run(at);
+    }
+    Uart::say(b"icache5");
+    for (i, name) in names.iter().enumerate() {
+        Uart::put(b' ');
+        Uart::say(name);
+        Uart::put(b' ');
+        Uart::put_decimal(cold[i]);
+        Uart::put(b' ');
+        Uart::put_decimal(warm[i]);
+    }
+    Uart::put(b'\n');
+    for (i, name) in names.iter().enumerate() {
+        Uart::say(b"costs loop2-");
+        Uart::say(name);
+        Uart::put(b' ');
+        Uart::put_decimal(warm[i] * 100 / 64);
+        Uart::put(b'\n');
+    }
+}
+
 /// The bulk blocks' two megabytes: a read and a set walk `FROM`, and a
 /// copy moves it to `TO`, a word at a time, four words a round, as the
 /// kernel's `memset` and `memcpy` do (issue 1561).
@@ -937,6 +1038,7 @@ fn main() -> ! {
     icache_jumps();
     icache_guess_contend();
     icache4();
+    icache5();
     // A load from the data memory at 0x1000, `DATA_BASE`, over the bus
     // (#1755): the data cache holds only the DDR3's lines, so the load
     // goes around it every time. The `lui` is a cycle the row carries on
