@@ -317,12 +317,16 @@ fn same_members(a: &[(usize, Path)], b: &[(usize, Path)]) -> bool {
 
 /// What the walk builds: the states, the tails, their order, and the
 /// counters of the `for` loops that wait, each a register the unit
-/// does not declare, with its name and the Rust of its width.
+/// does not declare, with its name and the Rust of its width. The
+/// counters are numbered from `first`, the count the unit's earlier
+/// processes have, so two processes' counters are two registers
+/// (#1893).
 struct Plan {
     states: Vec<State>,
     tails: Vec<Tail>,
     order: Vec<Piece>,
     counters: Vec<(String, String)>,
+    first: usize,
 }
 
 /// A statement into every open state: the one state's items when the
@@ -422,7 +426,7 @@ fn walk_for(
     last_text
         .parse::<TokenStream>()
         .map_err(|_| err(span, "the bound of the `for` does not parse"))?;
-    let n = plan.counters.len();
+    let n = plan.first + plan.counters.len();
     let reg = format!("for{n}");
     // The counter's width: from the last value when the bound is one
     // the netlist can evaluate, and from the register's own width when
@@ -796,13 +800,16 @@ fn lower_items(
 /// of the netlist's statements, the width of the hidden register
 /// called `reg`, and the registers the outputs are held in. `sts` are
 /// the body's statements, the first a wait; `pnames` the unit's
-/// ports; `span` where the loop is, for what is refused about the
-/// whole of it.
+/// ports; `counters` how many counters of counted loops the unit's
+/// earlier processes have, which this one's are numbered after;
+/// `span` where the loop is, for what is refused about the whole of
+/// it.
 pub(crate) fn lower(
     cx: &mut Cx,
     sts: &[Vec<TokenTree>],
     reg: &str,
     pnames: &[String],
+    counters: usize,
     span: Span,
 ) -> Result<(Vec<String>, usize, Vec<(String, String, Hidden)>), TokenStream> {
     // The states, one per wait, and what follows the last wait goes
@@ -813,6 +820,7 @@ pub(crate) fn lower(
         tails: Vec::new(),
         order: Vec::new(),
         counters: Vec::new(),
+        first: counters,
     };
     let open = walk(&mut plan, &sts, Vec::new())?;
     for (s, p) in open {
