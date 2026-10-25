@@ -51,12 +51,24 @@ are when the program read the status rather than when the watchdog
 moved, since a read over this bus costs about twenty six cycles; the
 figure is the moment itself.
 
+\subsection{A Tick Longer Than A Cycle}
+
+The timeout is sixteen bits, so a tick of one cycle at 100~MHz gives
+at most 655 microseconds, and a task that refreshes the watchdog every
+millisecond could never use it. The control word's \code{scale} makes
+a tick 2 to the \code{scale} cycles, up to 32\,768, and the timeout,
+the sill and the warning all count in ticks (issue~1884). It resets to
+0, a tick a cycle, so a program that never writes it sees the same
+watchdog as before. The example sets \code{scale} to 2 and reads the
+count twice: between two reads it falls a quarter as far as it did at
+the start.
+
 \subsection{The Lock}
 
 A watchdog software can turn off is a watchdog that gets turned off,
 usually while somebody is debugging something else. The lock bit sets
-and does not clear, and after it is set the control, the timeout and
-the sill are read only until the next reset. The example locks the
+and does not clear, and after it is set the control, the scale with
+it, the timeout and the sill are read only until the next reset. The example locks the
 watchdog on and then writes a zero over the control word, which
 changes nothing.
 
