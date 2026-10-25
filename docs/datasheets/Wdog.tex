@@ -31,8 +31,8 @@ Third, the configuration lock bit is write-once. Once asserted, \code{ctrl},
 \code{load}, and \code{sill} become read-only until hardware reset, protecting
 critical timing thresholds from corruption.
 
-The count runs in ticks rather than cycles: \code{ctrl}'s \code{scale}
-makes a tick 2 to the \code{scale} cycles, from one up to 32\,768, so
+The count runs in ticks rather than cycles: \code{scale}, bits 7 to 4
+of \code{ctrl}, makes a tick 2 to the \code{scale} cycles, from one up to 32\,768, so
 that a timeout of sixteen bits reaches about 21.5~s at 100~MHz rather
 than 655~\textmu s (issue~1884). \code{scale} resets to 0, a tick a
 cycle, so software that never writes it sees a watchdog counting
@@ -81,8 +81,10 @@ tick, and \code{pre} counts the cycles of a tick: a tick ends when
 \code{pre} reaches 2 to the \code{scale}, less one, and \code{pre}
 goes back to zero. A refresh loads \code{count} from \code{load}.
 \item A refresh, a warning, a failure and a write to \code{ctrl} each
-start a whole tick, setting \code{pre} to zero. So a timeout is
-\code{load} whole ticks from the refresh, a smaller \code{scale}
+start a whole tick, setting \code{pre} to zero; a write that the lock
+ignores starts none. The count expires on the cycle it reaches zero,
+so a timeout is \code{load} whole ticks from the refresh, and a
+\code{load} of zero times out at once. A smaller \code{scale}
 never finds \code{pre} past the end of its tick, and enabling the
 watchdog again never starts on part of one.
 \item A write of \code{KEY} to \code{feed} is a refresh, unless window
@@ -93,8 +95,8 @@ happened, the warning bit sets, \code{irq} rises and the count
 reloads, which gives a program that is merely slow one more timeout to
 notice. Otherwise it is a failure.
 \item A failure sets the failed bit, drives \code{rst\_req} and holds it
-for nine cycles, the failing one and eight while \code{hold} counts
-down, cycles whatever \code{scale} is, and reloads the count. The reload matters: the count
+for nine cycles whatever \code{scale} is, the failing one and eight
+while \code{hold} counts down, and reloads the count. The reload matters: the count
 is at zero when a timeout fails, so a watchdog that did not reload
 would ask for a reset on every cycle from then on and hold the machine
 down rather than restart it.
