@@ -17,23 +17,11 @@
 //! is deadlock free without anything else being said: a packet moves
 //! east or west until it is in its destination's column, then north
 //! or south until it is at its node, then out the exit.
-// In the order they use each other, each with `#[macro_use]`, so the
-// by-name macros of the structs (`Pkt![..]` and the rest, #1915) are in
-// scope in the modules after it.
-#[macro_use]
-pub mod pkt;
-
-#[macro_use]
-pub mod switch;
-
-#[macro_use]
-pub mod node;
-
-#[macro_use]
-pub mod mesh;
-
-#[macro_use]
 pub mod bridge;
+pub mod mesh;
+pub mod node;
+pub mod pkt;
+pub mod switch;
 
 /// The network end to end: a host at one corner of a two by two
 /// lattice and a memory at the far one, so that a burst crosses in X

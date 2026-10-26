@@ -1,22 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 //! A lattice of network nodes as one lowered unit (issue 635).
 //!
-//! `Mesh<3, 2, 6, ..>` from `bus::noc` is six nodes, three wide and
-//! two high, held as one field of `Units` and joined by index. Every
-//! node is one type, since its place is two inputs the mesh ties to
-//! constants rather than two type parameters. The bench has every
-//! node send a request to each of the other five, and a response to
-//! the node at the opposite corner of the lattice, and checks that
-//! each packet leaves by the exit of the node it was sent to and
-//! that none is lost. The netlist of the mesh, six node instances and
-//! the channels between them, is checked against the run under nvc
-//! and Verilator.
+//! `Mesh![COLS = 3, ROWS = 2, NODES = 6, ..]` from `bus::noc` is six nodes,
+//! three wide and two high, held as one field of `Units` and joined by index.
+//! Every node is one type, since its place is two inputs the mesh ties to
+//! constants rather than two type parameters. The bench has every node send a
+//! request to each of the other five, and a response to the node at the
+//! opposite corner of the lattice, and checks that each packet leaves by the
+//! exit of the node it was sent to and that none is lost. The netlist of the
+//! mesh, six node instances and the channels between them, is checked against
+//! the run under nvc and Verilator.
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{chan, DefaultClock, Running, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::noc::mesh::Mesh;
 use txhdl_parts::bus::noc::pkt::{Chan, Pkt};
-use txhdl_parts::Pkt;
+use txhdl_parts::{Mesh, Pkt};
 
 /// Three nodes wide and two high; a column fits in two bits and a row
 /// in one. The link's widths are small, since only the routing is
@@ -25,7 +24,17 @@ const W: usize = 3;
 const H: usize = 2;
 const N: usize = 6;
 type P = Pkt![X_BITS = 2, Y_BITS = 1, ADDR = 8, DATA = 8, STRB = 1, ID = 2];
-type M = Mesh<W, H, N, 2, 1, 8, 8, 1, 2>;
+type M = Mesh![
+    COLS = W,
+    ROWS = H,
+    NODES = N,
+    X_BITS = 2,
+    Y_BITS = 1,
+    ADDR = 8,
+    DATA = 8,
+    STRB = 1,
+    ID = 2
+];
 
 /// A packet from node `from` to node `to`; its address says who sent
 /// it, so the exit it leaves by can be checked against it.
