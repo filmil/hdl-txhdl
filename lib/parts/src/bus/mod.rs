@@ -20,8 +20,12 @@
 //!   across it.
 //! - [`wb`]: a bridge from a link's peripheral end to a pipelined
 //!   Wishbone bus.
-pub mod arbiter;
+// First, and with `#[macro_use]`, so the by-name macros of the AXI4
+// structs (`AxiHost![..]` and the rest) are in scope in the modules
+// after it (#1915).
+#[macro_use]
 pub mod axi;
+pub mod arbiter;
 pub mod axi_lite;
 pub mod axi_per_pins;
 pub mod axi_pins;

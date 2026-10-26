@@ -33,7 +33,10 @@
 //! everywhere in this library, because `U<{D / 8}>` needs nightly
 //! Rust: `A` is the address width, `D` the data width, `S` the
 //! strobe width, which is `D / 8`, `I` the identifier width and
-//! `NIDS` the count of identifiers, which is `1 << I`.
+//! `NIDS` the count of identifiers, which is `1 << I`. The structs
+//! name them `ADDR`, `DATA`, `STRB`, `ID` and `IDS` and take them by
+//! name, `AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4]`
+//! (#1915); the functions and the impls write the letters.
 //!
 //! [`chan`]: txhdl::comp::chan
 use std::cell::{Cell, RefCell};
@@ -45,11 +48,7 @@ use txhdl::comp::{
 };
 use txhdl::types::{Bit, U};
 
-pub mod sim;
-
-#[cfg(test)]
-mod fuzz;
-use txhdl::{lower, with, Trace};
+use txhdl::{lower, named_type_params, with, Trace};
 use txhdl::{
     Ports as PortsDerive, Transaction as TransactionDerive,
     Value as ValueDerive,
@@ -99,19 +98,20 @@ pub enum BurstKind {
 /// the fields of `AR` under other names, so one struct serves both
 /// channels and [`Aw`] and [`Ar`] name it as the channel does.
 ///
-/// `A` is the address width and `I` the identifier width, both stated
+/// `ADDR` is the address width and `ID` the identifier width, both stated
 /// rather than computed; see the module's own documentation for why
 /// every width in this file is a parameter.
 #[derive(
     TransactionDerive, ValueDerive, Clone, Copy, Default, Debug, PartialEq,
 )]
-pub struct Addr<const A: usize, const I: usize> {
+#[named_type_params]
+pub struct Addr<const ADDR: usize, const ID: usize> {
     /// Which burst this is. Answers carry it back, which is what
     /// lets several be in flight and be answered out of order. The
     /// tracker allocates it, so a client never writes one.
-    pub id: U<I>,
+    pub id: U<ID>,
     /// The address the burst starts at.
-    pub addr: U<A>,
+    pub addr: U<ADDR>,
     /// Beats in the burst, less one, as AXI counts them.
     pub len: U<8>,
     /// Bytes per beat, as a power of two: 2 is four bytes. It is the
@@ -152,8 +152,8 @@ pub const Aw: txhdl::types::Fields = Addr;
 #[allow(non_upper_case_globals)]
 pub const Ar: txhdl::types::Fields = Addr;
 
-/// The write data channel's beat. `D` is the data width and `S` the
-/// strobe width, which is `D / 8`.
+/// The write data channel's beat. `DATA` is the data width and `STRB`
+/// the strobe width, which is `DATA / 8`.
 ///
 /// It carries no identifier. AXI4 puts one on the address channels
 /// and not on this one, so a beat belongs to the oldest address phase
@@ -162,14 +162,15 @@ pub const Ar: txhdl::types::Fields = Addr;
 #[derive(
     TransactionDerive, ValueDerive, Clone, Copy, Default, Debug, PartialEq,
 )]
-pub struct W<const D: usize, const S: usize, const L: usize = 1> {
-    /// The word written, in `L` limbs of 128 bits: one up to 128 bits
+#[named_type_params]
+pub struct W<const DATA: usize, const STRB: usize, const LIMBS: usize = 1> {
+    /// The word written, in `LIMBS` limbs of 128 bits: one up to 128 bits
     /// wide, two for 256 (issue 1696).
-    pub data: U<D, L>,
+    pub data: U<DATA, LIMBS>,
     /// Which of its bytes are meant, a bit per lane. A byte whose
     /// bit is low is not written, which is how a store narrower than
     /// the bus leaves the rest of the word alone.
-    pub strb: U<S>,
+    pub strb: U<STRB>,
     /// The last beat of this burst. The only way to know the burst
     /// has ended, since the length was on the address phase.
     pub last: Bit,
@@ -188,17 +189,18 @@ pub struct B<const I: usize> {
 }
 
 /// The read data channel's beat: one per beat of the burst, each
-/// carrying its own response. `D` is the data width and `I` the
+/// carrying its own response. `DATA` is the data width and `ID` the
 /// identifier width.
 #[derive(
     TransactionDerive, ValueDerive, Clone, Copy, Default, Debug, PartialEq,
 )]
-pub struct R<const D: usize, const I: usize, const L: usize = 1> {
+#[named_type_params]
+pub struct R<const DATA: usize, const ID: usize, const LIMBS: usize = 1> {
     /// The burst this belongs to. Beats of different bursts may be
     /// interleaved, and this is what sorts them out again.
-    pub id: U<I>,
-    /// The word read, in `L` limbs, as a write's is.
-    pub data: U<D, L>,
+    pub id: U<ID>,
+    /// The word read, in `LIMBS` limbs, as a write's is.
+    pub data: U<DATA, LIMBS>,
     /// How this beat went. A burst may fail part way through.
     pub resp: Resp,
     /// The last beat of this burst.
@@ -269,15 +271,16 @@ pub struct Done<const I: usize> {
 #[derive(
     TransactionDerive, ValueDerive, Clone, Copy, Default, Debug, PartialEq,
 )]
-pub struct PerReq<const A: usize, const I: usize> {
+#[named_type_params]
+pub struct PerReq<const ADDR: usize, const ID: usize> {
     /// Whether this is a read. A peripheral answers a read on its
     /// read beat channel and a write on its answer channel, so this
     /// is the first thing it looks at.
     pub read: Bit,
     /// The burst's identifier, which its answer must carry back.
-    pub id: U<I>,
+    pub id: U<ID>,
     /// The address the burst starts at.
-    pub addr: U<A>,
+    pub addr: U<ADDR>,
     /// Beats in the burst, less one, as AXI counts them.
     pub len: U<8>,
     /// Bytes per beat, as a power of two.
@@ -328,27 +331,29 @@ pub struct Answer<const I: usize> {
 /// for ever.
 /// Written in the lowered subset, so it is a netlist too.
 ///
-/// `A`, `D`, `S` and `I` are the link's widths, which [`axi`] states.
-/// `NIDS` is this unit's own: how many identifiers it hands out, so
-/// `1 << I`, and therefore how many bursts may be in flight at once.
-/// It is a parameter rather than a computation because `U<{1 << I}>`
+/// `ADDR`, `DATA`, `STRB` and `ID` are the link's widths, which [`axi`]
+/// states. `IDS` is this unit's own: how many identifiers it hands out,
+/// so `1 << ID`, and therefore how many bursts may be in flight at
+/// once. It is a parameter rather than a computation because
+/// `U<{1 << ID}>`
 /// needs nightly Rust, and it is the width of the register of
 /// outstanding identifiers, a bit each.
 // begin{hostunit}
+#[named_type_params]
 #[derive(Trace, Default)]
 pub struct AxiHost<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
-    const NIDS: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+    const IDS: usize,
 > {
     /// The identifier whose turn it is: the one the next burst takes.
     /// VHDL reserves `next`, so the netlist calls it `next_rw` (issue
     /// 497).
-    pub next: Reg<U<I>>,
+    pub next: Reg<U<ID>>,
     /// Which identifiers are outstanding, a bit each.
-    pub busy: Reg<U<NIDS>>,
+    pub busy: Reg<U<IDS>>,
 }
 
 #[lower]
@@ -490,21 +495,22 @@ impl<
 /// the client and the response half after it, since an unregistered
 /// channel's sender runs first.
 ///
-/// `A`, `D`, `S` and `I` are the link's widths, which [`axi`] states.
-/// There is no `NIDS`: this end allocates no identifiers, it answers
+/// `ADDR`, `DATA`, `STRB` and `ID` are the link's widths, which [`axi`]
+/// states. There is no `IDS`: this end allocates no identifiers, it answers
 /// with the one each burst arrived under.
 // begin{perunit}
+#[named_type_params]
 #[derive(Trace, Default)]
 pub struct AxiPer<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
 > {
     /// The address channels and the write beats, into the client.
-    pub req: AxiPerReq<A, D, S, I>,
+    pub req: AxiPerReq<ADDR, DATA, STRB, ID>,
     /// The client's answers, back onto the response channels.
-    pub rsp: AxiPerRsp<A, D, S, I>,
+    pub rsp: AxiPerRsp<ADDR, DATA, STRB, ID>,
 }
 
 #[lower]
@@ -534,12 +540,13 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize> Unit
 /// into one stream of requests, taking turns so that neither starves
 /// the other however long one of them streams, and the write beats
 /// handed to the client.
+#[named_type_params]
 #[derive(Trace, Default)]
 pub struct AxiPerReq<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
 > {
     /// Which address channel goes first: zero for the read channel.
     pub rr: Reg<U<1>>,
@@ -605,12 +612,13 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize> Unit
 /// The response half of [`AxiPer`]: the client's answers back onto
 /// the response channels, a write's as a `B` beat and a read's as an
 /// `R` beat. It keeps nothing, so it is wires and the two hand-offs.
+#[named_type_params]
 #[derive(Trace, Default)]
 pub struct AxiPerRsp<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
 > {}
 
 #[lower]
@@ -746,21 +754,22 @@ pub type PerClient<
 /// each port for the side and the field, `bus_req_valid`,
 /// `bus_r_data`, as [`LitePort`](super::axi_lite::LitePort) does for
 /// AXI-Lite (issue 483).
+#[named_type_params]
 #[derive(PortsDerive)]
 pub struct PerPort<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
 > {
     /// Requests, in: one per burst, reads and writes both.
-    pub req: Rx<PerReq<A, I>>,
+    pub req: Rx<PerReq<ADDR, ID>>,
     /// Write beats, in.
-    pub w: Rx<W<D, S>>,
+    pub w: Rx<W<DATA, STRB>>,
     /// Answers to writes, out.
-    pub ans: Tx<Answer<I>>,
+    pub ans: Tx<Answer<ID>>,
     /// Read beats, out.
-    pub r: Tx<R<D, I>>,
+    pub r: Tx<R<DATA, ID>>,
 }
 
 impl<const A: usize, const D: usize, const S: usize, const I: usize>
@@ -774,27 +783,28 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize>
 /// A link whose clients are units: the ports of the two trackers, and
 /// the channel ends a hardware client holds on each side. [`axi`] is
 /// this with the two ends wrapped in [`Host`] and [`Per`].
+#[named_type_params]
 pub struct UnitLink<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
 > {
     /// The channel ends a host client that is hardware holds.
-    pub host_client: HostClient<A, D, S, I>,
+    pub host_client: HostClient<ADDR, DATA, STRB, ID>,
     /// The channel ends a peripheral client that is hardware holds.
-    pub per_client: PerClient<A, D, S, I>,
+    pub per_client: PerClient<ADDR, DATA, STRB, ID>,
     /// What the host tracker reads: give it to [`AxiHost::run`].
-    pub host_in: HostIn<A, D, S, I>,
+    pub host_in: HostIn<ADDR, DATA, STRB, ID>,
     /// What the host tracker drives. Its first three are the `aw`,
     /// `ar` and `w` a router takes.
-    pub host_out: HostOut<A, D, S, I>,
+    pub host_out: HostOut<ADDR, DATA, STRB, ID>,
     /// What the peripheral tracker reads. Its first three are the
     /// `aw`, `ar` and `w` a router drives.
-    pub per_in: PerIn<A, D, S, I>,
+    pub per_in: PerIn<ADDR, DATA, STRB, ID>,
     /// What the peripheral tracker drives. Its last two are the `b`
     /// and `r` a router takes.
-    pub per_out: PerOut<A, D, S, I>,
+    pub per_out: PerOut<ADDR, DATA, STRB, ID>,
 }
 
 /// Make a link for clients that are units. Every channel of the link
@@ -846,28 +856,29 @@ pub fn axi_units<
 /// the two units between them. A design joins [`AxiHost`] and
 /// [`AxiPer`] on those ports, or a unit of its own with the same
 /// ports, which is the seam a design uses to supply its own tracker.
+#[named_type_params]
 pub struct Link<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
-    const NIDS: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+    const IDS: usize,
 > {
     /// The end a host client holds.
-    pub host: Host<A, D, S, I, NIDS>,
+    pub host: Host<ADDR, DATA, STRB, ID, IDS>,
     /// The end a peripheral client holds.
-    pub per: Per<A, D, S, I>,
+    pub per: Per<ADDR, DATA, STRB, ID>,
     /// What the host tracker reads: give it to [`AxiHost::run`].
-    pub host_in: HostIn<A, D, S, I>,
+    pub host_in: HostIn<ADDR, DATA, STRB, ID>,
     /// What the host tracker drives. Its first three are the `aw`,
     /// `ar` and `w` a router takes.
-    pub host_out: HostOut<A, D, S, I>,
+    pub host_out: HostOut<ADDR, DATA, STRB, ID>,
     /// What the peripheral tracker reads. Its first three are the
     /// `aw`, `ar` and `w` a router drives.
-    pub per_in: PerIn<A, D, S, I>,
+    pub per_in: PerIn<ADDR, DATA, STRB, ID>,
     /// What the peripheral tracker drives. Its last two are the `b`
     /// and `r` a router takes.
-    pub per_out: PerOut<A, D, S, I>,
+    pub per_out: PerOut<ADDR, DATA, STRB, ID>,
 }
 
 /// Make a link and get its ends, the way [`chan`] makes a channel and
@@ -914,25 +925,26 @@ pub fn axi<
 /// [`axi_units`] hands a peripheral that is hardware. It is what a test
 /// drives a peripheral written in the lowered subset with, from client
 /// code rather than from another unit.
+#[named_type_params]
 pub struct HostLink<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
-    const NIDS: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+    const IDS: usize,
 > {
     /// The end a host client holds.
-    pub host: Host<A, D, S, I, NIDS>,
+    pub host: Host<ADDR, DATA, STRB, ID, IDS>,
     /// The channel ends a peripheral client that is hardware holds.
-    pub per_client: PerClient<A, D, S, I>,
+    pub per_client: PerClient<ADDR, DATA, STRB, ID>,
     /// What the host tracker reads.
-    pub host_in: HostIn<A, D, S, I>,
+    pub host_in: HostIn<ADDR, DATA, STRB, ID>,
     /// What the host tracker drives.
-    pub host_out: HostOut<A, D, S, I>,
+    pub host_out: HostOut<ADDR, DATA, STRB, ID>,
     /// What the peripheral tracker reads.
-    pub per_in: PerIn<A, D, S, I>,
+    pub per_in: PerIn<ADDR, DATA, STRB, ID>,
     /// What the peripheral tracker drives.
-    pub per_out: PerOut<A, D, S, I>,
+    pub per_out: PerOut<ADDR, DATA, STRB, ID>,
 }
 
 /// Make a link with a simulation host and a peripheral that is a unit.
@@ -1170,9 +1182,10 @@ impl<const D: usize, const I: usize> Inbox<D, I> {
 /// A burst in flight: the identifier the tracker gave it, and the
 /// answer to come. Several may be in flight at once and they may be
 /// awaited in any order, which is what out of order means here.
-pub struct Pending<const D: usize, const I: usize> {
-    id: U<I>,
-    inbox: Rc<Inbox<D, I>>,
+#[named_type_params]
+pub struct Pending<const DATA: usize, const ID: usize> {
+    id: U<ID>,
+    inbox: Rc<Inbox<DATA, ID>>,
 }
 
 impl<const D: usize, const I: usize> Pending<D, I> {
@@ -1202,21 +1215,22 @@ impl<const D: usize, const I: usize> Pending<D, I> {
 /// in the cycle the burst goes out.
 ///
 /// The widths are the link's, the same five everywhere in this
-/// module: `A` the address width, `D` the data width, `S` the strobe
-/// width, `I` the identifier width, and `NIDS` how many identifiers
+/// module: `ADDR` the address width, `DATA` the data width, `STRB` the
+/// strobe width, `ID` the identifier width, and `IDS` how many identifiers
 /// there are. See [the module's own documentation](self) for what
 /// each means and why none of them is computed.
+#[named_type_params]
 pub struct Host<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
-    const NIDS: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+    const IDS: usize,
 > {
-    issue: Tx<Issue<A>>,
-    wbeat: Tx<W<D, S>>,
-    grant: Rx<Grant<I>>,
-    inbox: Rc<Inbox<D, I>>,
+    issue: Tx<Issue<ADDR>>,
+    wbeat: Tx<W<DATA, STRB>>,
+    grant: Rx<Grant<ID>>,
+    inbox: Rc<Inbox<DATA, ID>>,
 }
 
 /// What a burst's `size` should say: what the client asked for, or,
@@ -1408,28 +1422,30 @@ impl<const D: usize, const I: usize> Port<D, I> {
 /// A write, accepted whole: its address phase and every beat of its
 /// data. It answers itself, and it may be answered from a process
 /// other than the one that accepted it.
+#[named_type_params]
 pub struct WriteXact<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
 > {
-    req: PerReq<A, I>,
-    data: Vec<U<D>>,
-    strb: Vec<U<S>>,
-    port: Rc<Port<D, I>>,
+    req: PerReq<ADDR, ID>,
+    data: Vec<U<DATA>>,
+    strb: Vec<U<STRB>>,
+    port: Rc<Port<DATA, ID>>,
 }
 
 /// A read, accepted: its address phase. It answers itself with the
 /// words it asked for, and it may be answered from another process.
+#[named_type_params]
 pub struct ReadXact<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
 > {
-    req: PerReq<A, I>,
-    port: Rc<Port<D, I>>,
+    req: PerReq<ADDR, ID>,
+    port: Rc<Port<DATA, ID>>,
 }
 
 /// One accepted AXI transaction, decoded. Nothing of the protocol is
@@ -1589,13 +1605,19 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize>
 /// free, which is how a peripheral keeps more than one transaction
 /// open at a time.
 ///
-/// `A`, `D`, `S` and `I` are the link's widths; see [the module's own
-/// documentation](self). A peripheral end has no `NIDS`, because it
+/// `ADDR`, `DATA`, `STRB` and `ID` are the link's widths; see [the
+/// module's own documentation](self). A peripheral end has no `IDS`, because it
 /// allocates no identifiers: it answers with the one it was given.
-pub struct Per<const A: usize, const D: usize, const S: usize, const I: usize> {
-    req: Rx<PerReq<A, I>>,
-    wd: Rx<W<D, S>>,
-    port: Rc<Port<D, I>>,
+#[named_type_params]
+pub struct Per<
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+> {
+    req: Rx<PerReq<ADDR, ID>>,
+    wd: Rx<W<DATA, STRB>>,
+    port: Rc<Port<DATA, ID>>,
     gathering: Rc<Cell<bool>>,
 }
 
@@ -1650,9 +1672,13 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize>
 /// Transactions a client has accepted and not answered, by
 /// identifier: what a client keeps when the process that accepts is
 /// not the process that answers.
-pub struct Open<const A: usize, const D: usize, const S: usize, const I: usize>(
-    Rc<RefCell<HashMap<u128, Xact<A, D, S, I>>>>,
-);
+#[named_type_params]
+pub struct Open<
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+>(Rc<RefCell<HashMap<u128, Xact<ADDR, DATA, STRB, ID>>>>);
 
 impl<const A: usize, const D: usize, const S: usize, const I: usize> Clone
     for Open<A, D, S, I>
@@ -1744,6 +1770,15 @@ pub async fn serve<
 /// writes left, the answers may come back in any order, and a
 /// transaction may be answered by a process other than the one that
 /// accepted it.
+// After the structs, so the macros #[named_type_params] writes for them
+// are in scope in these modules, as a macro_rules! is only after it is
+// defined; `#[macro_use]` takes `sim`'s on to the rest of the crate.
+#[macro_use]
+pub mod sim;
+
+#[cfg(test)]
+mod fuzz;
+
 #[cfg(test)]
 mod tests {
     use super::*;

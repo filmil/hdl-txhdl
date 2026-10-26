@@ -17,21 +17,28 @@
 //! [`Per`]: super::Per
 use std::cell::RefCell;
 use std::rc::Rc;
+use txhdl::named_type_params;
 use txhdl::types::U;
 
 use super::{serve, BurstKind, Per, Resp, Xact};
 
 // begin{ram}
-/// A RAM behind an AXI peripheral end: `words` words of `D` bits,
+/// A RAM behind an AXI peripheral end: `words` words of `DATA` bits,
 /// byte-addressed, answering bursts of any length.
 ///
 /// It is a handle on the words, so a testbench keeps one while the
 /// run has another: load a program into it before the run and read
-/// the result out after. The widths are the link's: `A` the address
-/// width, `D` the data width, `S` the strobe width, which is `D / 8`,
-/// and `I` the identifier width.
-pub struct Ram<const A: usize, const D: usize, const S: usize, const I: usize> {
-    words: Rc<RefCell<Vec<U<D>>>>,
+/// the result out after. The widths are the link's: `ADDR` the address
+/// width, `DATA` the data width, `STRB` the strobe width, which is
+/// `DATA / 8`, and `ID` the identifier width.
+#[named_type_params]
+pub struct Ram<
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+> {
+    words: Rc<RefCell<Vec<U<DATA>>>>,
 }
 // end{ram}
 
@@ -259,8 +266,11 @@ mod tests {
             per_in,
             per_out,
         } = axi::<16, 32, 4, 2, 4>();
-        let mut h = AxiHost::<16, 32, 4, 2, 4>::default();
-        let mut p = AxiPer::<16, 32, 4, 2>::default();
+        let mut h = <AxiHost![
+            ADDR = 16, DATA = 32, STRB = 4, ID = 2, IDS = 4
+        ]>::default();
+        let mut p =
+            <AxiPer![ADDR = 16, DATA = 32, STRB = 4, ID = 2]>::default();
         let mut sim = Running::new(join2(
             join2(h.run(host_in, host_out), p.run(per_in, per_out)),
             join2(client(host), ram.serve(per, 2)),
