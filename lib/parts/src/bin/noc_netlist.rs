@@ -10,13 +10,34 @@
 //! optimised away as it would be for a node on an edge.
 use txhdl_parts::bus::noc::node::Node;
 use txhdl_parts::bus::noc::switch::Switch;
+use txhdl_parts::{Node, Switch};
 
 fn main() {
     let which = std::env::args().nth(1).unwrap_or_else(|| "node".into());
     match which.as_str() {
         "switch" => {
-            print!("{}", Switch::<2, 2, 32, 32, 4, 2>::verilog("switch"))
+            print!(
+                "{}",
+                <Switch![
+                    X_BITS = 2,
+                    Y_BITS = 2,
+                    ADDR = 32,
+                    DATA = 32,
+                    STRB = 4,
+                    ID = 2
+                ]>::verilog("switch")
+            )
         }
-        _ => print!("{}", Node::<2, 2, 32, 32, 4, 2>::verilog("node")),
+        _ => print!(
+            "{}",
+            <Node![
+                X_BITS = 2,
+                Y_BITS = 2,
+                ADDR = 32,
+                DATA = 32,
+                STRB = 4,
+                ID = 2
+            ]>::verilog("node")
+        ),
     }
 }

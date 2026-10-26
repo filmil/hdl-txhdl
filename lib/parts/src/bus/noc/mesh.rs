@@ -12,6 +12,7 @@
 use txhdl::comp::{
     chan, chans, join_all, tie, DefaultClock, Ends, In, Rx, Tx, Unit, Units,
 };
+use txhdl::named_type_params;
 use txhdl::types::U;
 use txhdl::{lower, Trace};
 
@@ -69,50 +70,52 @@ pub type Outs<
 /// `q_out`.
 ///
 /// The widths are the AXI link's, and they are the same everywhere in
-/// the network: `A` is the address width, `D` the data width, `S` the
-/// strobe width, which is `D / 8`, and `I` the identifier width. `XB`
-/// and `YB` are the widths of a coordinate, so a lattice is `1 << XB`
-/// by `1 << YB` nodes at most.
+/// the network: `ADDR` is the address width, `DATA` the data width,
+/// `STRB` the strobe width, which is `DATA / 8`, and `ID` the identifier
+/// width. `X_BITS` and `Y_BITS` are the widths of a coordinate, so a lattice is
+/// `1 << X_BITS` by `1 << Y_BITS` nodes at most.
+#[named_type_params]
 pub struct Exit<
-    const XB: usize,
-    const YB: usize,
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
+    const X_BITS: usize,
+    const Y_BITS: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
 > {
     /// Requests into the node, which a host's bridge drives.
-    pub q_in: Tx<Pkt<XB, YB, A, D, S, I>>,
+    pub q_in: Tx<Pkt<X_BITS, Y_BITS, ADDR, DATA, STRB, ID>>,
     /// Requests out of the node, which a peripheral's bridge reads.
-    pub q_out: Rx<Pkt<XB, YB, A, D, S, I>>,
+    pub q_out: Rx<Pkt<X_BITS, Y_BITS, ADDR, DATA, STRB, ID>>,
     /// Responses into the node, which a peripheral's bridge drives.
-    pub p_in: Tx<Pkt<XB, YB, A, D, S, I>>,
+    pub p_in: Tx<Pkt<X_BITS, Y_BITS, ADDR, DATA, STRB, ID>>,
     /// Responses out of the node, which a host's bridge reads.
-    pub p_out: Rx<Pkt<XB, YB, A, D, S, I>>,
+    pub p_out: Rx<Pkt<X_BITS, Y_BITS, ADDR, DATA, STRB, ID>>,
 }
 
 /// A lattice, wired: per node in row-major order, the ends its `run`
 /// takes, and the ends whatever attaches to its exit holds.
 ///
 /// The widths are the AXI link's, and they are the same everywhere in
-/// the network: `A` is the address width, `D` the data width, `S` the
-/// strobe width, which is `D / 8`, and `I` the identifier width. `XB`
-/// and `YB` are the widths of a coordinate, so a lattice is `1 << XB`
-/// by `1 << YB` nodes at most.
+/// the network: `ADDR` is the address width, `DATA` the data width,
+/// `STRB` the strobe width, which is `DATA / 8`, and `ID` the identifier
+/// width. `X_BITS` and `Y_BITS` are the widths of a coordinate, so a lattice is
+/// `1 << X_BITS` by `1 << Y_BITS` nodes at most.
+#[named_type_params]
 pub struct Lattice<
-    const XB: usize,
-    const YB: usize,
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
+    const X_BITS: usize,
+    const Y_BITS: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
 > {
     /// What each node's `run` reads, in row-major order.
-    pub ins: Vec<Ins<XB, YB, A, D, S, I>>,
+    pub ins: Vec<Ins<X_BITS, Y_BITS, ADDR, DATA, STRB, ID>>,
     /// What each node's `run` drives, in the same order.
-    pub outs: Vec<Outs<XB, YB, A, D, S, I>>,
+    pub outs: Vec<Outs<X_BITS, Y_BITS, ADDR, DATA, STRB, ID>>,
     /// What attaches at each node's exit, in the same order.
-    pub exits: Vec<Exit<XB, YB, A, D, S, I>>,
+    pub exits: Vec<Exit<X_BITS, Y_BITS, ADDR, DATA, STRB, ID>>,
 }
 
 /// Make the channels of a `w` by `h` lattice and hand out the ends.
@@ -247,11 +250,12 @@ pub const fn east(i: usize, w: usize) -> usize {
 }
 
 // begin{mesh}
-/// A lattice of `W` by `H` nodes as one unit, which lowers: `N` nodes
-/// in row-major order, `N` being `W * H`, and each at the place its
-/// index says, held at constants with `tie` (issue 635).
+/// A lattice of `COLS` by `ROWS` nodes as one unit, which lowers:
+/// `NODES` nodes in row-major order, `NODES` being `COLS * ROWS`, and
+/// each at the place its index says, held at constants with `tie`
+/// (issue 635).
 ///
-/// Its ports are the exits, each an array of `N`: `qx_in` the requests
+/// Its ports are the exits, each an array of `NODES`: `qx_in` the requests
 /// into each node and `px_in` the responses, `qx_out` and `px_out` what
 /// leaves by each. The links are one array of channels per direction
 /// of travel and per virtual channel, a node's output to a direction
@@ -265,23 +269,24 @@ pub const fn east(i: usize, w: usize) -> usize {
 /// since no column is east of it.
 ///
 /// The widths are the AXI link's, and they are the same everywhere in
-/// the network: `A` is the address width, `D` the data width, `S` the
-/// strobe width, which is `D / 8`, and `I` the identifier width. `XB`
-/// and `YB` are the widths of a coordinate.
+/// the network: `ADDR` is the address width, `DATA` the data width,
+/// `STRB` the strobe width, which is `DATA / 8`, and `ID` the identifier
+/// width. `X_BITS` and `Y_BITS` are the widths of a coordinate.
+#[named_type_params]
 #[derive(Trace)]
 pub struct Mesh<
-    const W: usize,
-    const H: usize,
-    const N: usize,
-    const XB: usize,
-    const YB: usize,
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
+    const COLS: usize,
+    const ROWS: usize,
+    const NODES: usize,
+    const X_BITS: usize,
+    const Y_BITS: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
 > {
     /// The nodes, `nodes_0` onward in the netlist, row major.
-    pub nodes: Units<Node<XB, YB, A, D, S, I>, N>,
+    pub nodes: Units<Node<X_BITS, Y_BITS, ADDR, DATA, STRB, ID>, NODES>,
 }
 
 /// A mesh whose count is not its width times its height is refused

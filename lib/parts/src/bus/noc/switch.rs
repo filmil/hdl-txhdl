@@ -22,6 +22,7 @@
 //! the exit, last in the order, moved nothing at all while a link
 //! through the node was busy. That was issue 315.
 use txhdl::comp::{mux, Clock, DefaultClock, In, Reg, Rx, Tx, Unit};
+use txhdl::named_type_params;
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, Trace};
 
@@ -120,18 +121,19 @@ fn room(
 /// whole of the switch's state (issue 315).
 ///
 /// The widths are the AXI link's, and they are the same everywhere in
-/// the network: `A` is the address width, `D` the data width, `S` the
-/// strobe width, which is `D / 8`, and `I` the identifier width. `XB`
-/// and `YB` are the widths of a coordinate, so a lattice is `1 << XB`
-/// by `1 << YB` nodes at most.
+/// the network: `ADDR` is the address width, `DATA` the data width,
+/// `STRB` the strobe width, which is `DATA / 8`, and `ID` the identifier
+/// width. `X_BITS` and `Y_BITS` are the widths of a coordinate, so a lattice is
+/// `1 << X_BITS` by `1 << Y_BITS` nodes at most.
+#[named_type_params]
 #[derive(Trace, Default)]
 pub struct Switch<
-    const XB: usize,
-    const YB: usize,
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
+    const X_BITS: usize,
+    const Y_BITS: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
 > {
     /// The input the choice starts from: 0 north, 1 south, 2 west, 3
     /// east, 4 the exit. It becomes the one after whichever input
