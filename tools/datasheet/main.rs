@@ -64,6 +64,7 @@ use txhdl_parts::tracer::Tracer;
 use txhdl_parts::trng::{Entropy, Trng};
 use txhdl_parts::udprx::UdpRx;
 use txhdl_parts::wdog::Wdog;
+use txhdl_parts::{AxiPerPins, AxiPins};
 use vreteno32::board::{Board, BoardRouter};
 use vreteno32::core::Vreteno;
 use vreteno32::dcsnoop::DcSnoop;
@@ -548,12 +549,14 @@ fn main() {
     sheet(
         "AxiPins",
         "AxiPins<32, 64, 8, 4>",
-        AxiPins::<32, 64, 8, 4>::lowered("axi_pins"),
+        <AxiPins![ADDR = 32, DATA = 64, STRB = 8, ID = 4]>::lowered("axi_pins"),
     );
     sheet(
         "AxiPerPins",
         "AxiPerPins<32, 32, 4, 5>",
-        AxiPerPins::<32, 32, 4, 5>::lowered("axi_per_pins"),
+        <AxiPerPins![ADDR = 32, DATA = 32, STRB = 4, ID = 5]>::lowered(
+            "axi_per_pins",
+        ),
     );
     sheet(
         "Switch",

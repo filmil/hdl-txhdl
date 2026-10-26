@@ -15,16 +15,18 @@
 //!
 //! The host drives no `AxQOS` and no `AxREGION`, as an endpoint's
 //! master does not, so both go out as zero. The widths are stated, as
-//! everywhere in this library: `A` the address width, `D` the data
-//! width, `S` the strobe width, which is `D / 8`, and `I` the
-//! identifier width.
+//! everywhere in this library: `ADDR` the address width, `DATA` the
+//! data width, `STRB` the strobe width, which is `DATA / 8`, and `ID`
+//! the identifier width. Each struct takes them by name,
+//! `AxiPins![ADDR = 32, DATA = 64, STRB = 8, ID = 4]`, and the impls
+//! write them `A`, `D`, `S` and `I`.
 //!
 //! [`AxiHost`]: super::axi::AxiHost
 //! [`AxiPer`]: super::axi::AxiPer
 use crate::bus::axi::{Addr, Ar, Aw, BurstKind, Resp, B, R, W};
 use txhdl::comp::{Clock, DefaultClock, In, Out, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, select, Ports, Trace};
+use txhdl::{lower, named_type_params, select, Ports, Trace};
 
 // begin{ports}
 /// What the host drives: its 24 pins, named as AXI4 names them. A
@@ -32,17 +34,18 @@ use txhdl::{lower, select, Ports, Trace};
 /// ports holds them as one field, `jtag: AxiHostPins<..>`, and passes
 /// them on whole; its ports are then `jtag_awid` and the rest
 /// (issue 579).
+#[named_type_params]
 #[derive(Ports)]
 pub struct AxiHostPins<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
 > {
     /// The write address phase's pins.
-    pub awid: In<U<I>>,
+    pub awid: In<U<ID>>,
     /// The address a write burst starts at.
-    pub awaddr: In<U<A>>,
+    pub awaddr: In<U<ADDR>>,
     /// Beats in the write burst, less one.
     pub awlen: In<U<8>>,
     /// Bytes per beat, as a power of two.
@@ -58,9 +61,9 @@ pub struct AxiHostPins<
     /// A write address phase offered.
     pub awvalid: In<Bit>,
     /// The word written.
-    pub wdata: In<U<D>>,
+    pub wdata: In<U<DATA>>,
     /// Which of its bytes are meant.
-    pub wstrb: In<U<S>>,
+    pub wstrb: In<U<STRB>>,
     /// The last beat of the burst.
     pub wlast: In<Bit>,
     /// A write beat offered.
@@ -68,9 +71,9 @@ pub struct AxiHostPins<
     /// The host takes a write response.
     pub bready: In<Bit>,
     /// The read address phase's pins, as the write's.
-    pub arid: In<U<I>>,
+    pub arid: In<U<ID>>,
     /// The address a read burst starts at.
-    pub araddr: In<U<A>>,
+    pub araddr: In<U<ADDR>>,
     /// Beats in the read burst, less one.
     pub arlen: In<U<8>>,
     /// Bytes per beat, as a power of two.
@@ -91,40 +94,42 @@ pub struct AxiHostPins<
 
 /// What the host drives, and the answers coming back to it from the
 /// link: the unit's inputs.
+#[named_type_params]
 pub struct AxiPinsIn<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
 > {
     /// The host's pins.
-    pub pins: AxiHostPins<A, D, S, I>,
+    pub pins: AxiHostPins<ADDR, DATA, STRB, ID>,
     /// The write responses from the link.
-    pub b: Rx<B<I>>,
+    pub b: Rx<B<ID>>,
     /// The read beats from the link.
-    pub r: Rx<R<D, I>>,
+    pub r: Rx<R<DATA, ID>>,
 }
 
 /// What goes to the link, and the answers to the host: the unit's
 /// outputs.
+#[named_type_params]
 pub struct AxiPinsOut<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
 > {
     /// The write address phases, to the link.
-    pub aw: Tx<Aw<A, I>>,
+    pub aw: Tx<Aw<ADDR, ID>>,
     /// The read address phases, to the link.
-    pub ar: Tx<Ar<A, I>>,
+    pub ar: Tx<Ar<ADDR, ID>>,
     /// The write beats, to the link.
-    pub w: Tx<W<D, S>>,
+    pub w: Tx<W<DATA, STRB>>,
     /// The write address channel has room.
     pub awready: Out<Bit>,
     /// The write data channel has room.
     pub wready: Out<Bit>,
     /// The burst a write response answers.
-    pub bid: Out<U<I>>,
+    pub bid: Out<U<ID>>,
     /// How the write went, as AXI4 encodes it.
     pub bresp: Out<U<2>>,
     /// A write response offered.
@@ -132,9 +137,9 @@ pub struct AxiPinsOut<
     /// The read address channel has room.
     pub arready: Out<Bit>,
     /// The burst a read beat belongs to.
-    pub rid: Out<U<I>>,
+    pub rid: Out<U<ID>>,
     /// The word read.
-    pub rdata: Out<U<D>>,
+    pub rdata: Out<U<DATA>>,
     /// How the beat went, as AXI4 encodes it.
     pub rresp: Out<U<2>>,
     /// The last beat of the burst.
@@ -145,12 +150,13 @@ pub struct AxiPinsOut<
 // end{ports}
 
 /// A host's AXI4 pins joined to the link's channels; see the module.
+#[named_type_params]
 #[derive(Trace, Default)]
 pub struct AxiPins<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
 > {}
 
 // begin{unit}
@@ -263,31 +269,33 @@ pub mod sim {
     use super::{AxiHostPins, AxiPinsIn, AxiPinsOut};
     use crate::bus::axi::{Ar, Aw, Resp, B, R, W};
     use txhdl::comp::{signal, Clock, DefaultClock, In, Out, Rx, Tx};
+    use txhdl::named_type_params;
     use txhdl::types::{Bit, U};
 
     /// The host's ends of the pins: what it drives and what it reads.
+    #[named_type_params]
     pub struct PinHost<
-        const A: usize,
-        const D: usize,
-        const S: usize,
-        const I: usize,
+        const ADDR: usize,
+        const DATA: usize,
+        const STRB: usize,
+        const ID: usize,
     > {
-        aw: (Out<U<I>>, Out<U<A>>, Out<U<8>>, Out<U<3>>, Out<U<2>>),
+        aw: (Out<U<ID>>, Out<U<ADDR>>, Out<U<8>>, Out<U<3>>, Out<U<2>>),
         awvalid: Out<Bit>,
-        w: (Out<U<D>>, Out<U<S>>, Out<Bit>),
+        w: (Out<U<DATA>>, Out<U<STRB>>, Out<Bit>),
         wvalid: Out<Bit>,
         bready: Out<Bit>,
-        ar: (Out<U<I>>, Out<U<A>>, Out<U<8>>, Out<U<3>>, Out<U<2>>),
+        ar: (Out<U<ID>>, Out<U<ADDR>>, Out<U<8>>, Out<U<3>>, Out<U<2>>),
         arvalid: Out<Bit>,
         rready: Out<Bit>,
         awready: In<Bit>,
         wready: In<Bit>,
-        bid: In<U<I>>,
+        bid: In<U<ID>>,
         bresp: In<U<2>>,
         bvalid: In<Bit>,
         arready: In<Bit>,
-        rid: In<U<I>>,
-        rdata: In<U<D>>,
+        rid: In<U<ID>>,
+        rdata: In<U<DATA>>,
         rresp: In<U<2>>,
         rlast: In<Bit>,
         rvalid: In<Bit>,
@@ -295,14 +303,15 @@ pub mod sim {
 
     /// What a burst came back with: its identifier, its response, and
     /// a read's words.
-    pub struct Answer<const D: usize, const I: usize> {
+    #[named_type_params]
+    pub struct Answer<const DATA: usize, const ID: usize> {
         /// The identifier the answer carried.
-        pub id: U<I>,
+        pub id: U<ID>,
         /// The burst's response: a write's one, or a read's first that
         /// is not `Okay`.
         pub resp: Resp,
         /// A read's words, in order; none for a write.
-        pub data: Vec<U<D>>,
+        pub data: Vec<U<DATA>>,
     }
 
     fn resp(v: U<2>) -> Resp {
@@ -422,16 +431,17 @@ pub mod sim {
 
     /// The unit's ends of what the host drives: the inputs of a
     /// device on the pins, named as its ports are.
+    #[named_type_params]
     pub struct HostPins<
-        const A: usize,
-        const D: usize,
-        const S: usize,
-        const I: usize,
+        const ADDR: usize,
+        const DATA: usize,
+        const STRB: usize,
+        const ID: usize,
     > {
         /// `AWID`.
-        pub awid: In<U<I>>,
+        pub awid: In<U<ID>>,
         /// `AWADDR`.
-        pub awaddr: In<U<A>>,
+        pub awaddr: In<U<ADDR>>,
         /// `AWLEN`.
         pub awlen: In<U<8>>,
         /// `AWSIZE`.
@@ -447,9 +457,9 @@ pub mod sim {
         /// `AWVALID`.
         pub awvalid: In<Bit>,
         /// `WDATA`.
-        pub wdata: In<U<D>>,
+        pub wdata: In<U<DATA>>,
         /// `WSTRB`.
-        pub wstrb: In<U<S>>,
+        pub wstrb: In<U<STRB>>,
         /// `WLAST`.
         pub wlast: In<Bit>,
         /// `WVALID`.
@@ -457,9 +467,9 @@ pub mod sim {
         /// `BREADY`.
         pub bready: In<Bit>,
         /// `ARID`.
-        pub arid: In<U<I>>,
+        pub arid: In<U<ID>>,
         /// `ARADDR`.
-        pub araddr: In<U<A>>,
+        pub araddr: In<U<ADDR>>,
         /// `ARLEN`.
         pub arlen: In<U<8>>,
         /// `ARSIZE`.
@@ -480,13 +490,14 @@ pub mod sim {
 
     /// The device's ends of what the host reads: the outputs of a
     /// device on the pins, named as its ports are.
-    pub struct DevicePins<const D: usize, const I: usize> {
+    #[named_type_params]
+    pub struct DevicePins<const DATA: usize, const ID: usize> {
         /// `AWREADY`.
         pub awready: Out<Bit>,
         /// `WREADY`.
         pub wready: Out<Bit>,
         /// `BID`.
-        pub bid: Out<U<I>>,
+        pub bid: Out<U<ID>>,
         /// `BRESP`.
         pub bresp: Out<U<2>>,
         /// `BVALID`.
@@ -494,9 +505,9 @@ pub mod sim {
         /// `ARREADY`.
         pub arready: Out<Bit>,
         /// `RID`.
-        pub rid: Out<U<I>>,
+        pub rid: Out<U<ID>>,
         /// `RDATA`.
-        pub rdata: Out<U<D>>,
+        pub rdata: Out<U<DATA>>,
         /// `RRESP`.
         pub rresp: Out<U<2>>,
         /// `RLAST`.

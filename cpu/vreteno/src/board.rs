@@ -71,6 +71,7 @@ use txhdl_parts::scanout::ScanFetch;
 use txhdl_parts::sd::{Sd, SdLines};
 use txhdl_parts::spi::{Spi, SpiLines};
 use txhdl_parts::trng::Entropy;
+use txhdl_parts::{AxiHostPins, AxiPins};
 
 /// Which device this board answers to on the wire. Every frame the
 /// remote peripheral sends carries it, and a program answers each
@@ -239,7 +240,7 @@ pub struct Board<const DIV: u32> {
     /// the core is doing (issue 241). Its pins arrive as the board's
     /// own, and this joins them to the link's channels; a top with no
     /// master ties them off.
-    pub jtag: AxiPins<32, 32, 4, 1>,
+    pub jtag: AxiPins![ADDR = 32, DATA = 32, STRB = 4, ID = 1],
     /// The RISC-V debug transport (issue 154), behind the top's
     /// `BSCANE2` on `USER4` and on the cable's clock, so that a stock
     /// OpenOCD, and gdb through it, reaches the debug module from the
@@ -557,7 +558,7 @@ pub struct BoardIn {
     pub net_rx: Rx<EthByte>,
     /// The JTAG master's pins, one field; its ports are `jtag_awid`
     /// and the rest (issue 579).
-    pub jtag: AxiHostPins<32, 32, 4, 1>,
+    pub jtag: AxiHostPins![ADDR = 32, DATA = 32, STRB = 4, ID = 1],
     /// The scanout's line requests, from the pixel clock's side.
     pub scan_req: Rx<U<32>>,
     /// The board top's host on the arbiter's fourth port (issue 1634):

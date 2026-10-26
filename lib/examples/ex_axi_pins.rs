@@ -17,9 +17,10 @@ use txhdl_parts::bus::axi::sim::Ram;
 use txhdl_parts::bus::axi::{axi, AxiPer, Link};
 use txhdl_parts::bus::axi_pins::sim::pins;
 use txhdl_parts::bus::axi_pins::AxiPins;
+use txhdl_parts::AxiPins;
 
 /// The pins' widths: the endpoint's.
-type Pins = AxiPins<32, 64, 8, 4>;
+type Pins = AxiPins![ADDR = 32, DATA = 64, STRB = 8, ID = 4];
 
 fn hex(ws: &[U<64>]) -> String {
     let s: Vec<String> = ws.iter().map(|w| format!("{:#x}", w.raw())).collect();

@@ -16,9 +16,10 @@ use txhdl::types::U;
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Wr};
 use txhdl_parts::bus::axi_per_pins::sim::pins;
 use txhdl_parts::bus::axi_per_pins::AxiPerPins;
+use txhdl_parts::AxiPerPins;
 
 /// The pins' widths: the controller's.
-type Pins = AxiPerPins<30, 32, 4, 5>;
+type Pins = AxiPerPins![ADDR = 30, DATA = 32, STRB = 4, ID = 5];
 
 fn hex(ws: &[U<32>]) -> String {
     let s: Vec<String> = ws.iter().map(|w| format!("{:#x}", w.raw())).collect();
