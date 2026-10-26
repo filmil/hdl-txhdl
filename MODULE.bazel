@@ -279,6 +279,14 @@ register_toolchains("@verilator_prebuilt//:toolchain")
 # other workspaces on this machine state them, so that the key matches
 # theirs and the installation is shared rather than redone.
 bazel_dep(name = "rules_vivado", version = "4.1.1")
+
+# FireSim, FPGA-accelerated simulation of RISC-V SoCs, from the filmil
+# registry: rules for its flow from Chisel to a bitstream and host driver,
+# and its Golden Gate compiler as a prebuilt tool (firesim_goldengate).
+# //firesim:goldengate_test runs Golden Gate; nothing else uses it yet.
+bazel_dep(name = "rules_firesim", version = "0.1.0")
+bazel_dep(name = "firesim_goldengate", version = "1.22.0")
+
 # Shell binaries: the remote programmer and the serial watcher.
 bazel_dep(name = "rules_shell", version = "0.8.0")
 

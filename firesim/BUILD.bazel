@@ -1,0 +1,22 @@
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+# Golden Gate, FireSim's compiler, from @rules_firesim's prebuilt
+# (firesim_goldengate), on FireSim's GCD example for the Nitefury II
+# platform. testdata/ is GCD elaborated by FireSim 1.22.0's examples
+# generator (FireSim's sim/src/main/scala/midasexamples/GCD.scala), with
+# the source locators' build paths stripped to paths in FireSim's tree.
+sh_test(
+    name = "goldengate_test",
+    size = "medium",
+    srcs = ["goldengate_test.sh"],
+    args = [
+        "$(rootpath @firesim_goldengate//:goldengate)",
+        "$(rootpath testdata/GCD.fir)",
+        "$(rootpath testdata/GCD.anno.json)",
+    ],
+    data = [
+        "testdata/GCD.anno.json",
+        "testdata/GCD.fir",
+        "@firesim_goldengate//:goldengate",
+    ],
+)
