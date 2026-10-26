@@ -446,10 +446,10 @@ mod tests {
     /// A host's identifier is two bits, the peripheral side's five,
     /// which leaves three for the port number: more than the two
     /// hosts need, and exactly what four need.
-    type HostUnit = AxiHost<16, 32, 4, 2, 8>;
-    type PerUnit = AxiPer<16, 32, 4, 5>;
+    type HostUnit = AxiHost![ADDR = 16, DATA = 32, STRB = 4, ID = 2, IDS = 8];
+    type PerUnit = AxiPer![ADDR = 16, DATA = 32, STRB = 4, ID = 5];
     type Job = Xact<16, 32, 4, 5>;
-    type Client = Host<16, 32, 4, 2, 8>;
+    type Client = Host![ADDR = 16, DATA = 32, STRB = 4, ID = 2, IDS = 8];
 
     /// A client, boxed so that two of different shapes can be passed
     /// to one driver.
@@ -464,7 +464,7 @@ mod tests {
     /// for, so a host can tell its own answers from another's, and
     /// records every write burst whole.
     fn memory(
-        per: Per<16, 32, 4, 5>,
+        per: Per![ADDR = 16, DATA = 32, STRB = 4, ID = 5],
         seen: Seen,
     ) -> impl std::future::Future<Output = ()> {
         crate::bus::axi::serve(per, 4, move |x: Job| {

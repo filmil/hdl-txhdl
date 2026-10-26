@@ -8,7 +8,7 @@ use txhdl_parts::bus::axi::{
     Answer, Ar, Aw, AxiPer, PerPort, PerReq, Resp, B, R, W,
 };
 use txhdl_parts::bus::axi_pins::{AxiHostPins, AxiPins, AxiPinsIn, AxiPinsOut};
-use txhdl_parts::AxiPins;
+use txhdl_parts::{AxiPer, AxiPins};
 
 /// The identifier word, at offset 0: `TxHDL` in ASCII, and a version.
 pub const IDENT: u64 = 0x5478_4844_4c00_0001;
@@ -239,7 +239,7 @@ pub struct PcieBar {
     /// The pins, joined to the link's channels.
     pub pins: AxiPins![ADDR = 32, DATA = 64, STRB = 8, ID = 4],
     /// The peripheral tracker.
-    pub per: AxiPer<32, 64, 8, 4>,
+    pub per: AxiPer![ADDR = 32, DATA = 64, STRB = 8, ID = 4],
     /// The registers.
     pub regs: BarRegs<4>,
 }

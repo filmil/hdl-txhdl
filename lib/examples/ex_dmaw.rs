@@ -22,6 +22,7 @@ use txhdl_parts::bus::axi::{
     axi_units, Answer, AxiHost, AxiPer, PerPort, Resp, R,
 };
 use txhdl_parts::dma::LineStore;
+use txhdl_parts::{AxiHost, AxiPer, PerPort};
 
 const ADDR: usize = 32;
 const IDB: usize = 2;
@@ -151,7 +152,8 @@ impl<const A: usize, const I: usize, const M: usize> Unit for Ram<A, I, M> {
 fn main() {
     let link = axi_units::<ADDR, 32, 4, IDB>();
     let (issue, wbeat, release, grant, done, rdata) = link.host_client;
-    let bus: PerPort<ADDR, 32, 4, IDB> = link.per_client.into();
+    let bus: PerPort![ADDR = ADDR, DATA = 32, STRB = 4, ID = IDB] =
+        link.per_client.into();
     let (base_o, base) = signal::<U<ADDR>, DefaultClock>();
     let (bytes_o, bytes) = signal::<U<16>, DefaultClock>();
     let (go_o, go) = signal::<Bit, DefaultClock>();
@@ -169,8 +171,15 @@ fn main() {
     // A second handle on the memory, so the run can be checked
     // against what actually landed rather than against the bus.
     let stored = ram.px.clone();
-    let mut host = AxiHost::<ADDR, 32, 4, IDB, IDS>::default();
-    let mut per = AxiPer::<ADDR, 32, 4, IDB>::default();
+    let mut host = <AxiHost![
+        ADDR = ADDR,
+        DATA = 32,
+        STRB = 4,
+        ID = IDB,
+        IDS = IDS
+    ]>::default();
+    let mut per =
+        <AxiPer![ADDR = ADDR, DATA = 32, STRB = 4, ID = IDB]>::default();
     let mut store = LineStore::<ADDR, IDB, BEATS, 16>::default();
 
     if let Some(mut w) = Wave::from_env() {

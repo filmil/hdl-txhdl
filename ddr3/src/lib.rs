@@ -708,6 +708,7 @@ mod tests {
     use txhdl_parts::bus::axi::{
         axi, Ar, Aw, AxiHost, Link, Rd, Resp, Wr, B, R, W,
     };
+    use txhdl_parts::{AxiHost, R, W};
 
     /// Words written across the memory and read back, the first ones
     /// issued while the controller is still calibrating, and a burst
@@ -728,7 +729,9 @@ mod tests {
         let (_sys_rst_o, sys_rst) = signal::<Bit, DefaultClock>();
         let (calib_o, calib) = signal::<Bit, DefaultClock>();
         let bits = || signal::<Bit, DefaultClock>().0;
-        let mut h = AxiHost::<32, 32, 4, 5, 32>::default();
+        let mut h = <AxiHost![
+            ADDR = 32, DATA = 32, STRB = 4, ID = 5, IDS = 32
+        ]>::default();
         let mut mem = Ddr3Per::default();
         let seen = Rc::new(RefCell::new(Vec::new()));
         let out = seen.clone();
@@ -761,7 +764,11 @@ mod tests {
                         b,
                         r,
                         xar: chan::<Ar<32, 5>, DefaultClock>().1,
-                        xr: chan::<R<256, 5, 2>, DefaultClock>().0,
+                        xr: chan::<
+                            R![DATA = 256, ID = 5, LIMBS = 2],
+                            DefaultClock,
+                        >()
+                        .0,
                     },
                     Ddr3PerPins {
                         sys_clk,
@@ -820,11 +827,14 @@ mod tests {
         let (aw, ar, w, _, _) = per_in;
         let (_, _, b, r) = per_out;
         let bits = || signal::<Bit, DefaultClock>().0;
-        let mut h = AxiHost::<32, 32, 4, 5, 32>::default();
+        let mut h = <AxiHost![
+            ADDR = 32, DATA = 32, STRB = 4, ID = 5, IDS = 32
+        ]>::default();
         let mut mem = Ddr3Per::default();
         let mut wide = WideRead::<5>::on(mem.ctl.memory());
         let (wide_ar, wide_ar_rx) = chan::<Ar<32, 5>, DefaultClock>();
-        let (wide_r_tx, wide_r) = chan::<R<256, 5, 2>, DefaultClock>();
+        let (wide_r_tx, wide_r) =
+            chan::<R![DATA = 256, ID = 5, LIMBS = 2], DefaultClock>();
         let now = Rc::new(Cell::new(0u32));
         let got = Rc::new(RefCell::new(Vec::new()));
         let (at, into) = (now.clone(), got.clone());
@@ -861,7 +871,11 @@ mod tests {
                         b,
                         r,
                         xar: chan::<Ar<32, 5>, DefaultClock>().1,
-                        xr: chan::<R<256, 5, 2>, DefaultClock>().0,
+                        xr: chan::<
+                            R![DATA = 256, ID = 5, LIMBS = 2],
+                            DefaultClock,
+                        >()
+                        .0,
                     },
                     Ddr3PerPins {
                         sys_clk: signal::<Bit, DefaultClock>().1,
@@ -938,7 +952,8 @@ mod tests {
         }
         let (rst_o, rst) = signal::<Bit, DefaultClock>();
         let (wide_ar, wide_ar_rx) = chan::<Ar<32, 5>, DefaultClock>();
-        let (wide_r_tx, wide_r) = chan::<R<256, 5, 2>, DefaultClock>();
+        let (wide_r_tx, wide_r) =
+            chan::<R![DATA = 256, ID = 5, LIMBS = 2], DefaultClock>();
         let now = Rc::new(Cell::new(0u32));
         let got = Rc::new(RefCell::new(Vec::new()));
         let reset_at = Rc::new(Cell::new(None));
@@ -983,9 +998,9 @@ mod tests {
                     rst,
                     aw: chan::<Aw<32, 5>, DefaultClock>().1,
                     ar: chan::<Ar<32, 5>, DefaultClock>().1,
-                    w: chan::<W<32, 4>, DefaultClock>().1,
+                    w: chan::<W![DATA = 32, STRB = 4], DefaultClock>().1,
                     b: chan::<B<5>, DefaultClock>().0,
-                    r: chan::<R<32, 5>, DefaultClock>().0,
+                    r: chan::<R![DATA = 32, ID = 5], DefaultClock>().0,
                     xar: wide_ar_rx,
                     xr: wide_r_tx,
                 },

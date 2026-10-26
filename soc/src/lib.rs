@@ -35,7 +35,7 @@ use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::bus::noc::bridge::{HostBridge, PerBridge};
 use txhdl_parts::bus::noc::mesh::lattice;
 use txhdl_parts::bus::noc::node::Node;
-use txhdl_parts::{HostBridge, Node, PerBridge};
+use txhdl_parts::{AxiHost, AxiPer, HostBridge, Node, PerBridge, Ram};
 use vreteno32::core::Writeback;
 use vreteno32::hart::{Hart, HartIn, HartOut};
 use vreteno32::term::Terminal;
@@ -220,7 +220,13 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     // 0,0: the core, its tracker and its bridge.
     let cl = axi_units::<32, 32, 4, IW>();
     let (issue, wbeat, release, grant, cdone, crdata) = cl.host_client;
-    let mut ctrk = AxiHost::<32, 32, 4, IW, NIDS>::default();
+    let mut ctrk = <AxiHost![
+        ADDR = 32,
+        DATA = 32,
+        STRB = 4,
+        ID = IW,
+        IDS = NIDS
+    ]>::default();
     let mut cbr = Bridge::<0, 0>::default();
     let mut hart = Hart::<IW>::with(text);
     let cpu = &hart.core;
@@ -258,7 +264,13 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     // 1,0: the rasteriser, its tracker and its bridge.
     let gl = axi_units::<32, 32, 4, IW>();
     let (gissue, gwbeat, grelease, ggrant, gdone, grdata) = gl.host_client;
-    let mut gtrk = AxiHost::<32, 32, 4, IW, NIDS>::default();
+    let mut gtrk = <AxiHost![
+        ADDR = 32,
+        DATA = 32,
+        STRB = 4,
+        ID = IW,
+        IDS = NIDS
+    ]>::default();
     let mut gbr = Bridge::<1, 0>::default();
     let mut raster =
         Raster::<32, IW, LOGW, H, FB_BASE, DL_BASE, DL_CTRL>::default();
@@ -275,7 +287,8 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
         host_out: rh_out,
         ..
     } = axi::<32, 32, 4, IW, NIDS>();
-    let mut rtrk = AxiPer::<32, 32, 4, IW>::default();
+    let mut rtrk =
+        <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = IW]>::default();
     let mut rbr = <PerBridge![
         COL = 0,
         ROW = 1,
@@ -287,7 +300,7 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
         ID = IW,
         IDS = NIDS
     ]>::default();
-    let ram = Ram::<32, 32, 4, IW>::new(RAM_WORDS);
+    let ram = <Ram![ADDR = 32, DATA = 32, STRB = 4, ID = IW]>::new(RAM_WORDS);
     // The constants the program reads, in the memory before the first
     // cycle, at the base the core's decode sends a load to.
     let words: Vec<U<32>> = data

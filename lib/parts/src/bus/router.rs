@@ -331,8 +331,8 @@ mod tests {
     use txhdl::map::AddrMap;
     use txhdl::types::U;
 
-    type Host2 = AxiHost<16, 32, 4, 3, 8>;
-    type Per2 = AxiPer<16, 32, 4, 3>;
+    type Host2 = AxiHost![ADDR = 16, DATA = 32, STRB = 4, ID = 3, IDS = 8];
+    type Per2 = AxiPer![ADDR = 16, DATA = 32, STRB = 4, ID = 3];
     type Job = Xact<16, 32, 4, 3>;
     /// Two peripherals, a nibble each; everything else is a hole.
     struct TwoMap;
@@ -353,7 +353,7 @@ mod tests {
     /// high half and records every write it is given.
     fn peripheral(
         k: u128,
-        per: Per<16, 32, 4, 3>,
+        per: Per![ADDR = 16, DATA = 32, STRB = 4, ID = 3],
         seen: Seen,
     ) -> impl std::future::Future<Output = ()> {
         crate::bus::axi::serve(per, 2, move |x: Job| {

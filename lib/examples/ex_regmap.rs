@@ -27,6 +27,7 @@ use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{
     axi_lite, LiteB, LiteBridge, LitePort, LiteR,
 };
+use txhdl_parts::AxiHost;
 
 // begin{map}
 regmap! { knobs (knobs_read, knobs_we), 2: [
@@ -121,7 +122,7 @@ impl Unit for Knobs {
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
 /// identifiers, four of them.
-type HostUnit = AxiHost<32, 32, 4, 2, 4>;
+type HostUnit = AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4];
 
 /// The bridge, with the peripheral at `0x1000`.
 type Bridge = LiteBridge<1, KnobsMap, 32, 32, 4, 2>;

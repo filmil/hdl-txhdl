@@ -492,7 +492,7 @@ mod tests {
     use std::rc::Rc;
     use txhdl::comp::{join2, Clock, Running, Unit};
 
-    type Host = AxiHost<16, 32, 4, 2, 4>;
+    type Host = AxiHost![ADDR = 16, DATA = 32, STRB = 4, ID = 2, IDS = 4];
     /// Two peripherals, a nibble each; everything else is a hole.
     struct TwoMap;
     impl AddrMap<2> for TwoMap {

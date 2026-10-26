@@ -13,6 +13,7 @@ use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, PerPort};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::bus::router::Router;
+use txhdl_parts::{AxiHost, AxiPer};
 use vreteno32::core::Writeback;
 use vreteno32::dmem::Dmem;
 use vreteno32::hart::Hart;
@@ -87,9 +88,17 @@ fn pair_says(program: &[u32], cycles: usize, fault: &[usize]) -> (bool, bool) {
     let sl = axi_lite::<32, 32, 4>();
     let ubus: LitePort<32, 32, 4> = sl.per.into();
     let (baw, bar, bw, bb, br) = sl.host;
-    let mut axi_host = AxiHost::<32, 32, 4, IW, NIDS>::default();
-    let mut dper = AxiPer::<32, 32, 4, IW>::default();
-    let mut tper = AxiPer::<32, 32, 4, IW>::default();
+    let mut axi_host = <AxiHost![
+        ADDR = 32,
+        DATA = 32,
+        STRB = 4,
+        ID = IW,
+        IDS = NIDS
+    ]>::default();
+    let mut dper =
+        <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = IW]>::default();
+    let mut tper =
+        <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = IW]>::default();
     let mut ubridge = Serial::default();
     let mut router = Rtr::default();
     let (rst_t, rst_u) = (rst.clone(), rst.clone());

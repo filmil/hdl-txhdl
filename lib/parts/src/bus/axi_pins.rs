@@ -31,7 +31,7 @@ use txhdl::{lower, named_type_params, select, Ports, Trace};
 // begin{ports}
 /// What the host drives: its 24 pins, named as AXI4 names them. A
 /// struct of its own so that a design holding a host's pins among its
-/// ports holds them as one field, `jtag: AxiHostPins<..>`, and passes
+/// ports holds them as one field, `jtag: AxiHostPins![..]`, and passes
 /// them on whole; its ports are then `jtag_awid` and the rest
 /// (issue 579).
 #[named_type_params]
@@ -720,7 +720,7 @@ mod tests {
         let (aw, ar, w, _, _, _) = host_out;
         let (_, _, b, r, _) = host_in;
         let (host, inp, outp) = pins::<16, 32, 4, 2>(aw, ar, w, b, r);
-        let ram = Ram::<16, 32, 4, 2>::new(16);
+        let ram = <Ram![ADDR = 16, DATA = 32, STRB = 4, ID = 2]>::new(16);
         let seen = ram.clone();
         let done = Rc::new(RefCell::new(false));
         let d = done.clone();
@@ -740,7 +740,8 @@ mod tests {
             *d.borrow_mut() = true;
         };
         let mut pinned = AxiPins::<16, 32, 4, 2>::default();
-        let mut tracker = AxiPer::<16, 32, 4, 2>::default();
+        let mut tracker =
+            <AxiPer![ADDR = 16, DATA = 32, STRB = 4, ID = 2]>::default();
         let mut sim = Running::new(join2(
             client,
             join2(

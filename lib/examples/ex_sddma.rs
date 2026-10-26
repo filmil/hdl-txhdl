@@ -47,9 +47,10 @@ use txhdl_parts::sd::{
     CMD_READ, CMD_SHORT, CMD_WRITE, CTRL_WIDE, STATUS_DCRC, STATUS_DONE,
     STATUS_DTIMEOUT, STATUS_RCRC, STATUS_RTIMEOUT, WORDS,
 };
+use txhdl_parts::{AxiHost, AxiPer, PerPort};
 
 /// The client's link to the host's registers.
-type HostUnit = AxiHost<32, 32, 4, 2, 4>;
+type HostUnit = AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4];
 type Bridge = LiteBridge<1, SdMap, 32, 32, 4, 2>;
 
 /// The host's registers at 0x1000.
@@ -197,19 +198,22 @@ fn main() {
     // And the memory's link starts at it, in a host tracker's place.
     let (m_aw, m_ar, m_w, _, _, _) = ml.host_out;
     let (_, _, m_b, m_r, _) = ml.host_in;
-    let mem_bus: PerPort<32, 32, 4, 2> = ml.per_client.into();
+    let mem_bus: PerPort![ADDR = 32, DATA = 32, STRB = 4, ID = 2] =
+        ml.per_client.into();
 
     let mut host_unit = HostUnit::default();
     let mut bridge = Bridge::default();
     let mut sd = Sd::default();
     let mut store = LineStore::<32, 1, 16, 16>::default();
     let mut fetch = LineFetch::<32, 1, 16, 16>::default();
-    let mut shost = AxiHost::<32, 32, 4, 1, 2>::default();
-    let mut fhost = AxiHost::<32, 32, 4, 1, 2>::default();
+    let mut shost =
+        <AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 1, IDS = 2]>::default();
+    let mut fhost =
+        <AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 1, IDS = 2]>::default();
     let mut noreads = NoReads::<1>::default();
     let mut nobeats = NoBeats::default();
     let mut arb = Arbiter2::<32, 32, 4, 1, 2, 0>::default();
-    let mut per = AxiPer::<32, 32, 4, 2>::default();
+    let mut per = <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = 2]>::default();
     // The words to write, in the memory's upper half.
     let image: Vec<U<32>> = (0..M as u32)
         .map(|i| {

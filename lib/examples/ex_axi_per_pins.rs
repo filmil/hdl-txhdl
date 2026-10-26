@@ -16,7 +16,7 @@ use txhdl::types::U;
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Wr};
 use txhdl_parts::bus::axi_per_pins::sim::pins;
 use txhdl_parts::bus::axi_per_pins::AxiPerPins;
-use txhdl_parts::AxiPerPins;
+use txhdl_parts::{AxiHost, AxiPerPins};
 
 /// The pins' widths: the controller's.
 type Pins = AxiPerPins![ADDR = 30, DATA = 32, STRB = 4, ID = 5];
@@ -38,7 +38,8 @@ fn main() {
     let (aw, ar, w, _, _) = per_in;
     let (_, _, b, r) = per_out;
     let (ram, inp, outp) = pins::<30, 32, 4, 5>(aw, ar, w, b, r, 16);
-    let mut tracker = AxiHost::<30, 32, 4, 5, 4>::default();
+    let mut tracker =
+        <AxiHost![ADDR = 30, DATA = 32, STRB = 4, ID = 5, IDS = 4]>::default();
     let mut pinned = Pins::default();
 
     if let Some(mut wave) = Wave::from_env() {

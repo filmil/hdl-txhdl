@@ -14,6 +14,7 @@ use txhdl::{lower, with, Trace};
 use txhdl_parts::bus::axi::{
     axi_to_unit, Answer, AxiHost, AxiPer, HostLink, PerPort, Rd, Resp, Wr, R,
 };
+use txhdl_parts::{AxiHost, AxiPer, PerPort};
 
 // begin{register}
 /// One word, readable and writable over AXI.
@@ -67,9 +68,11 @@ fn main() {
         per_in,
         per_out,
     } = axi_to_unit::<32, 32, 4, 2, 4>();
-    let bus: PerPort<32, 32, 4, 2> = per_client.into();
-    let mut h = AxiHost::<32, 32, 4, 2, 4>::default();
-    let mut p = AxiPer::<32, 32, 4, 2>::default();
+    let bus: PerPort![ADDR = 32, DATA = 32, STRB = 4, ID = 2] =
+        per_client.into();
+    let mut h =
+        <AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4]>::default();
+    let mut p = <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = 2]>::default();
     let mut reg = Register::default();
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();

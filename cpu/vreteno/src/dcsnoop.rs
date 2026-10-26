@@ -229,6 +229,7 @@ mod tests {
     use txhdl::comp::{chan, signal, DefaultClock, Running, Unit};
     use txhdl::types::{Bit, U};
     use txhdl_parts::bus::axi::{Addr, Resp, B, W};
+    use txhdl_parts::{Addr, W};
 
     /// With a second hart on port 7 (issue 1408), ports 0, 7 and 3 each
     /// write one word of a line of their own: hart 0 is told of the
@@ -241,8 +242,8 @@ mod tests {
         let mut s = DcSnoop::<7>::default();
         let (sleep_o, sleep) = signal::<Bit, DefaultClock>();
         sleep_o.set(Bit::from(asleep));
-        let (aw_tx, aw_in) = chan::<Addr<32, 5>, DefaultClock>();
-        let (w_tx, w_in) = chan::<W<32, 4>, DefaultClock>();
+        let (aw_tx, aw_in) = chan::<Addr![ADDR = 32, ID = 5], DefaultClock>();
+        let (w_tx, w_in) = chan::<W![DATA = 32, STRB = 4], DefaultClock>();
         let (b_tx, b_in) = chan::<B<5>, DefaultClock>();
         let (aw_out, aw_rx) = chan();
         let (w_out, w_rx) = chan();

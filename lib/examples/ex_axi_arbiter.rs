@@ -38,15 +38,16 @@ use txhdl_parts::bus::arbiter::Arbiter2;
 use txhdl_parts::bus::axi::{
     axi, serve, AxiHost, AxiPer, Per, Rd, Resp, Wr, Xact,
 };
+use txhdl_parts::{AxiHost, AxiPer, Per};
 
 /// A host's link: sixteen-bit addresses, thirty-two-bit words, four
 /// lanes, two-bit identifiers, four of them.
-type HostUnit = AxiHost<16, 32, 4, 2, 4>;
+type HostUnit = AxiHost![ADDR = 16, DATA = 32, STRB = 4, ID = 2, IDS = 4];
 /// The peripheral side's, whose identifier is three bits wider: two
 /// for a host's own, and three above them for the port number.
-type PerUnit = AxiPer<16, 32, 4, 5>;
+type PerUnit = AxiPer![ADDR = 16, DATA = 32, STRB = 4, ID = 5];
 type Job = Xact<16, 32, 4, 5>;
-type End = Per<16, 32, 4, 5>;
+type End = Per![ADDR = 16, DATA = 32, STRB = 4, ID = 5];
 
 /// Two hosts, identifiers two bits wide on their side and five on the
 /// peripheral's, round robin rather than fixed priority.

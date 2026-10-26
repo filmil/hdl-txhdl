@@ -328,7 +328,7 @@ mod tests {
     use txhdl::comp::{join2, now, Clock, DefaultClock, Reg, Running, Unit};
     use txhdl::types::{Bit, U};
 
-    type Client = Host<32, 32, 4, 2, 8>;
+    type Client = Host![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 8];
 
     /// The memory's words after a run, by word index.
     struct Mem(Rc<RefCell<std::collections::HashMap<u128, U<32>>>>);
@@ -416,8 +416,12 @@ mod tests {
         let l1 = axi::<32, 32, 4, 2, 8>();
         let la = axi::<32, 32, 4, 5, 8>();
         let lp = axi::<32, 32, 4, 5, 8>();
-        let mut h0 = AxiHost::<32, 32, 4, 2, 8>::default();
-        let mut h1 = AxiHost::<32, 32, 4, 2, 8>::default();
+        let mut h0 = <AxiHost![
+            ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 8
+        ]>::default();
+        let mut h1 = <AxiHost![
+            ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 8
+        ]>::default();
         let mut pinned = AxiPerPins::<32, 32, 4, 5>::default();
         let (paw, par, pw, _, _) = lp.per_in;
         let (_, _, pb, pr) = lp.per_out;

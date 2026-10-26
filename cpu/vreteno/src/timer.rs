@@ -296,6 +296,7 @@ mod tests {
     use txhdl::comp::{chan, signal, DefaultClock, Running, Unit};
     use txhdl::types::{Bit, U};
     use txhdl_parts::bus::axi::{PerPort, PerReq, W};
+    use txhdl_parts::PerReq;
 
     /// Write `data` at `off` in the timer's window, then read `off`:
     /// what the read answered, and `msip` after both.
@@ -308,7 +309,7 @@ mod tests {
     fn write_then_read_both(off: u32, data: u32) -> (u32, bool, bool) {
         let mut t = Timer::<2>::default();
         let (msip, msip1) = (t.msip, t.msip1);
-        let (req_tx, req) = chan::<PerReq<32, 2>, DefaultClock>();
+        let (req_tx, req) = chan::<PerReq![ADDR = 32, ID = 2], DefaultClock>();
         let (w_tx, w) = chan();
         let (ans, ans_rx) = chan();
         let (r, r_rx) = chan();

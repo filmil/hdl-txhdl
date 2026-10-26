@@ -71,7 +71,9 @@ use txhdl_parts::scanout::ScanFetch;
 use txhdl_parts::sd::{Sd, SdLines};
 use txhdl_parts::spi::{Spi, SpiLines};
 use txhdl_parts::trng::Entropy;
-use txhdl_parts::{AxiHostPins, AxiPins};
+use txhdl_parts::{
+    AxiHost, AxiHostPins, AxiPer, AxiPerReq, AxiPerRsp, AxiPins,
+};
 
 /// Which device this board answers to on the wire. Every frame the
 /// remote peripheral sends carries it, and a program answers each
@@ -226,14 +228,14 @@ pub struct Board<const DIV: u32> {
     /// The hart, its A instructions on the DDR3 exclusive pairs, which
     /// the arbiter and the monitor keep (issue 1408).
     pub cpu: Hart<2, 16384, 1, 0, 1>,
-    pub host: AxiHost<32, 32, 4, 2, 4>,
+    pub host: AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4],
     /// The second hart and its tracker (issue 1408), on the arbiter's
     /// eighth port. Its boot memory holds `park`, where it waits until
     /// the first starts it through the mailbox. Its external lines are
     /// the controller's third and fourth targets; it is not on the
     /// debug module yet.
     pub cpu1: Hart<2, 16384, 1, 1, 1>,
-    pub host1: AxiHost<32, 32, 4, 2, 4>,
+    pub host1: AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4],
     /// The second host: Vivado's JTAG-to-AXI master, on the top beside
     /// the board's, reached over the cable that programs the part, so
     /// that memory and every peripheral can be read and written whatever
@@ -255,7 +257,7 @@ pub struct Board<const DIV: u32> {
     /// and its system bus access served here, through a host of its
     /// own. One access at a time, so one bit of identifier.
     pub dbridge: DtmBridge<DM_AT, 1>,
-    pub dhost: AxiHost<32, 32, 4, 1, 2>,
+    pub dhost: AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 1, IDS = 2],
     /// The JTAG master and the transport's bridge share the arbiter's
     /// second host, each with one bit of identifier, so that nothing
     /// past the arbiter widens: the JTAG master's IP only ever used one
@@ -299,9 +301,9 @@ pub struct Board<const DIV: u32> {
     /// request half before the memory and the response half after it,
     /// so that a read's beat leaves the memory's block RAM and reaches
     /// the router in the cycle (#1755).
-    pub pdmemq: AxiPerReq<32, 32, 4, 5>,
-    pub pdmems: AxiPerRsp<32, 32, 4, 5>,
-    pub ptimer: AxiPer<32, 32, 4, 5>,
+    pub pdmemq: AxiPerReq![ADDR = 32, DATA = 32, STRB = 4, ID = 5],
+    pub pdmems: AxiPerRsp![ADDR = 32, DATA = 32, STRB = 4, ID = 5],
+    pub ptimer: AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = 5],
     // begin{vslot}
     /// Ten small peripherals share the page at `0x3000`: the serial
     /// port at `0x3000`, the pulse width modulator at `0x3100`,
@@ -342,7 +344,7 @@ pub struct Board<const DIV: u32> {
     /// The boot memory on the bus, at address zero, readable and not
     /// writable: the same words the core fetches from inside itself,
     /// so a load can read a constant beside the code (#268).
-    pub prom: AxiPer<32, 32, 4, 5>,
+    pub prom: AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = 5],
     pub rom: Rom<5>,
     pub dmem: Dmem<5>,
     pub timer: Timer<5>,
@@ -408,8 +410,8 @@ pub struct Board<const DIV: u32> {
     /// checks that the two busy lines are never high together.
     pub sdstore: LineStore<32, 1, 16, 16>,
     pub sdfetch: LineFetch<32, 1, 16, 16>,
-    pub sdshost: AxiHost<32, 32, 4, 1, 2>,
-    pub sdfhost: AxiHost<32, 32, 4, 1, 2>,
+    pub sdshost: AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 1, IDS = 2],
+    pub sdfhost: AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 1, IDS = 2],
     /// The store engine never reads, and the fetch engine never writes.
     pub sdnoreads: NoReads<1>,
     pub sdnobeats: NoBeats,
@@ -421,7 +423,7 @@ pub struct Board<const DIV: u32> {
     /// other. It keeps two ports free, for Razboj and a texture fetch.
     pub sdarb: Arbiter2<32, 32, 4, 1, 2, 0>,
     /// The window's tracker, on the router's eighth port.
-    pub pflash: AxiPer<32, 32, 4, 5>,
+    pub pflash: AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = 5],
     /// The window.
     pub flashwin: FlashWin<FLASH_DIV, 5>,
     /// The startup block and the pins, write enable refused.
@@ -442,8 +444,8 @@ pub struct Board<const DIV: u32> {
     /// peripheral by EtherType.
     /// A bit of identifier each, two bursts in flight, since the two
     /// share the arbiter's third port behind `etharb` (issue 1634).
-    pub fhost: AxiHost<32, 32, 4, 1, 2>,
-    pub shost: AxiHost<32, 32, 4, 1, 2>,
+    pub fhost: AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 1, IDS = 2],
+    pub shost: AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 1, IDS = 2],
     pub fetch: LineFetch<32, 1, 16, 16>,
     pub store: LineStore<32, 1, 16, 16>,
     pub fout: FrameOut,
@@ -482,7 +484,7 @@ pub struct Board<const DIV: u32> {
     /// but a load of the core's behind one waited up to 153 cycles
     /// where it waits 94 behind 64 and 88 with no scanout.
     pub vfetch: LineFetch<32, 2, 64, 16>,
-    pub vhost: AxiHost<32, 32, 4, 2, 4>,
+    pub vhost: AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4],
     /// The scanout's fetch never writes.
     pub vnobeats: NoBeats,
     // end{scan}
@@ -491,7 +493,7 @@ pub struct Board<const DIV: u32> {
     /// the display list at `RAZBOJ_DL`, and polls its doorbell on the
     /// tenth slot for the list's length.
     pub raster: Raster<32, 2, 10, 480, RAZBOJ_FB, RAZBOJ_DL, RAZBOJ_DOORBELL>,
-    pub rhost: AxiHost<32, 32, 4, 2, 4>,
+    pub rhost: AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4],
     pub doorbell: Doorbell,
     /// Three sources, each asking while its line is high: the serial
     /// port's receive interrupt, the board's own `irq` input, and the

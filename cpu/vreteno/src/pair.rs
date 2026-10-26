@@ -31,6 +31,7 @@ use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 use txhdl_parts::bus::axi::{Done, Grant, Issue, R, W};
 use txhdl_parts::redundant::{Check, Tee};
+use txhdl_parts::{R, W};
 
 use crate::core::Writeback;
 use crate::hart::{Hart, HartIn, HartOut};
@@ -144,7 +145,7 @@ pub struct Pair<const IW: usize> {
     /// The core that only checks.
     pub two: Hart<IW>,
     /// The read answers, to both cores.
-    pub tee_rdata: Tee<R<32, IW>>,
+    pub tee_rdata: Tee<R![DATA = 32, ID = IW]>,
     /// The write completions, to both.
     pub tee_done: Tee<Done<IW>>,
     /// The identifiers handed out, to both.
@@ -152,7 +153,7 @@ pub struct Pair<const IW: usize> {
     /// The bursts they issue, compared.
     pub check_issue: Check<Issue<32>>,
     /// The write beats they send, compared.
-    pub check_wbeat: Check<W<32, 4>>,
+    pub check_wbeat: Check<W![DATA = 32, STRB = 4]>,
     /// The identifiers they release, compared.
     pub check_release: Check<Grant<IW>>,
     /// Their three wires, compared, and passed on.

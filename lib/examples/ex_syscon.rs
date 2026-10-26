@@ -33,10 +33,11 @@ use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::syscon::{
     regs, Syscon, CAUSE_BUTTON, CAUSE_POWER, CAUSE_SOFTWARE,
 };
+use txhdl_parts::{AxiHost, Host};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
 /// identifiers, four of them.
-type HostUnit = AxiHost<32, 32, 4, 2, 4>;
+type HostUnit = AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4];
 
 /// The bridge, with the block at `0x1000`.
 type Bridge = LiteBridge<1, SysconMap, 32, 32, 4, 2>;
@@ -71,7 +72,7 @@ const R_RESET: u32 = BASE + regs::reset;
 const R_SCRATCH: u32 = BASE + regs::scratch;
 
 /// The client that drives the block.
-type Client = Host<32, 32, 4, 2, 4>;
+type Client = Host![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4];
 
 /// One word out of the block.
 async fn read(host: &Client, at: u32) -> Reply<32> {

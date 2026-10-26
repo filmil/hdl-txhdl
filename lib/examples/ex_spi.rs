@@ -28,10 +28,11 @@ use txhdl_parts::bus::axi::{axi, AxiHost, Host, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::spi::SpiLines;
 use txhdl_parts::spi::{regs, FlashDevice, Spi};
+use txhdl_parts::{AxiHost, Host};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
 /// identifiers, four of them.
-type HostUnit = AxiHost<32, 32, 4, 2, 4>;
+type HostUnit = AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4];
 
 /// The bridge, with the master at `0x1000`.
 type Bridge = LiteBridge<1, SpiMap, 32, 32, 4, 2>;
@@ -61,7 +62,7 @@ const HELD: u32 = DIV | regs::ctrl_sel.mask();
 const FREE: u32 = DIV;
 
 /// The client that drives the master.
-type Client = Host<32, 32, 4, 2, 4>;
+type Client = Host![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4];
 
 /// One byte out and one byte in, which on SPI is the same eight
 /// clocks: write the byte, wait for the transfer to end, and take what

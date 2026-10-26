@@ -23,10 +23,11 @@ use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::eth::EthRxLines;
 use txhdl_parts::eth::EthTxLines;
 use txhdl_parts::eth::{regs, ungray16, EthByte, EthLite, EthRx, EthTx};
+use txhdl_parts::AxiHost;
 
 /// The link: thirty-two-bit addresses and words, four lanes,
 /// two-bit identifiers, four of them.
-type HostUnit = AxiHost<32, 32, 4, 2, 4>;
+type HostUnit = AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4];
 
 /// The bridge, with the peripheral at `0x1000`.
 type Bridge = LiteBridge<1, EthMap, 32, 32, 4, 2>;

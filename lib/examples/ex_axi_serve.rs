@@ -31,9 +31,10 @@ use txhdl::{Transaction, Value};
 use txhdl_parts::bus::axi::{
     axi, serve, AxiHost, AxiPer, Link, Open, Per, Rd, Xact,
 };
+use txhdl_parts::{AxiHost, AxiPer, Open, Per};
 
-type HostUnit = AxiHost<16, 32, 4, 2, 4>;
-type PerUnit = AxiPer<16, 32, 4, 2>;
+type HostUnit = AxiHost![ADDR = 16, DATA = 32, STRB = 4, ID = 2, IDS = 4];
+type PerUnit = AxiPer![ADDR = 16, DATA = 32, STRB = 4, ID = 2];
 type Job = Xact<16, 32, 4, 2>;
 
 /// The bursts of the run: ten reads of one word, at ten addresses.
@@ -114,10 +115,13 @@ async fn host_client(
 
 /// The peripheral, by hand: accept and forward, a pool of workers,
 /// and a process that answers whatever finished.
-async fn forward_by_hand(per: Per<16, 32, 4, 2>, say: bool) {
+async fn forward_by_hand(
+    per: Per![ADDR = 16, DATA = 32, STRB = 4, ID = 2],
+    say: bool,
+) {
     let (job_tx, job_rx) = chan::<Ticket, DefaultClock>();
     let (fin_tx, fin_rx) = chan::<Finished, DefaultClock>();
-    let open = Open::<16, 32, 4, 2>::new();
+    let open = <Open![ADDR = 16, DATA = 32, STRB = 4, ID = 2]>::new();
     let held = open.clone();
     // One process accepts whatever arrives and forwards it, holding
     // the transaction open until somebody has its data.
@@ -180,7 +184,10 @@ async fn forward_by_hand(per: Per<16, 32, 4, 2>, say: bool) {
 }
 
 /// The same peripheral, as one call.
-async fn forward_with_serve(per: Per<16, 32, 4, 2>, say: bool) {
+async fn forward_with_serve(
+    per: Per![ADDR = 16, DATA = 32, STRB = 4, ID = 2],
+    say: bool,
+) {
     serve(per, WORKERS, move |x: Job| async move {
         let addr = x.addr().raw();
         cycles(work_cycles(addr)).await;
@@ -201,7 +208,10 @@ async fn forward_with_serve(per: Per<16, 32, 4, 2>, say: bool) {
 
 /// Drive one link for `cycles` cycles with the peripheral given.
 fn drive(
-    peripheral: impl FnOnce(Per<16, 32, 4, 2>, bool) -> BoxedFuture,
+    peripheral: impl FnOnce(
+        Per![ADDR = 16, DATA = 32, STRB = 4, ID = 2],
+        bool,
+    ) -> BoxedFuture,
     say: bool,
     trace: bool,
 ) -> Vec<(u128, u128)> {

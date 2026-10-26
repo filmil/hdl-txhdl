@@ -10,6 +10,7 @@ use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, PerPort};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::bus::router::Router;
+use txhdl_parts::{AxiHost, AxiPer};
 use vreteno32::core::Writeback;
 use vreteno32::dmem::Dmem;
 use vreteno32::hart::{Hart, HartIn, HartOut};
@@ -131,9 +132,17 @@ fn main() {
     let sl = axi_lite::<32, 32, 4>();
     let ubus: LitePort<32, 32, 4> = sl.per.into();
     let (baw, bar, bw, bb, br) = sl.host;
-    let mut axi_host = AxiHost::<32, 32, 4, IW, NIDS>::default();
-    let mut dper = AxiPer::<32, 32, 4, IW>::default();
-    let mut tper = AxiPer::<32, 32, 4, IW>::default();
+    let mut axi_host = <AxiHost![
+        ADDR = 32,
+        DATA = 32,
+        STRB = 4,
+        ID = IW,
+        IDS = NIDS
+    ]>::default();
+    let mut dper =
+        <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = IW]>::default();
+    let mut tper =
+        <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = IW]>::default();
     let mut ubridge = Serial::default();
     let mut router = Rtr::default();
     let mut timer = Timer::<IW>::default();
@@ -492,8 +501,15 @@ fn main() {
         ubr.trace_as(port, scope);
     }
     let uart = Uart::<868>::lowered("uart");
-    let axi_host = AxiHost::<32, 32, 4, IW, NIDS>::lowered("axi_host");
-    let mut dper = AxiPer::<32, 32, 4, IW>::lowered("axi_per");
+    let axi_host = <AxiHost![
+        ADDR = 32,
+        DATA = 32,
+        STRB = 4,
+        ID = IW,
+        IDS = NIDS
+    ]>::lowered("axi_host");
+    let mut dper =
+        <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = IW]>::lowered("axi_per");
     dper.trace_as("aw", "aw0");
     dper.trace_as("ar", "ar0");
     dper.trace_as("w", "w0");

@@ -40,10 +40,11 @@ use txhdl_parts::eth::EthTxLines;
 use txhdl_parts::eth::{EthByte, EthRx, EthTx};
 use txhdl_parts::remote::eth::{RemoteLink, FRAME_LEN, KIND_ANSWER};
 use txhdl_parts::remote::Remote;
+use txhdl_parts::AxiHost;
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
 /// identifiers, four of them.
-type HostUnit = AxiHost<32, 32, 4, 2, 4>;
+type HostUnit = AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4];
 
 /// The bridge, with the peripheral at `0x1000`.
 type Bridge = LiteBridge<1, RemoteMap, 32, 32, 4, 2>;

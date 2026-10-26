@@ -17,6 +17,7 @@ use txhdl_parts::bus::axi::{
 use txhdl_parts::bus::wb::sim::WbMem;
 use txhdl_parts::bus::wb::AxiWb;
 use txhdl_parts::bus::wb::WbMaster;
+use txhdl_parts::{AxiHost, AxiPer};
 
 /// The word address: twenty-eight bits.
 type Bridge = AxiWb<32, 2, 28>;
@@ -40,8 +41,9 @@ fn main() {
     let (stall_o, stall) = signal::<Bit, DefaultClock>();
     let (ack_o, ack) = signal::<Bit, DefaultClock>();
     let (rdat_o, rdat) = signal::<U<32>, DefaultClock>();
-    let mut h = AxiHost::<32, 32, 4, 2, 4>::default();
-    let mut p = AxiPer::<32, 32, 4, 2>::default();
+    let mut h =
+        <AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4]>::default();
+    let mut p = <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = 2]>::default();
     let mut bridge = Bridge::default();
     let mem = WbMem::<28>::new(2, 10);
     let mut model = mem.clone();

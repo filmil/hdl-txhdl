@@ -45,6 +45,7 @@ use txhdl_parts::bus::axi::{
     axi_units, per_end, Ar, Aw, AxiHost, AxiPer, Per, Xact, B, W,
 };
 use txhdl_parts::bus::exmon::ExMon;
+use txhdl_parts::{AxiHost, AxiPer, Per, W};
 use vreteno32::core::Writeback;
 use vreteno32::hart::{Hart, HartIn, HartOut};
 
@@ -133,7 +134,7 @@ struct Htif {
 /// test's image in it. A write to the word after `tohost` is an HTIF
 /// command.
 async fn memory(
-    per: Per<32, 32, 4, IW>,
+    per: Per![ADDR = 32, DATA = 32, STRB = 4, ID = IW],
     words: Rc<RefCell<HashMap<u32, u32>>>,
     tohost: u32,
     htif: Rc<RefCell<Htif>>,
@@ -225,8 +226,15 @@ fn simulate<const EXCL: usize>(
     let link = axi_units::<32, 32, 4, IW>();
     let (issue, wbeat, release, grant, cdone, crdata) = link.host_client;
     let per = per_end(link.per_client);
-    let mut axi_host = AxiHost::<32, 32, 4, IW, NIDS>::default();
-    let mut axi_per = AxiPer::<32, 32, 4, IW>::default();
+    let mut axi_host = <AxiHost![
+        ADDR = 32,
+        DATA = 32,
+        STRB = 4,
+        ID = IW,
+        IDS = NIDS
+    ]>::default();
+    let mut axi_per =
+        <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = IW]>::default();
     let mut exmon = ExMon::<IW, IW, 0, 1, 0x4000_0000, 0xc000_0000>::default();
     let mem = memory(per, words, img.tohost, htif.clone());
     // The tracker straight to the memory's unit, or with the monitor
@@ -236,7 +244,7 @@ fn simulate<const EXCL: usize>(
         let (req_tx, wd_tx, b_tx, r_tx) = link.per_out;
         let (maw_tx, maw_rx) = chan::<Aw<32, IW>, DefaultClock>();
         let (mar_tx, mar_rx) = chan::<Ar<32, IW>, DefaultClock>();
-        let (mw_tx, mw_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (mw_tx, mw_rx) = chan::<W![DATA = 32, STRB = 4], DefaultClock>();
         let (mb_tx, mb_rx) = chan::<B<IW>, DefaultClock>();
         Box::pin(join2(
             join2(

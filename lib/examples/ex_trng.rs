@@ -32,10 +32,11 @@ use txhdl_parts::trng::{
     RingOsc, Trng, CAP, CAPIDX, CAPWORD, CAP_DONE, CAP_START, CAP_WORDS, CTRL,
     CTRL_RUN, DATA, RAW, RINGS, STATUS, STATUS_READY,
 };
+use txhdl_parts::AxiHost;
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
 /// identifiers, four of them.
-type HostUnit = AxiHost<32, 32, 4, 2, 4>;
+type HostUnit = AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4];
 
 /// The bridge, with the peripheral at `0x1000`.
 type Bridge = LiteBridge<1, TrngMap, 32, 32, 4, 2>;
