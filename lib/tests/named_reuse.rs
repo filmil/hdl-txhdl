@@ -1,0 +1,75 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Markers declared once and reused (#1914): `named_markers!` declares
+//! `Data` and `Domain` with bound-free roles, and several structs in
+//! one module take them with `#[named_type_params(reuse(..))]`, each
+//! stating its own bounds in its `where` clause. Before #1914 the
+//! second struct would have made `Data` and `IsData` again, and the
+//! module would not compile (E0428). What `reuse` refuses is in the
+//! probes `experiments/rust_embedding/probe_named_reuse_*.rs`.
+use std::mem::size_of;
+use txhdl::{named_markers, named_type_params};
+
+named_markers!(pub Data, pub Domain);
+
+/// A clock domain, for the default.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Fast;
+
+/// One struct on the shared markers, with a default.
+#[named_type_params(reuse(Data, Domain))]
+pub struct Wire<Data: Copy + Default, Domain = Fast> {
+    pub value: Data,
+    pub domain: std::marker::PhantomData<Domain>,
+}
+
+/// A second in the same module, with other bounds on `Data`.
+#[named_type_params(reuse(Data))]
+pub struct Pair<Data: Into<u64> + Copy, Other> {
+    pub a: Data,
+    pub b: Other,
+}
+
+/// A tuple struct with a `where` clause of its own already, and a
+/// parameter that may be unsized.
+#[named_type_params(reuse(Data))]
+pub struct Boxed<Data: ?Sized + std::fmt::Debug, Tag>(pub Box<Data>, pub Tag)
+where
+    Tag: Copy;
+
+#[test]
+fn two_structs_share_one_set_of_markers() {
+    let w: Wire<Data<u8>> = Wire {
+        value: 3,
+        domain: std::marker::PhantomData,
+    };
+    assert_eq!(w.value, 3u8);
+    let p: Pair<Data<u32>, Other<&str>> = Pair { a: 7, b: "seven" };
+    let wide: u64 = p.a.into();
+    assert_eq!((wide, p.b), (7, "seven"));
+    // The markers take no room, and one marker type serves both.
+    assert_eq!(size_of::<Data<u64>>(), 0);
+    let _same: (Wire<Data<u16>, Domain<Fast>>, Pair<Data<u16>, Other<()>>) = (
+        Wire {
+            value: 1,
+            domain: std::marker::PhantomData,
+        },
+        Pair { a: 2, b: () },
+    );
+}
+
+#[test]
+fn a_tuple_struct_with_its_own_where_and_an_unsized_parameter() {
+    let b: Boxed<Data<str>, Tag<u8>> = Boxed("unsized".into(), 1);
+    assert_eq!((&*b.0, b.1), ("unsized", 1u8));
+}
+
+#[test]
+fn the_structs_macro_still_names_every_parameter() {
+    let p: Pair![Other = bool, Data = u8] = Pair { a: 1, b: true };
+    assert!(p.b);
+    let w: Wire![Data = i16] = Wire {
+        value: -1,
+        domain: std::marker::PhantomData,
+    };
+    assert_eq!(w.value, -1i16);
+}

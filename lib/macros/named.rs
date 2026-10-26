@@ -53,9 +53,10 @@ pub(crate) fn named_type_params(
     attr: TokenStream,
     item: TokenStream,
 ) -> TokenStream {
-    if let Some(t) = attr.into_iter().next() {
-        return err(t.span(), "`#[named_type_params]` takes no arguments");
-    }
+    let reused = match reused(attr) {
+        Ok(r) => r,
+        Err(e) => return e,
+    };
     let toks: Vec<TokenTree> = item.into_iter().collect();
     let Some(kw) = toks.iter().position(|t| {
         is_ident(t, "struct") || is_ident(t, "enum") || is_ident(t, "union")
@@ -151,40 +152,84 @@ pub(crate) fn named_type_params(
     let vis_s = text(&vis);
     let sealed = format!("__named_{}", snake(&name.to_string()));
     let mut out = String::new();
-    // The seal: a role is implemented by its marker alone.
-    out.push_str(&format!(
-        "#[doc(hidden)] #[allow(non_snake_case)] {vis_s} mod {sealed} {{ \
-         pub trait Sealed {{}} }}\n"
-    ));
+    // A name `reuse(..)` lists that is no type parameter of the struct.
+    for (r, span) in &reused {
+        if !names.contains(r) {
+            return err(
+                *span,
+                &format!("`reuse({r})` names no type parameter of `{name}`"),
+            );
+        }
+    }
+    let reuses = |n: &str| reused.iter().any(|(r, _)| r == n);
+    // The seal: a role is implemented by its marker alone. A struct
+    // that makes no marker of its own needs none.
+    if types.iter().any(|t| !reuses(&t.name.to_string())) {
+        out.push_str(&format!(
+            "#[doc(hidden)] #[allow(non_snake_case)] {vis_s} mod {sealed} {{ \
+             pub trait Sealed {{}} }}\n"
+        ));
+    }
     for t in &types {
         let p = t.name.to_string();
-        let b = text(&t.bounds);
-        let colon = if t.bounds.is_empty() { "" } else { ":" };
-        out.push_str(&format!(
-            "/// Names the `{p}` argument of [`{name}`]: `{p}<T>` where `T` is \
-             the type it stands for.\n\
-             {vis_s} struct {p}<T: ?Sized>(\
-             ::core::marker::PhantomData<T>);\n\
-             /// What may stand for `{p}` in [`{name}`]: its marker, `{p}<T>`, \
-             alone.\n\
-             {vis_s} trait Is{p}: {sealed}::Sealed {{ \
-             /// The type `{p}` stands for.\n type Repr{colon} {b}; }}\n\
-             impl<T{colon} {b}> {sealed}::Sealed for {p}<T> {{}}\n\
-             impl<T: ?Sized> ::core::clone::Clone for {p}<T> {{ \
-             fn clone(&self) -> Self {{ *self }} }}\n\
-             impl<T: ?Sized> ::core::marker::Copy for {p}<T> {{}}\n\
-             impl<T: ?Sized> ::core::default::Default for {p}<T> {{ \
-             fn default() -> Self {{ {p}(::core::marker::PhantomData) }} }}\n\
-             impl<T: ?Sized> ::core::fmt::Debug for {p}<T> {{ \
-             fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> \
-             ::core::fmt::Result {{ f.write_str(\"{p}\") }} }}\n\
-             impl<T: ?Sized> ::core::cmp::PartialEq for {p}<T> {{ \
-             fn eq(&self, _: &Self) -> bool {{ true }} }}\n\
-             impl<T: ?Sized> ::core::cmp::Eq for {p}<T> {{}}\n\
-             impl<T: ?Sized> ::core::hash::Hash for {p}<T> {{ \
-             fn hash<H: ::core::hash::Hasher>(&self, _: &mut H) {{}} }}\n\
-             impl<T{colon} {b}> Is{p} for {p}<T> {{ type Repr = T; }}\n"
+        if reuses(&p) {
+            continue;
+        }
+        out.push_str(&marker(
+            &vis_s,
+            &p,
+            &sealed,
+            &text(&t.bounds),
+            &format!("[`{name}`]"),
         ));
+    }
+    // The bounds of a reused parameter: its role is shared and has
+    // none, so the struct states its own in its `where` clause, read
+    // through the role, with the `Sized` a plain parameter has unless
+    // it said `?Sized`.
+    let mut preds: Vec<String> = Vec::new();
+    for t in &types {
+        let p = t.name.to_string();
+        if !reuses(&p) {
+            continue;
+        }
+        // The bounds, term by term at the top-level `+`: a relaxed one,
+        // `?Sized`, is the shared role's already and is not allowed in
+        // a `where` clause, so it drops out, and without it the term
+        // `Sized` is added, as a plain parameter has it.
+        let mut terms: Vec<String> = Vec::new();
+        let mut relaxed = false;
+        let mut depth = 0i32;
+        let mut cur: Vec<TokenTree> = Vec::new();
+        let mut flush = |cur: &mut Vec<TokenTree>, relaxed: &mut bool| {
+            if cur.first().is_some_and(|x| is_punct(x, '?')) {
+                *relaxed = true;
+            } else if !cur.is_empty() {
+                terms.push(text(cur));
+            }
+            cur.clear();
+        };
+        for (k, x) in t.bounds.iter().enumerate() {
+            if is_punct(x, '<') {
+                depth += 1;
+            } else if is_punct(x, '>') && !after_dash(&t.bounds, k) {
+                depth -= 1;
+            } else if is_punct(x, '+') && depth == 0 {
+                flush(&mut cur, &mut relaxed);
+                continue;
+            }
+            cur.push(x.clone());
+        }
+        flush(&mut cur, &mut relaxed);
+        if !relaxed {
+            terms.insert(0, "::core::marker::Sized".to_string());
+        }
+        if !terms.is_empty() {
+            preds.push(format!(
+                "<__{p}Param as Is{p}>::Repr: {}",
+                terms.join(" + ")
+            ));
+        }
     }
     // The struct: each type parameter renamed and bound to its role,
     // a default as its marker, and every use of a name in the rest read
@@ -214,7 +259,7 @@ pub(crate) fn named_type_params(
     out.push_str(&use_macro(&name.to_string(), &params, !vis.is_empty()));
     let before: TokenStream = toks[..=kw + 1].iter().cloned().collect();
     let rest = match rewrite(&toks[close + 1..], &names, Place::Top) {
-        Ok(r) => r,
+        Ok(r) => with_preds(r, &preds),
         Err(e) => return e,
     };
     let mut ts: TokenStream = out.parse().expect("the markers parse");
@@ -225,6 +270,168 @@ pub(crate) fn named_type_params(
     ts.extend(g);
     ts.extend(rest);
     ts
+}
+
+/// A marker `P<T>` and its role `IsP`, sealed by `sealed::Sealed`,
+/// with `bounds` on what it names, and the std traits implemented with
+/// no bound on `T`, so a derive on a struct that takes it is met.
+/// `owner` is what its documentation says it names an argument of.
+fn marker(
+    vis: &str,
+    p: &str,
+    sealed: &str,
+    bounds: &str,
+    owner: &str,
+) -> String {
+    let colon = if bounds.is_empty() { "" } else { ":" };
+    format!(
+        "/// Names the `{p}` argument of {owner}: `{p}<T>` where `T` is \
+         the type it stands for.\n\
+         {vis} struct {p}<T: ?Sized>(::core::marker::PhantomData<T>);\n\
+         /// What may stand for `{p}` in {owner}: its marker, `{p}<T>`, \
+         alone.\n\
+         {vis} trait Is{p}: {sealed}::Sealed {{ \
+         /// The type `{p}` stands for.\n type Repr{colon} {bounds}; }}\n\
+         impl<T{colon} {bounds}> {sealed}::Sealed for {p}<T> {{}}\n\
+         impl<T: ?Sized> ::core::clone::Clone for {p}<T> {{ \
+         fn clone(&self) -> Self {{ *self }} }}\n\
+         impl<T: ?Sized> ::core::marker::Copy for {p}<T> {{}}\n\
+         impl<T: ?Sized> ::core::default::Default for {p}<T> {{ \
+         fn default() -> Self {{ {p}(::core::marker::PhantomData) }} }}\n\
+         impl<T: ?Sized> ::core::fmt::Debug for {p}<T> {{ \
+         fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> \
+         ::core::fmt::Result {{ f.write_str(\"{p}\") }} }}\n\
+         impl<T: ?Sized> ::core::cmp::PartialEq for {p}<T> {{ \
+         fn eq(&self, _: &Self) -> bool {{ true }} }}\n\
+         impl<T: ?Sized> ::core::cmp::Eq for {p}<T> {{}}\n\
+         impl<T: ?Sized> ::core::hash::Hash for {p}<T> {{ \
+         fn hash<H: ::core::hash::Hasher>(&self, _: &mut H) {{}} }}\n\
+         impl<T{colon} {bounds}> Is{p} for {p}<T> {{ type Repr = T; }}\n"
+    )
+}
+
+/// The names `reuse(A, B)` lists, each with where it is named; none
+/// for no arguments (#1914).
+#[allow(clippy::type_complexity)]
+fn reused(attr: TokenStream) -> Result<Vec<(String, Span)>, TokenStream> {
+    let ts: Vec<TokenTree> = attr.into_iter().collect();
+    match ts.as_slice() {
+        [] => Ok(Vec::new()),
+        [TokenTree::Ident(r), TokenTree::Group(g)]
+            if *r.to_string() == *"reuse"
+                && g.delimiter() == Delimiter::Parenthesis =>
+        {
+            let mut out = Vec::new();
+            for t in g.stream() {
+                match t {
+                    TokenTree::Ident(n) => out.push((n.to_string(), n.span())),
+                    TokenTree::Punct(p) if p.as_char() == ',' => {}
+                    t => {
+                        return Err(err(
+                            t.span(),
+                            "`reuse(..)` names markers, `reuse(Data, Domain)`",
+                        ))
+                    }
+                }
+            }
+            Ok(out)
+        }
+        [t, ..] => Err(err(
+            t.span(),
+            "`#[named_type_params]` takes nothing, or `reuse(A, B)`: the \
+             markers it reuses rather than makes",
+        )),
+    }
+}
+
+/// What follows the generic list with `preds` added to its `where`
+/// clause, or a `where` clause made for them: before the body of a
+/// braced struct, after the fields of a tuple struct.
+fn with_preds(rest: Vec<TokenTree>, preds: &[String]) -> Vec<TokenTree> {
+    if preds.is_empty() {
+        return rest;
+    }
+    let body = rest.iter().position(|t| {
+        matches!(t, TokenTree::Group(g)
+            if g.delimiter() == Delimiter::Brace
+                || g.delimiter() == Delimiter::Parenthesis)
+    });
+    let Some(b) = body else {
+        return rest;
+    };
+    let tuple = matches!(&rest[b], TokenTree::Group(g) if g.delimiter() == Delimiter::Parenthesis);
+    // Where the clause is, or goes: for a tuple struct between the
+    // fields and the `;`, for a braced one before the body.
+    let (from, to) = if tuple { (b + 1, rest.len()) } else { (0, b) };
+    let has_where = rest[from..to].iter().any(|t| is_ident(t, "where"));
+    let clause_end = if tuple {
+        rest[from..]
+            .iter()
+            .position(|t| is_punct(t, ';'))
+            .map_or(rest.len(), |k| from + k)
+    } else {
+        b
+    };
+    let mut add = String::new();
+    if has_where {
+        let ends_comma = clause_end > 0 && is_punct(&rest[clause_end - 1], ',');
+        if !ends_comma {
+            add.push(',');
+        }
+    } else {
+        add.push_str(" where ");
+    }
+    add.push_str(&preds.join(", "));
+    let add: Vec<TokenTree> = add
+        .parse::<TokenStream>()
+        .expect("the bounds parse")
+        .into_iter()
+        .collect();
+    let mut out = rest[..clause_end].to_vec();
+    out.extend(add);
+    out.extend(rest[clause_end..].iter().cloned());
+    out
+}
+
+/// `named_markers!(pub Data, pub Domain)`: markers and roles declared
+/// once, for every struct that names them in
+/// `#[named_type_params(reuse(..))]` (#1914). A role here has no
+/// bounds, since it serves structs with different ones; each struct
+/// states its own in its `where` clause. The seal is a module of its
+/// own beside them, named for the first marker.
+pub(crate) fn named_markers(input: TokenStream) -> TokenStream {
+    let ts: Vec<TokenTree> = input.into_iter().collect();
+    let mut items: Vec<(String, String)> = Vec::new();
+    for part in ts.split(|t| is_punct(t, ',')) {
+        let Some((TokenTree::Ident(n), vis)) = part.split_last() else {
+            if part.is_empty() {
+                continue;
+            }
+            return err(
+                part[0].span(),
+                "`named_markers!` lists markers, `named_markers!(pub Data, pub Domain)`",
+            );
+        };
+        items.push((text(vis), n.to_string()));
+    }
+    let Some((vis0, first)) = items.first() else {
+        return err(Span::call_site(), "`named_markers!` lists no marker");
+    };
+    let sealed = format!("__named_markers_{}", snake(first));
+    let mut out = format!(
+        "#[doc(hidden)] #[allow(non_snake_case)] {vis0} mod {sealed} {{ \
+         pub trait Sealed {{}} }}\n"
+    );
+    for (vis, n) in &items {
+        out.push_str(&marker(
+            vis,
+            n,
+            &sealed,
+            "?Sized",
+            "a struct that reuses it",
+        ));
+    }
+    out.parse().expect("the markers parse")
 }
 
 /// The struct's own macro, `Name![P = v, ..]`: every parameter given
