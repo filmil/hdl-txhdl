@@ -21,16 +21,19 @@
 //! one peripheral. So the link's region is not carried, and a
 //! peripheral that wants one gets it as a constant where it is
 //! instantiated. `AxQOS` is carried, since the controller has it.
-//! The widths are stated, as everywhere in this library: `A` the
-//! address width, `D` the data width, `S` the strobe width, which is
-//! `D / 8`, and `I` the identifier width.
+//! The widths are stated, as everywhere in this library: `ADDR` the
+//! address width, `DATA` the data width, `STRB` the strobe width, which
+//! is `DATA / 8`, `ID` the identifier width, and `LIMBS` the 128-bit
+//! limbs of a word. Each struct takes them by name,
+//! `AxiPerPins![ADDR = 32, DATA = 32, STRB = 4, ID = 5]`, and the impls
+//! write them `A`, `D`, `S`, `I` and `L`.
 //!
 //! [`AxiPins`]: super::axi_pins::AxiPins
 //! [`AxiPer`]: super::axi::AxiPer
 use crate::bus::axi::{Ar, Aw, BurstKind, Resp, B, R, W};
 use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, select, with, Ports, Trace};
+use txhdl::{lower, named_type_params, select, with, Ports, Trace};
 
 // begin{ports}
 /// What the peripheral drives: its eleven pins, named as AXI4 names
@@ -38,14 +41,19 @@ use txhdl::{lower, select, with, Ports, Trace};
 /// holding a peripheral's pins among its ports passes them on whole.
 ///
 /// [`AxiHostPins`]: super::axi_pins::AxiHostPins
+#[named_type_params]
 #[derive(Ports)]
-pub struct AxiPerDriven<const D: usize, const I: usize, const L: usize = 1> {
+pub struct AxiPerDriven<
+    const DATA: usize,
+    const ID: usize,
+    const LIMBS: usize = 1,
+> {
     /// The peripheral takes a write address phase.
     pub awready: In<Bit>,
     /// The peripheral takes a write beat.
     pub wready: In<Bit>,
     /// The burst a write response answers.
-    pub bid: In<U<I>>,
+    pub bid: In<U<ID>>,
     /// How the write went, as AXI4 encodes it.
     pub bresp: In<U<2>>,
     /// A write response offered.
@@ -53,9 +61,9 @@ pub struct AxiPerDriven<const D: usize, const I: usize, const L: usize = 1> {
     /// The peripheral takes a read address phase.
     pub arready: In<Bit>,
     /// The burst a read beat belongs to.
-    pub rid: In<U<I>>,
+    pub rid: In<U<ID>>,
     /// The word read.
-    pub rdata: In<U<D, L>>,
+    pub rdata: In<U<DATA, LIMBS>>,
     /// How the beat went, as AXI4 encodes it.
     pub rresp: In<U<2>>,
     /// The last beat of the burst.
@@ -66,43 +74,45 @@ pub struct AxiPerDriven<const D: usize, const I: usize, const L: usize = 1> {
 
 /// What the peripheral drives, and the link's address phases and write
 /// beats: the unit's inputs.
+#[named_type_params]
 pub struct AxiPerPinsIn<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
-    const L: usize = 1,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+    const LIMBS: usize = 1,
 > {
     /// The design's reset, which the peripheral does not share: the
     /// unit answers it itself (issue 1532).
     pub rst: In<Bit>,
     /// The peripheral's pins.
-    pub pins: AxiPerDriven<D, I, L>,
+    pub pins: AxiPerDriven<DATA, ID, LIMBS>,
     /// The write address phases, from the link.
-    pub aw: Rx<Aw<A, I>>,
+    pub aw: Rx<Aw<ADDR, ID>>,
     /// The read address phases, from the link.
-    pub ar: Rx<Ar<A, I>>,
+    pub ar: Rx<Ar<ADDR, ID>>,
     /// The write beats, from the link.
-    pub w: Rx<W<D, S, L>>,
+    pub w: Rx<W<DATA, STRB, LIMBS>>,
 }
 
 /// The answers to the link, and what the peripheral is driven with:
 /// the unit's outputs.
+#[named_type_params]
 pub struct AxiPerPinsOut<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
-    const L: usize = 1,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+    const LIMBS: usize = 1,
 > {
     /// The write responses, to the link.
-    pub b: Tx<B<I>>,
+    pub b: Tx<B<ID>>,
     /// The read beats, to the link.
-    pub r: Tx<R<D, I, L>>,
+    pub r: Tx<R<DATA, ID, LIMBS>>,
     /// `AWID`.
-    pub awid: Out<U<I>>,
+    pub awid: Out<U<ID>>,
     /// `AWADDR`.
-    pub awaddr: Out<U<A>>,
+    pub awaddr: Out<U<ADDR>>,
     /// `AWLEN`: beats in the burst, less one.
     pub awlen: Out<U<8>>,
     /// `AWSIZE`: bytes per beat, as a power of two.
@@ -120,9 +130,9 @@ pub struct AxiPerPinsOut<
     /// A write address phase offered.
     pub awvalid: Out<Bit>,
     /// `WDATA`.
-    pub wdata: Out<U<D, L>>,
+    pub wdata: Out<U<DATA, LIMBS>>,
     /// `WSTRB`.
-    pub wstrb: Out<U<S>>,
+    pub wstrb: Out<U<STRB>>,
     /// `WLAST`.
     pub wlast: Out<Bit>,
     /// A write beat offered.
@@ -130,9 +140,9 @@ pub struct AxiPerPinsOut<
     /// The write response channel has room.
     pub bready: Out<Bit>,
     /// `ARID`.
-    pub arid: Out<U<I>>,
+    pub arid: Out<U<ID>>,
     /// `ARADDR`.
-    pub araddr: Out<U<A>>,
+    pub araddr: Out<U<ADDR>>,
     /// `ARLEN`.
     pub arlen: Out<U<8>>,
     /// `ARSIZE`.
@@ -174,13 +184,14 @@ pub struct AxiPerPinsOut<
 /// design that was reset and passes none of them on, and offers the
 /// peripheral nothing new. Nothing it offers waits on a `ready`, as AXI4
 /// asks of a host, and an offer is never withdrawn.
+#[named_type_params]
 #[derive(Trace, Default)]
 pub struct AxiPerPins<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
-    const L: usize = 1,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+    const LIMBS: usize = 1,
 > {
     /// A write is being given: offered, and its address or a beat not
     /// yet taken.
@@ -193,9 +204,9 @@ pub struct AxiPerPins<
     /// How many of its beats have gone.
     pub sent: Reg<U<9>>,
     /// Its address phase as the pins carry it: `AWID`.
-    pub h_id: Reg<U<I>>,
+    pub h_id: Reg<U<ID>>,
     /// `AWADDR`.
-    pub h_addr: Reg<U<A>>,
+    pub h_addr: Reg<U<ADDR>>,
     /// `AWLEN`.
     pub h_len: Reg<U<8>>,
     /// `AWSIZE`.
@@ -420,30 +431,32 @@ pub mod sim {
     use std::collections::{HashMap, VecDeque};
     use std::rc::Rc;
     use txhdl::comp::{signal, Clock, DefaultClock, In, Out, Rx, Tx};
+    use txhdl::named_type_params;
     use txhdl::types::{Bit, U};
 
     /// The pins a memory reads: what the unit drives, less the fields it
     /// does not use. Every burst is taken as incrementing words, so
     /// `AxSIZE` and `AxBURST` are not among them, and nor are `AxLOCK`,
     /// `AxCACHE`, `AxPROT` and `AxQOS`.
+    #[named_type_params]
     pub struct PinRamIn<
-        const A: usize,
-        const D: usize,
-        const S: usize,
-        const I: usize,
+        const ADDR: usize,
+        const DATA: usize,
+        const STRB: usize,
+        const ID: usize,
     > {
         /// `AWID`.
-        pub awid: In<U<I>>,
+        pub awid: In<U<ID>>,
         /// `AWADDR`.
-        pub awaddr: In<U<A>>,
+        pub awaddr: In<U<ADDR>>,
         /// `AWLEN`.
         pub awlen: In<U<8>>,
         /// `AWVALID`.
         pub awvalid: In<Bit>,
         /// `WDATA`.
-        pub wdata: In<U<D>>,
+        pub wdata: In<U<DATA>>,
         /// `WSTRB`.
-        pub wstrb: In<U<S>>,
+        pub wstrb: In<U<STRB>>,
         /// `WLAST`.
         pub wlast: In<Bit>,
         /// `WVALID`.
@@ -451,9 +464,9 @@ pub mod sim {
         /// `BREADY`.
         pub bready: In<Bit>,
         /// `ARID`.
-        pub arid: In<U<I>>,
+        pub arid: In<U<ID>>,
         /// `ARADDR`.
-        pub araddr: In<U<A>>,
+        pub araddr: In<U<ADDR>>,
         /// `ARLEN`.
         pub arlen: In<U<8>>,
         /// `ARVALID`.
@@ -463,7 +476,8 @@ pub mod sim {
     }
 
     /// The pins a memory drives: its readies and its answers.
-    pub struct PinRamOut<const D: usize, const I: usize> {
+    #[named_type_params]
+    pub struct PinRamOut<const DATA: usize, const ID: usize> {
         /// `AWREADY`.
         pub awready: Out<Bit>,
         /// `WREADY`.
@@ -471,15 +485,15 @@ pub mod sim {
         /// `ARREADY`.
         pub arready: Out<Bit>,
         /// `BID`.
-        pub bid: Out<U<I>>,
+        pub bid: Out<U<ID>>,
         /// `BRESP`.
         pub bresp: Out<U<2>>,
         /// `BVALID`.
         pub bvalid: Out<Bit>,
         /// `RID`.
-        pub rid: Out<U<I>>,
+        pub rid: Out<U<ID>>,
         /// `RDATA`.
-        pub rdata: Out<U<D>>,
+        pub rdata: Out<U<DATA>>,
         /// `RRESP`.
         pub rresp: Out<U<2>>,
         /// `RLAST`.
@@ -489,15 +503,16 @@ pub mod sim {
     }
 
     /// The peripheral's ends of the pins, and its memory.
+    #[named_type_params]
     pub struct PinRam<
-        const A: usize,
-        const D: usize,
-        const S: usize,
-        const I: usize,
+        const ADDR: usize,
+        const DATA: usize,
+        const STRB: usize,
+        const ID: usize,
     > {
-        inp: PinRamIn<A, D, S, I>,
-        out: PinRamOut<D, I>,
-        mem: Rc<RefCell<HashMap<u128, U<D>>>>,
+        inp: PinRamIn<ADDR, DATA, STRB, ID>,
+        out: PinRamOut<DATA, ID>,
+        mem: Rc<RefCell<HashMap<u128, U<DATA>>>>,
         words: u128,
         wraps: bool,
         early: bool,
