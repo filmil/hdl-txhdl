@@ -154,7 +154,9 @@ behaviors.
 
 Example driver \code{ex\_axi\_pins} evaluates this adapter in simulation
 (Listing~\ref{lst:p-ex}). A behavioral host model drives
-\code{AxiPins<32, 64, 8, 4>}, matching endpoint bus widths, connected to a
+\code{AxiPins} at the endpoint's bus widths, given by name:
+\code{ADDR = 32}, \code{DATA = 64}, \code{STRB = 8} and \code{ID = 4}.
+The adapter is connected to a
 peripheral tracker and target RAM. The test issues three 64-bit write beats,
 reads back four words, and attempts an out-of-bounds read that triggers a bus
 fault. Listing~\ref{lst:p-out} records simulation output, and
@@ -206,8 +208,9 @@ single-port memory controllers do not inspect. Quality-of-service bits
 (\code{AxQOS}) are forwarded directly.
 
 Example testbench \code{ex\_axi\_per\_pins} verifies this interface by attaching
-a simulated memory model behind \code{AxiPerPins<30, 32, 4, 5>}, matching DDR3
-controller widths. Listing~\ref{lst:p-perex} shows testbench construction,
+a simulated memory model behind \code{AxiPerPins} at the DDR3
+controller's widths: \code{ADDR = 30}, \code{DATA = 32}, \code{STRB = 4} and
+\code{ID = 5}. Listing~\ref{lst:p-perex} shows testbench construction,
 Listing~\ref{lst:p-perout} lists output traces, and Figure~\ref{fig:p-perpins}
 charts write transaction timing across peripheral pins. Multi-simulator test
 suites under \code{nvc} and Verilator confirm formal equivalence with generated
