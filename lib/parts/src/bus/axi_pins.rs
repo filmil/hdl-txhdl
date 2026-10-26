@@ -31,7 +31,7 @@ use txhdl::{lower, named_type_params, select, Ports, Trace};
 // begin{ports}
 /// What the host drives: its 24 pins, named as AXI4 names them. A
 /// struct of its own so that a design holding a host's pins among its
-/// ports holds them as one field, `jtag: AxiHostPins<..>`, and passes
+/// ports holds them as one field, `jtag: AxiHostPins![..]`, and passes
 /// them on whole; its ports are then `jtag_awid` and the rest
 /// (issue 579).
 #[named_type_params]
