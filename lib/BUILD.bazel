@@ -140,6 +140,15 @@ rust_test(
     deps = [":txhdl"],
 )
 
+# Markers declared once and reused, `named_markers!` (#1914).
+rust_test(
+    name = "named_reuse_test",
+    srcs = ["tests/named_reuse.rs"],
+    edition = "2021",
+    proc_macro_deps = [":txhdl_macros"],
+    deps = [":txhdl"],
+)
+
 # Type parameters given by name, `#[named_type_params]` (#1899).
 rust_test(
     name = "named_params_test",

@@ -198,14 +198,23 @@ impl<T: Copy> Cellf<T> {
     }
 }
 
+/// The markers the runtime's types give their parameters by, declared
+/// once so every type reuses them (#1914): `Data<T>`, the value a
+/// wire or a channel carries, and `Domain<C>`, the clock domain it is
+/// in. The roles have no bounds; each type states its own.
+pub mod named {
+    txhdl_macros::named_markers!(pub Data, pub Domain);
+}
+pub use named::{Data, Domain, IsData, IsDomain};
+
 /// One wire, in a clock domain. Never held by a unit; split into ends.
 ///
 /// Its two type parameters are given by name (#1899): `Signal<Data<T>>`
 /// is a wire of `T` in the default clock domain, and
 /// `Signal<Data<T>, Domain<C>>` one in `C`'s. `Data` and `Domain` are
-/// the markers `#[named_type_params]` makes, so the two cannot be
+/// the shared markers of [`named`] (#1914), so the two cannot be
 /// swapped.
-#[txhdl_macros::named_type_params]
+#[txhdl_macros::named_type_params(reuse(Data, Domain))]
 pub struct Signal<Data: Copy + Default, Domain: Clock = DefaultClock>(
     Rc<Cellf<Data>>,
     PhantomData<Domain>,

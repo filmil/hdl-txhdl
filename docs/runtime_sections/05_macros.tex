@@ -462,8 +462,26 @@ each implements \code{Clone}, \code{Copy}, \code{Debug},
 \code{Default}, \code{PartialEq}, \code{Eq} and \code{Hash} whatever
 it names; the fields meet the derived traits only if the parameters'
 bounds say so, which they then carry over to the roles.
-Two structs of one module cannot share a parameter's name, since each
-makes the marker of that name (\#1914).
+Two structs of one module that each made the marker of one name would
+define it twice (\#1914), so a marker can be declared once and reused.
+\code{named\_markers!(pub Data, pub Domain)} declares the markers and
+their roles, whose \code{Repr} has no bounds, with a seal of their own
+beside them; \code{\#[named\_type\_params(reuse(Data, Domain))]} on a
+struct makes no marker for the names it lists and states the struct's
+own bounds on each in its \code{where} clause, read through the role,
+\code{<\_\_DataParam as IsData>::Repr: Sized + Copy + Default}, with
+the \code{Sized} a plain parameter has unless it said \code{?Sized}.
+The runtime's markers are \code{comp::named}'s, and \code{Signal}
+reuses them.
+\code{reuse(..)} is for markers \code{named\_markers!} declared: a
+marker another struct made carries that struct's bounds in its role, so
+a struct reusing it would have both structs' bounds, and could not drop
+\code{Sized}.
+The one cost is Rust's: a struct's \code{where} bounds are not implied
+in its impls, as a trait's bounds on an associated type are, so an impl
+generic over the role restates them (\code{probe\_named\_reuse\_generic});
+one written on the marker, \code{impl<T: Copy + Default> ..
+Signal<Data<T>>}, as every impl in the tree is, needs nothing more.
 
 \lstinputlisting[caption={\code{lib/macros/lib.rs}.},label={lst:r-macros}]{lib/macros/lib.rs}
 

@@ -1194,6 +1194,14 @@ pub fn named_type_params(attr: TokenStream, item: TokenStream) -> TokenStream {
     named::named_type_params(attr, item)
 }
 
+/// `named_markers!(pub Data, pub Domain)`: markers declared once, for
+/// the structs that reuse them with `#[named_type_params(reuse(..))]`
+/// (#1914). See `named.rs`.
+#[proc_macro]
+pub fn named_markers(input: TokenStream) -> TokenStream {
+    named::named_markers(input)
+}
+
 /// `ts` with every token given `span`: a check the macro writes then
 /// reports at the name it checks. Every path in such a check is
 /// absolute, so where its names resolve does not change.
