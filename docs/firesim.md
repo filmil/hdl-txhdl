@@ -28,7 +28,7 @@ rules_scala takes its Scala version from the root module alone, so Golden Gate i
 The one platform is FireSim's RHS Research Nitefury II (`xc7a200tfbg484-2`), on Vivado 2025.2.
 FireSim's own flow for it is pinned to Vivado 2022.1; the change 2025.2 needs, XDMA 4.1 to 4.2, is a patch in `firesim_platform_nitefury`.
 FireSim's `nitefury_firesim_rocket_singlecore_no_nic` recipe goes from Chisel to a bitstream that meets timing.
-From a warm cache on eph4, elaboration and Golden Gate take about 1.5 minutes, and the bitstream about 30, at a worst negative slack of +0.318 ns and 69% of the part's LUTs.
+On one build machine (eph4, eight cores), from a warm cache, elaboration and Golden Gate take about 1.5 minutes, and the bitstream about 30 minutes, at a worst negative slack of +0.318 ns and 69% of the part's LUTs.
 An opt-in shell built on rules_vivado's own rules, `firesim_nitefury_shell`, makes the same shell without a block design, so its cores and synthesis are cached apart.
 
 The toolchain's README says how a consumer sets it up: the registry lines for `.bazelrc`, and what only the root module can state in `MODULE.bazel`, namely Scala 2.13.16, the C++ toolchain, Vivado and a lock file for the Maven set.
@@ -37,8 +37,8 @@ The toolchain's README says how a consumer sets it up: the registry lines for `.
 
 Only Golden Gate, through one test (PR 1929):
 
-* `MODULE.bazel` depends on `firesim_goldengate` 1.22.0, the module rules_firesim runs Golden Gate from.
-* `//firesim:goldengate_test` runs Golden Gate on FireSim's GCD example for the Nitefury II platform.
+* `MODULE.bazel` depends on the module `firesim_goldengate` 1.22.0, which holds Golden Gate prebuilt; the rule of the same name in rules_firesim runs it from there.
+* `//firesim:goldengate_test` runs that prebuilt binary, `@firesim_goldengate//:goldengate`, directly and not through the rule, on FireSim's GCD example for the Nitefury II platform.
   The example is checked in under `firesim/testdata/`, GCD elaborated by FireSim 1.22.0's examples generator, about 22 KB of FIRRTL and annotations.
   The test checks that the Verilog and the driver header come out, with the simulator's top module, `FPGATop`, and GCD's own logic in the Verilog, and the register blocks of GCD's two bridges, peek-poke and the clock, in the header.
 
@@ -48,9 +48,14 @@ It moves `rules_cc`, `dtc` and five more modules to newer releases, so it comes 
 ## What comes next
 
 Part (c) of #1927 is a FireSim platform for the AX7A200B, the board TxHDL runs on, reusing `//pcie`'s XDMA endpoint and `//ddr3`'s MIG controller.
-A run on hardware needs more than a bitstream: FireSim's host drives the design over PCIe, so the board must sit in a PCIe slot of a host that runs the driver.
-TxHDL's PCIe endpoint has not run in one yet; `//docs:pcie` says its validation in a host remains to be done.
+As far as is known, the board has what FireSim needs: XDMA over its PCIe edge, Gen2 with two lanes in `//pcie` against the Nitefury II's four, so half the bandwidth, and DDR3 through `//ddr3`.
+The published platform and the bitstreams built so far are for the Nitefury II, a different board with the same part, which TxHDL does not have.
+
+A run on hardware needs more than a platform.
+FireSim's host driver reaches the FPGA over PCIe, through XDMA's `/dev/xdma`, so the board must sit in a PCIe slot of a host that runs the driver.
+Today it does not: it hangs off a host over JTAG and a serial line only, and TxHDL's own PCIe endpoint has not run in a host yet, as `//docs:pcie` says.
 So (c) starts with a build that meets timing, and a run follows once the board is in a host.
+Ethernet, which the board also has, is the slower alternative the plan for (c) looks at.
 
 ## What it is not
 
