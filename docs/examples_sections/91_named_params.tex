@@ -26,6 +26,12 @@ the way to write \code{Lanes<8, 4>} with each number named.
 The positional form still compiles for a const parameter, so the macro
 is a discipline there and not a guarantee.
 
+Two structs that name a parameter alike share its marker:
+\code{named\_markers!(pub Addr, pub Word)} declares the markers once,
+and \code{Bus} and \code{Beat} each take them with
+\code{\#[named\_type\_params(reuse(..))]}, their own bounds stated
+for themselves (\#1914).
+
 The runtime's \code{Signal} is written this way, so a wire of eight
 bits is \code{Signal<Data<U<8>>>}, and one in a named clock domain
 \code{Signal<Data<U<8>>, Domain<C>>}.
