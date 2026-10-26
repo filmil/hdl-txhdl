@@ -31,6 +31,7 @@ Those reasons live here.
 | `board-checks.md` | Every board check the issues owe, as commands in session order: the bitstreams to build first, what each run should print, what to keep, and which issue it closes |
 | `demos.md` | The canonical demos redone after each bigger milestone: the list in `demos.tsv`, the tool that runs them on the board, and where the videos go (issue 1592) |
 | `sv32-timing.md` | Where Sv32 translation sits in the core, the walker and the TLB sizes, the core's two critical paths measured with a prototype TLB and with operands read at the edge, the cost in cycles of each option, and the recommendation (issue 1009) |
+| `firesim.md` | FireSim in TxHDL: the published Bazel toolchain and its four rules, the one platform it supports and what it costs to build, what TxHDL takes of it today (Golden Gate and `//firesim:goldengate_test`), and what a FireSim platform for the AX7A200B needs (issues 1927 and 1930) |
 
 The documents typeset here are the ones `cover.tex` names:
 `article.tex` with `sections/` is the merge, `//docs:article`;
