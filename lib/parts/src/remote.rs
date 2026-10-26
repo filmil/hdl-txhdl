@@ -28,6 +28,7 @@
 //! the bus has already finished with.
 
 pub mod eth;
+pub mod host;
 use txhdl::comp::{mux, Clock, DefaultClock, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};

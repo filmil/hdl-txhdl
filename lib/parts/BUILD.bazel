@@ -55,6 +55,7 @@ rust_library(
         "src/scanout.rs",
         "src/sd.rs",
         "src/remote/eth.rs",
+        "src/remote/host.rs",
         "src/spi.rs",
         "src/station.rs",
         "src/tracer.rs",

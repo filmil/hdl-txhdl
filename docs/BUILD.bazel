@@ -1229,6 +1229,8 @@ latex_document(
         ":flashwin_timing",
         ":remote_run",
         ":remote_timing",
+        ":hostlink_run",
+        ":hostlink_timing",
         ":pwm_run",
         ":pwm_timing",
         ":trng_run",
@@ -2363,6 +2365,26 @@ waveform(
     ],
     from_tick = 39,
     until = 119,
+)
+
+# A program's ask arriving as bytes on `rx`, performed on the bus, and
+# answered on `tx` (issue 1931).
+waveform(
+    name = "hostlink",
+    example = "//lib/examples:ex_hostlink",
+    lowered = [
+        ("host_link", "host_link"),
+        ("lite_master", "lite_master"),
+    ],
+    signals = [
+        "//clocks/clk=>clk",
+        "//rx/tx_valid=>rx",
+        "//ask/tx_valid=>ask",
+        "//bus_ar/tx_valid=>ar",
+        "//back/tx_valid=>back",
+        "//tx/tx_valid=>tx",
+        "//master/busy=>busy",
+    ],
 )
 
 # A peripheral answered by a program: the transaction leaving on
