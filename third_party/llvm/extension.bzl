@@ -15,13 +15,20 @@ inside `toolchains_llvm`, where this module's repositories are not
 visible. A label made here and turned into its canonical form does
 resolve there, whether this module is the root or a dependency, which a
 label written as a string in `MODULE.bazel` cannot do.
+
+The LLVM release itself is unpacked by `llvm_dist` in `repo.bzl` rather
+than by `toolchains_llvm`, so that the libraries its linker needs come
+with it rather than from the machine (issue 1948).
+`toolchains_llvm` is pointed at it through `toolchain_roots`, by the
+same kind of canonical label.
 """
 
 load("@toolchains_llvm//toolchain:rules.bzl", "llvm_toolchain")
 load("//third_party/debs:repo.bzl", "deb_tree")
+load(":repo.bzl", "llvm_dist")
 
-# The LLVM release. toolchains_llvm fetches it by the checksum it keeps
-# for each release.
+# The LLVM release. `llvm_dist` fetches it by the checksum that
+# toolchains_llvm keeps for it.
 LLVM_VERSION = "20.1.8"
 
 def _cc_toolchain_impl(module_ctx):
@@ -30,9 +37,13 @@ def _cc_toolchain_impl(module_ctx):
         locks = [Label("//third_party/sysroot:bullseye.lock.tsv")],
         sysroot = True,
     )
+    llvm_dist(name = "llvm_toolchain_llvm")
     llvm_toolchain(
         name = "llvm_toolchain",
         llvm_versions = {"": LLVM_VERSION},
+        toolchain_roots = {
+            "": str(Label("@llvm_toolchain_llvm//:BUILD.bazel")).removesuffix(":BUILD.bazel"),
+        },
         sysroot = {
             "linux-x86_64": str(Label("@sysroot_bullseye//tree:sysroot")),
         },
