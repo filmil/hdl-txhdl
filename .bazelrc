@@ -35,6 +35,11 @@ build --output_groups=+rustfmt_checks
 # Vivado from the Bazel-installed toolchain, not Docker or the host.
 build --@rules_vivado//:vivado_mode=hermetic
 
+# Golden Gate (//firesim) is a Java program, and this machine has no JDK of
+# its own: Bazel fetches one. Nothing else here is Java.
+build --java_runtime_version=remotejdk_21
+build --tool_java_runtime_version=remotejdk_21
+
 # What CI runs with, `bazel build --config=ci`, so that its log holds what a
 # failure needs rather than every action's replayed chatter (#537). A cached
 # run replays each action's stderr from the disk cache, and CI uploads its
