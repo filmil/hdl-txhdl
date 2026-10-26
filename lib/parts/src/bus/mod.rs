@@ -27,6 +27,7 @@ pub mod axi_per_pins;
 pub mod axi_pins;
 pub mod exmon;
 pub mod lite_split;
+#[macro_use]
 pub mod noc;
 pub mod router;
 pub mod wb;

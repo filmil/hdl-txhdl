@@ -12,6 +12,9 @@
 #![deny(missing_docs)]
 
 pub mod buffer;
+// With `#[macro_use]`, so the bus structs' by-name macros are in scope
+// in the modules after it (#1915).
+#[macro_use]
 pub mod bus;
 pub mod cdc;
 pub mod cfgflash;

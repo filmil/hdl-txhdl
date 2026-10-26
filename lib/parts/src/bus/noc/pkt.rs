@@ -9,6 +9,7 @@
 //! worked. A read address beat leaves the data and the strobe at
 //! zero; a write response leaves the address at zero. [`Chan`] says
 //! which fields mean anything.
+use txhdl::named_type_params;
 use txhdl::types::{Bit, U};
 use txhdl::{Transaction as TransactionDerive, Value as ValueDerive};
 
@@ -48,37 +49,38 @@ pub enum Vc {
 /// A packet: one beat of one AXI channel, addressed to a node.
 ///
 /// The widths are the AXI link's, and they are the same everywhere in
-/// the network: `A` is the address width, `D` the data width, `S` the
-/// strobe width, which is `D / 8`, and `I` the identifier width. `XB`
-/// and `YB` are the widths of a coordinate, so a lattice is `1 << XB`
-/// by `1 << YB` nodes at most.
+/// the network: `ADDR` is the address width, `DATA` the data width,
+/// `STRB` the strobe width, which is `DATA / 8`, and `ID` the identifier
+/// width. `X_BITS` and `Y_BITS` are the widths of a coordinate, so a lattice is
+/// `1 << X_BITS` by `1 << Y_BITS` nodes at most.
+#[named_type_params]
 #[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
 pub struct Pkt<
-    const XB: usize,
-    const YB: usize,
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
+    const X_BITS: usize,
+    const Y_BITS: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
 > {
     // Where it is going, and where it came from, so that an answer
     // knows its way back without anything keeping a table.
     /// The column of the node it is going to.
-    pub dx: U<XB>,
+    pub dx: U<X_BITS>,
     /// The row of the node it is going to.
-    pub dy: U<YB>,
+    pub dy: U<Y_BITS>,
     /// The column of the node it came from.
-    pub sx: U<XB>,
+    pub sx: U<X_BITS>,
     /// The row of the node it came from.
-    pub sy: U<YB>,
+    pub sy: U<Y_BITS>,
     /// Which channel's beat this is, and so which fields below mean
     /// anything.
     pub chan: Chan,
     /// The AXI identifier the beat carries.
-    pub id: U<I>,
+    pub id: U<ID>,
     // An address phase: `Aw` and `Ar`.
     /// The byte address the burst starts at.
-    pub addr: U<A>,
+    pub addr: U<ADDR>,
     /// Beats in the burst, less one, as AXI counts them.
     pub len: U<8>,
     /// The log of the bytes in a beat, as AXI states it.
@@ -97,9 +99,9 @@ pub struct Pkt<
     pub region: U<4>,
     // A data beat: `W` and `R`.
     /// The beat's data, on `W` and `R`.
-    pub data: U<D>,
+    pub data: U<DATA>,
     /// Which lanes of `data` a write covers.
-    pub strb: U<S>,
+    pub strb: U<STRB>,
     /// Whether this is the burst's final beat.
     pub last: Bit,
     // A response: `B` and `R`.

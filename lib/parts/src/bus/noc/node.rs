@@ -12,6 +12,7 @@
 //! The naming is `q` for the request channel and `p` for the
 //! response, then the port, then `i` or `o`.
 use txhdl::comp::{join2, In, Rx, Tx, Unit};
+use txhdl::named_type_params;
 use txhdl::types::U;
 use txhdl::{lower, Trace};
 
@@ -24,23 +25,24 @@ use super::switch::Switch;
 /// its inputs `col` and `row` say (issue 635).
 ///
 /// The widths are the AXI link's, and they are the same everywhere in
-/// the network: `A` is the address width, `D` the data width, `S` the
-/// strobe width, which is `D / 8`, and `I` the identifier width. `XB`
-/// and `YB` are the widths of a coordinate, so a lattice is `1 << XB`
-/// by `1 << YB` nodes at most.
+/// the network: `ADDR` is the address width, `DATA` the data width,
+/// `STRB` the strobe width, which is `DATA / 8`, and `ID` the identifier
+/// width. `X_BITS` and `Y_BITS` are the widths of a coordinate, so a lattice is
+/// `1 << X_BITS` by `1 << Y_BITS` nodes at most.
+#[named_type_params]
 #[derive(Trace, Default)]
 pub struct Node<
-    const XB: usize,
-    const YB: usize,
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
+    const X_BITS: usize,
+    const Y_BITS: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
 > {
     /// What a host sends and a peripheral receives.
-    pub req: Switch<XB, YB, A, D, S, I>,
+    pub req: Switch<X_BITS, Y_BITS, ADDR, DATA, STRB, ID>,
     /// What a peripheral sends and a host receives.
-    pub rsp: Switch<XB, YB, A, D, S, I>,
+    pub rsp: Switch<X_BITS, Y_BITS, ADDR, DATA, STRB, ID>,
 }
 // end{state}
 

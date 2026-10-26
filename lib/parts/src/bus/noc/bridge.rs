@@ -31,6 +31,7 @@
 //! tree; `docs/noc-bursts.md` says what it would cost to do otherwise,
 //! and for whom.
 use txhdl::comp::{mux, Clock, DefaultClock, Mem, Reg, Rx, Tx, Unit};
+use txhdl::named_type_params;
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 
@@ -38,19 +39,19 @@ use super::pkt::{Chan, Pkt};
 use crate::bus::axi::{Addr, BurstKind, Resp, B, R, W};
 
 // begin{host}
-/// The host side of an exit, at column `X` and row `Y`.
+/// The host side of an exit, at column `COL` and row `ROW`.
 ///
-/// `B0`, `M0`, `X0` and `Y0`, and their two fellows, are the address
-/// map: an address whose bits under the mask `M0` equal `B0` goes to
-/// the node at `X0`, `Y0`. The last entry is the default route: `X2`,
-/// `Y2` take everything the first two did not match, and `B2` and `M2`
-/// are not read.
+/// `BASE0`, `MASK0`, `COL0` and `ROW0`, and their two fellows, are the
+/// address map: an address whose bits under the mask `MASK0` equal
+/// `BASE0` goes to the node at `COL0`, `ROW0`. The last entry is the
+/// default route: `COL2`, `ROW2` take everything the first two did not
+/// match, and `BASE2` and `MASK2` are not read.
 ///
 /// The widths are the AXI link's, and they are the same everywhere in
-/// the network: `A` is the address width, `D` the data width, `S` the
-/// strobe width, which is `D / 8`, and `I` the identifier width. `XB`
-/// and `YB` are the widths of a coordinate, so a lattice is `1 << XB`
-/// by `1 << YB` nodes at most.
+/// the network: `ADDR` is the address width, `DATA` the data width,
+/// `STRB` the strobe width, which is `DATA / 8`, and `ID` the identifier
+/// width. `X_BITS` and `Y_BITS` are the widths of a coordinate, so a lattice is
+/// `1 << X_BITS` by `1 << Y_BITS` nodes at most.
 ///
 /// A write of one beat is one packet and needs nothing kept between
 /// cycles. A write of more is split (issue 125): its first beat leaves
@@ -63,41 +64,42 @@ use crate::bus::axi::{Addr, BurstKind, Resp, B, R, W};
 /// write of one beat and a read do not wait. A wrapping burst is not
 /// split, since the wrap is not computed here: it is eaten whole and
 /// answered `SlvErr`, as every long write was before the split.
+#[named_type_params]
 #[derive(Trace, Default)]
 pub struct HostBridge<
-    const X: usize,
-    const Y: usize,
-    const XB: usize,
-    const YB: usize,
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
-    const B0: usize,
-    const M0: usize,
-    const X0: usize,
-    const Y0: usize,
-    const B1: usize,
-    const M1: usize,
-    const X1: usize,
-    const Y1: usize,
-    const B2: usize,
-    const M2: usize,
-    const X2: usize,
-    const Y2: usize,
+    const COL: usize,
+    const ROW: usize,
+    const X_BITS: usize,
+    const Y_BITS: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+    const BASE0: usize,
+    const MASK0: usize,
+    const COL0: usize,
+    const ROW0: usize,
+    const BASE1: usize,
+    const MASK1: usize,
+    const COL1: usize,
+    const ROW1: usize,
+    const BASE2: usize,
+    const MASK2: usize,
+    const COL2: usize,
+    const ROW2: usize,
 > {
     /// Beats of the burst being split that are still to leave, after
     /// the one leaving now; zero when no burst is being split.
     left: Reg<U<8>>,
     /// The address the next beat of that burst goes to.
-    saddr: Reg<U<A>>,
+    saddr: Reg<U<ADDR>>,
     /// The address phase held for the beats after the first: its
     /// identifier, which the merged answer also carries; whether it
     /// is fixed, in which case the address does not move; and its
     /// size and the hints AXI carries and nothing here acts on, sent
     /// again with every beat so that the far side sees the same phase
     /// each time.
-    sid: Reg<U<I>>,
+    sid: Reg<U<ID>>,
     ssize: Reg<U<3>>,
     sfix: Reg<Bit>,
     slock: Reg<Bit>,
@@ -119,7 +121,7 @@ pub struct HostBridge<
     owe: Reg<Bit>,
     /// The identifier that answer carries, kept from the address
     /// phase that was refused.
-    bad: Reg<U<I>>,
+    bad: Reg<U<ID>>,
 }
 // end{host}
 
@@ -407,42 +409,43 @@ impl<
 // end{hostrun}
 
 // begin{per}
-/// The peripheral side of an exit, at node `X`, `Y`. It unpacks a
+/// The peripheral side of an exit, at node `COL`, `ROW`. It unpacks a
 /// request into the channels a peripheral's tracker reads and packs
 /// the answers back to the node the request came from.
 ///
 /// An identifier belongs to the host that made it, so two hosts may
 /// use the same one and a peripheral behind one port cannot tell
 /// their bursts apart. This bridge therefore gives every request an
-/// identifier of its own, from `NIDS` of them, and remembers against
+/// identifier of its own, from `IDS` of them, and remembers against
 /// it the node the request came from and the identifier that node
 /// used. The answer comes back under the local one, and the packet
 /// goes home under the original. A request waits when the identifier
 /// whose turn it is has not been answered, which is what bounds how
 /// many bursts a peripheral has in flight.
+#[named_type_params]
 #[derive(Trace, Default)]
 pub struct PerBridge<
-    const X: usize,
-    const Y: usize,
-    const XB: usize,
-    const YB: usize,
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
-    const NIDS: usize,
+    const COL: usize,
+    const ROW: usize,
+    const X_BITS: usize,
+    const Y_BITS: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+    const IDS: usize,
 > {
     /// The column of the node each local identifier's burst came from.
-    pub sx: Mem<U<XB>, NIDS>,
+    pub sx: Mem<U<X_BITS>, IDS>,
     /// The row of it.
-    pub sy: Mem<U<YB>, NIDS>,
+    pub sy: Mem<U<Y_BITS>, IDS>,
     /// The identifier that node used, which its answer goes back
     /// under.
-    pub oid: Mem<U<I>, NIDS>,
+    pub oid: Mem<U<ID>, IDS>,
     /// The local identifier whose turn it is to be given out.
-    pub turn: Reg<U<I>>,
+    pub turn: Reg<U<ID>>,
     /// Which local identifiers are out and not yet answered.
-    pub busy: Reg<U<NIDS>>,
+    pub busy: Reg<U<IDS>>,
 }
 // end{per}
 
