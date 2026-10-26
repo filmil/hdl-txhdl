@@ -20,4 +20,9 @@ done
 # The simulator's top module and GCD's own logic, in the Verilog.
 grep -q "^module FPGATop" "$out/FireSim-generated.sv" || { echo "no FPGATop in the Verilog" >&2; exit 1; }
 grep -q "GCDDUT" "$out/FireSim-generated.sv" || { echo "no GCDDUT in the Verilog" >&2; exit 1; }
+# The driver's register blocks for GCD's bridges: peek-poke (the host
+# drives GCD through it) and the clock.
+for s in PEEKPOKEBRIDGEMODULE_struct CLOCKBRIDGEMODULE_struct; do
+    grep -q "$s" "$out/FireSim-generated.const.h" || { echo "no $s in the header" >&2; exit 1; }
+done
 echo "Golden Gate: $(wc -c < "$out/FireSim-generated.sv") bytes of Verilog"
