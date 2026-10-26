@@ -1,0 +1,51 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Program That Drives the Bus}
+\label{sec:x-hostlink}
+
+\code{Remote} sends the design's transactions out to a program that
+answers them. This example runs the other way: a program on another
+machine asks, and the design's bus does what it asks. The program
+puts an \code{Ask} in an Ethernet frame. \code{HostLink} takes the
+frame off the wire and hands the \code{Ask} on. \code{LiteMaster}
+performs it as an AXI-Lite host on the design's bus, and the
+\code{Answer} goes back the same way, in a frame. The two directions
+share the frame of \code{RemoteLink}, at the same offsets, with two
+kinds of their own, so they can share a wire and a program, and
+neither takes the other's frames for its own.
+
+This is how FireSim's host driver reaches the simulator's control
+registers without PCIe. Over PCIe the driver reads and writes those
+registers through the XDMA core; here the same reads and writes are
+frames on the board's Ethernet port, to a machine on the other end of
+a cable.
+
+A frame can be lost, so the program sends an ask again when its
+answer does not come. A write performed twice is not always harmless,
+since writing some registers does something. So \code{LiteMaster}
+keeps the tag and the answer of the last transaction it performed,
+and an ask that repeats that tag is answered from them, without
+reaching the bus.
+
+The run sends four asks, one at a time, each waiting for its answer
+as the driver waits for a register. It writes a word and reads it
+back. It asks the same read again under the same tag, as the program
+does when an answer is lost, and the count of transactions the memory
+saw does not move. Then it writes where the memory refuses, and the
+refusal comes back as an error in the answer.
+
+Both units are lowered, and the build simulates both netlists against
+this run under \code{nvc} and Verilator.
+
+\begin{figure}[htbp]
+\centering
+\input{hostlink_timing.tex}
+\caption{An ask arriving: its bytes come in on \code{rx}, the whole
+frame becomes one \code{ask}, \code{busy} rises while the read is on
+the bus at \code{ar}, and the \code{back} it brings leaves as a frame
+on \code{tx}.}
+\label{fig:x-hostlink}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_hostlink.rs}. Run with \code{bazel run //lib/examples:ex\_hostlink}.},label={lst:x-hostlink}]{lib/examples/ex_hostlink.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_hostlink} printed when the build ran it: each ask, its tag and answer, and how many transactions the bus had seen.},label={lst:x-hostlink-out}]{out_hostlink.txt}
