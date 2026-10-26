@@ -115,3 +115,27 @@ mod clauses {
         assert_eq!((h.f)(h.item), 8);
     }
 }
+
+/// The crate's derives on a struct that reuses a marker (#1936): the
+/// bounds `reuse` writes into the `where` clause reach every impl the
+/// derives write, or `Reg<Data>` would ask for a `Value` it was not
+/// promised.
+mod derived {
+    use txhdl::comp::{Data, IsData, Reg};
+    use txhdl::netlist::Fields;
+    use txhdl::types::{Value, U};
+    use txhdl::{named_type_params, Trace};
+
+    #[named_type_params(reuse(Data))]
+    #[derive(Trace, Default)]
+    pub struct Held<Data: Value + Default + 'static> {
+        pub r: Reg<Data>,
+    }
+
+    #[test]
+    fn derives_keep_the_where_clause() {
+        let h = Held::<Data<U<4>>>::default();
+        assert_eq!(h.r.get(), U::<4>::default());
+        assert_eq!(<Held<Data<U<4>>> as Fields>::NAMES, &["r"]);
+    }
+}
