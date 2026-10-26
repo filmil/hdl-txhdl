@@ -35,6 +35,7 @@ use txhdl_parts::bus::axi_per_pins::sim::{PinRam, PinRamIn, PinRamOut};
 use txhdl_parts::bus::axi_per_pins::{
     AxiPerDriven, AxiPerPins, AxiPerPinsIn, AxiPerPinsOut,
 };
+use txhdl_parts::AxiPerPins;
 
 /// The memory's words as an address: a gigabyte of them is two to the
 /// twenty-eighth.
@@ -466,7 +467,7 @@ impl Unit for WidePins {
 /// controller's pins.
 #[derive(Trace, Default)]
 pub struct Ddr3Per {
-    pub pins: AxiPerPins<32, 32, 4, 5>,
+    pub pins: AxiPerPins![ADDR = 32, DATA = 32, STRB = 4, ID = 5],
     pub ctl: Ddr3,
     /// The wide read port's channels on the controller's wide pins.
     pub wide: WidePins,
