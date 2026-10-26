@@ -65,6 +65,7 @@ use txhdl_parts::trng::{Entropy, Trng};
 use txhdl_parts::udprx::UdpRx;
 use txhdl_parts::wdog::Wdog;
 use txhdl_parts::{AxiPerPins, AxiPins};
+use txhdl_parts::{HostBridge, Mesh, Node, PerBridge, Switch};
 use vreteno32::board::{Board, BoardRouter};
 use vreteno32::core::Vreteno;
 use vreteno32::dcsnoop::DcSnoop;
@@ -561,48 +562,82 @@ fn main() {
     sheet(
         "Switch",
         "Switch<2, 2, 32, 32, 4, 2>",
-        Switch::<2, 2, 32, 32, 4, 2>::lowered("switch"),
+        <Switch![
+            X_BITS = 2,
+            Y_BITS = 2,
+            ADDR = 32,
+            DATA = 32,
+            STRB = 4,
+            ID = 2
+        ]>::lowered("switch"),
     );
     sheet(
         "Node",
         "Node<2, 2, 32, 32, 4, 2>",
-        Node::<2, 2, 32, 32, 4, 2>::lowered("node"),
+        <Node![
+            X_BITS = 2,
+            Y_BITS = 2,
+            ADDR = 32,
+            DATA = 32,
+            STRB = 4,
+            ID = 2
+        ]>::lowered("node"),
     );
     sheet(
         "Mesh",
         "Mesh<3, 2, 6, 2, 1, 8, 8, 1, 2>",
-        Mesh::<3, 2, 6, 2, 1, 8, 8, 1, 2>::lowered("mesh"),
+        <Mesh![
+            COLS = 3,
+            ROWS = 2,
+            NODES = 6,
+            X_BITS = 2,
+            Y_BITS = 1,
+            ADDR = 8,
+            DATA = 8,
+            STRB = 1,
+            ID = 2
+        ]>::lowered("mesh"),
     );
     sheet(
         "HostBridge",
         "soc::Bridge<0, 0>",
-        HostBridge::<
-            0,
-            0,
-            2,
-            2,
-            32,
-            32,
-            4,
-            2,
-            0x3000,
-            0xffff_f000,
-            1,
-            1,
-            0x1000,
-            0xffff_f000,
-            0,
-            1,
-            0,
-            0,
-            0,
-            1,
-        >::lowered("host_bridge"),
+        <HostBridge![
+            COL = 0,
+            ROW = 0,
+            X_BITS = 2,
+            Y_BITS = 2,
+            ADDR = 32,
+            DATA = 32,
+            STRB = 4,
+            ID = 2,
+            BASE0 = 0x3000,
+            MASK0 = 0xffff_f000,
+            COL0 = 1,
+            ROW0 = 1,
+            BASE1 = 0x1000,
+            MASK1 = 0xffff_f000,
+            COL1 = 0,
+            ROW1 = 1,
+            BASE2 = 0,
+            MASK2 = 0,
+            COL2 = 0,
+            ROW2 = 1
+        ]>::lowered("host_bridge"),
     );
     sheet(
         "PerBridge",
         "PerBridge<0, 1, 2, 2, 32, 32, 4, 2, 4>",
-        PerBridge::<0, 1, 2, 2, 32, 32, 4, 2, 4>::lowered("per_bridge"),
+        <PerBridge![
+            COL = 0,
+            ROW = 1,
+            X_BITS = 2,
+            Y_BITS = 2,
+            ADDR = 32,
+            DATA = 32,
+            STRB = 4,
+            ID = 2,
+            IDS = 4
+        ]>::lowered("per_bridge"),
     );
     sheet("EthTx", "EthTx", EthTx::lowered("eth_tx"));
     sheet("EthRx", "EthRx", EthRx::lowered("eth_rx"));

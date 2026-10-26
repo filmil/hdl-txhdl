@@ -35,6 +35,7 @@ use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::bus::noc::bridge::{HostBridge, PerBridge};
 use txhdl_parts::bus::noc::mesh::lattice;
 use txhdl_parts::bus::noc::node::Node;
+use txhdl_parts::{Node, PerBridge};
 use vreteno32::core::Writeback;
 use vreteno32::hart::{Hart, HartIn, HartOut};
 use vreteno32::term::Terminal;
@@ -172,10 +173,38 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
 
     // The lattice, and the four nodes on it, row major.
     let mut net = lattice::<XB, YB, 32, 32, 4, IW>(2, 2);
-    let mut n00 = Node::<XB, YB, 32, 32, 4, IW>::default();
-    let mut n10 = Node::<XB, YB, 32, 32, 4, IW>::default();
-    let mut n01 = Node::<XB, YB, 32, 32, 4, IW>::default();
-    let mut n11 = Node::<XB, YB, 32, 32, 4, IW>::default();
+    let mut n00 = <Node![
+        X_BITS = XB,
+        Y_BITS = YB,
+        ADDR = 32,
+        DATA = 32,
+        STRB = 4,
+        ID = IW
+    ]>::default();
+    let mut n10 = <Node![
+        X_BITS = XB,
+        Y_BITS = YB,
+        ADDR = 32,
+        DATA = 32,
+        STRB = 4,
+        ID = IW
+    ]>::default();
+    let mut n01 = <Node![
+        X_BITS = XB,
+        Y_BITS = YB,
+        ADDR = 32,
+        DATA = 32,
+        STRB = 4,
+        ID = IW
+    ]>::default();
+    let mut n11 = <Node![
+        X_BITS = XB,
+        Y_BITS = YB,
+        ADDR = 32,
+        DATA = 32,
+        STRB = 4,
+        ID = IW
+    ]>::default();
     let e00 = net.exits.remove(0);
     let e10 = net.exits.remove(0);
     let e01 = net.exits.remove(0);
@@ -247,7 +276,17 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
         ..
     } = axi::<32, 32, 4, IW, NIDS>();
     let mut rtrk = AxiPer::<32, 32, 4, IW>::default();
-    let mut rbr = PerBridge::<0, 1, XB, YB, 32, 32, 4, IW, NIDS>::default();
+    let mut rbr = <PerBridge![
+        COL = 0,
+        ROW = 1,
+        X_BITS = XB,
+        Y_BITS = YB,
+        ADDR = 32,
+        DATA = 32,
+        STRB = 4,
+        ID = IW,
+        IDS = NIDS
+    ]>::default();
     let ram = Ram::<32, 32, 4, IW>::new(RAM_WORDS);
     // The constants the program reads, in the memory before the first
     // cycle, at the base the core's decode sends a load to.
@@ -279,7 +318,17 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let ubus: LitePort<32, 32, 4> = sl.per.into();
     let (baw, bar, bw, bb, br) = sl.host;
     let mut ubridge = LiteBridge::<1, SerialMap, 32, 32, 4, IW>::default();
-    let mut ubr = PerBridge::<1, 1, XB, YB, 32, 32, 4, IW, NIDS>::default();
+    let mut ubr = <PerBridge![
+        COL = 1,
+        ROW = 1,
+        X_BITS = XB,
+        Y_BITS = YB,
+        ADDR = 32,
+        DATA = 32,
+        STRB = 4,
+        ID = IW,
+        IDS = NIDS
+    ]>::default();
     let mut uart = Uart::<4>::default();
     let (tx_out, tx) = signal::<Bit, DefaultClock>();
     let (rx_out, rx) = signal::<Bit, DefaultClock>();

@@ -16,6 +16,7 @@ use txhdl::comp::{chan, DefaultClock, Running, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::noc::mesh::Mesh;
 use txhdl_parts::bus::noc::pkt::{Chan, Pkt};
+use txhdl_parts::Pkt;
 
 /// Three nodes wide and two high; a column fits in two bits and a row
 /// in one. The link's widths are small, since only the routing is
@@ -23,7 +24,7 @@ use txhdl_parts::bus::noc::pkt::{Chan, Pkt};
 const W: usize = 3;
 const H: usize = 2;
 const N: usize = 6;
-type P = Pkt<2, 1, 8, 8, 1, 2>;
+type P = Pkt![X_BITS = 2, Y_BITS = 1, ADDR = 8, DATA = 8, STRB = 1, ID = 2];
 type M = Mesh<W, H, N, 2, 1, 8, 8, 1, 2>;
 
 /// A packet from node `from` to node `to`; its address says who sent
