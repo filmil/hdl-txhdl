@@ -731,6 +731,19 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A program on another machine reads and writes the bus, over Ethernet
+# frames (issue 1931):  bazel run //lib/examples:ex_hostlink
+rust_binary(
+    name = "ex_hostlink",
+    srcs = ["ex_hostlink.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A peripheral written in software:  bazel run //lib/examples:ex_remote
 rust_binary(
     name = "ex_remote",
@@ -1604,6 +1617,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_flashwin.rs",
         "ex_pwm.rs",
         "ex_bundle.rs",
+        "ex_hostlink.rs",
         "ex_remote.rs",
         "ex_redundant.rs",
         "ex_regmap.rs",
