@@ -17,16 +17,25 @@
 //! stable Rust cannot read a number out of a marker: `Lanes![COUNT = 4,
 //! WIDTH = 8]` is `Lanes<8, 4>`.
 //!
+//! Two structs of one module that name a parameter alike share its
+//! marker: `named_markers!(pub Addr, pub Word)` declares the markers
+//! once, and each struct takes them with
+//! `#[named_type_params(reuse(..))]`, its own bounds in its `where`
+//! clause. Here `Bus` and `Beat` both take `Word`.
+//!
 //! The runtime's `Signal` is written this way: `Signal<Data<T>>` is a
 //! wire of `T`, and `Signal<Data<T>, Domain<C>>` one in clock domain
 //! `C`.
 use txhdl::comp::{Data, DefaultClock, Domain, Member, Signal};
-use txhdl::named_type_params;
 use txhdl::types::U;
+use txhdl::{named_markers, named_type_params};
 
 // begin{bus}
+// The markers, once, for the two structs below.
+named_markers!(pub Addr, pub Word);
+
 /// An address and a data word, two numbers of overlapping bounds.
-#[named_type_params]
+#[named_type_params(reuse(Addr, Word))]
 pub struct Bus<Addr: Copy + Into<u64>, Word: Copy> {
     pub addr: Addr,
     pub data: [Word; 2],
@@ -34,6 +43,13 @@ pub struct Bus<Addr: Copy + Into<u64>, Word: Copy> {
 
 /// A 32-bit address and 64-bit data, each named.
 type Axi = Bus<Addr<u32>, Word<u64>>;
+
+/// One word and whether it is the last of a burst: the same `Word`.
+#[named_type_params(reuse(Word))]
+pub struct Beat<Word: Copy> {
+    pub data: Word,
+    pub last: bool,
+}
 
 /// Two numbers of the same type, which only names keep apart.
 #[named_type_params]
@@ -55,6 +71,11 @@ fn main() {
         data: [5, 6],
     };
     println!("{}", show(&b));
+    let beat: Beat<Word<u64>> = Beat {
+        data: b.data[1],
+        last: true,
+    };
+    println!("beat {} last {}", beat.data, beat.last);
     let l: Lanes![COUNT = 4, WIDTH = 8] = Lanes {
         lanes: [U::<8>::from(3u8); 4],
     };
