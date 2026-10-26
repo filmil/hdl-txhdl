@@ -10,7 +10,7 @@
 //! registers without PCIe (issue 1931).
 //!
 //! The bus here has a memory of words on it, which answers `SlvErr`
-//! above 0x1000. The program writes a word, reads it back, asks the
+//! at and above 0x1000. The program writes a word, reads it back, asks the
 //! same read again under the same tag, as it does when an answer is
 //! lost, and writes where the memory refuses. The repeat is answered
 //! from what the master kept and never reaches the bus, which the

@@ -105,11 +105,14 @@ impl Unit for LiteMaster {
             let send_aw = busy & writing & !addr_sent & bus.aw.ready();
             let send_w = busy & writing & !data_sent & bus.w.ready();
             let send_ar = busy & !writing & !addr_sent & bus.ar.ready();
-            // The response ends the transaction.
+            // The response ends the transaction. It is taken only once
+            // the request has gone whole, so a response from a bus that
+            // misbehaves can't end a write whose word is still waiting.
             let bh = bus.b.head();
             let rh = bus.r.head();
-            let got_b = busy & writing & bus.b.peek().is_some();
-            let got_r = busy & !writing & bus.r.peek().is_some();
+            let got_b =
+                busy & writing & addr_sent & data_sent & bus.b.peek().is_some();
+            let got_r = busy & !writing & addr_sent & bus.r.peek().is_some();
             let _ = bus.b.recv_if(got_b);
             let _ = bus.r.recv_if(got_r);
             let done = got_b | got_r;
@@ -172,7 +175,10 @@ impl Unit for LiteMaster {
 /// [`RemoteLink`](super::eth::RemoteLink).
 #[derive(Trace, Default)]
 pub struct HostLink<const DEV: usize> {
-    /// Which byte of the frame coming in is next.
+    /// Which byte of the frame coming in is next. It stops at 63
+    /// rather than wrapping, so a long frame's later bytes are never
+    /// read as its header or its fields again: frames longer than 64
+    /// bytes (ARP, IPv6, LLDP) are ordinary on a wire.
     pub got: Reg<U<6>>,
     /// Whether a byte of the frame coming in has said it is not this
     /// device's ask. Held the polarity round, as `RemoteLink`'s is.
@@ -249,10 +255,11 @@ impl<const DEV: usize> Unit for HostLink<DEV> {
                 | (got == 13) & (value != U::<8>::from(0xb5u8))
                 | (got == 14) & (value != U::<8>::from(KIND_HOST_ASK))
                 | (got == 15) & (value != dev);
-            // A frame shorter than an ask is not one either: the MAC
-            // pads to sixty bytes, so a whole ask always reaches
-            // byte 26.
-            let short = took & inb.last & (got < FRAME_LEN - 1);
+            // A frame that ends by byte 26 is not a whole ask: its last
+            // field, the strobe, is held a cycle after its byte, so the
+            // frame must go on past it. The MAC pads every frame to
+            // sixty bytes, so a real ask always does.
+            let short = took & inb.last & (got < FRAME_LEN);
             let ends = took & inb.last;
             // The ask goes on when the frame ends whole and the channel
             // has room; with no room it is dropped, and the program
@@ -275,7 +282,7 @@ impl<const DEV: usize> Unit for HostLink<DEV> {
             let put = sending & tx.ready();
             let last = at == FRAME_LEN - 1;
             with!(self <= {
-                took & !inb.last ? got: got + 1,
+                took & !inb.last & (got != 63) ? got: got + 1,
                 took & inb.last ? got: 0,
                 took & bad ? alien: Bit::One,
                 took & inb.last ? alien: Bit::Zero,
@@ -379,6 +386,16 @@ mod tests {
     /// The memory answers `SlvErr` at and above 0x1000. Returns the
     /// answers and how many writes the memory saw.
     fn serve(frames: &[Vec<u8>]) -> (Vec<(u8, u8, u32, bool)>, usize) {
+        let (answers, writes, _) = serve_with(frames, 0);
+        (answers, writes)
+    }
+
+    /// As `serve`, with a memory that takes `delay` cycles to answer,
+    /// and the strobe of every write it saw.
+    fn serve_with(
+        frames: &[Vec<u8>],
+        delay: u32,
+    ) -> (Vec<(u8, u8, u32, bool)>, usize, Vec<u8>) {
         let (host, per) = link::<LitePort<32, 32, 4>>();
         let (ask_tx, ask_rx) = chan::<Ask, DefaultClock>();
         let (ans_tx, ans_rx) = chan::<Answer, DefaultClock>();
@@ -388,6 +405,8 @@ mod tests {
         let mut master = LiteMaster::default();
         let writes = Rc::new(RefCell::new(0usize));
         let wcount = writes.clone();
+        let strobes = Rc::new(RefCell::new(Vec::new()));
+        let wstrb = strobes.clone();
         // A memory of words, as a peripheral on the bus.
         let memory = async move {
             let mut words: HashMap<u32, u32> = HashMap::new();
@@ -395,8 +414,13 @@ mod tests {
                 DefaultClock::rising().await;
                 if per.aw.peek().is_some() && per.w.peek().is_some() {
                     let a = per.aw.recv().unwrap().addr.raw() as u32;
-                    let w = per.w.recv().unwrap().data.raw() as u32;
+                    let wb = per.w.recv().unwrap();
+                    let w = wb.data.raw() as u32;
+                    wstrb.borrow_mut().push(wb.strb.raw() as u8);
                     *wcount.borrow_mut() += 1;
+                    for _ in 0..delay {
+                        DefaultClock::rising().await;
+                    }
                     let ok = a < 0x1000;
                     if ok {
                         words.insert(a, w);
@@ -406,6 +430,9 @@ mod tests {
                     });
                 }
                 if let Some(ar) = per.ar.recv() {
+                    for _ in 0..delay {
+                        DefaultClock::rising().await;
+                    }
                     let a = ar.addr.raw() as u32;
                     let ok = a < 0x1000;
                     per.r.send(LiteR {
@@ -425,7 +452,7 @@ mod tests {
         let mut answers = Vec::new();
         let mut cur: Vec<u8> = Vec::new();
         // One frame at a time, as a program waits for each answer; a
-        // frame that is not answered gets 200 cycles.
+        // frame that is not answered gets 400 cycles.
         for f in frames {
             let mut i = 0;
             let before = answers.len();
@@ -453,7 +480,8 @@ mod tests {
             }
         }
         let n = *writes.borrow();
-        (answers, n)
+        let st = strobes.borrow().clone();
+        (answers, n, st)
     }
 
     #[test]
@@ -502,5 +530,70 @@ mod tests {
         let (got, writes) = serve(&[other, wrong_type, theirs, good]);
         assert_eq!(got, vec![(5, 9, 0, false)], "only its own is answered");
         assert_eq!(writes, 0);
+    }
+
+    #[test]
+    fn a_partial_write_keeps_its_strobe() {
+        let mut f = ask_frame(5, 1, true, 0x40, 0xabcd);
+        f[26] = 0x3;
+        let (got, writes, strobes) = serve_with(&[f], 0);
+        assert_eq!(got, vec![(5, 1, 0, false)]);
+        assert_eq!((writes, strobes), (1, vec![0x3]), "the strobe reaches w");
+    }
+
+    #[test]
+    fn tag_zero_first_is_performed_not_taken_for_a_repeat() {
+        // Before the first transaction nothing is a repeat, though the
+        // kept tag starts at zero.
+        let (got, writes) = serve(&[ask_frame(5, 0, true, 0x40, 9)]);
+        assert_eq!(got, vec![(5, 0, 0, false)]);
+        assert_eq!(writes, 1);
+    }
+
+    #[test]
+    fn a_long_ask_is_taken_whole() {
+        // An ask with trailing bytes past 64, where a wrapping count
+        // would read the header and the fields again.
+        let mut f = ask_frame(5, 1, true, 0x40, 0x5555);
+        f.resize(100, 0xaa);
+        let (got, writes) = serve(&[f, ask_frame(5, 2, false, 0x40, 0)]);
+        assert_eq!(got, vec![(5, 1, 0, false), (5, 2, 0x5555, false)]);
+        assert_eq!(writes, 1);
+    }
+
+    #[test]
+    fn a_frame_that_ends_at_the_strobe_is_not_an_ask() {
+        let mut f = ask_frame(5, 1, true, 0x40, 1);
+        f.truncate(FRAME_LEN as usize);
+        let (got, writes) = serve(&[f, ask_frame(5, 2, false, 0x40, 0)]);
+        assert_eq!(got, vec![(5, 2, 0, false)], "only the whole one");
+        assert_eq!(writes, 0);
+    }
+
+    #[test]
+    fn a_long_frame_of_another_kind_is_ignored() {
+        // Two hundred bytes of another protocol, laid out so that bytes
+        // 76 to 79 spell an ask for this device. It is turned away at
+        // byte 12, and nothing later in it can make it one.
+        let mut other = vec![0x11u8; 200];
+        other[12] = 0x08;
+        other[13] = 0x06;
+        other[76..80].copy_from_slice(&[0x88, 0xb5, KIND_HOST_ASK as u8, 5]);
+        let (got, writes) = serve(&[other, ask_frame(5, 3, false, 0x40, 0)]);
+        assert_eq!(got, vec![(5, 3, 0, false)]);
+        assert_eq!(writes, 0);
+    }
+
+    #[test]
+    fn a_slow_bus_is_waited_for() {
+        let (got, writes, _) = serve_with(
+            &[
+                ask_frame(5, 1, true, 0x40, 0x77),
+                ask_frame(5, 2, false, 0x40, 0),
+            ],
+            50,
+        );
+        assert_eq!(got, vec![(5, 1, 0, false), (5, 2, 0x77, false)]);
+        assert_eq!(writes, 1);
     }
 }
