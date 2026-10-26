@@ -14,10 +14,11 @@ use proc_macro::{
 fn marker(input: TokenStream, trait_path: &str) -> TokenStream {
     let item = parse_item(input);
     format!(
-        "impl{b} {trait_path} for {n}{a} {{}}",
+        "impl{b} {trait_path} for {n}{a}{w} {{}}",
         b = item.bounds,
         n = item.name,
-        a = item.args
+        a = item.args,
+        w = item.wheres
     )
     .parse()
     .unwrap()
@@ -47,6 +48,11 @@ struct Item {
     args: String,
     /// Each generic parameter, by name and as written with its bounds.
     generics: Vec<(String, String)>,
+    /// The item's `where` clause as written, with a space before it, or
+    /// nothing: every impl a derive writes repeats it, since Rust does
+    /// not carry a struct's where-bounds into its impls (#1914's
+    /// `reuse(..)` writes its bounds there).
+    wheres: String,
     body: Option<Group>,
 }
 
@@ -137,6 +143,31 @@ fn parse_item(input: TokenStream) -> Item {
             generics = names.into_iter().zip(full).collect();
         }
     }
+    // A tuple struct's fields come before its `where`, a braced
+    // struct's after it.
+    let mut j = i;
+    if let Some(TokenTree::Group(g)) = toks.get(j) {
+        if g.delimiter() == Delimiter::Parenthesis {
+            j += 1;
+        }
+    }
+    let mut wheres = String::new();
+    let at_where = |t: Option<&TokenTree>| match t {
+        Some(TokenTree::Ident(w)) => w.to_string() == "where",
+        _ => false,
+    };
+    if at_where(toks.get(j)) {
+        let end = toks[j..]
+            .iter()
+            .position(|t| match t {
+                TokenTree::Group(g) => g.delimiter() == Delimiter::Brace,
+                TokenTree::Punct(p) => p.as_char() == ';',
+                _ => false,
+            })
+            .map_or(toks.len(), |k| j + k);
+        let clause: TokenStream = toks[j..end].iter().cloned().collect();
+        wheres = format!(" {clause}");
+    }
     let body = toks[i..].iter().find_map(|t| match t {
         TokenTree::Group(g) if g.delimiter() == Delimiter::Brace => {
             Some(g.clone())
@@ -150,6 +181,7 @@ fn parse_item(input: TokenStream) -> Item {
         bounds,
         args,
         generics,
+        wheres,
         body,
     }
 }
@@ -644,7 +676,7 @@ pub fn derive_value(input: TokenStream) -> TokenStream {
             String::new()
         };
         format!(
-            "impl{b} ::txhdl::types::Value for {n}{a} {{\n\
+            "impl{b} ::txhdl::types::Value for {n}{a}{w} {{\n\
              const WIDTH: usize = {width};\n\
              {pc}\
              fn vcd(self) -> String {{\n\
@@ -670,6 +702,7 @@ pub fn derive_value(input: TokenStream) -> TokenStream {
             b = item.bounds,
             n = item.name,
             a = item.args,
+            w = item.wheres,
             v = item.vis,
             pc = match (ports, bare) {
                 (true, true) => {
@@ -695,7 +728,7 @@ pub fn derive_value(input: TokenStream) -> TokenStream {
             .collect::<Vec<_>>()
             .join("\n");
         format!(
-            "impl{b} ::txhdl::types::Value for {n}{a} {{\n\
+            "impl{b} ::txhdl::types::Value for {n}{a}{w} {{\n\
              const WIDTH: usize = {width};\n\
              fn vcd(self) -> String {{ let i = match self {{ {arms} }};\n\
              format!(\"{{:0w$b}}\", i, w = {width}) }}\n\
@@ -703,7 +736,8 @@ pub fn derive_value(input: TokenStream) -> TokenStream {
              Some(&[{names}]) }}\n}}",
             b = item.bounds,
             n = item.name,
-            a = item.args
+            a = item.args,
+            w = item.wheres
         )
     };
     out.parse().unwrap()
@@ -822,17 +856,18 @@ pub fn derive_ports(input: TokenStream) -> TokenStream {
     // A struct of ports is a port field too, so another struct of ports
     // may hold it: its ports are flattened, each `field_sub` (issue 498).
     format!(
-        "impl{b} ::txhdl::netlist::Ports for {n}{a} {{\n\
+        "impl{b} ::txhdl::netlist::Ports for {n}{a}{w} {{\n\
          fn ports() -> Vec<::txhdl::netlist::BundlePort> {{ \
          let mut v = Vec::new(); {ports} v }}\n}}\n\
-         impl{b} ::txhdl::netlist::PortField for {n}{a} {{\n\
+         impl{b} ::txhdl::netlist::PortField for {n}{a}{w} {{\n\
          fn ports_of(name: &str) -> Vec<::txhdl::netlist::BundlePort> {{ \
          <Self as ::txhdl::netlist::Ports>::ports().into_iter().map(|mut p| \
          {{ p.name = format!(\"{{name}}_{{}}\", p.name); p }})\
          .collect() }}\n}}{bundle}",
         b = item.bounds,
         n = item.name,
-        a = item.args
+        a = item.args,
+        w = item.wheres
     )
     .parse()
     .unwrap()
@@ -903,6 +938,7 @@ pub fn derive_link(input: TokenStream) -> TokenStream {
         );
     }
     let (n, b, a, v) = (&item.name, &item.bounds, &item.args, &item.vis);
+    let w = &item.wheres;
     let names = field_names(body);
     let types = field_types(body);
     let fields = names
@@ -932,19 +968,19 @@ pub fn derive_link(input: TokenStream) -> TokenStream {
          as `#[derive(Link)]` writes it (issue 1695).\n\
          #[derive(::txhdl::Ports)]\n\
          {v} struct {n}Host{b} {{\n{fields}}}\n\
-         impl{b} ::txhdl::comp::Link for {n}{a} {{\n\
+         impl{b} ::txhdl::comp::Link for {n}{a}{w} {{\n\
          type Host = {n}Host{a};\n\
          fn link() -> (Self::Host, Self) {{ {lets} \
          ({n}Host {{ {h} }}, {n} {{ {s} }}) }}\n}}\n\
-         impl{b} ::txhdl::comp::Mirror for {n}{a} {{\n\
+         impl{b} ::txhdl::comp::Mirror for {n}{a}{w} {{\n\
          type Other = {n}Host{a};\n\
          fn pair() -> (Self, Self::Other) {{ \
          let (h, s) = <Self as ::txhdl::comp::Link>::link(); (s, h) }}\n}}\n\
-         impl{b} ::txhdl::comp::Mirror for {n}Host{a} {{\n\
+         impl{b} ::txhdl::comp::Mirror for {n}Host{a}{w} {{\n\
          type Other = {n}{a};\n\
          fn pair() -> (Self, Self::Other) {{ \
          <{n}{a} as ::txhdl::comp::Link>::link() }}\n}}\n\
-         impl{b} ::txhdl::comp::Link for {n}Host{a} {{\n\
+         impl{b} ::txhdl::comp::Link for {n}Host{a}{w} {{\n\
          type Host = {n}{a};\n\
          fn link() -> (Self::Host, Self) {{ \
          let (h, s) = <{n}{a} as ::txhdl::comp::Link>::link(); (s, h) }}\n}}",
@@ -1089,10 +1125,10 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
         .collect::<Vec<_>>()
         .join("\n");
     let generated = format!(
-        "impl{b} ::txhdl::comp::trace::Traceable for {n}{a} {{\n\
+        "impl{b} ::txhdl::comp::trace::Traceable for {n}{a}{w} {{\n\
          fn trace(&self, scope: &::txhdl::comp::trace::Scope) {{\n\
          {calls} }}\n}}\n\
-         impl{b} ::txhdl::netlist::Fields for {n}{a} {{\n\
+         impl{b} ::txhdl::netlist::Fields for {n}{a}{w} {{\n\
          const NAMES: &'static [&'static str] = &[{quoted}];\n\
          const RENAMES: &'static [(&'static str, &'static str)] = \
          &[{pairs}];\n\
@@ -1107,10 +1143,11 @@ pub fn derive_trace(input: TokenStream) -> TokenStream {
          let mut __v = Vec::new(); {fields} __v }}\n\
          fn entries_of(f: &'static str) -> Vec<&'static str> {{ \
          match f {{ {entries_of} _ => vec![f] }} }}\n}}\n\
-         impl{b} ::txhdl::netlist::Port for {n}{a} {{}}",
+         impl{b} ::txhdl::netlist::Port for {n}{a}{w} {{}}",
         b = item.bounds,
         n = item.name,
         a = item.args,
+        w = item.wheres,
         quoted = names
             .iter()
             .map(|n| format!("\"{n}\""))
