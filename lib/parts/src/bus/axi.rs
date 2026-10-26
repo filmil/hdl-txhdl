@@ -1762,14 +1762,6 @@ pub async fn serve<
 }
 // end{serve}
 
-// ---------------------------------------------------------------------
-// The link against the rule written with loops
-
-/// A link driven by clients on both ends, checked against a model of
-/// what AXI promises: every burst is answered, a read reads what the
-/// writes left, the answers may come back in any order, and a
-/// transaction may be answered by a process other than the one that
-/// accepted it.
 // After the structs, so the macros #[named_type_params] writes for them
 // are in scope in these modules, as a macro_rules! is only after it is
 // defined; `#[macro_use]` takes `sim`'s on to the rest of the crate.
@@ -1779,6 +1771,14 @@ pub mod sim;
 #[cfg(test)]
 mod fuzz;
 
+// ---------------------------------------------------------------------
+// The link against the rule written with loops
+
+/// A link driven by clients on both ends, checked against a model of
+/// what AXI promises: every burst is answered, a read reads what the
+/// writes left, the answers may come back in any order, and a
+/// transaction may be answered by a process other than the one that
+/// accepted it.
 #[cfg(test)]
 mod tests {
     use super::*;
