@@ -73,3 +73,45 @@ fn the_structs_macro_still_names_every_parameter() {
     };
     assert_eq!(w.value, -1i16);
 }
+
+mod clauses {
+    //! A braced struct with a `where` clause of its own, holding a
+    //! parenthesized type, with and without a trailing comma: the
+    //! reused bounds join it, before the body. And markers of mixed
+    //! visibility in one `named_markers!`.
+    use txhdl::{named_markers, named_type_params};
+
+    named_markers!(pub(crate) Item, pub Step);
+
+    #[named_type_params(reuse(Item, Step))]
+    pub struct Apply<Item: Copy, Step>
+    where
+        Step: Fn(u8) -> u8,
+    {
+        pub item: Item,
+        pub step: Step,
+    }
+
+    #[named_type_params(reuse(Item))]
+    pub struct Hold<Item: Copy, F>
+    where
+        F: Fn(Item) -> Item,
+    {
+        pub item: Item,
+        pub f: F,
+    }
+
+    #[test]
+    fn a_where_clause_with_a_parenthesized_type_is_joined() {
+        let a: Apply<Item<u8>, Step<fn(u8) -> u8>> = Apply {
+            item: 2,
+            step: |x| x + 1,
+        };
+        assert_eq!((a.step)(a.item), 3);
+        let h: Hold<Item<u8>, F<fn(u8) -> u8>> = Hold {
+            item: 4,
+            f: |x| x * 2,
+        };
+        assert_eq!((h.f)(h.item), 8);
+    }
+}

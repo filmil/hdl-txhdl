@@ -108,6 +108,8 @@ rust_binary(
         "probe_named_reuse_swap",      # E0277: shared markers swapped (#1914)
         "probe_named_reuse_generic",   # E0277: a struct's where bounds are not implied (#1914)
         "probe_named_twice_markers",   # E0428: the marker made twice (#1914)
+        "probe_named_reuse_bounds",    # E0277: a shared role keeps the struct's bounds (#1914)
+        "probe_named_reuse_twice",     # the macro's own message (#1914)
         "probe_axi_send",              # the macro's own message (#1871)
         "probe_axi_rx",                # the macro's own message (#1871)
         "probe_axi_name",              # the macro's own message (#1871)

@@ -321,18 +321,35 @@ fn reused(attr: TokenStream) -> Result<Vec<(String, Span)>, TokenStream> {
             if *r.to_string() == *"reuse"
                 && g.delimiter() == Delimiter::Parenthesis =>
         {
-            let mut out = Vec::new();
-            for t in g.stream() {
-                match t {
-                    TokenTree::Ident(n) => out.push((n.to_string(), n.span())),
-                    TokenTree::Punct(p) if p.as_char() == ',' => {}
-                    t => {
+            let mut out: Vec<(String, Span)> = Vec::new();
+            let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+            let parts: Vec<&[TokenTree]> =
+                inner.split(|t| is_punct(t, ',')).collect();
+            let last = parts.len() - 1;
+            for (k, part) in parts.iter().enumerate() {
+                match *part {
+                    [TokenTree::Ident(n)] => {
+                        if out.iter().any(|(m, _)| *m == n.to_string()) {
+                            return Err(err(
+                                n.span(),
+                                &format!("`reuse(..)` names `{n}` twice"),
+                            ));
+                        }
+                        out.push((n.to_string(), n.span()))
+                    }
+                    // A trailing comma, and nothing else, is allowed.
+                    [] if k == last && k > 0 => {}
+                    _ => {
                         return Err(err(
-                            t.span(),
-                            "`reuse(..)` names markers, `reuse(Data, Domain)`",
+                            part.first().map_or(g.span(), |t| t.span()),
+                            "`reuse(..)` names markers, once each: \
+                             `reuse(Data, Domain)`",
                         ))
                     }
                 }
+            }
+            if out.is_empty() {
+                return Err(err(g.span(), "`reuse()` names no marker"));
             }
             Ok(out)
         }
@@ -351,26 +368,23 @@ fn with_preds(rest: Vec<TokenTree>, preds: &[String]) -> Vec<TokenTree> {
     if preds.is_empty() {
         return rest;
     }
-    let body = rest.iter().position(|t| {
-        matches!(t, TokenTree::Group(g)
-            if g.delimiter() == Delimiter::Brace
-                || g.delimiter() == Delimiter::Parenthesis)
-    });
-    let Some(b) = body else {
-        return rest;
+    let group = |t: Option<&TokenTree>, d: Delimiter| match t {
+        Some(TokenTree::Group(g)) => g.delimiter() == d,
+        _ => false,
     };
-    let tuple = matches!(&rest[b], TokenTree::Group(g) if g.delimiter() == Delimiter::Parenthesis);
-    // Where the clause is, or goes: for a tuple struct between the
-    // fields and the `;`, for a braced one before the body.
-    let (from, to) = if tuple { (b + 1, rest.len()) } else { (0, b) };
-    let has_where = rest[from..to].iter().any(|t| is_ident(t, "where"));
-    let clause_end = if tuple {
-        rest[from..]
-            .iter()
-            .position(|t| is_punct(t, ';'))
-            .map_or(rest.len(), |k| from + k)
+    // A tuple struct's fields come straight after the generic list; a
+    // braced struct's body is its last token. A group inside a `where`
+    // clause, `Fn(u8) -> u8`, is neither. A unit struct, or a tuple
+    // one, ends at its `;`.
+    let tuple = group(rest.first(), Delimiter::Parenthesis);
+    let braced = !tuple && group(rest.last(), Delimiter::Brace);
+    let has_where = rest.iter().any(|t| is_ident(t, "where"));
+    let clause_end = if braced {
+        rest.len() - 1
     } else {
-        b
+        rest.iter()
+            .rposition(|t| is_punct(t, ';'))
+            .unwrap_or(rest.len())
     };
     let mut add = String::new();
     if has_where {
@@ -393,6 +407,10 @@ fn with_preds(rest: Vec<TokenTree>, preds: &[String]) -> Vec<TokenTree> {
     out
 }
 
+/// `reuse(..)` is meant for these: a marker another struct made has
+/// that struct's bounds on its role, which a struct reusing it would
+/// then have as well as its own.
+///
 /// `named_markers!(pub Data, pub Domain)`: markers and roles declared
 /// once, for every struct that names them in
 /// `#[named_type_params(reuse(..))]` (#1914). A role here has no
@@ -402,24 +420,46 @@ fn with_preds(rest: Vec<TokenTree>, preds: &[String]) -> Vec<TokenTree> {
 pub(crate) fn named_markers(input: TokenStream) -> TokenStream {
     let ts: Vec<TokenTree> = input.into_iter().collect();
     let mut items: Vec<(String, String)> = Vec::new();
-    for part in ts.split(|t| is_punct(t, ',')) {
-        let Some((TokenTree::Ident(n), vis)) = part.split_last() else {
-            if part.is_empty() {
-                continue;
+    let parts: Vec<&[TokenTree]> = ts.split(|t| is_punct(t, ',')).collect();
+    let last = parts.len() - 1;
+    let wrong = |span: Span| {
+        err(
+            span,
+            "`named_markers!` lists markers, each once, with its visibility: \
+             `named_markers!(pub Data, pub(crate) Domain)`",
+        )
+    };
+    for (k, part) in parts.iter().enumerate() {
+        // A visibility, `pub` or `pub(..)`, or none, then the name.
+        let (vis, n) = match *part {
+            [] if k == last && k > 0 => continue,
+            [TokenTree::Ident(n)] => (&part[..0], n),
+            [p, TokenTree::Ident(n)] if is_ident(p, "pub") => (&part[..1], n),
+            [p, TokenTree::Group(g), TokenTree::Ident(n)]
+                if is_ident(p, "pub")
+                    && g.delimiter() == Delimiter::Parenthesis =>
+            {
+                (&part[..2], n)
             }
-            return err(
-                part[0].span(),
-                "`named_markers!` lists markers, `named_markers!(pub Data, pub Domain)`",
-            );
+            _ => {
+                return wrong(
+                    part.first().map_or(Span::call_site(), |t| t.span()),
+                )
+            }
         };
+        if items.iter().any(|(_, m)| *m == n.to_string()) {
+            return wrong(n.span());
+        }
         items.push((text(vis), n.to_string()));
     }
-    let Some((vis0, first)) = items.first() else {
+    let Some((_, first)) = items.first() else {
         return err(Span::call_site(), "`named_markers!` lists no marker");
     };
+    // Public, so a role as public as any marker can name it; hidden,
+    // and with nothing to use but the trait the roles are sealed by.
     let sealed = format!("__named_markers_{}", snake(first));
     let mut out = format!(
-        "#[doc(hidden)] #[allow(non_snake_case)] {vis0} mod {sealed} {{ \
+        "#[doc(hidden)] #[allow(non_snake_case)] pub mod {sealed} {{ \
          pub trait Sealed {{}} }}\n"
     );
     for (vis, n) in &items {
