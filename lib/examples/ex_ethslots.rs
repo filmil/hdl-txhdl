@@ -29,6 +29,7 @@ use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::eth::gray16;
 use txhdl_parts::ethslots::{regs, EthSlots, SlotsMac};
+use txhdl_parts::AxiHost;
 
 /// Where the four buffers begin: sixteen megabytes into the board's
 /// memory, clear of where a program loads.
@@ -49,7 +50,7 @@ const TX_LENGTH: u32 = BASE + regs::tx_length;
 const TX_START: u32 = BASE + regs::tx_start;
 const TX_READY: u32 = BASE + regs::tx_ready;
 
-type HostUnit = AxiHost<32, 32, 4, 2, 4>;
+type HostUnit = AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4];
 type Bridge = LiteBridge<1, SlotsMap, 32, 32, 4, 2>;
 
 /// Where the bridge's one peripheral is: a nibble of the address

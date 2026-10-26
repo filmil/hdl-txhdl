@@ -24,10 +24,11 @@ use txhdl_parts::bus::axi::{axi, AxiHost, BurstKind, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{
     axi_lite, LiteB, LiteBridge, LitePort, LiteR,
 };
+use txhdl_parts::AxiHost;
 
 /// The link: sixteen-bit addresses, thirty-two-bit words, four lanes,
 /// two-bit identifiers, four of them.
-type HostUnit = AxiHost<16, 32, 4, 2, 4>;
+type HostUnit = AxiHost![ADDR = 16, DATA = 32, STRB = 4, ID = 2, IDS = 4];
 
 /// The address map, as the bridge's type states it: two banks of a
 /// nibble each, and every other address a hole.

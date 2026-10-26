@@ -41,6 +41,7 @@ use txhdl_parts::bus::wb::sim::WbMem;
 use txhdl_parts::bus::wb::AxiWb;
 use txhdl_parts::bus::wb::WbMaster;
 use txhdl_parts::dma::{LineFetch, LineStore};
+use txhdl_parts::{AxiHost, AxiPer};
 
 const ADDR: usize = 32;
 const IDB: usize = 2;
@@ -85,8 +86,15 @@ fn main() {
         src.set(i as u128, word_at(i));
     }
     let mut src_mem = src.clone();
-    let mut r_host = AxiHost::<ADDR, 32, 4, IDB, IDS>::default();
-    let mut r_per = AxiPer::<ADDR, 32, 4, IDB>::default();
+    let mut r_host = <AxiHost![
+        ADDR = ADDR,
+        DATA = 32,
+        STRB = 4,
+        ID = IDB,
+        IDS = IDS
+    ]>::default();
+    let mut r_per =
+        <AxiPer![ADDR = ADDR, DATA = 32, STRB = 4, ID = IDB]>::default();
     let mut r_bridge = AxiWb::<ADDR, IDB, AW>::default();
     let mut fetch = LineFetch::<ADDR, IDB, BEATS, 16>::default();
 
@@ -113,8 +121,15 @@ fn main() {
 
     let dst = WbMem::<AW>::new(2, 10);
     let mut dst_mem = dst.clone();
-    let mut w_host = AxiHost::<ADDR, 32, 4, IDB, IDS>::default();
-    let mut w_per = AxiPer::<ADDR, 32, 4, IDB>::default();
+    let mut w_host = <AxiHost![
+        ADDR = ADDR,
+        DATA = 32,
+        STRB = 4,
+        ID = IDB,
+        IDS = IDS
+    ]>::default();
+    let mut w_per =
+        <AxiPer![ADDR = ADDR, DATA = 32, STRB = 4, ID = IDB]>::default();
     let mut w_bridge = AxiWb::<ADDR, IDB, AW>::default();
     let mut store = LineStore::<ADDR, IDB, BEATS, 16>::default();
 

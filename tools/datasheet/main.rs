@@ -64,8 +64,10 @@ use txhdl_parts::tracer::Tracer;
 use txhdl_parts::trng::{Entropy, Trng};
 use txhdl_parts::udprx::UdpRx;
 use txhdl_parts::wdog::Wdog;
-use txhdl_parts::{AxiPerPins, AxiPins};
-use txhdl_parts::{HostBridge, Mesh, Node, PerBridge, Switch};
+use txhdl_parts::{
+    AxiHost, AxiPer, AxiPerPins, AxiPins, HostBridge, Mesh, Node, PerBridge,
+    Switch, R,
+};
 use vreteno32::board::{Board, BoardRouter};
 use vreteno32::core::Vreteno;
 use vreteno32::dcsnoop::DcSnoop;
@@ -510,12 +512,14 @@ fn main() {
     sheet(
         "AxiHost",
         "AxiHost<32, 32, 4, 2, 4>",
-        AxiHost::<32, 32, 4, 2, 4>::lowered("axi_host"),
+        <AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4]>::lowered(
+            "axi_host",
+        ),
     );
     sheet(
         "AxiPer",
         "AxiPer<32, 32, 4, 2>",
-        AxiPer::<32, 32, 4, 2>::lowered("axi_per"),
+        <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = 2]>::lowered("axi_per"),
     );
     sheet(
         "Router",
@@ -696,7 +700,11 @@ fn main() {
     );
     sheet("Gpio", "Gpio<8>", Gpio::<8>::lowered("gpio"));
     sheet("Pwm", "Pwm", Pwm::lowered("pwm"));
-    sheet("Tee", "Tee<R<32, 2>>", Tee::<R<32, 2>>::lowered("tee"));
+    sheet(
+        "Tee",
+        "Tee<R<32, 2>>",
+        Tee::<R![DATA = 32, ID = 2]>::lowered("tee"),
+    );
     sheet(
         "Check",
         "Check<Issue<32>>",

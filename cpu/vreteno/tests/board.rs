@@ -24,6 +24,7 @@ use txhdl_parts::remote::eth::{FRAME_LEN, KIND_ANSWER, KIND_ASK};
 use txhdl_parts::scanout::LinePair;
 use txhdl_parts::sd::SdCard;
 use txhdl_parts::spi::FlashDevice;
+use txhdl_parts::{Addr, R, W};
 use vreteno32::board::{
     Board, BoardIn, BoardMap, BoardOut, Bscan, Ddr3Pins, JtagAnswers, SlotMap,
     SysIn, SysOut, REMOTE_DEV,
@@ -683,14 +684,18 @@ fn run_all_in<const LO: usize, const HI: usize>(
     let (scan_req_tx, scan_req) = chan::<U<32>, DefaultClock>();
     let (scan_words, scan_words_rx) = chan::<U<32>, DefaultClock>();
     // The board top's host port (issue 1634).
-    let (host_aw_tx, host_aw) = chan::<Addr<32, 2>, DefaultClock>();
-    let (host_ar_tx, host_ar) = chan::<Addr<32, 2>, DefaultClock>();
-    let (host_w_tx, host_w) = chan::<W<32, 4>, DefaultClock>();
+    let (host_aw_tx, host_aw) =
+        chan::<Addr![ADDR = 32, ID = 2], DefaultClock>();
+    let (host_ar_tx, host_ar) =
+        chan::<Addr![ADDR = 32, ID = 2], DefaultClock>();
+    let (host_w_tx, host_w) = chan::<W![DATA = 32, STRB = 4], DefaultClock>();
     let (host_b, host_b_rx) = chan::<B<2>, DefaultClock>();
-    let (host_r, host_r_rx) = chan::<R<32, 2>, DefaultClock>();
+    let (host_r, host_r_rx) = chan::<R![DATA = 32, ID = 2], DefaultClock>();
     // The board's wide read port (issue 1696).
-    let (wide_ar_tx, wide_ar) = chan::<Addr<32, 5>, DefaultClock>();
-    let (wide_r, wide_r_rx) = chan::<R<256, 5, 2>, DefaultClock>();
+    let (wide_ar_tx, wide_ar) =
+        chan::<Addr![ADDR = 32, ID = 5], DefaultClock>();
+    let (wide_r, wide_r_rx) =
+        chan::<R![DATA = 256, ID = 5, LIMBS = 2], DefaultClock>();
     let mut wide_asked = false;
     let mut host_log = HostLog::default();
     // How far the plan is: the address phases and beats given, the

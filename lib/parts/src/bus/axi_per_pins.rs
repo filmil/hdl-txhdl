@@ -939,7 +939,13 @@ mod tests {
             assert_eq!(got.resp, Resp::SlvErr);
             *d.borrow_mut() = true;
         };
-        let mut tracker = AxiHost::<16, 32, 4, 2, 4>::default();
+        let mut tracker = <AxiHost![
+            ADDR = 16,
+            DATA = 32,
+            STRB = 4,
+            ID = 2,
+            IDS = 4
+        ]>::default();
         let mut pinned = AxiPerPins::<16, 32, 4, 2>::default();
         // The memory first, then the unit: the unit reads the pins the
         // memory drives in the same step.
@@ -990,7 +996,13 @@ mod tests {
             assert_eq!(got.data, words);
             a.borrow_mut().1 = (txhdl::comp::now() - t0) / DefaultClock::PERIOD;
         };
-        let mut tracker = AxiHost::<16, 32, 4, 2, 4>::default();
+        let mut tracker = <AxiHost![
+            ADDR = 16,
+            DATA = 32,
+            STRB = 4,
+            ID = 2,
+            IDS = 4
+        ]>::default();
         let mut pinned = AxiPerPins::<16, 32, 4, 2>::default();
         let mut sim = Running::new(join2(
             client,
@@ -1053,7 +1065,13 @@ mod tests {
             assert_eq!(wr.done().await.resp, Resp::Okay);
             *g.borrow_mut() = Some(rd.done().await.data[0].raw() as u32);
         };
-        let mut tracker = AxiHost::<16, 32, 4, 2, 4>::default();
+        let mut tracker = <AxiHost![
+            ADDR = 16,
+            DATA = 32,
+            STRB = 4,
+            ID = 2,
+            IDS = 4
+        ]>::default();
         let mut pinned = AxiPerPins::<16, 32, 4, 2>::default();
         let mut sim = Running::new(join2(
             client,
@@ -1100,7 +1118,13 @@ mod tests {
             }
             *d.borrow_mut() = true;
         };
-        let mut tracker = AxiHost::<16, 32, 4, 2, 4>::default();
+        let mut tracker = <AxiHost![
+            ADDR = 16,
+            DATA = 32,
+            STRB = 4,
+            ID = 2,
+            IDS = 4
+        ]>::default();
         let mut pinned = AxiPerPins::<16, 32, 4, 2>::default();
         let (bowe, rowe) = (pinned.bowe, pinned.rowe);
         let mut sim = Running::new(join2(

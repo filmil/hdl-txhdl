@@ -255,14 +255,22 @@ mod tests {
     fn a_read_asked_in_reset_is_answered_after_it() {
         let u = axi_units::<32, 32, 4, 2>();
         let host = host_end::<32, 32, 4, 2, 4>(u.host_client);
-        let bus: PerPort<32, 32, 4, 2> = u.per_client.into();
+        let bus: PerPort![ADDR = 32, DATA = 32, STRB = 4, ID = 2] =
+            u.per_client.into();
         let (miso_drive, miso) = signal::<Bit, DefaultClock>();
         let (sclk_out, sclk) = signal::<Bit, DefaultClock>();
         let (mosi_out, mosi) = signal::<Bit, DefaultClock>();
         let (cs_out, cs_n) = signal::<Bit, DefaultClock>();
         let (rst_out, rst) = signal::<Bit, DefaultClock>();
-        let mut host_unit = AxiHost::<32, 32, 4, 2, 4>::default();
-        let mut per_unit = AxiPer::<32, 32, 4, 2>::default();
+        let mut host_unit = <AxiHost![
+            ADDR = 32,
+            DATA = 32,
+            STRB = 4,
+            ID = 2,
+            IDS = 4
+        ]>::default();
+        let mut per_unit =
+            <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = 2]>::default();
         let mut win = FlashWin::<1, 2>::default();
         let got = Rc::new(Cell::new(None));
         let seen = got.clone();
@@ -309,14 +317,22 @@ mod tests {
     fn a_read_takes_the_cycles_its_account_says() {
         let u = axi_units::<32, 32, 4, 2>();
         let host = host_end::<32, 32, 4, 2, 4>(u.host_client);
-        let bus: PerPort<32, 32, 4, 2> = u.per_client.into();
+        let bus: PerPort![ADDR = 32, DATA = 32, STRB = 4, ID = 2] =
+            u.per_client.into();
         let (miso_drive, miso) = signal::<Bit, DefaultClock>();
         let (sclk_out, sclk) = signal::<Bit, DefaultClock>();
         let (mosi_out, mosi) = signal::<Bit, DefaultClock>();
         let (cs_out, cs_n) = signal::<Bit, DefaultClock>();
         let (_rst_out, rst) = signal::<Bit, DefaultClock>();
-        let mut host_unit = AxiHost::<32, 32, 4, 2, 4>::default();
-        let mut per_unit = AxiPer::<32, 32, 4, 2>::default();
+        let mut host_unit = <AxiHost![
+            ADDR = 32,
+            DATA = 32,
+            STRB = 4,
+            ID = 2,
+            IDS = 4
+        ]>::default();
+        let mut per_unit =
+            <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = 2]>::default();
         let mut win = FlashWin::<1, 2>::default();
         let got = Rc::new(Cell::new(None));
         let seen = got.clone();

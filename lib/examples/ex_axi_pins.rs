@@ -17,7 +17,7 @@ use txhdl_parts::bus::axi::sim::Ram;
 use txhdl_parts::bus::axi::{axi, AxiPer, Link};
 use txhdl_parts::bus::axi_pins::sim::pins;
 use txhdl_parts::bus::axi_pins::AxiPins;
-use txhdl_parts::AxiPins;
+use txhdl_parts::{AxiPer, AxiPins, Ram};
 
 /// The pins' widths: the endpoint's.
 type Pins = AxiPins![ADDR = 32, DATA = 64, STRB = 8, ID = 4];
@@ -39,9 +39,10 @@ fn main() {
     let (aw, ar, w, _, _, _) = host_out;
     let (_, _, b, r, _) = host_in;
     let (host, inp, outp) = pins::<32, 64, 8, 4>(aw, ar, w, b, r);
-    let ram = Ram::<32, 64, 8, 4>::new(16);
+    let ram = <Ram![ADDR = 32, DATA = 64, STRB = 8, ID = 4]>::new(16);
     let mut pinned = Pins::default();
-    let mut tracker = AxiPer::<32, 64, 8, 4>::default();
+    let mut tracker =
+        <AxiPer![ADDR = 32, DATA = 64, STRB = 8, ID = 4]>::default();
 
     if let Some(mut wave) = Wave::from_env() {
         wave.clock::<txhdl::comp::DefaultClock>();

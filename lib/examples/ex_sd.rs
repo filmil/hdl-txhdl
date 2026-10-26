@@ -32,10 +32,11 @@ use txhdl_parts::sd::{
     CMD_SHORT, CMD_WRITE, CTRL_CLEAR, CTRL_WIDE, STATUS_DCRC, STATUS_DONE,
     STATUS_DTIMEOUT, STATUS_RCRC, STATUS_RTIMEOUT, WORDS,
 };
+use txhdl_parts::AxiHost;
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
 /// identifiers, four of them.
-type HostUnit = AxiHost<32, 32, 4, 2, 4>;
+type HostUnit = AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4];
 
 /// The bridge, with the host at `0x1000`.
 type Bridge = LiteBridge<1, SdMap, 32, 32, 4, 2>;

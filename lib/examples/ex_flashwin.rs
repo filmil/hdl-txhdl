@@ -21,6 +21,7 @@ use txhdl_parts::bus::axi::{
 };
 use txhdl_parts::flashwin::FlashWin;
 use txhdl_parts::spi::FlashDevice;
+use txhdl_parts::{AxiHost, AxiPer, PerPort};
 
 /// The identifier width, and how many a host may have out at once.
 const IW: usize = 2;
@@ -38,15 +39,23 @@ const WORDS: [u32; 2] = [0xdead_beef, 0x0123_4567];
 fn main() {
     let u = axi_units::<32, 32, 4, IW>();
     let host = host_end::<32, 32, 4, IW, NIDS>(u.host_client);
-    let bus: PerPort<32, 32, 4, IW> = u.per_client.into();
+    let bus: PerPort![ADDR = 32, DATA = 32, STRB = 4, ID = IW] =
+        u.per_client.into();
     let (miso_drive, miso) = signal::<Bit, DefaultClock>();
     let (sclk_out, sclk) = signal::<Bit, DefaultClock>();
     let (mosi_out, mosi) = signal::<Bit, DefaultClock>();
     let (cs_out, cs_n) = signal::<Bit, DefaultClock>();
     let (rst_out, rst) = signal::<Bit, DefaultClock>();
 
-    let mut host_unit = AxiHost::<32, 32, 4, IW, NIDS>::default();
-    let mut per_unit = AxiPer::<32, 32, 4, IW>::default();
+    let mut host_unit = <AxiHost![
+        ADDR = 32,
+        DATA = 32,
+        STRB = 4,
+        ID = IW,
+        IDS = NIDS
+    ]>::default();
+    let mut per_unit =
+        <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = IW]>::default();
     let mut win = FlashWin::<DIV, IW>::default();
 
     if let Some(mut wave) = Wave::from_env() {

@@ -24,6 +24,7 @@ use txhdl_parts::bus::axi::{
     axi_units, Answer, AxiHost, AxiPer, PerPort, Resp, R,
 };
 use txhdl_parts::dma::LineFetch;
+use txhdl_parts::{AxiHost, AxiPer, PerPort};
 
 const ADDR: usize = 32;
 const IDB: usize = 2;
@@ -110,7 +111,8 @@ impl<const A: usize, const I: usize, const M: usize> Unit for Rom<A, I, M> {
 fn main() {
     let link = axi_units::<ADDR, 32, 4, IDB>();
     let (issue, wbeat, release, grant, done, rdata) = link.host_client;
-    let bus: PerPort<ADDR, 32, 4, IDB> = link.per_client.into();
+    let bus: PerPort![ADDR = ADDR, DATA = 32, STRB = 4, ID = IDB] =
+        link.per_client.into();
     let (base_o, base) = signal::<U<ADDR>, DefaultClock>();
     let (words_o, words) = signal::<U<16>, DefaultClock>();
     let (go_o, go) = signal::<Bit, DefaultClock>();
@@ -124,8 +126,15 @@ fn main() {
         px: Mem::with(&image),
         ..Default::default()
     };
-    let mut host = AxiHost::<ADDR, 32, 4, IDB, IDS>::default();
-    let mut per = AxiPer::<ADDR, 32, 4, IDB>::default();
+    let mut host = <AxiHost![
+        ADDR = ADDR,
+        DATA = 32,
+        STRB = 4,
+        ID = IDB,
+        IDS = IDS
+    ]>::default();
+    let mut per =
+        <AxiPer![ADDR = ADDR, DATA = 32, STRB = 4, ID = IDB]>::default();
     let mut fetch = LineFetch::<ADDR, IDB, BEATS, 16>::default();
 
     // Every port under the name the port has, and the unit under the

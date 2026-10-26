@@ -30,12 +30,13 @@ use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::cfgflash::CfgFlash;
 use txhdl_parts::flashwin::FlashWin;
 use txhdl_parts::spi::{regs, FlashDevice, Spi, SpiLines};
+use txhdl_parts::{AxiHost, AxiPer, Host, PerPort};
 
 /// The master's link: its host, and the bridge with the master at
 /// `0x1000`.
-type HostUnit = AxiHost<32, 32, 4, 2, 4>;
+type HostUnit = AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4];
 type Bridge = LiteBridge<1, SpiMap, 32, 32, 4, 2>;
-type Client = Host<32, 32, 4, 2, 4>;
+type Client = Host![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4];
 
 /// Where the bridge's one peripheral is.
 pub struct SpiMap;
@@ -108,7 +109,8 @@ fn main() {
     // The window, on a link of its own.
     let u = axi_units::<32, 32, 4, 2>();
     let whost = host_end::<32, 32, 4, 2, 4>(u.host_client);
-    let wbus: PerPort<32, 32, 4, 2> = u.per_client.into();
+    let wbus: PerPort![ADDR = 32, DATA = 32, STRB = 4, ID = 2] =
+        u.per_client.into();
     // The wires. `miso` goes from the chip to both.
     let (miso_drive, miso) = signal::<Bit, DefaultClock>();
     let (m_sclk_o, m_sclk) = signal::<Bit, DefaultClock>();
@@ -127,8 +129,10 @@ fn main() {
     let mut host_unit = HostUnit::default();
     let mut bridge = Bridge::default();
     let mut spi = Spi::default();
-    let mut whost_unit = AxiHost::<32, 32, 4, 2, 4>::default();
-    let mut wper_unit = AxiPer::<32, 32, 4, 2>::default();
+    let mut whost_unit =
+        <AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4]>::default();
+    let mut wper_unit =
+        <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = 2]>::default();
     let mut win = FlashWin::<DIV, 2>::default();
     let mut flash = CfgFlash::<GUARD>::default();
 

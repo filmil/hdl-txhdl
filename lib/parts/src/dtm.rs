@@ -840,8 +840,15 @@ mod bridge_tests {
         let (dmi_tx, dmi_rx) = chan::<U<41>, DefaultClock>();
         let (ans_tx, ans_rx) = chan::<U<34>, DefaultClock>();
         let mut bridge = DtmBridge::<DM, 1>::default();
-        let mut host = AxiHost::<32, 32, 4, 1, 2>::default();
-        let mut per = AxiPer::<32, 32, 4, 1>::default();
+        let mut host = <AxiHost![
+            ADDR = 32,
+            DATA = 32,
+            STRB = 4,
+            ID = 1,
+            IDS = 2
+        ]>::default();
+        let mut per =
+            <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = 1]>::default();
         let got = Rc::new(RefCell::new(Vec::new()));
         let out = got.clone();
         let n = script.len();

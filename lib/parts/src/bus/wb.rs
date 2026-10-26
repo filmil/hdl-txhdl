@@ -210,7 +210,7 @@ mod tests {
     use txhdl::comp::{join2, signal, DefaultClock, Running, Unit};
     use txhdl::types::{Bit, U};
 
-    type Client = Host<32, 32, 4, 2, 4>;
+    type Client = Host![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4];
 
     /// Run a client against a memory for `cycles` cycles, with the
     /// link, the bridge and the Wishbone lines between them.
@@ -237,8 +237,11 @@ mod tests {
         let (stall_o, stall) = signal::<Bit, DefaultClock>();
         let (ack_o, ack) = signal::<Bit, DefaultClock>();
         let (rdat_o, rdat) = signal::<U<32>, DefaultClock>();
-        let mut h = AxiHost::<32, 32, 4, 2, 4>::default();
-        let mut p = AxiPer::<32, 32, 4, 2>::default();
+        let mut h = <AxiHost![
+            ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4
+        ]>::default();
+        let mut p =
+            <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = 2]>::default();
         let mut bridge = AxiWb::<32, 2, 28>::default();
         let mut mem = mem;
         // The memory before the bridge: the bridge reads the memory's

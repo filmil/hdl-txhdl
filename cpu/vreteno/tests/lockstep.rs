@@ -11,6 +11,7 @@ use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, PerPort};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::bus::router::Router;
+use txhdl_parts::{AxiHost, AxiPer};
 use vreteno32::core::{is_load_word, Writeback};
 use vreteno32::dmem::Dmem;
 use vreteno32::hart::{Hart, HartIn, HartOut};
@@ -241,10 +242,12 @@ fn lockstep_hart<const HID: usize>(
     let rbus = PerPort::from(rl.per_client);
     let xl = axi_units::<32, 32, 4, IW>();
     let xbus = PerPort::from(xl.per_client);
-    let mut xper = AxiPer::<32, 32, 4, IW>::default();
+    let mut xper =
+        <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = IW]>::default();
     let mut ddr = Dmem::<IW, 12, DDR_WORDS>::default();
     let mut rom = Rom::<IW>::with(program);
-    let mut rper = AxiPer::<32, 32, 4, IW>::default();
+    let mut rper =
+        <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = IW]>::default();
     let (issue, wbeat, release, grant, cdone, crdata) = cl.host_client;
     let dbus = PerPort::from(dl.per_client);
     let tbus = PerPort::from(tl.per_client);
@@ -253,9 +256,17 @@ fn lockstep_hart<const HID: usize>(
     let sl = axi_lite::<32, 32, 4>();
     let ubus: LitePort<32, 32, 4> = sl.per.into();
     let (baw, bar, bw, bb, br) = sl.host;
-    let mut axi_host = AxiHost::<32, 32, 4, IW, NIDS>::default();
-    let mut dper = AxiPer::<32, 32, 4, IW>::default();
-    let mut tper = AxiPer::<32, 32, 4, IW>::default();
+    let mut axi_host = <AxiHost![
+        ADDR = 32,
+        DATA = 32,
+        STRB = 4,
+        ID = IW,
+        IDS = NIDS
+    ]>::default();
+    let mut dper =
+        <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = IW]>::default();
+    let mut tper =
+        <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = IW]>::default();
     let mut ubridge = Serial::default();
     let mut router = Rtr::default();
     let (halt_out, _halt) = signal::<Bit, DefaultClock>();

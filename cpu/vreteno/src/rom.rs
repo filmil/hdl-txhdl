@@ -142,6 +142,7 @@ mod tests {
     use txhdl_parts::bus::axi::{
         axi_units, host_end, AxiHost, AxiPer, Host, Rd,
     };
+    use txhdl_parts::{AxiHost, AxiPer, Host};
 
     /// A read burst of sixteen beats, which is how the scanout's fetch
     /// asks for a line, gets sixteen words in order with the last one
@@ -152,7 +153,8 @@ mod tests {
         let program: Vec<u32> = (0..64u32).map(|i| 0x1000 + i).collect();
         let mut rom = Rom::<2>::with(&program);
         let u = axi_units::<32, 32, 4, 2>();
-        let host: Host<32, 32, 4, 2, 4> = host_end(u.host_client);
+        let host: Host![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4] =
+            host_end(u.host_client);
         let bus = PerPort::from(u.per_client);
         let done = Rc::new(RefCell::new(false));
         let d = done.clone();
@@ -167,8 +169,15 @@ mod tests {
             assert_eq!(got.data[0].raw(), 0x1002);
             *d.borrow_mut() = true;
         };
-        let mut tracker = AxiHost::<32, 32, 4, 2, 4>::default();
-        let mut per = AxiPer::<32, 32, 4, 2>::default();
+        let mut tracker = <AxiHost![
+            ADDR = 32,
+            DATA = 32,
+            STRB = 4,
+            ID = 2,
+            IDS = 4
+        ]>::default();
+        let mut per =
+            <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = 2]>::default();
         let mut sim = Running::new(join2(
             client,
             join2(

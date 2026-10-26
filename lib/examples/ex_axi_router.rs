@@ -25,15 +25,16 @@ use txhdl_parts::bus::axi::{
     axi, serve, AxiHost, AxiPer, Link, Per, Rd, Resp, Wr, Xact,
 };
 use txhdl_parts::bus::router::Router;
+use txhdl_parts::{AxiHost, AxiPer, Per};
 
 /// The link of this example: sixteen-bit addresses, thirty-two-bit
 /// words, four lanes, three-bit identifiers, eight of them. Five
 /// bursts are in flight at once here, and an identifier is held until
 /// its answer is collected, so four would not be enough.
-type HostUnit = AxiHost<16, 32, 4, 3, 8>;
-type PerUnit = AxiPer<16, 32, 4, 3>;
+type HostUnit = AxiHost![ADDR = 16, DATA = 32, STRB = 4, ID = 3, IDS = 8];
+type PerUnit = AxiPer![ADDR = 16, DATA = 32, STRB = 4, ID = 3];
 type Job = Xact<16, 32, 4, 3>;
-type End = Per<16, 32, 4, 3>;
+type End = Per![ADDR = 16, DATA = 32, STRB = 4, ID = 3];
 
 /// The address map, a type the router is named with: three peripherals
 /// of a nibble each, and every other address a hole.

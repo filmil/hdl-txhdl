@@ -27,6 +27,7 @@ use txhdl_parts::bus::axi::{
 };
 use txhdl_parts::bus::axi_per_pins::sim::pins as pin_ram;
 use txhdl_parts::bus::axi_per_pins::AxiPerPins;
+use txhdl_parts::{AxiHost, Host, Pending, R};
 
 use crate::{Ddr3Per, Ddr3PerBus, Ddr3PerPins};
 
@@ -60,7 +61,7 @@ pub const WINDOW: usize = 4;
 /// reads or all writes, issued back to back with [`WINDOW`] in flight.
 /// `done` is set when the last is answered.
 async fn client(
-    host: Host<32, 32, 4, 5, 32>,
+    host: Host![ADDR = 32, DATA = 32, STRB = 4, ID = 5, IDS = 32],
     beats: usize,
     bursts: usize,
     write: bool,
@@ -70,7 +71,8 @@ async fn client(
     let mut pending = std::collections::VecDeque::new();
     for b in 0..bursts {
         if pending.len() == WINDOW {
-            let p: Pending<32, 5> = pending.pop_front().expect("in flight");
+            let p: Pending![DATA = 32, ID = 5] =
+                pending.pop_front().expect("in flight");
             assert_eq!(p.done().await.resp, Resp::Okay);
         }
         let at = BASE + (b * beats * 4) as u32;
@@ -109,7 +111,8 @@ pub fn pins(
     let (_, _, b, r) = per_out;
     let (ram, inp, outp) = pin_ram::<32, 32, 4, 5>(aw, ar, w, b, r, 1 << 20);
     let ram = ram.wrapping().timed(latency, latency, 0);
-    let mut h = AxiHost::<32, 32, 4, 5, 32>::default();
+    let mut h =
+        <AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 5, IDS = 32]>::default();
     let mut pinned = AxiPerPins::<32, 32, 4, 5>::default();
     let done = Rc::new(Cell::new(false));
     let finished = done.clone();
@@ -148,7 +151,8 @@ pub fn ddr3_per(beats: usize, bursts: usize, write: bool) -> Measured {
     let (_sys_rst_o, sys_rst) = signal::<Bit, DefaultClock>();
     let (calib_o, calib) = signal::<Bit, DefaultClock>();
     let bits = || signal::<Bit, DefaultClock>().0;
-    let mut h = AxiHost::<32, 32, 4, 5, 32>::default();
+    let mut h =
+        <AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 5, IDS = 32]>::default();
     let mut mem = Ddr3Per::default();
     let done = Rc::new(Cell::new(false));
     let finished = done.clone();
@@ -164,7 +168,10 @@ pub fn ddr3_per(beats: usize, bursts: usize, write: bool) -> Measured {
                     b,
                     r,
                     xar: chan::<Ar<32, 5>, DefaultClock>().1,
-                    xr: chan::<R<256, 5, 2>, DefaultClock>().0,
+                    xr:
+                        chan::<R![DATA = 256, ID = 5, LIMBS = 2], DefaultClock>(
+                        )
+                        .0,
                 },
                 Ddr3PerPins {
                     sys_clk,

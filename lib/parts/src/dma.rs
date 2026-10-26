@@ -517,7 +517,7 @@ mod tests {
     fn a_burst_never_crosses_a_4k_boundary() {
         let (grant_tx, grant) = chan::<Grant<2>, DefaultClock>();
         let (done_tx, done) = chan::<Done<2>, DefaultClock>();
-        let (rdata_tx, rdata) = chan::<R<32, 2>, DefaultClock>();
+        let (rdata_tx, rdata) = chan::<R![DATA = 32, ID = 2], DefaultClock>();
         let (issue, issue_rx) = chan::<Issue<16>, DefaultClock>();
         let (release, release_rx) = chan::<Grant<2>, DefaultClock>();
         let (out, out_rx) = chan::<U<32>, DefaultClock>();

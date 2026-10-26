@@ -21,12 +21,13 @@ use txhdl::types::U;
 use txhdl_parts::bus::axi::{
     axi, serve, AxiHost, AxiPer, Link, Rd, Resp, Wr, Xact,
 };
+use txhdl_parts::{AxiHost, AxiPer};
 
 /// The link of this example: sixteen-bit addresses, thirty-two-bit
 /// words, four lanes, two-bit identifiers, four of them. `AxiHost`
 /// and `AxiPer` are units, so the widths are their type parameters.
-type HostUnit = AxiHost<16, 32, 4, 2, 4>;
-type PerUnit = AxiPer<16, 32, 4, 2>;
+type HostUnit = AxiHost![ADDR = 16, DATA = 32, STRB = 4, ID = 2, IDS = 4];
+type PerUnit = AxiPer![ADDR = 16, DATA = 32, STRB = 4, ID = 2];
 /// One accepted transaction of that link.
 type Job = Xact<16, 32, 4, 2>;
 

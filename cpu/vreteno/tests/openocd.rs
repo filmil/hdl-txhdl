@@ -21,6 +21,7 @@ use txhdl_parts::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
 use txhdl_parts::bus::axi_pins::AxiHostPins;
 use txhdl_parts::dtm::Tck;
 use txhdl_parts::eth::EthByte;
+use txhdl_parts::{Addr, R, W};
 use vreteno32::board::{
     Board, BoardIn, BoardOut, Bscan, Ddr3Pins, JtagAnswers, SysIn, SysOut,
 };
@@ -327,10 +328,10 @@ fn rig_with(text: Vec<u32>, busy: bool) -> Rig {
             vr: chan::<LiteR<32>, DefaultClock>().1,
             net_rx: chan::<EthByte, DefaultClock>().1,
             scan_req: chan::<U<32>, DefaultClock>().1,
-            host_aw: chan::<Addr<32, 2>, DefaultClock>().1,
-            host_ar: chan::<Addr<32, 2>, DefaultClock>().1,
-            host_w: chan::<W<32, 4>, DefaultClock>().1,
-            wide_ar: chan::<Addr<32, 5>, DefaultClock>().1,
+            host_aw: chan::<Addr![ADDR = 32, ID = 2], DefaultClock>().1,
+            host_ar: chan::<Addr![ADDR = 32, ID = 2], DefaultClock>().1,
+            host_w: chan::<W![DATA = 32, STRB = 4], DefaultClock>().1,
+            wide_ar: chan::<Addr![ADDR = 32, ID = 5], DefaultClock>().1,
             jtag: AxiHostPins {
                 awid: signal::<U<1>, DefaultClock>().1,
                 awaddr: signal::<U<32>, DefaultClock>().1,
@@ -373,8 +374,8 @@ fn rig_with(text: Vec<u32>, busy: bool) -> Rig {
             // No scanout runs here: nothing asks for a line.
             scan_words: chan::<U<32>, DefaultClock>().0,
             host_b: chan::<B<2>, DefaultClock>().0,
-            host_r: chan::<R<32, 2>, DefaultClock>().0,
-            wide_r: chan::<R<256, 5, 2>, DefaultClock>().0,
+            host_r: chan::<R![DATA = 32, ID = 2], DefaultClock>().0,
+            wide_r: chan::<R![DATA = 256, ID = 5, LIMBS = 2], DefaultClock>().0,
         },
     ));
     // Out of reset, the serial line idle, and the cable's half period
