@@ -473,6 +473,10 @@ own bounds on each in its \code{where} clause, read through the role,
 the \code{Sized} a plain parameter has unless it said \code{?Sized}.
 The runtime's markers are \code{comp::named}'s, and \code{Signal}
 reuses them.
+\code{reuse(..)} is for markers \code{named\_markers!} declared: a
+marker another struct made carries that struct's bounds in its role, so
+a struct reusing it would have both structs' bounds, and could not drop
+\code{Sized}.
 The one cost is Rust's: a struct's \code{where} bounds are not implied
 in its impls, as a trait's bounds on an associated type are, so an impl
 generic over the role restates them (\code{probe\_named\_reuse\_generic});
