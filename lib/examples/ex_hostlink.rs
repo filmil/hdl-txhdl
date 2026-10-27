@@ -29,7 +29,7 @@ use txhdl_parts::bus::axi_lite::{LiteB, LitePort, LiteR};
 use txhdl_parts::eth::EthByte;
 use txhdl_parts::remote::eth::FRAME_LEN;
 use txhdl_parts::remote::host::{
-    HostLink, LiteMaster, KIND_HOST_ANSWER, KIND_HOST_ASK,
+    HostBridge, HostLink, LiteMaster, KIND_HOST_ANSWER, KIND_HOST_ASK,
 };
 use txhdl_parts::remote::{Answer, Ask};
 
@@ -167,5 +167,8 @@ fn main() {
     }
     let net = HostLink::<DEVICE>::lowered("host_link");
     let master = LiteMaster::lowered("lite_master");
-    txhdl::netlist::write_netlists_from_env(&[&net, &master]);
+    // The two joined, as the FireSim top on the AX7A200B instantiates
+    // them: the run above joins them by the same channels.
+    let bridge = HostBridge::<DEVICE>::lowered("host_bridge");
+    txhdl::netlist::write_netlists_from_env(&[&net, &master, &bridge]);
 }

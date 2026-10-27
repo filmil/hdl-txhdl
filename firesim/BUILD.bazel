@@ -1,5 +1,8 @@
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
+# GCD elaborated, for //firesim/ax7a200b too.
+exports_files(glob(["testdata/*"]))
+
 # Golden Gate, FireSim's compiler, prebuilt (@firesim_goldengate, the
 # module rules_firesim runs it from), on FireSim's GCD example for the
 # Nitefury II platform. testdata/ is GCD elaborated by FireSim 1.22.0's examples
