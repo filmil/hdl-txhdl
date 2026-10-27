@@ -29,9 +29,10 @@ pub const DMEM_WORDS: usize = 1024;
 /// of two, and `ADDR` the bits that number them, so that `WORDS` is
 /// `1 << ADDR`. The data memory is the defaults.
 ///
-/// `WORDS` and `ADDR` are stated apart, since a computed width in a type
-/// needs nightly Rust, so either can be given without the other; a
-/// `Dmem` whose `WORDS` is not `1 << ADDR` does not compile (#1971).
+/// `WORDS` and `ADDR` are both stated, since a computed width in a type
+/// needs nightly Rust, and they must agree: a `Dmem` built through
+/// `Default` or `with`, as every one in the tree is, whose `WORDS` is not
+/// `1 << ADDR` does not compile (#1971). Give both, or neither.
 #[txhdl::named_type_params]
 #[derive(Trace)]
 pub struct Dmem<
