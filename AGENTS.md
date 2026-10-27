@@ -157,8 +157,9 @@ all under `//docs`:
   netlist and its waveform, all produced by the build; the back is
   the vocabulary.
 * `//docs:stats` is the repository in numbers, lines per topic,
-  measured once on September 13, 2026, and typed in; it is not kept up
-  to date, and `tools/repostats.sh` measures again.
+  measured on October 27, 2026, beside the first edition of September
+  13, and typed in; it is not kept up to date, and
+  `tools/repostats.sh` measures again.
 * `//docs:dynamics` is how the work went rather than what it is: the
   project's timeline measured from its own history, with a Gantt
   chart of the bands of work and what each needed before it could
