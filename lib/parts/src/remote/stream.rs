@@ -23,7 +23,7 @@
 //! | 14 | the kind, [`KIND_STREAM_ASK`] |
 //! | 15 | the device |
 //! | 16 | the tag |
-//! | 17 | 1 for a write, 0 for a read |
+//! | 17 | bit 0: 1 for a write, 0 for a read; bit 1: a no-op |
 //! | 18 to 25 | the address, most significant byte first |
 //! | 26 to 41 | the beat, in memory order: byte 26 is lane 0 |
 //! | 42 to 43 | the strobe, a bit per lane, most significant byte first |
@@ -36,6 +36,13 @@
 //! [`LiteMaster`](super::host::LiteMaster), an ask that repeats the
 //! tag of the last transfer is answered from what was kept of it,
 //! the beat included.
+//!
+//! A program starts with a tag it can't know the board has not kept
+//! from an earlier run, and no stream transfer is harmless to repeat
+//! or to skip. So its first ask is a no-op, bit 1 of byte 17: the
+//! master answers it without touching the port and keeps its tag as
+//! the last one. Whether or not that tag was a repeat, every tag after
+//! it differs from the one kept.
 use txhdl::comp::{chan, join2, mux, Clock, DefaultClock, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
@@ -67,6 +74,8 @@ pub struct BeatAsk {
     pub data: U<128>,
     /// Which lanes the write covers; zero on a read.
     pub strb: U<16>,
+    /// One for a no-op: answered and its tag kept, the port untouched.
+    pub noop: Bit,
 }
 
 /// The answer to one [`BeatAsk`].
@@ -160,7 +169,8 @@ impl Unit for BeatMaster {
             let _ = ask.recv_if(take);
             let repeat =
                 self.have_last.get() & (head.tag == self.last_tag.get());
-            let start = take & !repeat;
+            let start = take & !repeat & !head.noop;
+            let noop = take & !repeat & head.noop;
             let send_aw = busy & writing & !addr_sent & aw.ready();
             let send_w = busy & writing & !data_sent & w.ready();
             let send_ar = busy & !writing & !addr_sent & ar.ready();
@@ -187,6 +197,9 @@ impl Unit for BeatMaster {
                           tag: head.tag, addr: head.addr,
                           data: head.data, strb: head.strb },
                 take & repeat ? answering: Bit::One,
+                noop ? { answering: Bit::One, have_last: Bit::One,
+                         last_tag: head.tag, last_data: U::<128>::from(0u32),
+                         last_err: Bit::Zero },
                 send_aw | send_ar ? addr_sent: Bit::One,
                 send_w ? data_sent: Bit::One,
                 done ? { busy: Bit::Zero, answering: Bit::One,
@@ -234,6 +247,8 @@ pub struct StreamLink<const DEV: usize> {
     pub in_tag: Reg<U<8>>,
     /// Whether it is a write.
     pub in_write: Reg<Bit>,
+    /// Whether it is a no-op.
+    pub in_noop: Reg<Bit>,
     /// Its address, shifted in a byte at a time.
     pub in_addr: Reg<U<64>>,
     /// Its beat, shifted in from the top so lane 0 ends lowest.
@@ -345,7 +360,8 @@ impl<const DEV: usize> Unit for StreamLink<DEV> {
                 took & bad ? alien: Bit::One,
                 took & inb.last ? alien: Bit::Zero,
                 took & (got == 16) ? in_tag: value,
-                took & (got == 17) ? in_write: value.bit(0),
+                took & (got == 17) ? { in_write: value.bit(0),
+                                       in_noop: value.bit(1) },
                 took & in_addr ? in_addr:
                     self.in_addr.get().slice::<0, 56>().concat::<_, 64>(value),
                 took & in_data ? in_data:
@@ -361,6 +377,7 @@ impl<const DEV: usize> Unit for StreamLink<DEV> {
                 ask.send(BeatAsk {
                     tag: self.in_tag.get(),
                     write: self.in_write.get(),
+                    noop: self.in_noop.get(),
                     addr: self.in_addr.get(),
                     data: self.in_data.get(),
                     strb: self.in_strb.get(),
@@ -554,6 +571,13 @@ mod tests {
         (answers, seen)
     }
 
+    /// A no-op ask.
+    fn noop_frame(tag: u8) -> Vec<u8> {
+        let mut f = ask_frame(5, tag, false, 0, 0, 0);
+        f[17] = 2;
+        f
+    }
+
     const BEAT: u128 = 0x0f0e0d0c_0b0a0908_07060504_03020100;
 
     #[test]
@@ -635,6 +659,33 @@ mod tests {
         let good = ask_frame(5, 9, false, 0x40, 0, 0);
         let (got, seen) = serve(&[other, control, short, good], vec![BEAT]);
         assert_eq!(got, vec![(5, 9, BEAT, false)]);
+        assert!(seen.borrow().writes.is_empty());
+    }
+
+    #[test]
+    fn a_noop_is_answered_and_never_reaches_the_port() {
+        // The first ask of a run: whatever tag the master kept, the
+        // reads after the no-op are performed.
+        let (got, seen) = serve(
+            &[
+                noop_frame(9),
+                ask_frame(5, 10, false, 0x200, 0, 0),
+                noop_frame(10),
+                ask_frame(5, 11, false, 0x200, 0, 0),
+            ],
+            vec![BEAT, !BEAT],
+        );
+        assert_eq!(
+            got,
+            vec![
+                (5, 9, 0, false),
+                (5, 10, BEAT, false),
+                (5, 10, BEAT, false),
+                (5, 11, !BEAT, false)
+            ],
+            "a no-op that repeats the kept tag is answered as the repeat"
+        );
+        assert_eq!(seen.borrow().reads, vec![0x200, 0x200]);
         assert!(seen.borrow().writes.is_empty());
     }
 }
