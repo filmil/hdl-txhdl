@@ -105,8 +105,20 @@ read_ping() {
   ' "$log"
 }
 
+# The gap in microseconds, start to start, between the frames of a
+# receive burst of `size` bytes: #1038's paced pass, 40 for the 60-byte
+# frames and 60 for the 1514. Unpaced, the burst runs at whatever rate
+# the server's socket takes it, which changes from burst to burst, and
+# the one-frame receiver keeps less of a faster one, so the count
+# would measure the server rather than the board (#1955).
+rx_gap_us() {
+  if (($1 <= 60)); then echo 40; else echo 60; fi
+}
+
 # ethperf: each transmit run's frames a second, recorded, and each
-# receive run's frames got of those sent, which are all of them.
+# receive run's frames got of those sent. A paced burst passes at 99%
+# or more: docs/eth.tex measured 0.1% lost of the 60-byte frames at
+# that pacing, and none of the 1514 (#1955).
 read_ethperf() {
   local log="$1"
   perl -e '
@@ -116,7 +128,7 @@ read_ethperf() {
       if (/\btx (dma|copy) (\d+) frames \d+ ticks \d+ frames\/s (\d+)/) {
         print "ethernet\ttx $1 $2\t$3\tframes/s\tpass\n"; $n++;
       } elsif (/\brx (dma|copy) (\d+) got (\d+) of (\d+)/) {
-        printf "ethernet\trx %s %s got\t%d\tof %d\t%s\n", $1, $2, $3, $4, $4 > 0 && $3 == $4 ? "pass" : "fail"; $n++;
+        printf "ethernet\trx %s %s got\t%d\tof %d\t%s\n", $1, $2, $3, $4, $4 > 0 && $3 <= $4 && 100 * $3 >= 99 * $4 ? "pass" : "fail"; $n++;
       }
     }
     print "ethernet\tethperf\t-\t-\tfail\n" unless $n;
