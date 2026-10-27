@@ -38,6 +38,14 @@ TOPS = [
         ["//pcie:bar_v"],
     ),
     (
+        ["//firesim/ax7a200b:firesim_eth_top.v"],
+        [
+            "//firesim/ax7a200b:hostlink_v",
+            "//firesim/ax7a200b:gcd/FireSim-generated.sv",
+            "//eth:mac_v",
+        ],
+    ),
+    (
         ["//flagship:board/flagship.v"],
         [
             "//cpu/vreteno:board_boot_v",
