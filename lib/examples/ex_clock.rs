@@ -5,9 +5,12 @@
 //! in on one clock and gives it out on the other (issue 1017); a unit
 //! that reads a port of the other clock does not compile, so the
 //! crossing cannot be forgotten.
+use txhdl::comp::Data;
 use txhdl::comp::{chan, Clock, DefaultClock, Reg, Rx, Tx};
 use txhdl::types::U;
 use txhdl_parts::cdc::ChanCdc;
+use txhdl_parts::cdc::{ReadClock, WriteClock};
+use txhdl_parts::ChanCdc;
 
 pub struct Clk400;
 impl Clock for Clk400 {
@@ -38,7 +41,14 @@ impl<C: Clock> Probe<C> {
 
 /// The crossing: four words of `U<32>`, two address bits and three
 /// pointer bits, from the default clock to `Clk400`.
-pub type Cross = ChanCdc<U<32>, 2, 4, 3, DefaultClock, Clk400>;
+pub type Cross = ChanCdc![
+    Data = U<32>,
+    ADDR = 2,
+    DEPTH = 4,
+    PTRS = 3,
+    WriteClock = DefaultClock,
+    ReadClock = Clk400,
+];
 
 /// The three, and the two channel ends the crossing's `run` takes: the
 /// counter's channel in, on the default clock, and the DSP's out, on

@@ -82,14 +82,15 @@ pub const FULL: u32 = 3;
 pub const GOLDEN: u32 = 0x9E37_79B1;
 
 /// An operation on the table.
+#[txhdl::named_type_params]
 #[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
-pub struct TableOp<const KW: usize, const VW: usize> {
+pub struct TableOp<const KEY: usize, const VALUE: usize> {
     /// `LOOKUP`, `INSERT`, `UPDATE` or `REMOVE`.
     pub op: U<2>,
     /// The key.
-    pub key: U<KW>,
+    pub key: U<KEY>,
     /// The value an insert or an update puts in.
-    pub val: U<VW>,
+    pub val: U<VALUE>,
 }
 
 /// An operation's answer.
@@ -110,38 +111,39 @@ pub fn set_of(key: u32, b: usize) -> usize {
 }
 
 // begin{state}
-/// `W` ways, 1 to 256, of `D = 1 << B` rows, `B` from 1 to 32, of a
-/// key of `KW` bits, 1 to 32, and a value of `VW` bits.
+/// `WAYS` ways, 1 to 256, of `ROWS = 1 << ROW_ADDR` rows, `ROW_ADDR` from 1
+/// to 32, of a key of `KEY` bits, 1 to 32, and a value of `VALUE` bits.
+#[txhdl::named_type_params]
 #[derive(Trace)]
 pub struct SetTable<
-    const KW: usize,
-    const VW: usize,
-    const B: usize,
-    const D: usize,
-    const W: usize,
+    const KEY: usize,
+    const VALUE: usize,
+    const ROW_ADDR: usize,
+    const ROWS: usize,
+    const WAYS: usize,
 > {
     /// Each way's keys, a memory per way.
-    pub key: Mems<U<KW>, D, W>,
+    pub key: Mems<U<KEY>, ROWS, WAYS>,
     /// Each way's values.
-    pub val: Mems<U<VW>, D, W>,
+    pub val: Mems<U<VALUE>, ROWS, WAYS>,
     /// Whether each way's row is used.
-    pub used: Mems<Bit, D, W>,
+    pub used: Mems<Bit, ROWS, WAYS>,
     /// An operation was read last cycle and is decided this one.
     pub busy: Reg<Bit>,
     /// Its kind: `LOOKUP`, `INSERT`, `UPDATE` or `REMOVE`.
     pub kind: Reg<U<2>>,
     /// Its key.
-    pub okey: Reg<U<KW>>,
+    pub okey: Reg<U<KEY>>,
     /// Its value.
-    pub oval: Reg<U<VW>>,
+    pub oval: Reg<U<VALUE>>,
     /// Its set.
-    pub set: Reg<U<B>>,
+    pub set: Reg<U<ROW_ADDR>>,
     /// Each way's key at that set, as read or as forwarded.
-    pub rkey: Regs<U<KW>, W>,
+    pub rkey: Regs<U<KEY>, WAYS>,
     /// Each way's value there.
-    pub rval: Regs<U<VW>, W>,
+    pub rval: Regs<U<VALUE>, WAYS>,
     /// Whether each way's row there is used.
-    pub rused: Regs<Bit, W>,
+    pub rused: Regs<Bit, WAYS>,
     /// Inserts refused for a full set.
     pub refused: Reg<U<32>>,
 }
@@ -371,7 +373,8 @@ mod tests {
     use txhdl::comp::{chan, signal, Running};
 
     /// Eight sets of four ways, keys of 16 bits and values of 8.
-    type Small = SetTable<16, 8, 3, 8, 4>;
+    type Small =
+        SetTable![KEY = 16, VALUE = 8, ROW_ADDR = 3, ROWS = 8, WAYS = 4];
 
     /// Run `ops` through a `Small`, each offered on the cycles `give`
     /// says and the answers taken on the cycles `take` says; the
@@ -381,12 +384,13 @@ mod tests {
         give: &mut dyn FnMut(usize) -> bool,
         take: &mut dyn FnMut(usize) -> bool,
     ) -> (Vec<(u32, u32)>, u32) {
-        let (op_tx, op_rx) = chan::<TableOp<16, 8>, DefaultClock>();
+        let (op_tx, op_rx) =
+            chan::<TableOp![KEY = 16, VALUE = 8], DefaultClock>();
         let (res_tx, res_rx) = chan::<TableResult<8>, DefaultClock>();
         let (ref_o, ref_i) = signal::<U<32>, DefaultClock>();
         let mut t = Small::default();
         let mut sim = Running::new(t.run(op_rx, (res_tx, ref_o)));
-        let mut queue: Vec<TableOp<16, 8>> = ops
+        let mut queue: Vec<TableOp![KEY = 16, VALUE = 8]> = ops
             .iter()
             .map(|&(op, key, val)| TableOp {
                 op: U::from(op),
@@ -552,7 +556,13 @@ mod tests {
     /// ports takes (issue 1285).
     #[test]
     fn a_large_table_fits_block_rams() {
-        let net = SetTable::<32, 32, 10, 1024, 4>::lowered("large");
+        let net = <SetTable![
+            KEY = 32,
+            VALUE = 32,
+            ROW_ADDR = 10,
+            ROWS = 1024,
+            WAYS = 4
+        ]>::lowered("large");
         let v = net.verilog();
         assert!(v.contains("val_3 [0:1023]"), "{v}");
     }
@@ -562,7 +572,13 @@ mod tests {
     #[test]
     #[should_panic(expected = "SetTable: D is 16, not 1 << B = 8")]
     fn rows_that_are_not_two_to_the_set_bits_are_refused() {
-        let _ = SetTable::<16, 8, 3, 16, 4>::default();
+        let _ = <SetTable![
+            KEY = 16,
+            VALUE = 8,
+            ROW_ADDR = 3,
+            ROWS = 16,
+            WAYS = 4
+        ]>::default();
     }
 
     /// The same table is refused when it is lowered, since the lowering
@@ -570,7 +586,13 @@ mod tests {
     #[test]
     #[should_panic(expected = "SetTable: D is 16, not 1 << B = 8")]
     fn a_netlist_of_such_a_table_is_refused() {
-        let _ = SetTable::<16, 8, 3, 16, 4>::lowered("bad");
+        let _ = <SetTable![
+            KEY = 16,
+            VALUE = 8,
+            ROW_ADDR = 3,
+            ROWS = 16,
+            WAYS = 4
+        ]>::lowered("bad");
     }
 
     /// Too few rows, the case that would run past the memory: four rows
@@ -578,42 +600,84 @@ mod tests {
     #[test]
     #[should_panic(expected = "SetTable: D is 4, not 1 << B = 8")]
     fn too_few_rows_for_the_sets_are_refused() {
-        let _ = SetTable::<16, 8, 3, 4, 4>::default();
+        let _ = <SetTable![
+            KEY = 16,
+            VALUE = 8,
+            ROW_ADDR = 3,
+            ROWS = 4,
+            WAYS = 4
+        ]>::default();
     }
 
     #[test]
     #[should_panic(expected = "SetTable: B is 0, not 1 to 32")]
     fn no_set_bits_are_refused() {
-        let _ = SetTable::<16, 8, 0, 1, 4>::default();
+        let _ = <SetTable![
+            KEY = 16,
+            VALUE = 8,
+            ROW_ADDR = 0,
+            ROWS = 1,
+            WAYS = 4
+        ]>::default();
     }
 
     #[test]
     #[should_panic(expected = "SetTable: B is 33, not 1 to 32")]
     fn more_set_bits_than_the_hash_are_refused() {
-        let _ = SetTable::<16, 8, 33, 8, 4>::default();
+        let _ = <SetTable![
+            KEY = 16,
+            VALUE = 8,
+            ROW_ADDR = 33,
+            ROWS = 8,
+            WAYS = 4
+        ]>::default();
     }
 
     #[test]
     #[should_panic(expected = "SetTable: KW is 0, not 1 to 32")]
     fn a_key_of_no_bits_is_refused() {
-        let _ = SetTable::<0, 8, 3, 8, 4>::default();
+        let _ = <SetTable![
+            KEY = 0,
+            VALUE = 8,
+            ROW_ADDR = 3,
+            ROWS = 8,
+            WAYS = 4,
+        ]>::default();
     }
 
     #[test]
     #[should_panic(expected = "SetTable: KW is 33, not 1 to 32")]
     fn a_key_wider_than_the_hash_is_refused() {
-        let _ = SetTable::<33, 8, 3, 8, 4>::default();
+        let _ = <SetTable![
+            KEY = 33,
+            VALUE = 8,
+            ROW_ADDR = 3,
+            ROWS = 8,
+            WAYS = 4
+        ]>::default();
     }
 
     #[test]
     #[should_panic(expected = "SetTable: W is 0, not 1 to 256")]
     fn no_ways_are_refused() {
-        let _ = SetTable::<16, 8, 3, 8, 0>::default();
+        let _ = <SetTable![
+            KEY = 16,
+            VALUE = 8,
+            ROW_ADDR = 3,
+            ROWS = 8,
+            WAYS = 0
+        ]>::default();
     }
 
     #[test]
     #[should_panic(expected = "SetTable: W is 257, not 1 to 256")]
     fn more_ways_than_a_byte_numbers_are_refused() {
-        let _ = SetTable::<16, 8, 3, 8, 257>::default();
+        let _ = <SetTable![
+            KEY = 16,
+            VALUE = 8,
+            ROW_ADDR = 3,
+            ROWS = 8,
+            WAYS = 257
+        ]>::default();
     }
 }

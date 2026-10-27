@@ -31,12 +31,12 @@ against that trace under both simulators.
 
 \lstinputlisting[caption={\code{lib/parts/src/buffer.rs}.},label={lst:r-buffer}]{lib/parts/src/buffer.rs}
 
-\code{Fifo<T, AW, D>} is a channel in, a channel out and \code{D}
-words between, \code{D = 1 << AW} stated since a computed width in a
+\code{Fifo<Data, PTRS, DEPTH>} is a channel in, a channel out and
+\code{DEPTH} words between, \code{DEPTH = 1 << PTRS} stated since a computed width in a
 type needs nightly Rust. A word is taken from the input whenever
 there is room and the oldest word is offered on the output whenever
 there is one, so the latency is one cycle; the head and the tail are
-\code{AW} bits and a full bit tells full from empty, since the
+\code{PTRS} bits and a full bit tells full from empty, since the
 pointers are equal in both. Behind a unit whose output is a channel
 it is the depth the channel's buffer of two does not have. Its test
 runs it against a queue.

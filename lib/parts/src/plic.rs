@@ -54,20 +54,21 @@ use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 
 // begin{state}
-/// A platform-level interrupt controller of `N` sources and four
-/// targets, the machine and supervisor modes of each of two harts, `N`
+/// A platform-level interrupt controller of `SOURCES` sources and four
+/// targets, the machine and supervisor modes of each of two harts, `SOURCES`
 /// from 1 to 31, the most one word
 /// of pending bits holds.
 /// `EDGE` has a bit per source, set for a source that asks on a rising
 /// edge rather than while its line is high. One unit for every count:
 /// the sources are an array of ports and the priorities an array of
 /// registers, and the lowering unrolls the loops over them for each
-/// `N` (issue 500). The words are 32 bits whatever `N` is, bit `s` for
-/// source `s`, and the bits above `N` stay zero.
+/// `SOURCES` (issue 500). The words are 32 bits whatever `SOURCES` is,
+/// bit `s` for source `s`, and the bits above `SOURCES` stay zero.
+#[txhdl::named_type_params]
 #[derive(Trace, Default)]
-pub struct Plic<const N: usize, const EDGE: usize> {
+pub struct Plic<const SOURCES: usize, const EDGE: usize> {
     /// The priority of each source, `prio[s - 1]` for source `s`.
-    pub prio: Regs<U<3>, N>,
+    pub prio: Regs<U<3>, SOURCES>,
     /// The machine target's threshold: only a priority above it
     /// interrupts.
     pub threshold: Reg<U<3>>,
@@ -107,21 +108,21 @@ pub struct Plic<const N: usize, const EDGE: usize> {
 // end{state}
 
 /// One source.
-pub type Plic1<const EDGE: usize> = Plic<1, EDGE>;
+pub type Plic1<const EDGE: usize> = Plic![SOURCES = 1, EDGE = EDGE];
 /// Two sources.
-pub type Plic2<const EDGE: usize> = Plic<2, EDGE>;
+pub type Plic2<const EDGE: usize> = Plic![SOURCES = 2, EDGE = EDGE];
 /// Three sources.
-pub type Plic3<const EDGE: usize> = Plic<3, EDGE>;
+pub type Plic3<const EDGE: usize> = Plic![SOURCES = 3, EDGE = EDGE];
 /// Four sources.
-pub type Plic4<const EDGE: usize> = Plic<4, EDGE>;
+pub type Plic4<const EDGE: usize> = Plic![SOURCES = 4, EDGE = EDGE];
 /// Five sources.
-pub type Plic5<const EDGE: usize> = Plic<5, EDGE>;
+pub type Plic5<const EDGE: usize> = Plic![SOURCES = 5, EDGE = EDGE];
 /// Six sources.
-pub type Plic6<const EDGE: usize> = Plic<6, EDGE>;
+pub type Plic6<const EDGE: usize> = Plic![SOURCES = 6, EDGE = EDGE];
 /// Seven sources.
-pub type Plic7<const EDGE: usize> = Plic<7, EDGE>;
+pub type Plic7<const EDGE: usize> = Plic![SOURCES = 7, EDGE = EDGE];
 /// Eight sources.
-pub type Plic8<const EDGE: usize> = Plic<8, EDGE>;
+pub type Plic8<const EDGE: usize> = Plic![SOURCES = 8, EDGE = EDGE];
 
 // begin{ports}
 // The lowering reads a loop over an array as `srcs[i]`, so the index is

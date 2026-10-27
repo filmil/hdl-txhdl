@@ -1293,7 +1293,7 @@ The core has one external interrupt line, and a machine has more
 sources than one. On the board a platform-level interrupt controller,
 Listing~\ref{lst:v-plic-gateway} and those after it, stands between
 them, at \code{0x0c00\_0000}, where RISC-V machines put it. It is a
-part of \code{txhdl\_parts}, \code{Plic<N, EDGE>}, one unit for every
+part of \code{txhdl\_parts}, \code{Plic<SOURCES, EDGE>}, one unit for every
 count of sources, whose sources are an array of ports and whose
 priorities are an array of registers, \code{Plic1} to \code{Plic8}
 naming the counts; it is an AXI-Lite peripheral behind a bridge of

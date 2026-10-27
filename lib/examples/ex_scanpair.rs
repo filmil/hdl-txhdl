@@ -28,13 +28,16 @@ use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{
     chan, join2, now, signal, Clock, DefaultClock, In, Mem, Reg, Running, Unit,
 };
+use txhdl::comp::{Data, Domain};
 use txhdl::types::{Bit, U};
 use txhdl::{with, Trace};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, PerPort, Resp, R};
 use txhdl_parts::cdc::ChanCdc;
+use txhdl_parts::cdc::{ReadClock, WriteClock};
 use txhdl_parts::dma::LineFetch;
 use txhdl_parts::scanout::{LinePair, ScanFetch};
 use txhdl_parts::{AxiHost, AxiPer, PerPort};
+use txhdl_parts::{ChanCdc, LineFetch, LinePair, ScanFetch};
 
 const ADDR: usize = 32;
 const IDB: usize = 2;
@@ -120,8 +123,17 @@ impl<const A: usize, const I: usize, const M: usize>
     }
 }
 
-type Pair = LinePair<LEN, AW, ROWS, TOTAL, STRIDE, 0, MEM, ClkPix>;
-type Fetch = ScanFetch<ADDR, 16, LEN>;
+type Pair = LinePair![
+    LEN = LEN,
+    COL = AW,
+    ROWS = ROWS,
+    TOTAL = TOTAL,
+    STRIDE = STRIDE,
+    LO = 0,
+    HI = MEM,
+    Domain = ClkPix
+];
+type Fetch = ScanFetch![ADDR = ADDR, COUNT = 16, LEN = LEN];
 
 fn main() {
     let link = axi_units::<ADDR, 32, 4, IDB>();
@@ -178,10 +190,29 @@ fn main() {
     ]>::default();
     let mut per =
         <AxiPer![ADDR = ADDR, DATA = 32, STRB = 4, ID = IDB]>::default();
-    let mut fetch = LineFetch::<ADDR, IDB, BEATS, 16>::default();
+    let mut fetch = <LineFetch![
+        ADDR = ADDR,
+        ID = IDB,
+        BEATS = BEATS,
+        COUNT = 16
+    ]>::default();
     let mut sfetch = Fetch::default();
-    let mut down = ChanCdc::<U<32>, 4, 16, 5, DefaultClock, ClkPix>::default();
-    let mut up = ChanCdc::<U<32>, 1, 2, 2, ClkPix, DefaultClock>::default();
+    let mut down = <ChanCdc![
+        Data = U<32>,
+        ADDR = 4,
+        DEPTH = 16,
+        PTRS = 5,
+        WriteClock = DefaultClock,
+        ReadClock = ClkPix,
+    ]>::default();
+    let mut up = <ChanCdc![
+        Data = U<32>,
+        ADDR = 1,
+        DEPTH = 2,
+        PTRS = 2,
+        WriteClock = ClkPix,
+        ReadClock = DefaultClock,
+    ]>::default();
     let mut pair = Pair::default();
 
     // The two lowered units under check, their ports under their own

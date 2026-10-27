@@ -21,6 +21,7 @@ use txhdl_parts::bus::axi::{
 };
 use txhdl_parts::flashwin::FlashWin;
 use txhdl_parts::spi::FlashDevice;
+use txhdl_parts::FlashWin;
 use txhdl_parts::{AxiHost, AxiPer, PerPort};
 
 /// The identifier width, and how many a host may have out at once.
@@ -56,7 +57,7 @@ fn main() {
     ]>::default();
     let mut per_unit =
         <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = IW]>::default();
-    let mut win = FlashWin::<DIV, IW>::default();
+    let mut win = <FlashWin![DIV = DIV, ID = IW]>::default();
 
     if let Some(mut wave) = Wave::from_env() {
         wave.clock::<DefaultClock>();
@@ -129,7 +130,7 @@ fn main() {
         miso_drive.set(Bit::from_bool(chip.miso()));
     }
     stop();
-    let net = FlashWin::<DIV, IW>::lowered("flashwin");
+    let net = <FlashWin![DIV = DIV, ID = IW]>::lowered("flashwin");
     txhdl::netlist::write_netlists_from_env(&[&net]);
     print!("\n{}", net.verilog());
 }

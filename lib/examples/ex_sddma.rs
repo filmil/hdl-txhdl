@@ -48,6 +48,7 @@ use txhdl_parts::sd::{
     STATUS_DTIMEOUT, STATUS_RCRC, STATUS_RTIMEOUT, WORDS,
 };
 use txhdl_parts::{AxiHost, AxiPer, PerPort};
+use txhdl_parts::{LineFetch, LineStore};
 
 /// The client's link to the host's registers.
 type HostUnit = AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4];
@@ -204,8 +205,10 @@ fn main() {
     let mut host_unit = HostUnit::default();
     let mut bridge = Bridge::default();
     let mut sd = Sd::default();
-    let mut store = LineStore::<32, 1, 16, 16>::default();
-    let mut fetch = LineFetch::<32, 1, 16, 16>::default();
+    let mut store =
+        <LineStore![ADDR = 32, ID = 1, BEATS = 16, COUNT = 16]>::default();
+    let mut fetch =
+        <LineFetch![ADDR = 32, ID = 1, BEATS = 16, COUNT = 16]>::default();
     let mut shost =
         <AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 1, IDS = 2]>::default();
     let mut fhost =
