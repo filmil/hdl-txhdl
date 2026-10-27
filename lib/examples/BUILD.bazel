@@ -744,6 +744,19 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A program on another machine moves 16-byte beats through a wide AXI4
+# port, a frame each (issue 1984):  bazel run //lib/examples:ex_stream
+rust_binary(
+    name = "ex_stream",
+    srcs = ["ex_stream.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # A peripheral written in software:  bazel run //lib/examples:ex_remote
 rust_binary(
     name = "ex_remote",
@@ -1618,6 +1631,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_pwm.rs",
         "ex_bundle.rs",
         "ex_hostlink.rs",
+        "ex_stream.rs",
         "ex_remote.rs",
         "ex_redundant.rs",
         "ex_regmap.rs",

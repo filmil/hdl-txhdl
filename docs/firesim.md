@@ -59,6 +59,13 @@ To repeat it, holding the BOARD TOKEN:
 It passes when it exits 0 and prints `PASS Test`.
 `no answer to a read at 0x0` means no frame came back: the bitstream isn't loaded, or the interface is wrong.
 
+Milestone 2's streams have their path over frames (#1984), not yet run on the board.
+FireSim's driver moves a CPU-managed stream with `cpu_managed_axi4_read` and `cpu_managed_axi4_write`, on `FPGATop`'s 128-bit AXI4 port.
+`StreamBridge` (`//lib/parts`, `remote::stream`) carries those one 16-byte beat per frame, under EtherType 0x88b6, so `EthShare` can split them from `HostBridge`'s frames by type.
+`simif_ax7a200b_eth.cc` implements both calls with those frames, and `eth_frame.h` lays out both kinds of frame.
+A stream read or write can't be repeated or skipped, so the driver's first stream ask is a no-op, which sets the tag the board keeps.
+`ex_stream` in `//docs:examples` shows the frames on a queue.
+
 `rules_firesim` itself is not a dependency yet; it comes in with the first change that uses its rules.
 `firesim_target` has already moved `rules_cc`, `dtc` and five more modules to the newer releases they share.
 

@@ -1231,6 +1231,8 @@ latex_document(
         ":remote_timing",
         ":hostlink_run",
         ":hostlink_timing",
+        ":streamlink_run",
+        ":streamlink_timing",
         ":pwm_run",
         ":pwm_timing",
         ":trng_run",
@@ -2382,6 +2384,27 @@ waveform(
         "//rx/tx_valid=>rx",
         "//ask/tx_valid=>ask",
         "//bus_ar/tx_valid=>ar",
+        "//back/tx_valid=>back",
+        "//tx/tx_valid=>tx",
+        "//master/busy=>busy",
+    ],
+)
+
+# A beat's ask arriving as bytes on `rx`, performed on the wide AXI4
+# port, and answered on `tx` (issue 1984).
+waveform(
+    name = "streamlink",
+    example = "//lib/examples:ex_stream",
+    lowered = [
+        ("stream_link", "stream_link"),
+        ("beat_master", "beat_master"),
+        ("stream_bridge", "stream_bridge"),
+    ],
+    signals = [
+        "//clocks/clk=>clk",
+        "//rx/tx_valid=>rx",
+        "//ask/tx_valid=>ask",
+        "//ar/tx_valid=>ar",
         "//back/tx_valid=>back",
         "//tx/tx_valid=>tx",
         "//master/busy=>busy",

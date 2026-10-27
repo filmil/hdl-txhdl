@@ -29,6 +29,7 @@
 
 pub mod eth;
 pub mod host;
+pub mod stream;
 use txhdl::comp::{mux, Clock, DefaultClock, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};

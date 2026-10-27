@@ -1,0 +1,54 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Program That Moves Beats Through a Wide Port}
+\label{sec:x-stream}
+
+\code{HostLink} and \code{LiteMaster} reach a 32-bit AXI-Lite bus, one
+word per frame. FireSim's streams need more. Its host driver moves
+them with \code{cpu\_managed\_axi4\_read} and
+\code{cpu\_managed\_axi4\_write}, on an AXI4 port 128 bits wide with
+64-bit addresses. This example reaches such a port, one 16-byte beat
+per frame. \code{StreamLink} takes the ask off the wire,
+\code{BeatMaster} performs it as an AXI4 burst of one beat, and the
+answer goes back in a frame.
+
+The frames have their own EtherType, \code{0x88b6}, next to the
+\code{0x88b5} of \code{HostLink}'s frames. So \code{EthShare} can give
+each unit its own frames by the type alone, and both can share the
+board's one Ethernet port.
+
+Behind the port is a queue, as a FireSim stream is: a read takes the
+next beat out, and a write puts one in. So a transfer performed twice
+loses a beat or adds one. As \code{LiteMaster} does, \code{BeatMaster}
+keeps the tag and the answer of the last transfer, the beat it read
+included, and answers an ask that repeats the tag from them.
+
+A program starts with a tag the board may have kept from an earlier
+run, and no stream transfer is safe to skip or to repeat. So its
+first ask is a no-op, which \code{BeatMaster} answers without the
+port and whose tag it keeps, whatever it kept before.
+
+The run starts with that no-op. Then it writes two beats and reads
+them back. It asks the second read
+again under the same tag, as the program does when an answer is lost,
+and the count of transfers the port saw does not move. Then it reads
+the empty queue, and the error comes back in the answer.
+
+The two units and \code{StreamBridge}, which joins them, are lowered,
+and the build simulates the three netlists against this run under
+\code{nvc} and Verilator.
+
+\begin{figure}[htbp]
+\centering
+\input{streamlink_timing.tex}
+\caption{The seven asks of the run. Each arrives as bytes on \code{rx}
+and becomes one \code{ask}; \code{busy} is high while its transfer is
+on the port, a read's address on \code{ar}, and the \code{back} it
+brings leaves as a frame on \code{tx}. The first, the no-op, and the
+sixth, the repeated read, are answered without \code{busy} or
+\code{ar}.}
+\label{fig:x-stream}
+\end{figure}
+
+\lstinputlisting[caption={\code{ex\_stream.rs}. Run with \code{bazel run //lib/examples:ex\_stream}.},label={lst:x-stream}]{lib/examples/ex_stream.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_stream} printed when the build ran it: each ask, its tag, the beat in its answer, and how many transfers the port had seen.},label={lst:x-stream-out}]{out_streamlink.txt}
