@@ -290,6 +290,10 @@ bazel_dep(name = "firesim_goldengate", version = "1.22.0")
 # FireSim host link over Ethernet on the AX7A200B (//firesim/ax7a200b,
 # issue 1931).
 bazel_dep(name = "firesim_target", version = "1.22.0.bcr.1")
+# FireChip's half of the host driver (its bridges, TSI and the
+# simulation's top), C++ only, for the Rocket driver (issue 1988). Its
+# Scala targets are never built here, so nothing below sets Scala up.
+bazel_dep(name = "chipyard_firechip", version = "1.15.0")
 
 # FireSim's Rocket design for the Nitefury II, as Golden Gate wrote it:
 # the release asset of bazel_rules_firesim v0.2.1, built from source by

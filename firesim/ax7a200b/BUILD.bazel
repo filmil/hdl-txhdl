@@ -260,3 +260,25 @@ filegroup(
     name = "sources",
     srcs = glob(["*.v", "*.xdc", "*.rs", "*.cc", "*.h"]),
 )
+
+# The host for the Rocket design (issue 1988): FireSim's main and entry,
+# FireChip's bridge drivers, the design's header from the prebuilt
+# design, and the platform file that speaks frames.
+cc_binary(
+    name = "rocket_eth_driver",
+    srcs = [
+        "simif_ax7a200b_eth.cc",
+        "@firesim_target//:sim/midas/src/main/cc/entry.cc",
+        "@firesim_target//:sim/midas/src/main/cc/main.cc",
+    ],
+    copts = [
+        "-std=c++20",
+        "-DFIRESIM",
+        "-Wno-inconsistent-missing-override",
+    ],
+    deps = [
+        ":eth_frame",
+        "@chipyard_firechip//:firechip_driver_lib",
+        "@firesim_rocket_nitefury//:const_h",
+    ],
+)
