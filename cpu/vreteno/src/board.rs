@@ -54,6 +54,7 @@ use txhdl_parts::bus::axi_lite::{
 use txhdl_parts::bus::axi_pins::{AxiHostPins, AxiPins, AxiPinsIn, AxiPinsOut};
 use txhdl_parts::bus::exmon::ExMon;
 use txhdl_parts::bus::router::Router;
+use txhdl_parts::bus::Map;
 use txhdl_parts::cdc::ChanCdc;
 use txhdl_parts::cdc::{ReadClock, WriteClock};
 use txhdl_parts::cfgflash::CfgFlash;
@@ -73,7 +74,7 @@ use txhdl_parts::scanout::ScanFetch;
 use txhdl_parts::sd::{Sd, SdLines};
 use txhdl_parts::spi::{Spi, SpiLines};
 use txhdl_parts::trng::Entropy;
-use txhdl_parts::{Arbiter, ExMon};
+use txhdl_parts::{Arbiter, ExMon, LiteBridge, Router};
 use txhdl_parts::{
     AxiHost, AxiHostPins, AxiPer, AxiPerReq, AxiPerRsp, AxiPins,
 };
@@ -155,7 +156,14 @@ impl AddrMap<8> for BoardMap {
 /// from here (issue 1015).
 pub const PLIC_SOURCES: [&str; 3] = ["serial", "irq", "ethernet"];
 
-pub type BoardRouter = Router<8, BoardMap, 32, 32, 4, 5>;
+pub type BoardRouter = Router![
+    PORTS = 8,
+    Map = BoardMap,
+    ADDR = 32,
+    DATA = 32,
+    STRB = 4,
+    ID = 5
+];
 
 /// Where Razboj draws, and where its display list is: both in the DDR3
 /// (issue 985). The frame is the one the scanout shows, rows of 1024
@@ -370,13 +378,34 @@ pub struct Board<const DIV: u32> {
     ///
     /// The fifth is a field, because `EthSlots` runs on the bus clock
     /// like every other peripheral here and wants no crossing.
-    pub puart: LiteBridge<10, SlotMap, 32, 32, 4, 5>,
+    pub puart: LiteBridge![
+        PORTS = 10,
+        Map = SlotMap,
+        ADDR = 32,
+        DATA = 32,
+        STRB = 4,
+        ID = 5
+    ],
     // end{vslot}
-    pub pplic: LiteBridge<1, PlicMap, 32, 32, 4, 5>,
+    pub pplic: LiteBridge![
+        PORTS = 1,
+        Map = PlicMap,
+        ADDR = 32,
+        DATA = 32,
+        STRB = 4,
+        ID = 5
+    ],
     /// The debug module, on a router port of its own behind a bridge
     /// of its own, so the JTAG host reaches it while the core is
     /// halted (issue 154).
-    pub pdm: LiteBridge<1, DmMap, 32, 32, 4, 5>,
+    pub pdm: LiteBridge![
+        PORTS = 1,
+        Map = DmMap,
+        ADDR = 32,
+        DATA = 32,
+        STRB = 4,
+        ID = 5
+    ],
     pub dmod: Dm,
     /// The boot memory on the bus, at address zero, readable and not
     /// writable: the same words the core fetches from inside itself,

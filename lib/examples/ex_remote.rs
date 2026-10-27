@@ -35,19 +35,28 @@ use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
+use txhdl_parts::bus::Map;
 use txhdl_parts::eth::EthRxLines;
 use txhdl_parts::eth::EthTxLines;
 use txhdl_parts::eth::{EthByte, EthRx, EthTx};
 use txhdl_parts::remote::eth::{RemoteLink, FRAME_LEN, KIND_ANSWER};
 use txhdl_parts::remote::Remote;
 use txhdl_parts::AxiHost;
+use txhdl_parts::LiteBridge;
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
 /// identifiers, four of them.
 type HostUnit = AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4];
 
 /// The bridge, with the peripheral at `0x1000`.
-type Bridge = LiteBridge<1, RemoteMap, 32, 32, 4, 2>;
+type Bridge = LiteBridge![
+    PORTS = 1,
+    Map = RemoteMap,
+    ADDR = 32,
+    DATA = 32,
+    STRB = 4,
+    ID = 2
+];
 
 /// Where the bridge's one peripheral is: a nibble of the address
 /// space at 0x1000.

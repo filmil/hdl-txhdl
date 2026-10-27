@@ -17,16 +17,17 @@
 use crate::bus::axi_lite::{LiteAr, LiteAw, LiteB, LitePort, LiteR, LiteW};
 use txhdl::comp::{mux, Clock, DefaultClock, Reg, Rx, Tx, Unit};
 use txhdl::types::Bit;
-use txhdl::{lower, with, Trace};
+use txhdl::{lower, named_type_params, with, Trace};
 
 // begin{state}
-/// An AXI-Lite slot split in two by address bit `BIT`. `A`, `D` and
-/// `S` are the address, data and strobe widths.
+/// An AXI-Lite slot split in two by address bit `BIT`. `ADDR`, `DATA`
+/// and `STRB` are the address, data and strobe widths.
+#[named_type_params]
 #[derive(Trace, Default)]
 pub struct LiteSplit<
-    const A: usize,
-    const D: usize,
-    const S: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
     const BIT: usize,
 > {
     /// A read is out, waiting for its word.

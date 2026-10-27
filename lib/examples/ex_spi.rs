@@ -26,8 +26,10 @@ use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Host, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
+use txhdl_parts::bus::Map;
 use txhdl_parts::spi::SpiLines;
 use txhdl_parts::spi::{regs, FlashDevice, Spi};
+use txhdl_parts::LiteBridge;
 use txhdl_parts::{AxiHost, Host};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
@@ -35,7 +37,14 @@ use txhdl_parts::{AxiHost, Host};
 type HostUnit = AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4];
 
 /// The bridge, with the master at `0x1000`.
-type Bridge = LiteBridge<1, SpiMap, 32, 32, 4, 2>;
+type Bridge = LiteBridge![
+    PORTS = 1,
+    Map = SpiMap,
+    ADDR = 32,
+    DATA = 32,
+    STRB = 4,
+    ID = 2
+];
 
 /// Where the bridge's one peripheral is: a nibble of the address
 /// space at 0x1000.

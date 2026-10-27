@@ -20,6 +20,14 @@
 //!   across it.
 //! - [`wb`]: a bridge from a link's peripheral end to a pipelined
 //!   Wishbone bus.
+/// The markers the bus structs give a type parameter by, declared once
+/// so the router and the AXI-Lite bridge share them (#1914): `Map<M>`,
+/// the address map a part decodes with.
+pub mod named {
+    txhdl::named_markers!(pub Map);
+}
+pub use named::{IsMap, Map};
+
 // First, and with `#[macro_use]`, so the by-name macros of the AXI4
 // structs (`AxiHost![..]` and the rest) are in scope in the modules
 // after it (#1915).
@@ -27,11 +35,15 @@
 pub mod axi;
 #[macro_use]
 pub mod arbiter;
+#[macro_use]
 pub mod axi_lite;
 pub mod axi_per_pins;
 pub mod axi_pins;
 pub mod exmon;
+#[macro_use]
 pub mod lite_split;
-pub mod noc;
+// Before `noc`, whose tests write the router by name.
+#[macro_use]
 pub mod router;
+pub mod noc;
 pub mod wb;

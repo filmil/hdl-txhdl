@@ -30,18 +30,26 @@ use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Host, Link, Rd, Reply, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
+use txhdl_parts::bus::Map;
 use txhdl_parts::syscon::{
     regs, Syscon, CAUSE_BUTTON, CAUSE_POWER, CAUSE_SOFTWARE,
 };
-use txhdl_parts::Syscon;
 use txhdl_parts::{AxiHost, Host};
+use txhdl_parts::{LiteBridge, Syscon};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
 /// identifiers, four of them.
 type HostUnit = AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4];
 
 /// The bridge, with the block at `0x1000`.
-type Bridge = LiteBridge<1, SysconMap, 32, 32, 4, 2>;
+type Bridge = LiteBridge![
+    PORTS = 1,
+    Map = SysconMap,
+    ADDR = 32,
+    DATA = 32,
+    STRB = 4,
+    ID = 2
+];
 
 /// Where the bridge's one peripheral is: a nibble of the address
 /// space at 0x1000.

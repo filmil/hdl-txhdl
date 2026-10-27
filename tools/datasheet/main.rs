@@ -35,6 +35,7 @@ use txhdl_parts::bus::noc::mesh::Mesh;
 use txhdl_parts::bus::noc::node::Node;
 use txhdl_parts::bus::noc::switch::Switch;
 use txhdl_parts::bus::wb::AxiWb;
+use txhdl_parts::bus::Map;
 use txhdl_parts::cdc::ChanCdc;
 use txhdl_parts::cdc::{ReadClock, WriteClock};
 use txhdl_parts::cfgflash::CfgFlash;
@@ -72,8 +73,9 @@ use txhdl_parts::{
 };
 use txhdl_parts::{AxiWb, ExMon};
 use txhdl_parts::{
-    ChanCdc, DtmBridge, Fifo, FlashWin, Hdmi, I2cInit, LineBuf, LineFetch,
-    LinePair, LineStore, ScanFetch, ScanVideo, SetTable, Syscon,
+    ChanCdc, DtmBridge, ExMon, Fifo, FlashWin, Hdmi, I2cInit, LineBuf,
+    LineFetch, LinePair, LineStore, LiteBridge, LiteSplit, ScanFetch,
+    ScanVideo, SetTable, Syscon,
 };
 use vreteno32::board::{Board, BoardRouter};
 use vreteno32::core::Vreteno;
@@ -579,12 +581,21 @@ fn main() {
     sheet(
         "LiteBridge",
         "LiteBridge<1, SerialMap, 32, 32, 4, 2>",
-        LiteBridge::<1, SerialMap, 32, 32, 4, 2>::lowered("lite_bridge"),
+        <LiteBridge![
+            PORTS = 1,
+            Map = SerialMap,
+            ADDR = 32,
+            DATA = 32,
+            STRB = 4,
+            ID = 2
+        ]>::lowered("lite_bridge"),
     );
     sheet(
         "LiteSplit",
         "LiteSplit<32, 32, 4, 7>",
-        LiteSplit::<32, 32, 4, 7>::lowered("lite_split"),
+        <LiteSplit![ADDR = 32, DATA = 32, STRB = 4, BIT = 7]>::lowered(
+            "lite_split",
+        ),
     );
     sheet(
         "AxiWb",

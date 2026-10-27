@@ -38,6 +38,7 @@ mod tests {
         axi, Ar, Aw, AxiHost, AxiPer, BurstKind, Link, Rd, Resp, Wr, B, R, W,
     };
     use crate::bus::router::Router;
+    use crate::bus::Map;
     use std::cell::RefCell;
     use std::rc::Rc;
     use txhdl::comp::{chan, join2, join_all, DefaultClock, Running, Unit};
@@ -652,7 +653,14 @@ mod tests {
             ];
         }
 
-        type Rtr = Router<4, NocMap, A, D, S, I>;
+        type Rtr = Router![
+            PORTS = 4,
+            Map = NocMap,
+            ADDR = A,
+            DATA = D,
+            STRB = S,
+            ID = I
+        ];
         const BASES: [u32; 4] = [0x1000, 0x1400, 0x1800, 0x1c00];
         const HOLE: u32 = 0x2010;
         type Boxed<'a> =

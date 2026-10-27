@@ -13,16 +13,17 @@
 //! array, read the same way (issue 593). Until then a router per count
 //! was text `router!` wrote, `Router2` to `Router8`.
 use crate::bus::axi::{Ar, Aw, Resp, B, R, W};
+use crate::bus::{IsMap, Map};
 use std::marker::PhantomData;
 use txhdl::comp::{mux, Clock, DefaultClock, Reg, Rx, Tx, Unit};
 use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
-use txhdl::{lower, with, Trace};
+use txhdl::{lower, named_type_params, with, Trace};
 
 // begin{part}
-/// An AXI4 router of one host and `N` peripherals. The host's five
+/// An AXI4 router of one host and `PORTS` peripherals. The host's five
 /// channels come in; five go out per peripheral, and a peripheral's
-/// range is its entry of `M::RANGES`, a base and a mask matched on the
+/// range is its entry of `Map::RANGES`, a base and a mask matched on the
 /// address of each phase, the first that matches the one. A burst
 /// whose address is no peripheral's is answered `DecErr` by the router
 /// itself rather than dropped. Write beats follow the address phase
@@ -32,40 +33,43 @@ use txhdl::{lower, with, Trace};
 /// back to the host, the lowest peripheral first when two answer at
 /// once. Written in the lowered subset, so it is a netlist too.
 // begin{state}
+#[named_type_params(reuse(Map))]
 #[derive(Trace)]
 pub struct Router<
-    const N: usize,
-    M: AddrMap<N>,
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
-> {
+    const PORTS: usize,
+    Map,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+> where
+    Map: AddrMap<PORTS>,
+{
     /// The map, which holds no signal: a marker the netlist ignores.
-    pub map: PhantomData<M>,
+    pub map: PhantomData<Map>,
     /// A write burst's beats are going out; a second address phase
     /// waits, since AXI4 puts no identifier on `w`.
     pub wbusy: Reg<Bit>,
     /// Where this write burst's beats go, one bit per peripheral;
     /// none set means they are being swallowed.
-    pub wsel: Reg<U<N>>,
+    pub wsel: Reg<U<PORTS>>,
     /// This write burst decoded to no peripheral.
     pub whole: Reg<Bit>,
     /// Its identifier, to answer when its last beat has gone.
-    pub wid: Reg<U<I>>,
+    pub wid: Reg<U<ID>>,
     /// A write response the router owes for a decode error.
     pub berr: Reg<Bit>,
     /// The identifier that response must carry.
-    pub berr_id: Reg<U<I>>,
+    pub berr_id: Reg<U<ID>>,
     /// A read burst is going up; its beats stay together.
     pub rbusy: Reg<Bit>,
     /// Which peripheral that burst is coming from, one bit each, so
     /// no other one's beats get in between.
-    pub rsel: Reg<U<N>>,
+    pub rsel: Reg<U<PORTS>>,
     /// A read burst the router owes for a decode error.
     pub rerr: Reg<Bit>,
     /// The identifier its beats must carry.
-    pub rerr_id: Reg<U<I>>,
+    pub rerr_id: Reg<U<ID>>,
     /// How many of its beats are still to send. A read of a hole is
     /// answered in as many beats as it asked for, or the client would
     /// gather for ever.
@@ -80,7 +84,7 @@ impl<
         const D: usize,
         const S: usize,
         const I: usize,
-    > Default for Router<N, M, A, D, S, I>
+    > Default for Router<N, Map<M>, A, D, S, I>
 {
     fn default() -> Self {
         Router {
@@ -112,7 +116,7 @@ impl<
         const D: usize,
         const S: usize,
         const I: usize,
-    > Unit for Router<N, M, A, D, S, I>
+    > Unit for Router<N, Map<M>, A, D, S, I>
 {
     async fn run(
         &mut self,
@@ -325,6 +329,7 @@ mod tests {
     use crate::bus::axi::{
         axi, AxiHost, AxiPer, Link, Per, Rd, Resp, Wr, Xact,
     };
+    use crate::bus::Map;
     use std::cell::RefCell;
     use std::rc::Rc;
     use txhdl::comp::{join2, Running, Unit};
@@ -342,7 +347,14 @@ mod tests {
             [(0x1000, 0xf000), (0x2000, 0xf000)];
     }
 
-    type Rtr = Router<2, TwoMap, 16, 32, 4, 3>;
+    type Rtr = Router![
+        PORTS = 2,
+        Map = TwoMap,
+        ADDR = 16,
+        DATA = 32,
+        STRB = 4,
+        ID = 3
+    ];
 
     /// What a peripheral was asked to write, in the order its beats
     /// arrived: the record the interleaving test reads.

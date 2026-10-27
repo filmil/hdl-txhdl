@@ -27,16 +27,24 @@ use txhdl_parts::bus::axi::{
     Wr,
 };
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
+use txhdl_parts::bus::Map;
 use txhdl_parts::cfgflash::CfgFlash;
 use txhdl_parts::flashwin::FlashWin;
 use txhdl_parts::spi::{regs, FlashDevice, Spi, SpiLines};
-use txhdl_parts::FlashWin;
 use txhdl_parts::{AxiHost, AxiPer, Host, PerPort};
+use txhdl_parts::{FlashWin, LiteBridge};
 
 /// The master's link: its host, and the bridge with the master at
 /// `0x1000`.
 type HostUnit = AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4];
-type Bridge = LiteBridge<1, SpiMap, 32, 32, 4, 2>;
+type Bridge = LiteBridge![
+    PORTS = 1,
+    Map = SpiMap,
+    ADDR = 32,
+    DATA = 32,
+    STRB = 4,
+    ID = 2
+];
 type Client = Host![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4];
 
 /// Where the bridge's one peripheral is.
