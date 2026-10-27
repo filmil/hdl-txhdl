@@ -338,6 +338,19 @@ uint32_t simif_ax7a200b_eth_t::read(size_t addr) {
   return transact(false, static_cast<uint32_t>(addr), 0);
 }
 
+// A beat goes to lane 0 of the port, so a transfer must start on a
+// beat. FireSim's stream addresses do.
+static void check_aligned(size_t addr) {
+  if (addr % BEAT_BYTES != 0) {
+    fprintf(stderr,
+            "simif_ax7a200b_eth: a stream transfer at 0x%zx is not on a "
+            "%zu-byte beat\n",
+            addr,
+            BEAT_BYTES);
+    exit(1);
+  }
+}
+
 // The first stream access starts the stream path's tags with a no-op,
 // as the constructor starts the control path's with a read.
 void simif_ax7a200b_eth_t::start_streams() {
@@ -354,6 +367,7 @@ size_t simif_ax7a200b_eth_t::cpu_managed_axi4_write(size_t addr,
                                                     const char *data,
                                                     size_t size) {
   start_streams();
+  check_aligned(addr);
   // One beat per frame; a last beat shorter than sixteen bytes is sent
   // with only its own lanes in the strobe.
   for (size_t at = 0; at < size; at += BEAT_BYTES) {
@@ -371,6 +385,7 @@ size_t simif_ax7a200b_eth_t::cpu_managed_axi4_read(size_t addr,
                                                    char *data,
                                                    size_t size) {
   start_streams();
+  check_aligned(addr);
   const uint8_t zero[BEAT_BYTES] = {};
   for (size_t at = 0; at < size; at += BEAT_BYTES) {
     uint8_t b[BEAT_BYTES];

@@ -93,6 +93,15 @@ int main() {
              ba.beat[15] == 0xaf,
          "its device, tag, flag and beat");
   expect(!decode_answer(bin, sizeof(bin), &a), "not a control answer");
+  bin[17] = 1;
+  expect(decode_beat_answer(bin, sizeof(bin), &ba) && ba.err,
+         "a beat's error flag");
+  expect(!decode_beat_answer(bin, STREAM_FRAME_LEN - 1, &ba),
+         "too short is not a beat's answer");
+  bin[14] = KIND_STREAM_ASK;
+  expect(!decode_beat_answer(bin, sizeof(bin), &ba),
+         "a beat's ask is not its answer");
+  bin[14] = KIND_STREAM_ANSWER;
   bin[13] = 0xb5;
   expect(!decode_beat_answer(bin, sizeof(bin), &ba), "the type is checked");
   in[14] = 0x82;
