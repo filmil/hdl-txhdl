@@ -15,7 +15,8 @@
 //! u32]`, and refuses one given twice, one it does not have, or one
 //! left out. That is how a const parameter is given by name, since
 //! stable Rust cannot read a number out of a marker: `Lanes![COUNT = 4,
-//! WIDTH = 8]` is `Lanes<8, 4>`.
+//! WIDTH = 8]` is `Lanes<8, 4>`. A type alias of const parameters
+//! takes the attribute too, and gets the macro alone (#1946).
 //!
 //! Two structs of one module that name a parameter alike share its
 //! marker: `named_markers!(pub Addr, pub Word)` declares the markers
@@ -56,6 +57,10 @@ pub struct Beat<Word: Copy> {
 pub struct Lanes<const WIDTH: usize, const COUNT: usize> {
     pub lanes: [U<WIDTH>; COUNT],
 }
+
+/// A type alias of const parameters has a macro too, in its own order.
+#[named_type_params]
+pub type Row<const COUNT: usize, const WIDTH: usize> = Lanes<WIDTH, COUNT>;
 // end{bus}
 
 /// The fields are plain numbers: this takes a `u32` and a `u64`.
@@ -84,6 +89,9 @@ fn main() {
         l.lanes.len(),
         <U<8> as txhdl::types::Value>::WIDTH
     );
+    // The alias's macro: the same type as `Lanes![COUNT = 4, WIDTH = 8]`.
+    let r: Row![WIDTH = 8, COUNT = 4] = l;
+    println!("the row has {} lanes", r.lanes.len());
     println!(
         "Bus is {} bytes, as its fields are; Addr<u32> is {}",
         std::mem::size_of::<Axi>(),
