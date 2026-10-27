@@ -57,6 +57,7 @@ use txhdl_parts::plic::Plic3;
 use txhdl_parts::pwm::Pwm;
 use txhdl_parts::redundant::{Check, Tee};
 use txhdl_parts::remote::eth::RemoteLink;
+use txhdl_parts::remote::host::{HostLink, LiteMaster};
 use txhdl_parts::remote::Remote;
 use txhdl_parts::scanout::{LinePair, ScanCtl, ScanFetch, ScanVideo};
 use txhdl_parts::sd::Sd;
@@ -782,6 +783,16 @@ fn main() {
         "RemoteLink",
         "RemoteLink<3>",
         RemoteLink::<3>::lowered("remote_link"),
+    );
+    sheet(
+        "HostLink",
+        "HostLink<5>",
+        HostLink::<5>::lowered("host_link"),
+    );
+    sheet(
+        "LiteMaster",
+        "LiteMaster",
+        LiteMaster::lowered("lite_master"),
     );
     sheet("Spi", "Spi", Spi::lowered("spi"));
     sheet("Tracer", "Tracer<8>", Tracer::<8>::lowered("tracer"));
