@@ -25,6 +25,10 @@ a number out of a marker, so \code{Lanes![COUNT = 4, WIDTH = 8]} is
 the way to write \code{Lanes<8, 4>} with each number named.
 The positional form still compiles for a const parameter, so the macro
 is a discipline there and not a guarantee.
+A type alias of const parameters takes the attribute as well, and gets
+its macro and nothing else, in the alias's own order:
+\code{Row![WIDTH = 8, COUNT = 4]} is \code{Row<4, 8>}, which is
+\code{Lanes<8, 4>} (\#1946).
 
 Two structs that name a parameter alike share its marker:
 \code{named\_markers!(pub Addr, pub Word)} declares the markers once,
