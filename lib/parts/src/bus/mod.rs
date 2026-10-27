@@ -33,6 +33,7 @@ pub use named::{IsMap, Map};
 // after it (#1915).
 #[macro_use]
 pub mod axi;
+#[macro_use]
 pub mod arbiter;
 #[macro_use]
 pub mod axi_lite;

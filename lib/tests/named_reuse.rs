@@ -139,3 +139,44 @@ mod derived {
         assert_eq!(<Held<Data<U<4>>> as Fields>::NAMES, &["r"]);
     }
 }
+
+/// The where clause of a tuple struct, which comes after its fields,
+/// reaches a derived impl too (#1936): without it `Transaction`, which
+/// asks for `Copy`, would not hold for `Tag<T>`.
+mod tuple {
+    use txhdl::types::Transaction;
+
+    #[derive(Clone, Copy, Default, txhdl::Transaction)]
+    pub struct Tag<T>(pub T)
+    where
+        T: Copy + Default + 'static;
+
+    fn is_transaction<X: Transaction>() {}
+
+    #[test]
+    fn tuple_where_clause_reaches_the_impl() {
+        is_transaction::<Tag<u8>>();
+    }
+}
+
+/// A bundle on a reused marker (#1936): `Link` writes `LaneHost`, the
+/// other side, which needs the same where clause as `Lane`.
+mod linked {
+    use txhdl::comp::{link, Data, IsData, Rx, Tx};
+    use txhdl::types::{Bit, Transaction, Value, U};
+    use txhdl::{named_type_params, Link, Ports};
+
+    #[named_type_params(reuse(Data))]
+    #[derive(Ports, Link)]
+    pub struct Lane<Data: Transaction + Value> {
+        pub data: Rx<Data>,
+        pub ack: Tx<Bit>,
+    }
+
+    #[test]
+    fn the_other_side_keeps_the_where_clause() {
+        let (host, lane): (LaneHost<Data<U<8>>>, Lane<Data<U<8>>>) =
+            link::<Lane<Data<U<8>>>>();
+        let _ends = (host, lane.data, lane.ack);
+    }
+}
