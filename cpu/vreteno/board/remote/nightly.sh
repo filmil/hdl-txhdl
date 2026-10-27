@@ -298,7 +298,7 @@ if [[ -z "$dry" ]]; then
       # send rate (#1955).
       [[ -n "$size" ]] && { BUILD_WORKSPACE_DIRECTORY="$ws" bare "$ethtest" \
         --server="$server" --mode=send --count=1000 --size="$size" \
-        --gap-us="$(rx_gap_us "$size")" \
+        --gap-us="$(rx_gap_us "$size" "$answered_waits")" \
         >>"$dir/ethtest.log" 2>&1 || sent=$?; }
       # Exit 2 is the sender unable to start at all, no tester or a bad
       # argument, which no later burst will mend: say so and stop
