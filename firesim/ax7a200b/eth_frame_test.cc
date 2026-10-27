@@ -58,6 +58,43 @@ int main() {
   expect(decode_answer(in, sizeof(in), &a) && a.err, "the error flag");
   in[14] = 0x02;
   expect(!decode_answer(in, sizeof(in), &a), "an ask is not an answer");
+
+  // A beat's ask, as StreamLink reads one.
+  uint8_t beat[BEAT_BYTES];
+  for (int i = 0; i < 16; i++) {
+    beat[i] = static_cast<uint8_t>(i);
+  }
+  encode_beat(f, mac, 5, 9, BEAT_WRITE, 0x0102030405060708ULL, beat, 0x8001);
+  expect(f[12] == 0x88 && f[13] == 0xb6, "type 0x88b6");
+  expect(f[14] == 0x03 && f[15] == 5 && f[16] == 9, "kind, device, tag");
+  expect(f[17] == 1, "a write");
+  expect(f[18] == 0x01 && f[25] == 0x08,
+         "address, most significant byte first");
+  expect(f[26] == 0 && f[41] == 15, "the beat in memory order");
+  expect(f[42] == 0x80 && f[43] == 0x01,
+         "strobe, most significant byte first");
+  expect(f[44] == 0 && f[59] == 0, "padded with zeros to sixty");
+  encode_beat(f, mac, 5, 10, BEAT_NOOP, 0, beat, 0);
+  expect(f[17] == 2, "a no-op");
+
+  // A beat's answer, as StreamLink's stream_answer_byte writes one.
+  uint8_t bin[MIN_FRAME] = {};
+  bin[12] = 0x88;
+  bin[13] = 0xb6;
+  bin[14] = 0x83;
+  bin[15] = 5;
+  bin[16] = 10;
+  for (int i = 0; i < 16; i++) {
+    bin[26 + i] = static_cast<uint8_t>(0xa0 + i);
+  }
+  BeatAnswer ba;
+  expect(decode_beat_answer(bin, sizeof(bin), &ba), "a beat's answer");
+  expect(ba.device == 5 && ba.tag == 10 && !ba.err && ba.beat[0] == 0xa0 &&
+             ba.beat[15] == 0xaf,
+         "its device, tag, flag and beat");
+  expect(!decode_answer(bin, sizeof(bin), &a), "not a control answer");
+  bin[13] = 0xb5;
+  expect(!decode_beat_answer(bin, sizeof(bin), &ba), "the type is checked");
   in[14] = 0x82;
   in[13] = 0xb6;
   expect(!decode_answer(in, sizeof(in), &a), "another type is not one");
