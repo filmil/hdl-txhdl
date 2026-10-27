@@ -18,10 +18,12 @@
 corresponding author, at f@hdlfactory.com; Dragiša Janković is
 reached at linkedin.com/in/dragisa-jankovic.}%
 \thanks{This document is a snapshot. The numbers in it were measured
-on September 13, 2026, at commit \code{0ab36f3} of the mainline, and
+on October 27, 2026, at commit \code{489a2273} of the mainline, and
 typed in; nothing rebuilds them, and they are not kept up to date.
-The script that produced them is in the tree, for a reader who wants
-the numbers of a later day.}%
+The first edition measured September 13, 2026, at commit
+\code{0ab36f3}; Section~\ref{sec:stats-growth} sets the two side by
+side. The script that produced them is in the tree, for a reader who
+wants the numbers of a later day.}%
 \thanks{The authors used a large language model, Claude, as an
 assistant in exploring the concepts and in writing and constructing
 the documents and the programs; every commit of the repository records
@@ -37,24 +39,24 @@ this attribution and includes the exact prompts that guided it.}%
 
 Every file tracked by git in the repository \code{HDL/txhdl}, outside
 \code{third\_party/}, was counted with \code{wc -l}, so comments and
-blank lines count as lines. Lock files (\code{Cargo.lock},
-\code{MODULE.bazel.lock}, \code{cargo-bazel-lock.json}, and
-\code{multitool.lock.json}) and \code{.bazelversion} were excluded:
-because they are generated artifacts, including them would add thirty
-thousand lines of external configuration. \code{third\_party/} holds
-vendored \LaTeX{} packages and the IEEE document class, under their own
-licenses, and is not this project's work.
+blank lines count as lines. Lock files and JSON (\code{Cargo.lock},
+\code{MODULE.bazel.lock}, \code{cargo-bazel-lock.json},
+\code{multitool.lock.json} and the like) and \code{.bazelversion} were
+excluded, because they are generated artifacts, not the project's own
+writing. \code{third\_party/} holds vendored \LaTeX{} packages, the IEEE
+document class and other code under their own licenses, and is not this
+project's work.
 
-The measurement was taken on September 13, 2026, at commit
-\code{0ab36f3} of the mainline, the commit before this document and
-its script were added. Listing~\ref{lst:stats-script} displays the
-script; executed from the root of a checkout, it reports
-Tables~\ref{tab:stats-topic} and~\ref{tab:stats-lang} for that
-checkout. The topics are the directories of the tree, named in the
-script. The script has gained topics since that date, covering the
-parts library, Vreteno software, and newly created directories
-(issue 745), so a run today sorts into rows the tables below do not
-have.
+The measurement was taken on October 27, 2026, at commit
+\code{489a2273} of the mainline, with the script of
+Listing~\ref{lst:stats-script}; executed from the root of a checkout,
+it reports Tables~\ref{tab:stats-topic} and~\ref{tab:stats-lang} for
+that checkout. The topics are the directories of the tree, named in
+the script. The tree outgrew the script's topics between the two
+editions: the GL ES library, the Linux port, FireSim, the demos, the
+runtime's tests and the datasheets had none, and 27,000 lines fell into
+the root's row. This edition names them (issue 1989), and the script's
+own lines are counted as they were at \code{489a2273}.
 
 \lstinputlisting[style=ascii,caption={\code{tools/repostats.sh}: the
 measurement.},label={lst:stats-script}]{tools/repostats.sh}
@@ -62,49 +64,61 @@ measurement.},label={lst:stats-script}]{tools/repostats.sh}
 \section{Lines per Topic}
 
 Table~\ref{tab:stats-topic} is the count by topic, largest first.
-The total is 218 files and 32,452 lines.
+The total is 1,198 files and 262,507 lines.
 
 \begin{table}[h]
-\caption{Lines per topic, September 13, 2026.}
+\caption{Lines per topic, October 27, 2026.}
 \label{tab:stats-topic}
 \centering
 \begin{tabular}{@{}llrr@{}}
 \toprule
 Topic & Where & Files & Lines \\
 \midrule
+Parts library & \code{lib/parts/} & 64 & 32,621 \\
+Examples & \code{lib/examples/} & 147 & 23,492 \\
 Documents, \LaTeX{}
   & \code{docs/*.tex}, \code{docs/*\_sections/}
-  & 74
-  & 7,109 \\
+  & 185 & 22,178 \\
+GL ES library & \code{gles/} & 48 & 18,918 \\
+Vreteno core & \code{cpu/vreteno/src/} & 32 & 18,753 \\
+Tools & \code{tools/} & 122 & 16,582 \\
+Vreteno programs & \code{cpu/vreteno/rust/}, \code{cpp/} & 60 & 13,255 \\
+Razboj GPU & \code{gpu/} & 26 & 13,030 \\
+Lowering macro & \code{lib/macros/} & 4 & 12,363 \\
+Runtime library & \code{lib/src/} & 11 & 12,216 \\
+Vreteno tests & \code{cpu/vreteno/tests/} & 11 & 11,337 \\
+Datasheets & \code{docs/datasheets/} & 81 & 10,891 \\
+Docs build files & \code{docs/BUILD.bazel}, \code{docs/*.bzl}, data & 13 & 8,739 \\
+Zephyr port & \code{zephyr/} & 88 & 6,572 \\
+Board subsystems & \code{ddr3/}, \code{eth/}, \code{hdmi/}, \code{pcie/} & 42 & 5,388 \\
 Early specs and proposals
   & \code{spec/}, \code{filmil/}, \code{proposal.md}
-  & 8
-  & 5,237 \\
-Runtime library & \code{lib/src/} & 7 & 3,733 \\
-Vreteno core & \code{cpu/vreteno/src/} & 12 & 2,951 \\
-Examples & \code{lib/examples/} & 32 & 2,878 \\
-Lowering macro & \code{lib/macros/lib.rs} & 1 & 2,556 \\
-Tools & \code{tools/} & 16 & 2,091 \\
-Design notes, Markdown & \code{docs/*.md} & 5 & 1,468 \\
-Docs build files
-  & \code{docs/BUILD.bazel}, \code{docs/waveform.bzl}
-  & 2
-  & 1,162 \\
-Rust probes & \code{experiments/} & 34 & 847 \\
-Root config and READMEs & the root & 9 & 693 \\
-Vreteno board & \code{cpu/vreteno/board/} & 7 & 504 \\
-Lib build files
-  & \code{lib/BUILD.bazel}, \code{lib/foreign.bzl} and two more
-  & 5
-  & 408 \\
-Vreteno lockstep test & \code{cpu/vreteno/tests/} & 1 & 313 \\
-CI workflows & \code{.forgejo/workflows/} & 3 & 306 \\
+  & 10 & 5,271 \\
+Design notes, Markdown & \code{docs/*.md} & 16 & 4,773 \\
+Vreteno board & \code{cpu/vreteno/board/} & 36 & 4,301 \\
+Root config and READMEs & the root & 10 & 4,207 \\
+Runtime tests & \code{lib/tests/} & 16 & 3,480 \\
+Rust probes & \code{experiments/} & 77 & 2,406 \\
+Lib support crates
+  & \code{lib/board/}, \code{chanloop/}, \code{logo/}, \code{teapot/}
+  & 16 & 1,913 \\
+Linux port & \code{linux/} & 12 & 1,871 \\
+Vreteno conformance, layout
+  & \code{cpu/vreteno/act/}, \code{asic/}
+  & 12 & 1,278 \\
 Vreteno build and synthesis
-  & \code{cpu/vreteno/BUILD.bazel}, \code{vreteno.xdc}
-  & 2
-  & 196 \\
+  & \code{cpu/vreteno/BUILD.bazel} and scripts
+  & 6 & 1,194 \\
+Flagship & \code{flagship/} & 6 & 1,158 \\
+FireSim & \code{firesim/} & 10 & 1,005 \\
+CI workflows & \code{.forgejo/workflows/} & 6 & 921 \\
+Demos & \code{demo/} & 10 & 888 \\
+SoC on the network & \code{soc/} & 3 & 696 \\
+Lib build files & \code{lib/BUILD.bazel}, \code{lib/foreign.bzl} & 2 & 465 \\
+Tutorial workspace & \code{tutorial/} & 10 & 243 \\
+Consumer test & \code{tests/} & 6 & 102 \\
 \midrule
-Total & & 218 & 32,452 \\
+Total & & 1,198 & 262,507 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -114,88 +128,123 @@ Total & & 218 & 32,452 \\
 Table~\ref{tab:stats-lang} is the same count by file extension.
 
 \begin{table}[h]
-\caption{Lines per language, September 13, 2026.}
+\caption{Lines per language, October 27, 2026.}
 \label{tab:stats-lang}
 \centering
 \begin{tabular}{@{}llr@{}}
 \toprule
 Extension & Language & Lines \\
 \midrule
-\code{rs} & Rust & 14,893 \\
-\code{md} & Markdown & 7,293 \\
-\code{tex} & \LaTeX{} & 7,109 \\
-\code{bazel} & Bazel, \code{BUILD.bazel} and \code{MODULE.bazel} & 2,022 \\
-\code{bzl} & Starlark & 317 \\
-\code{yml} & workflow YAML & 306 \\
-\code{sh} & shell & 167 \\
-\code{v} & Verilog & 148 \\
-\code{go} & Go & 119 \\
-\code{xdc} & Vivado constraints & 33 \\
-\code{vhdl} & VHDL & 20 \\
-other
-  & \code{.bazelrc}, \code{main.cc}, \code{rustfmt.toml}, \code{.gitignore}
-  & 25 \\
+\code{rs} & Rust & 166,884 \\
+\code{tex} & \LaTeX{} & 33,069 \\
+\code{bazel} & Bazel, \code{BUILD.bazel} and \code{MODULE.bazel} & 15,716 \\
+\code{md} & Markdown & 13,627 \\
+\code{c} & C: Zephyr, the GL ES C API, Linux and the demos & 6,550 \\
+\code{tsv} & tables the documents draw, measured and committed & 4,217 \\
+\code{v} & Verilog: hand-written board tops, wrappers and models & 4,076 \\
+\code{sh} & shell & 3,823 \\
+\code{go} & Go & 3,485 \\
+\code{bzl} & Starlark & 2,914 \\
+\code{h} & C headers & 1,434 \\
+\code{xdc} & Vivado constraints & 1,096 \\
+\code{yml} & workflow YAML & 958 \\
+other & 34 more, from test logs and Tcl to linker scripts & 4,658 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \section{The Largest Files}
 
-Table~\ref{tab:stats-files} lists individual file sizes across
-the runtime, the core, and associated tooling. The largest single file
-in the tree is the lowering macro; the second largest is the early
-specification, which predates the library and is preserved for
-historical context.
+Table~\ref{tab:stats-files} lists the runtime file by file, the core's
+largest files, and the largest tools, each tool counted as its
+directory. The largest single file in the tree is still the lowering
+macro, \code{lib/macros/lib.rs}, at 9,478 lines; the next are the
+netlist writer, at 6,429, and the board test, at 5,958.
 
 \begin{table}[h]
-\caption{The runtime, the core and the tools, file by file.}
+\caption{The runtime, the core and the tools, largest first.}
 \label{tab:stats-files}
 \centering
-\begin{tabular}{@{}lr@{\hspace{12mm}}lr@{\hspace{12mm}}lr@{}}
+\begin{tabular}{@{}lr@{\hspace{10mm}}lr@{\hspace{10mm}}lr@{}}
 \toprule
 Runtime & Lines & Vreteno & Lines & Tools & Lines \\
 \midrule
-\code{macros/lib.rs} & 2,556 & \code{core.rs} & 815 & \code{vshim} & 579 \\
-\code{comp.rs} & 1,697 & \code{isa.rs} & 522 & \code{fst2tb} & 547 \\
-\code{netlist.rs} & 1,169 & \code{model.rs} & 364 & \code{dt2tikz} & 372 \\
-\code{types.rs} & 479 & \code{program.rs} & 355 & \code{api} & 259 \\
-\code{foreign.rs} & 200 & \code{uart.rs} & 246 & \code{fstcheck} & 170 \\
-\code{pipeline.rs} & 95 & \code{main.rs} & 221 & & \\
-\code{funcs.rs} & 48 & \code{term.rs} & 100 & & \\
-\code{lib.rs} & 45 & \code{timer.rs} & 98 & & \\
- & & \code{router.rs} & 98 & & \\
- & & \code{dmem.rs} & 78 & & \\
- & & \code{bus.rs} & 41 & & \\
- & & \code{lib.rs} & 13 & & \\
+\code{macros/lib.rs} & 9,478 & \code{core.rs} & 3,755 & \code{bootimg} & 1,764 \\
+\code{netlist.rs} & 6,429 & \code{model.rs} & 2,717 & \code{datasheet} & 1,417 \\
+\code{comp.rs} & 3,005 & \code{board.rs} & 2,264 & \code{fst2tb} & 1,250 \\
+\code{macros/seq.rs} & 1,373 & \code{isa.rs} & 1,317 & \code{clockgen} & 1,128 \\
+\code{types.rs} & 1,271 & \code{program.rs} & 1,117 & \code{remote} & 1,103 \\
+\code{macros/named.rs} & 985 & \code{debug.rs} & 766 & \code{devtree} & 664 \\
+\code{macros/regmap.rs} & 527 & \code{main.rs} & 554 & \code{vshim} & 661 \\
+\code{reserved.rs} & 420 & \code{uart.rs} & 414 & \code{pdfedge} & 647 \\
+\code{regmap.rs} & 410 & \code{pair.rs} & 394 & \code{trngstat} & 645 \\
+\code{foreign.rs} & 216 & \code{timer.rs} & 390 & \code{topcheck} & 613 \\
+five more & 465 & 22 more & 5,065 & 33 more & 6,690 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \section{What the Numbers Say}
 
-The core language footprint is compact. The runtime and macro together
-total approximately 6,300 lines of Rust. Within the runtime,
-\code{comp.rs} and \code{netlist.rs} comprise three quarters of the
-volume, with the remainder distributed across type definitions,
-foreign unit declarations, pipeline primitives, and helper functions.
+Rust is nearly two lines in three: 166,884 of 262,507. The language,
+its runtime and the lowering macro together, is 24,579 lines, under a
+tenth of the tree. Most of the Rust is written \emph{in} the language
+rather than \emph{for} it: the parts library, the Vreteno core, Razboj
+and the board subsystems are about 70,000 lines of hardware, and the
+GL ES library, the programs the core runs and the Zephyr and Linux
+ports are about 41,000 more of software for that hardware.
 
-The Vreteno processor is roughly half the size of the language runtime.
-The CPU core comprises 815 lines, the instruction decoder 522 lines, and
-the reference model 364 lines. On-chip bus peripherals (including the
-UART, timer, crossbar router, and data memory) total 560 lines.
+The parts library is now the largest topic, 32,621 lines in 64 files,
+larger than the runtime and the macro together. Its largest files are
+the AXI link, at 2,208 lines, the SD controller and the scanout.
 
-Technical prose approaches parity with codebase implementation.
-Documentation, architectural design notes, and formal specifications
-account for approximately 13,800 lines, compared to 15,000 lines of
-Rust. Because documents incorporate code listings by reference rather
-than duplicating text, these counts reflect pure explanatory prose.
+Checking is a quarter of the Rust. The 147 example files, 23,492
+lines, are each a test, and with the Vreteno tests, the runtime's
+tests, the probes, and the conformance and layout runs they come to
+about 42,000 lines, against the 70,000 of hardware they check.
 
-Examples remain modular and focused: thirty-two files averaging ninety
-lines each, with each file demonstrating an isolated architectural concept.
+Prose kept up, though not in step. The documents, the datasheets, the
+design notes and the early specifications are 43,113 lines, a quarter
+of the Rust; at the first edition they were nearly as long as it.
+The documents still include their listings from the tree, so these are
+lines of explanation, not copies of code.
 
-Tooling represents one quarter of the Rust codebase. The two testbench
-generators, \code{vshim} and \code{fst2tb}, form the largest utilities
-at roughly 550 lines each, demonstrating that verification harnesses
-require substantial engineering investment.
+Tooling is 16,582 lines in 122 files, two thirds of it Rust. The
+largest tool is no longer a testbench generator but \code{bootimg},
+which builds the Linux boot image and the inflater that unpacks it on
+the core, followed by \code{datasheet}, which writes every datasheet's
+tables from the lowering.
+
+\section{Since September}
+\label{sec:stats-growth}
+
+Table~\ref{tab:stats-growth} sets this edition beside the first. The
+44 days between them saw 3,297 commits. The tree grew eightfold, and
+its Rust elevenfold. The language grew fourfold, and what is built in
+it far faster: the Vreteno core is six times its size, the parts
+library went from three files and 158 lines to 32,621, and Razboj, the
+GL ES library and the Zephyr and Linux ports did not exist. The
+early specifications are the one topic that did not move, as a record
+of where the language began.
+
+\begin{table}[h]
+\caption{The first edition and this one.}
+\label{tab:stats-growth}
+\centering
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+ & September 13 & October 27 & Growth \\
+\midrule
+Files & 218 & 1,198 & 5.5$\times$ \\
+Lines & 32,452 & 262,507 & 8.1$\times$ \\
+Rust & 14,893 & 166,884 & 11.2$\times$ \\
+\LaTeX{} & 7,109 & 33,069 & 4.7$\times$ \\
+Runtime and lowering macro & 6,289 & 24,579 & 3.9$\times$ \\
+Vreteno core & 2,951 & 18,753 & 6.4$\times$ \\
+Examples, files & 32 & 147 & 4.6$\times$ \\
+Early specs and proposals & 5,237 & 5,271 & 1.0$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \end{document}
