@@ -56,6 +56,16 @@ printf '00:00:01.000Z r00 1140 796d 937c 4032\n00:00:01.000Z r08 0000 0200 7800 
 # A receive with nothing sent is not a pass.
 printf '00:00:01.000Z rx dma 60 got 0 of 0 lost 0 other 0 ticks 0 cycles/frame 0\n' >"$bad"
 [[ "$(read_ethperf "$bad" | cut -f5)" == fail ]]
+# A paced burst passes at 99% or more of the frames sent (#1955).
+printf '00:00:01.000Z rx dma 60 got 990 of 1000 lost 10 other 0 ticks 1 cycles/frame 1\n' >"$bad"
+[[ "$(read_ethperf "$bad" | cut -f5)" == pass ]]
+printf '00:00:01.000Z rx dma 60 got 989 of 1000 lost 11 other 0 ticks 1 cycles/frame 1\n' >"$bad"
+[[ "$(read_ethperf "$bad" | cut -f5)" == fail ]]
+# More got than sent is not a pass either.
+printf '00:00:01.000Z rx dma 60 got 1001 of 1000 lost 0 other 0 ticks 1 cycles/frame 1\n' >"$bad"
+[[ "$(read_ethperf "$bad" | cut -f5)" == fail ]]
+# Each burst's gap: #1038's 40 us for the 60-byte frames, 60 for 1514.
+[[ "$(rx_gap_us 60)" == 40 && "$(rx_gap_us 1514)" == 60 ]]
 # Listening with no load before it is not a time.
 printf '00:00:01.000Z fastboot: listening on port 5554\n' >"$bad"
 [[ "$(read_fastboot "$bad" yes | head -1 | cut -f5)" == fail ]]
