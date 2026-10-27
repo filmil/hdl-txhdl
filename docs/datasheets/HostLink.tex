@@ -26,7 +26,9 @@ frames on one side and an AXI-Lite host on the other, joined by their
 \code{ask} and \code{back} channels inside it, where the lowering
 buffers them. Joined by wires in a hand-written top instead, each
 channel's valid would depend on its own ready through the other unit, a
-combinational loop, which issue 1931 met on the board.
+combinational loop, which issue 1931 met on the board. It has no tables
+of its own here: its ports are \code{HostLink}'s \code{rx} and
+\code{tx} and \code{LiteMaster}'s bus, below and on the next sheet.
 
 \subsection*{Parameters}
 
@@ -85,8 +87,9 @@ clears, so the next frame starts innocent.
 latched as they arrive, at bytes 16 to 26.
 \item An ask goes on \code{ask} at the end of a frame nothing objected
 to. A frame that ends by byte 26 is not a whole ask, since its last
-field is held a cycle after its byte; the MAC pads every frame to sixty
-bytes, so a real ask always goes on past it. With no room on
+field is held a cycle after its byte, so an ask needs at least one
+byte past it; the sender's MAC pads every frame to sixty bytes, so a
+real ask always has them. With no room on
 \code{ask} the ask is dropped, and the program asks again.
 \item An answer is taken from \code{back} when no frame is going out,
 and its 27 bytes leave a byte per cycle that \code{tx} has room,

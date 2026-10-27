@@ -73,6 +73,9 @@ and \code{//firesim/ax7a200b} through \code{HostBridge<5>}.
 
 \subsection*{Limits}
 
-One transaction at a time, and one 32-bit word per transaction. Only
-the last answer is kept, so an ask repeated after a newer one has been
+One transaction at a time, and one 32-bit word per transaction. A
+repeat is known by its tag alone, so a program must give each new ask a
+tag other than the last one's: a new ask under the last tag is answered
+with the last answer and not performed, whatever its address. Only the
+last answer is kept, so an ask repeated after a newer one has been
 performed is performed again.
