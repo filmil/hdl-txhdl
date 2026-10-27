@@ -24,21 +24,23 @@ use txhdl_parts::bus::axi::{Answer, PerPort, Resp, R};
 const WORD: usize = 2;
 
 // begin{state}
-/// The framebuffer, `N` words of one pixel each.
+/// The framebuffer, `WORDS` words of one pixel each, behind an AXI link
+/// of `ADDR` address bits and `ID` identifier bits.
+#[txhdl::named_type_params]
 #[derive(Trace, Default)]
-pub struct Fb<const A: usize, const I: usize, const N: usize> {
-    pub px: Mem<U<32>, N>,
+pub struct Fb<const ADDR: usize, const ID: usize, const WORDS: usize> {
+    pub px: Mem<U<32>, WORDS>,
     /// A write taken and waiting for its beats: where the next goes and
     /// which identifier answers it.
     pub pend: Reg<U<1>>,
     pub paddr: Reg<U<24>>,
-    pub pid: Reg<U<I>>,
+    pub pid: Reg<U<ID>>,
     /// A read burst being answered after its first beat: the beats
     /// still to send, the word the next one reads, and the identifier
     /// every beat carries.
     pub rleft: Reg<U<8>>,
     pub raddr: Reg<U<24>>,
-    pub rid: Reg<U<I>>,
+    pub rid: Reg<U<ID>>,
     /// Read bursts taken and read beats sent, for a run to count what
     /// the rasteriser asked of the memory.
     pub rbursts: Reg<U<32>>,

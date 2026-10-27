@@ -36,6 +36,7 @@ use crate::uart::Uart;
 use ddr3::{Ddr3Per, Ddr3PerBus, Ddr3PerPins};
 use razboj::doorbell::Doorbell;
 use razboj::raster::Raster;
+use razboj::Raster;
 use txhdl::comp::Data;
 use txhdl::comp::{
     chan, join2, signal, tie, DefaultClock, In, Out, Pad, Rx, Tx, Unit,
@@ -558,7 +559,15 @@ pub struct Board<const DIV: u32> {
     /// draws into the frame the scanout shows, at `RAZBOJ_FB`, from
     /// the display list at `RAZBOJ_DL`, and polls its doorbell on the
     /// tenth slot for the list's length.
-    pub raster: Raster<32, 2, 10, 480, RAZBOJ_FB, RAZBOJ_DL, RAZBOJ_DOORBELL>,
+    pub raster: Raster![
+        ADDR = 32,
+        ID = 2,
+        LOG_WIDTH = 10,
+        HEIGHT = 480,
+        FB_AT = RAZBOJ_FB,
+        LIST_AT = RAZBOJ_DL,
+        COUNT_AT = RAZBOJ_DOORBELL
+    ],
     pub rhost: AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4],
     pub doorbell: Doorbell,
     /// Three sources, each asking while its line is high: the serial

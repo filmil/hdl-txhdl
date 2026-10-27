@@ -17,6 +17,7 @@ use razboj::op::{ALWAYS, EQUAL, GREATER};
 use razboj::op::{ONE_MINUS_SRC_ALPHA, SRC_ALPHA, XOR};
 use razboj::raster::Raster;
 use razboj::sim::{self, Work};
+use razboj::Raster;
 
 /// One tile across, and forty rows of it.
 const LOGW: usize = 6;
@@ -147,9 +148,15 @@ fn main() {
         "the tile is loaded"
     );
     let runs = sim::run_works_at::<A, LOGW, H, N, DL, CTRL>(&works, true);
-    let r = Raster::<A, { sim::IDB }, LOGW, H, 0, DL, CTRL>::lowered(
-        "raster_blend",
-    );
+    let r = <Raster![
+        ADDR = A,
+        ID = sim::IDB,
+        LOG_WIDTH = LOGW,
+        HEIGHT = H,
+        FB_AT = 0,
+        LIST_AT = DL,
+        COUNT_AT = CTRL
+    ]>::lowered("raster_blend");
     txhdl::netlist::write_netlists_from_env(&[&r]);
     let base = model::render(&first, W, H);
     let want = model::render_over(&list, W, H, base.clone());

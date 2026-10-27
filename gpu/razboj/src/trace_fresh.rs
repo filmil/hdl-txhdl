@@ -14,6 +14,7 @@ use razboj::op::stencil::{INCR, KEEP};
 use razboj::op::{assemble, DepthMode, Op, StencilMode, EQUAL, LESS};
 use razboj::raster::Raster;
 use razboj::sim::{self, Work};
+use razboj::Raster;
 
 /// One tile across, and forty rows of it.
 const LOGW: usize = 6;
@@ -70,9 +71,15 @@ fn main() {
         std::slice::from_ref(&work),
         true,
     );
-    let r = Raster::<A, { sim::IDB }, LOGW, H, 0, DL, CTRL>::lowered(
-        "raster_fresh",
-    );
+    let r = <Raster![
+        ADDR = A,
+        ID = sim::IDB,
+        LOG_WIDTH = LOGW,
+        HEIGHT = H,
+        FB_AT = 0,
+        LIST_AT = DL,
+        COUNT_AT = CTRL
+    ]>::lowered("raster_fresh");
     txhdl::netlist::write_netlists_from_env(&[&r]);
     let want = model::render(&insns, W, H);
     assert_eq!(runs[0].fb, want, "the fresh tile and the model differ");

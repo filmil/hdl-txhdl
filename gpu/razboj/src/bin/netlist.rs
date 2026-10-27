@@ -10,6 +10,7 @@
 //! (issue 985): they are constants the logic adds, so their values move
 //! a few gates and not the size or the timing.
 use razboj::raster::Raster;
+use razboj::Raster;
 
 /// Address bits, as on the board's bus.
 const A: usize = 32;
@@ -25,6 +26,14 @@ const DL: usize = 0x4300_0000;
 const CTRL: usize = 0x4320_0000;
 
 fn main() {
-    let net = Raster::<A, I, LOGW, H, BASE, DL, CTRL>::lowered("razboj");
+    let net = <Raster![
+        ADDR = A,
+        ID = I,
+        LOG_WIDTH = LOGW,
+        HEIGHT = H,
+        FB_AT = BASE,
+        LIST_AT = DL,
+        COUNT_AT = CTRL
+    ]>::lowered("razboj");
     print!("{}", net.verilog());
 }

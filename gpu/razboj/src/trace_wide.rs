@@ -9,6 +9,7 @@ use razboj::model;
 use razboj::op::{assemble, Op};
 use razboj::raster::Raster;
 use razboj::sim;
+use razboj::Raster;
 
 /// The board's row, and enough rows to pass the sixteenth.
 const LOGW: usize = 10;
@@ -46,8 +47,15 @@ fn main() {
     // The rasteriser's netlist under a name of its own, since the
     // sixteen-pixel trace's is `raster` and the two are checked side by
     // side.
-    let r =
-        Raster::<A, { sim::IDB }, LOGW, H, 0, DL, CTRL>::lowered("raster_wide");
+    let r = <Raster![
+        ADDR = A,
+        ID = sim::IDB,
+        LOG_WIDTH = LOGW,
+        HEIGHT = H,
+        FB_AT = 0,
+        LIST_AT = DL,
+        COUNT_AT = CTRL
+    ]>::lowered("raster_wide");
     txhdl::netlist::write_netlists_from_env(&[&r]);
     let want = model::render(&insns, W, H);
     assert_eq!(runs[0].fb, want, "the hardware and the model differ");
