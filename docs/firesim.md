@@ -82,6 +82,7 @@ To repeat it, holding the BOARD TOKEN:
    A binary given `cap_net_raw` ignores `LD_LIBRARY_PATH`, so link it with `--linkopt=-Wl,-rpath,<the directory on srv>` and keep the libraries there.
 3. Run `./rocket_eth_driver +permissive +iface=fpga-a200t-eth0 +permissive-off hello.riscv`.
    The driver's own plusargs go inside the `+permissive` block; outside it, fesvr takes the first one for the program.
+   `+device` defaults to 5, the device number `rocket_netlist.rs` builds in.
 
 `rules_firesim` itself is not a dependency yet; it comes in with the first change that uses its rules.
 `firesim_target` has already moved `rules_cc`, `dtc` and five more modules to the newer releases they share.
