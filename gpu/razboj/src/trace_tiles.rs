@@ -10,6 +10,7 @@ use razboj::model;
 use razboj::op::{assemble, Op};
 use razboj::raster::Raster;
 use razboj::sim::{self, Work};
+use razboj::Raster;
 
 /// Two tiles across and one down: the scene is as small as shows a tile
 /// at an origin past nought, since nvc runs the whole testbench within
@@ -52,9 +53,15 @@ fn main() {
         std::slice::from_ref(&work),
         true,
     );
-    let r = Raster::<A, { sim::IDB }, LOGW, H, 0, DL, CTRL>::lowered(
-        "raster_tiles",
-    );
+    let r = <Raster![
+        ADDR = A,
+        ID = sim::IDB,
+        LOG_WIDTH = LOGW,
+        HEIGHT = H,
+        FB_AT = 0,
+        LIST_AT = DL,
+        COUNT_AT = CTRL
+    ]>::lowered("raster_tiles");
     txhdl::netlist::write_netlists_from_env(&[&r]);
     let want = model::render(&insns, W, H);
     assert_eq!(runs[0].fb, want, "the tiled hardware and the model differ");

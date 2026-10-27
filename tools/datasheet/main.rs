@@ -18,6 +18,7 @@ use pcie::bar::{BarRegs, PcieBar};
 use razboj::doorbell::Doorbell;
 use razboj::fb::Fb;
 use razboj::raster::Raster;
+use razboj::{Fb, Raster};
 use txhdl::comp::{Data, Domain};
 use txhdl::regmap::RegMap;
 use txhdl::types::U;
@@ -821,11 +822,23 @@ fn main() {
     sheet("Board", "Board<868>", Board::<868>::lowered("board"));
     sheet("BarRegs", "BarRegs<4>", BarRegs::<4>::lowered("bar_regs"));
     sheet("PcieBar", "PcieBar", PcieBar::lowered("pcie_bar"));
-    sheet("Fb", "Fb<16, 2, 1024>", Fb::<16, 2, 1024>::lowered("fb"));
+    sheet(
+        "Fb",
+        "Fb<16, 2, 1024>",
+        <Fb![ADDR = 16, ID = 2, WORDS = 1024]>::lowered("fb"),
+    );
     sheet(
         "Raster",
         "Raster<16, 2, 4, 16, 0, 0x400, 0x600>",
-        Raster::<16, 2, 4, 16, 0, 0x400, 0x600>::lowered("raster"),
+        <Raster![
+            ADDR = 16,
+            ID = 2,
+            LOG_WIDTH = 4,
+            HEIGHT = 16,
+            FB_AT = 0,
+            LIST_AT = 0x400,
+            COUNT_AT = 0x600
+        ]>::lowered("raster"),
     );
     regs("Doorbell", &razboj::doorbell::doorbell::MAP);
     sheet("Doorbell", "Doorbell", Doorbell::lowered("doorbell"));

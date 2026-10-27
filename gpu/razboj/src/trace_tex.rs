@@ -14,6 +14,7 @@ use razboj::model::{self, Textures};
 use razboj::op::{assemble, Op, TexMode};
 use razboj::raster::Raster;
 use razboj::sim::{self, Work};
+use razboj::Raster;
 use razboj_tile::tex::{
     encode, level_base, side, texel_offset, Combine, Desc, BLEND, COMBINE,
     FN_ADD, FN_INTERPOLATE, FN_SUBTRACT, LINEAR, LINEAR_MIPMAP_LINEAR,
@@ -164,8 +165,15 @@ fn main() {
         std::slice::from_ref(&work),
         true,
     );
-    let r =
-        Raster::<A, { sim::IDB }, LOGW, H, 0, DL, CTRL>::lowered("raster_tex");
+    let r = <Raster![
+        ADDR = A,
+        ID = sim::IDB,
+        LOG_WIDTH = LOGW,
+        HEIGHT = H,
+        FB_AT = 0,
+        LIST_AT = DL,
+        COUNT_AT = CTRL
+    ]>::lowered("raster_tex");
     txhdl::netlist::write_netlists_from_env(&[&r]);
     let read = |a: u32| {
         more.iter()

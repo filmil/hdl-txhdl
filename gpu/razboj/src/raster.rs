@@ -96,19 +96,20 @@ const _: () = assert!(TILE == razboj_tile::TILE && TILE_LEN == TILE - 1);
 const SHIFT: usize = 6;
 
 // begin{state}
-/// The rasteriser. `A` is the address width, `I` the AXI identifier
-/// width, the screen is `1 << LOGW` by `H` pixels, and the
-/// framebuffer's first word is at byte address `BASE`, which is where
+/// The rasteriser. `ADDR` is the address width, `ID` the AXI identifier
+/// width, the screen is `1 << LOG_WIDTH` by `HEIGHT` pixels, and the
+/// framebuffer's first word is at byte address `FB_AT`, which is where
 /// a design puts it in whatever it writes into.
+#[txhdl::named_type_params]
 #[derive(Trace, Default)]
 pub struct Raster<
-    const A: usize,
-    const I: usize,
-    const LOGW: usize,
-    const H: usize,
-    const BASE: usize,
-    const DL: usize,
-    const CTRL: usize,
+    const ADDR: usize,
+    const ID: usize,
+    const LOG_WIDTH: usize,
+    const HEIGHT: usize,
+    const FB_AT: usize,
+    const LIST_AT: usize,
+    const COUNT_AT: usize,
 > {
     /// Which entry is being walked. A triangle is the one whose edge
     /// functions are tested, and the waveform names it.

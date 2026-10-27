@@ -25,6 +25,7 @@
 //! on the other through anything but the memory they share.
 use razboj::op::Insn;
 use razboj::raster::Raster;
+use razboj::Raster;
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, join_all, signal, DefaultClock, Running, Unit};
 use txhdl::map::AddrMap;
@@ -274,8 +275,15 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
         IDS = NIDS
     ]>::default();
     let mut gbr = Bridge::<1, 0>::default();
-    let mut raster =
-        Raster::<32, IW, LOGW, H, FB_BASE, DL_BASE, DL_CTRL>::default();
+    let mut raster = <Raster![
+        ADDR = 32,
+        ID = IW,
+        LOG_WIDTH = LOGW,
+        HEIGHT = H,
+        FB_AT = FB_BASE,
+        LIST_AT = DL_BASE,
+        COUNT_AT = DL_CTRL
+    ]>::default();
     let (idle_out, idle) = signal::<Bit, DefaultClock>();
 
     // 0,1: the memory, behind a tracker and a bridge. It takes the
