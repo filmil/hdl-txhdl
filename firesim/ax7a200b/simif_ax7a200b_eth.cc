@@ -49,14 +49,11 @@
 #include <vector>
 
 #include "core/simif.h"
+#include "eth_frame.h"
 
 namespace {
 
-constexpr uint16_t ETHERTYPE = 0x88b5;
-constexpr uint8_t KIND_HOST_ASK = 0x02;
-constexpr uint8_t KIND_HOST_ANSWER = 0x82;
-constexpr size_t FRAME_LEN = 27;
-constexpr size_t MIN_FRAME = 60;
+using namespace eth_frame;
 
 std::string plusarg(const std::vector<std::string> &args,
                     const std::string &name,
@@ -68,6 +65,20 @@ std::string plusarg(const std::vector<std::string> &args,
     }
   }
   return dflt;
+}
+
+// A whole-number plusarg in [lo, hi]; anything else stops the driver.
+int plusint(const std::vector<std::string> &args, const std::string &name,
+            int dflt, int lo, int hi) {
+  const std::string v = plusarg(args, name, std::to_string(dflt));
+  char *end = nullptr;
+  const long n = strtol(v.c_str(), &end, 10);
+  if (v.empty() || *end != '\0' || n < lo || n > hi) {
+    fprintf(stderr, "simif_ax7a200b_eth: +%s=%s is not a number from %d to %d\n",
+            name.c_str(), v.c_str(), lo, hi);
+    exit(1);
+  }
+  return static_cast<int>(n);
 }
 
 [[noreturn]] void die(const char *what) {
@@ -105,13 +116,16 @@ simif_ax7a200b_eth_t::simif_ax7a200b_eth_t(
     const TargetConfig &config, const std::vector<std::string> &args)
     : simif_t(config) {
   const std::string iface = plusarg(args, "iface", "");
-  if (iface.empty()) {
-    fprintf(stderr, "simif_ax7a200b_eth: give +iface=<interface>\n");
+  if (iface.empty() || iface.size() >= IFNAMSIZ) {
+    fprintf(stderr,
+            "simif_ax7a200b_eth: give +iface=<interface>, at most %d "
+            "characters\n",
+            IFNAMSIZ - 1);
     exit(1);
   }
-  device = std::stoi(plusarg(args, "device", "5"));
-  timeout_ms = std::stoi(plusarg(args, "timeout_ms", "20"));
-  retries = std::stoi(plusarg(args, "retries", "50"));
+  device = static_cast<uint8_t>(plusint(args, "device", 5, 0, 255));
+  timeout_ms = plusint(args, "timeout_ms", 20, 1, 60000);
+  retries = plusint(args, "retries", 50, 1, 1000000);
 
   fd = socket(AF_PACKET, SOCK_RAW, htons(ETHERTYPE));
   if (fd < 0) {
@@ -133,8 +147,13 @@ simif_ax7a200b_eth_t::simif_ax7a200b_eth_t(
   if (bind(fd, reinterpret_cast<struct sockaddr *>(&sll), sizeof(sll)) < 0) {
     die("bind");
   }
-  // A random first tag, spent on a read nothing depends on, so that no
-  // later tag can repeat the one the board last kept. Address 0 is the
+  // The board answers an ask that repeats the tag of the last one it
+  // performed from what it kept, without performing it. Each ask here
+  // takes the tag after the one before, so only the first could match
+  // a tag the board kept from an earlier run. So the first ask is a
+  // read nothing depends on, under a random tag: if it matches, the
+  // board answers it from what it kept, and every ask after it differs
+  // from the board's last, however the count wraps. Address 0 is the
   // simulation master's INIT_DONE, a status register: reading it does
   // nothing (FireSim-generated.const.h, SIMULATIONMASTER_struct).
   tag = static_cast<uint8_t>(std::random_device{}());
@@ -158,20 +177,8 @@ simif_ax7a200b_eth_t::~simif_ax7a200b_eth_t() {
 uint32_t simif_ax7a200b_eth_t::transact(bool write, uint32_t addr,
                                         uint32_t data) {
   tag = static_cast<uint8_t>(tag + 1);
-  uint8_t f[MIN_FRAME] = {};
-  memset(f, 0xff, 6); // to the board: the cable has no one else on it
-  memcpy(f + 6, mac, 6);
-  f[12] = ETHERTYPE >> 8;
-  f[13] = ETHERTYPE & 0xff;
-  f[14] = KIND_HOST_ASK;
-  f[15] = device;
-  f[16] = tag;
-  f[17] = write ? 1 : 0;
-  for (int i = 0; i < 4; i++) {
-    f[18 + i] = static_cast<uint8_t>(addr >> (24 - 8 * i));
-    f[22 + i] = static_cast<uint8_t>(data >> (24 - 8 * i));
-  }
-  f[26] = write ? 0xf : 0;
+  uint8_t f[MIN_FRAME];
+  encode_ask(f, mac, device, tag, write, addr, data);
 
   struct sockaddr_ll to = {};
   to.sll_family = AF_PACKET;
@@ -197,30 +204,34 @@ uint32_t simif_ax7a200b_eth_t::transact(bool write, uint32_t addr,
         break;
       }
       struct pollfd p = {fd, POLLIN, 0};
-      if (poll(&p, 1, static_cast<int>(left)) <= 0) {
-        continue;
+      const int r = poll(&p, 1, static_cast<int>(left));
+      if (r < 0 && errno != EINTR) {
+        die("poll");
+      }
+      if (r <= 0) {
+        continue; // interrupted, or the wait ran out: checked above
       }
       uint8_t in[1600];
       struct sockaddr_ll from = {};
       socklen_t fl = sizeof(from);
       ssize_t n = recvfrom(fd, in, sizeof(in), 0,
                            reinterpret_cast<struct sockaddr *>(&from), &fl);
-      if (n < static_cast<ssize_t>(FRAME_LEN) ||
-          from.sll_pkttype == PACKET_OUTGOING) {
+      if (n < 0 || from.sll_pkttype == PACKET_OUTGOING) {
         continue;
       }
-      if (in[14] != KIND_HOST_ANSWER || in[15] != device || in[16] != tag) {
-        continue; // another kind, another device, or a late answer
+      Answer a;
+      if (!decode_answer(in, static_cast<size_t>(n), &a) ||
+          a.device != device || a.tag != tag) {
+        continue; // not an answer, another device's, or a late one
       }
-      if (in[17] & 1) {
+      if (a.err) {
         fprintf(stderr,
                 "simif_ax7a200b_eth: the bus refused a %s at 0x%x\n",
                 write ? "write" : "read",
                 addr);
         exit(1);
       }
-      return (uint32_t(in[22]) << 24) | (uint32_t(in[23]) << 16) |
-             (uint32_t(in[24]) << 8) | uint32_t(in[25]);
+      return a.data;
     }
   }
   fprintf(stderr,

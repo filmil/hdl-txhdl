@@ -3,10 +3,10 @@
 # milestone 1: FireSim's GCD example, whose bridges are registers only.
 #
 # The board: the MAC's two halves and the PHY's RGMII, as //eth's echo
-# design has them; HostLink and LiteMaster (//lib/parts, remote::host),
-# lowered; and Golden Gate's FPGATop for GCD at 50 MHz. The host: FireSim's
+# design has them; HostBridge, HostLink and LiteMaster joined
+# (//lib/parts, remote::host), lowered; and Golden Gate's FPGATop for GCD at 50 MHz. The host: FireSim's
 # driver for GCD with a platform file that speaks frames instead of PCIe.
-load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
 load("@rules_rust//rust:defs.bzl", "rust_binary")
 load(
     "@rules_vivado//build/vivado:rules.bzl",
@@ -19,7 +19,7 @@ package(default_visibility = ["//visibility:public"])
 # The hand-written top, for //tools/topcheck (issue 508).
 exports_files(["firesim_eth_top.v"])
 
-# The Verilog of `host_link` and `lite_master`.
+# The Verilog of `host_bridge`, with HostLink and LiteMaster inside.
 rust_binary(
     name = "netlist",
     srcs = ["netlist.rs"],
@@ -110,6 +110,20 @@ cc_library(
     includes = ["gcd"],
 )
 
+# The frame the host speaks, laid out as HostBridge reads it, and its
+# test, byte for byte.
+cc_library(
+    name = "eth_frame",
+    hdrs = ["eth_frame.h"],
+)
+
+cc_test(
+    name = "eth_frame_test",
+    size = "small",
+    srcs = ["eth_frame_test.cc"],
+    deps = [":eth_frame"],
+)
+
 # Run it on the machine cabled to the board, as one with cap_net_raw:
 #
 #   gcd_eth_driver +iface=<interface>
@@ -128,6 +142,7 @@ cc_binary(
         "-Wno-unused-variable",
     ],
     deps = [
+        ":eth_frame",
         ":gcd_const",
         "@firesim_target//:examples_driver_hdrs",
         "@firesim_target//:midas_bridges",
@@ -137,5 +152,5 @@ cc_binary(
 # The sources by name, for the documents' listings.
 filegroup(
     name = "sources",
-    srcs = glob(["*.v", "*.xdc", "*.rs", "*.cc"]),
+    srcs = glob(["*.v", "*.xdc", "*.rs", "*.cc", "*.h"]),
 )
