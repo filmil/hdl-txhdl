@@ -1,0 +1,132 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: HostLink, txhdl_parts::remote::host::HostBridge
+\datasheet{HostLink}{The wire under a program that drives the design's bus: each ask one Ethernet frame in, each answer one frame out.}
+
+\dsfacts{\code{lib/parts/src/remote/host.rs}}{\code{txhdl\_parts::remote::host::HostLink}, and \code{HostBridge}, it and \code{LiteMaster} joined}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+\code{HostLink} is the other direction of \code{RemoteLink}.
+There the board's transactions go out to a program that answers them;
+here a program on another machine sends an \code{Ask} in a frame, and
+\code{HostLink} takes it off the wire and passes it on \code{ask}.
+The \code{Answer} that comes back on \code{back} leaves as a frame.
+\code{LiteMaster} performs the ask on the design's AXI-Lite bus.
+What FireSim's host driver does over PCIe, reading and writing the
+simulator's control registers, it can do over this instead (issue
+1931).
+
+The frame is \code{RemoteLink}'s, at the same offsets, with two kinds of
+its own, so the two directions can share a wire and a program and
+neither takes the other's frames for its own.
+
+\code{HostBridge} is \code{HostLink} and \code{LiteMaster} as one unit,
+frames on one side and an AXI-Lite host on the other, joined by their
+\code{ask} and \code{back} channels inside it, where the lowering
+buffers them. Joined by wires in a hand-written top instead, each
+channel's valid would depend on its own ready through the other unit, a
+combinational loop, which issue 1931 met on the board.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{DEV} & The device number, which every ask this accepts must carry
+and every answer it sends carries, as for \code{RemoteLink}. The tables
+use 5, as \code{ex\_hostlink} and \code{//firesim/ax7a200b} do. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{The frame}
+
+27 bytes, before whatever padding the MAC adds to reach the minimum
+frame; \code{RemoteLink}'s layout.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}llp{0.52\textwidth}@{}}
+\toprule
+Bytes & Field & What \\
+\midrule
+0 to 6 & destination & Broadcast on an answer, since the design does
+not know where the program is. \\
+6 to 12 & source & \code{02:00:00:00:00:\textit{dev}} on an answer. \\
+12 to 14 & type & \code{0x88b5}. \\
+14 & kind & \code{0x02} asks, \code{0x82} answers. \\
+15 & device & \code{DEV}. \\
+16 & tag & The ask's, which the answer repeats. \\
+17 & flags & Bit 0 is a write on an ask, an error on an answer. \\
+18 to 22 & address & Most significant byte first. \\
+22 to 26 & word & The word written, or the word answered. \\
+26 & strobe & Which lanes a write means. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\dstables{HostLink}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item Every byte coming in is taken, so a frame that is not an ask is
+read and dropped rather than left to block the MAC.
+\item \code{got} counts the bytes of the frame coming in and stops at 63
+rather than wrapping, so a long frame's later bytes are never read as
+its header or its fields again: frames longer than 64 bytes, such as
+ARP, IPv6 or LLDP, are ordinary on a wire.
+\item Four bytes are checked as they pass: the two of the type, the
+kind and the device. A mismatch sets \code{alien}, which the last byte
+clears, so the next frame starts innocent.
+\item The tag, the write bit, the address, the word and the strobe are
+latched as they arrive, at bytes 16 to 26.
+\item An ask goes on \code{ask} at the end of a frame nothing objected
+to. A frame that ends by byte 26 is not a whole ask, since its last
+field is held a cycle after its byte; the MAC pads every frame to sixty
+bytes, so a real ask always goes on past it. With no room on
+\code{ask} the ask is dropped, and the program asks again.
+\item An answer is taken from \code{back} when no frame is going out,
+and its 27 bytes leave a byte per cycle that \code{tx} has room,
+spelled from registers by \code{at} rather than kept in a buffer.
+\item Taking asks and sending answers are independent.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item Eleven tests in \code{lib/parts/src/remote/host.rs}, in
+\code{//lib/parts:parts\_test}, run \code{HostLink<5>} and
+\code{LiteMaster} with a memory on the bus. Among them:
+\code{frames\_that\_are\_not\_this\_devices\_asks\_are\_ignored} sends
+another device's ask, another protocol's frame and the other
+direction's ask;
+\code{a\_long\_ask\_is\_taken\_whole} pads an ask past 64 bytes;
+\code{a\_frame\_that\_ends\_at\_the\_strobe\_is\_not\_an\_ask} cuts one
+short; \code{a\_long\_frame\_of\_another\_kind\_is\_ignored} hides an
+ask's header past byte 64 of another protocol's frame; and
+\code{the\_bridge\_is\_the\_two\_units\_joined} sends the same asks
+through \code{HostBridge}.
+\item \code{//lib/examples:ex\_hostlink} runs a program's asks over a
+wire, and the build simulates the three netlists against that run under
+nvc and Verilator, among them\newline
+\code{//docs:hostlink\_sim\_host\_link\_host\_link\_tb\_test}\newline
+\code{//docs:hostlink\_sim\_host\_bridge\_host\_bridge\_tb\_test}\newline
+and their \code{vsim} twins.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{ex\_hostlink}, and \code{//firesim/ax7a200b}, where
+\code{HostBridge<5>} is the host link to FireSim's GCD design on the
+AX7A200B, driven over the Ethernet cable from \code{srv}.
+
+\subsection*{Limits}
+
+One answer frame goes out at a time, and an ask that finds \code{ask}
+full is dropped; a program that does not hear an answer asks again.
+The frame carries one 32-bit word. Frames carry no authentication, so
+any station on the wire that speaks the protocol with this device
+number can drive the bus.
