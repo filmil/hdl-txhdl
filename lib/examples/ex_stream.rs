@@ -15,8 +15,12 @@
 //! from what the master kept, so the queue does not lose a beat, which
 //! the port's count of transfers shows.
 //!
-//! Both units are lowered, and the build simulates their netlists
-//! against this run under nvc and Verilator.
+//! The run starts as a host driver does, with a no-op that sets the
+//! tag the master keeps and never reaches the port.
+//!
+//! The two units and the bridge that joins them are lowered, and the
+//! build simulates the three netlists against this run under nvc and
+//! Verilator.
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -121,7 +125,10 @@ fn main() {
     // The program: one ask at a time, each waiting for its answer.
     let one = 0x0f0e0d0c_0b0a0908_07060504_03020100u128;
     let two = 0xfedcba98_76543210_00112233_44556677u128;
+    let mut noop = ask_frame(9, false, 0, 0);
+    noop[17] = 2;
     let asks = [
+        ("no-op", noop),
         ("write one", ask_frame(1, true, 0x200, one)),
         ("write two", ask_frame(2, true, 0x200, two)),
         ("read", ask_frame(3, false, 0x200, 0)),
