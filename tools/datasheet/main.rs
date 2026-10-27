@@ -560,7 +560,7 @@ fn main() {
     );
     sheet(
         "Router",
-        "Router<8, BoardMap, 32, 32, 4, 4>",
+        "Router<8, Map<BoardMap>, 32, 32, 4, 4>",
         BoardRouter::lowered("router"),
     );
     sheet(
@@ -582,7 +582,7 @@ fn main() {
     );
     sheet(
         "LiteBridge",
-        "LiteBridge<1, SerialMap, 32, 32, 4, 2>",
+        "LiteBridge<1, Map<SerialMap>, 32, 32, 4, 2>",
         <LiteBridge![
             PORTS = 1,
             Map = SerialMap,
