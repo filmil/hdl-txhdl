@@ -194,8 +194,9 @@ and cannot index multi-line memories.
 Because native channels buffer two items, the station output tolerates two
 cycles of downstream backpressure before stalling. When consumers process
 traffic in large bursts, a dedicated \code{Fifo} queue is placed downstream of
-the station: \code{Fifo<Line2<2, U<8>, U<16>>, 3, 8>} provides an 8-entry queue
-indexed by 3 address bits. Listing~\ref{lst:s-queue} demonstrates FIFO operation
+the station: a \code{Fifo} of \code{DEPTH = 8} words of
+\code{Line2<2, U<8>, U<16>>} provides an 8-entry queue indexed by
+\code{PTRS = 3} address bits. Listing~\ref{lst:s-queue} demonstrates FIFO operation
 buffering nine incoming items across a 4-entry queue.
 
 \lstinputlisting[style=ascii,caption={What \code{ex\_queue} printed when the build ran it: a FIFO of four between two channels, filling and draining; then its lowering.},label={lst:s-queue}]{out_queue.txt}
