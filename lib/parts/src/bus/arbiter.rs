@@ -14,8 +14,11 @@
 //! address phase and carries it back on the answer, so the arbiter
 //! puts the host's port number above the host's own identifier on the
 //! way out and takes it off again on the way back. That is why the
-//! peripheral side's identifier is `J` bits where a host's is `I`:
-//! `J` has to be at least `I` plus the bits the port number needs.
+//! peripheral side's identifier is `PER_ID` bits where a host's is
+//! `ID`: `PER_ID` has to be at least `ID` plus the bits the port number
+//! needs. The struct takes its parameters by name,
+//! `Arbiter![HOSTS = 2, ADDR = 32, DATA = 32, STRB = 4, ID = 2, PER_ID = 3,
+//! FIXED = 0]`; the impls write them `N`, `A`, `D`, `S`, `I` and `J`.
 //!
 //! The write data channel has no identifier at all, which is the
 //! other half of the same problem. A beat belongs to the oldest
@@ -31,17 +34,17 @@
 use crate::bus::axi::{Ar, Aw, B, R, W};
 use txhdl::comp::{mux, Clock, DefaultClock, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, with, Trace};
+use txhdl::{lower, named_type_params, with, Trace};
 
 // begin{part}
-/// An AXI4 arbiter of `N` hosts and one peripheral link, the mirror of
-/// the router: it merges rather than fans out.
+/// An AXI4 arbiter of `HOSTS` hosts and one peripheral link, the mirror
+/// of the router: it merges rather than fans out.
 ///
 /// Each host's address phases go out carrying its port number above
-/// its own identifier, so the peripheral side's identifier is `J` bits
-/// where a host's is `I`; the answers come back with that tag and are
-/// given to the host it names, with the tag taken off again. `J` must
-/// be at least `I` plus the bits the port number needs.
+/// its own identifier, so the peripheral side's identifier is `PER_ID`
+/// bits where a host's is `ID`; the answers come back with that tag and
+/// are given to the host it names, with the tag taken off again.
+/// `PER_ID` must be at least `ID` plus the bits the port number needs.
 ///
 /// The write data channel is locked to the host whose write address
 /// phase was granted until that burst's last beat, since AXI4 puts no
@@ -72,14 +75,15 @@ use txhdl::{lower, with, Trace};
 /// for the scanout and sets none (`SCAN_PRIO` in
 /// `cpu/vreteno/src/board.rs` says why).
 /// Writes are not affected.
+#[named_type_params]
 #[derive(Trace, Default)]
 pub struct Arbiter<
-    const N: usize,
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
-    const J: usize,
+    const HOSTS: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+    const PER_ID: usize,
     const FIXED: usize,
     const HOLD: usize = 0,
     const PRIO: usize = 8,
@@ -88,7 +92,7 @@ pub struct Arbiter<
     /// phase waits, since AXI4 puts no identifier on `w`.
     pub wbusy: Reg<Bit>,
     /// Whose beats they are, one bit per host.
-    pub wsel: Reg<U<N>>,
+    pub wsel: Reg<U<HOSTS>>,
     /// Where the round robin starts looking for the next read address
     /// phase.
     pub rturn: Reg<U<3>>,

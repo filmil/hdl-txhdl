@@ -39,26 +39,27 @@
 use crate::bus::axi::{Ar, Aw, Resp, B, W};
 use txhdl::comp::{mux, Clock, DefaultClock, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, with, Trace};
+use txhdl::{lower, named_type_params, with, Trace};
 
-/// The monitor for the two ports `P0` and `P1` of an arbiter whose
-/// identifiers are `J` bits, at most five, the host's own `I` of them
-/// below the port's, on a link of 32-bit addresses and words, for the
-/// addresses `a` with `a & RM == RB`.
+/// The monitor for the two ports `PORT0` and `PORT1` of an arbiter whose
+/// identifiers are `PER_ID` bits, at most five, the host's own `ID` of
+/// them below the port's, on a link of 32-bit addresses and words, for
+/// the addresses `a` with `a & MASK == BASE`.
+#[named_type_params]
 #[derive(Trace, Default)]
 pub struct ExMon<
-    const J: usize,
-    const I: usize,
-    const P0: usize,
-    const P1: usize,
-    const RB: usize,
-    const RM: usize,
+    const PER_ID: usize,
+    const ID: usize,
+    const PORT0: usize,
+    const PORT1: usize,
+    const BASE: usize,
+    const MASK: usize,
 > {
-    /// Whether port `P0` has a reservation.
+    /// Whether port `PORT0` has a reservation.
     pub v0: Reg<Bit>,
     /// The line it is for: the address above its four low bits.
     pub line0: Reg<U<28>>,
-    /// Whether port `P1` has a reservation.
+    /// Whether port `PORT1` has a reservation.
     pub v1: Reg<Bit>,
     /// The line it is for.
     pub line1: Reg<U<28>>,
@@ -89,11 +90,11 @@ pub struct ExMon<
     /// The lines it covers.
     pub fwcnt: Reg<U<28>>,
     /// The exclusive write at the head was decided last cycle: whether
-    /// it was, whether it stores, and whether by port `P0`'s reservation.
+    /// it was, whether it stores, and whether by port `PORT0`'s reservation.
     pub xk_v: Reg<Bit>,
     /// Whether it stores.
     pub xk_ok: Reg<Bit>,
-    /// Whether by port `P0`'s reservation.
+    /// Whether by port `PORT0`'s reservation.
     pub xk_p0: Reg<Bit>,
     /// A write burst taken whose beats are still coming.
     pub wpend: Reg<Bit>,
@@ -103,16 +104,16 @@ pub struct ExMon<
     /// A failed exclusive write's answer, waiting to be given.
     pub binj: Reg<Bit>,
     /// Its identifier.
-    pub binjid: Reg<U<J>>,
-    /// An exclusive write of port `P0` passed on, whose answer goes
+    pub binjid: Reg<U<PER_ID>>,
+    /// An exclusive write of port `PORT0` passed on, whose answer goes
     /// back as `ExOkay`.
     pub x0: Reg<Bit>,
     /// Its identifier.
-    pub x0id: Reg<U<J>>,
-    /// The same for port `P1`.
+    pub x0id: Reg<U<PER_ID>>,
+    /// The same for port `PORT1`.
     pub x1: Reg<Bit>,
     /// Its identifier.
-    pub x1id: Reg<U<J>>,
+    pub x1id: Reg<U<PER_ID>>,
 }
 
 #[lower]
@@ -428,7 +429,16 @@ mod tests {
         let (ram, inp, outp) = pins::<32, 32, 4, 5>(paw, par, pw, pb, pr, 1024);
         let ram = ram.reading_at_address().timed(8, 2, 0);
         let words = ram.memory();
-        let mut arb = Arbiter::<2, 32, 32, 4, 2, 5, 0, HOLD>::default();
+        let mut arb = <Arbiter![
+            HOSTS = 2,
+            ADDR = 32,
+            DATA = 32,
+            STRB = 4,
+            ID = 2,
+            PER_ID = 5,
+            FIXED = 0,
+            HOLD = HOLD
+        ]>::default();
         let mut mon = ExMon::<5, 2, 0, 1, 0, 0>::default();
         if ALTERNATE.with(|a| a.get()) {
             mon.alternate = Reg::new(Bit::One);

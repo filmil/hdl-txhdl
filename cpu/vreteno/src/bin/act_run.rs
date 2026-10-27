@@ -45,6 +45,7 @@ use txhdl_parts::bus::axi::{
     axi_units, per_end, Ar, Aw, AxiHost, AxiPer, Per, Xact, B, W,
 };
 use txhdl_parts::bus::exmon::ExMon;
+use txhdl_parts::ExMon;
 use txhdl_parts::{AxiHost, AxiPer, Per, W};
 use vreteno32::core::Writeback;
 use vreteno32::hart::{Hart, HartIn, HartOut};
@@ -235,7 +236,14 @@ fn simulate<const EXCL: usize>(
     ]>::default();
     let mut axi_per =
         <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = IW]>::default();
-    let mut exmon = ExMon::<IW, IW, 0, 1, 0x4000_0000, 0xc000_0000>::default();
+    let mut exmon = <ExMon![
+        PER_ID = IW,
+        ID = IW,
+        PORT0 = 0,
+        PORT1 = 1,
+        BASE = 0x4000_0000,
+        MASK = 0xc000_0000
+    ]>::default();
     let mem = memory(per, words, img.tohost, htif.clone());
     // The tracker straight to the memory's unit, or with the monitor
     // between them.
