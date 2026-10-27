@@ -192,6 +192,19 @@ vivado_place_and_route2(
     tags = ["manual"],
 )
 
+# The Rocket bitstream into the board, as gcd_eth_prog below writes GCD's.
+# Needs the BOARD TOKEN and the tunnel:
+#
+#   bazel run //cpu/vreteno/board/remote:hw_server
+#   bazel run //firesim/ax7a200b:rocket_eth_prog -- \
+#       --hostport localhost:3122 --device '*/xilinx_tcf/Digilent/*'
+vivado_program_device(
+    name = "rocket_eth_prog",
+    prog_daemon = "//cpu/vreteno/board/remote:hw_server",
+    deps = [":rocket_eth_pnr"],
+    tags = ["manual"],
+)
+
 # Write it into the board where it is, as //eth:echo_prog does, over the
 # tunnel the Vreteno board's daemon opens. Needs the BOARD TOKEN. Bring
 # the tunnel up first:
