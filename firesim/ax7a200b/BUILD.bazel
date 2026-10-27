@@ -282,3 +282,21 @@ cc_binary(
         "@firesim_rocket_nitefury//:const_h",
     ],
 )
+
+# The program the Rocket design runs first: a line on the UART, then exit
+# through tohost. Assembled and linked by the LLVM toolchain's clang and
+# ld.lld for RV64.
+genrule(
+    name = "hello_riscv",
+    srcs = [
+        "hello/hello.S",
+        "hello/hello.ld",
+    ],
+    outs = ["hello.riscv"],
+    cmd = "for f in $(execpaths @llvm_toolchain_llvm//:bin); do " +
+          "case $$f in */bin/clang) CC=$$f;; */bin/ld.lld) LD=$$f;; esac; done; " +
+          "$$CC --target=riscv64-unknown-elf -march=rv64imac -mabi=lp64 " +
+          "-mcmodel=medany -c $(location hello/hello.S) -o $(@D)/hello.o && " +
+          "$$LD -T $(location hello/hello.ld) $(@D)/hello.o -o $@",
+    tools = ["@llvm_toolchain_llvm//:bin"],
+)
