@@ -290,6 +290,40 @@ bazel_dep(name = "firesim_goldengate", version = "1.22.0")
 # FireSim host link over Ethernet on the AX7A200B (//firesim/ax7a200b,
 # issue 1931).
 bazel_dep(name = "firesim_target", version = "1.22.0.bcr.1")
+# FireChip's half of the host driver (its bridges, TSI and the
+# simulation's top), C++ only, for the Rocket driver (issue 1988). Its
+# Scala targets are never built here, so nothing below sets Scala up.
+bazel_dep(name = "chipyard_firechip", version = "1.15.0")
+
+# FireSim's Rocket design for the Nitefury II, as Golden Gate wrote it:
+# the release asset of bazel_rules_firesim v0.2.1, built from source by
+# its CI and identical to a build on eph4. The AX7A200B has the same part
+# and 1 GiB of DDR3, so the AX7A200B's Rocket top uses it as it is
+# (//firesim/ax7a200b, issue 1988). TxHDL needs no Scala for it.
+http_archive(
+    name = "firesim_rocket_nitefury",
+    build_file_content = """load("@rules_cc//cc:defs.bzl", "cc_library")
+
+exports_files(glob(["**"]))
+
+filegroup(
+    name = "sv",
+    srcs = ["FireSim-generated.sv"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "const_h",
+    hdrs = ["FireSim-generated.const.h"],
+    visibility = ["//visibility:public"],
+)
+""",
+    sha256 = "f9ff328fbaee32f0a396f35c9862f4f1086bf4df5b282656c92bb62383a2c135",
+    strip_prefix = "rocket_nitefury-v0.2.1",
+    urls = [
+        "https://github.com/filmil/bazel_rules_firesim/releases/download/v0.2.1/rocket_nitefury-v0.2.1.tar.gz",
+    ],
+)
 
 # Shell binaries: the remote programmer and the serial watcher.
 bazel_dep(name = "rules_shell", version = "0.8.0")

@@ -11,6 +11,7 @@ package(default_visibility = ["//visibility:public"])
 
 # The hand-written tops, for //tools/topcheck (issue 508).
 exports_files([
+    "board/ax7a200_ddr3.xdc",
     "board/vreteno_board.v",
     "board/vreteno_board_ila.v",
     "board/vreteno_board_jtag.v",

@@ -59,12 +59,30 @@ To repeat it, holding the BOARD TOKEN:
 It passes when it exits 0 and prints `PASS Test`.
 `no answer to a read at 0x0` means no frame came back: the bitstream isn't loaded, or the interface is wrong.
 
-Milestone 2's streams have their path over frames (#1984), not yet run on the board.
+Milestone 2's streams have their path over frames (#1984).
 FireSim's driver moves a CPU-managed stream with `cpu_managed_axi4_read` and `cpu_managed_axi4_write`, on `FPGATop`'s 128-bit AXI4 port.
 `StreamBridge` (`//lib/parts`, `remote::stream`) carries those one 16-byte beat per frame, under EtherType 0x88b6, so `EthShare` can split them from `HostBridge`'s frames by type.
 `simif_ax7a200b_eth.cc` implements both calls with those frames, and `eth_frame.h` lays out both kinds of frame.
 A stream read or write can't be repeated or skipped, so the driver's first stream ask is a no-op, which sets the tag the board keeps.
 `ex_stream` in `//docs:examples` shows the frames on a queue.
+
+Milestone 2, FireSim's Rocket design, passed on the board on 2026-10-27 (#1988).
+The design is `rocket_nitefury-v0.2.1.tar.gz`, Golden Gate's outputs for `FireSimRocket1GiBDRAMConfig`, prebuilt by bazel_rules_firesim's CI and fetched by sha256 as `@firesim_rocket_nitefury`, so TxHDL needs no Scala.
+`rocket_eth_top.v` joins all three of `FPGATop`'s ports:
+
+* the control port and the stream port to `rocket_link`, which splits the frames by EtherType between `HostLink` with `LiteMaster` and `StreamBridge`;
+* `mem_0`, the target's DRAM, through an AXI clock converter to `rocket_mig`, `//ddr3`'s MIG with its AXI port at `FPGATop`'s 64-bit data and 16-bit IDs.
+
+`rocket_eth_pnr` meets timing with 0.435 ns of setup slack and uses 60% of the LUTs.
+The driver, `rocket_eth_driver`, loaded `hello.riscv` into the DDR3 over TSI; the target printed `Hello from Rocket on the AX7A200B, over Ethernet.` on its UART and ended with `*** PASSED ***` after 68,162,012 target cycles.
+To repeat it, holding the BOARD TOKEN:
+
+1. Program the board with `rocket_eth_prog`, as the comment beside it says.
+2. Build `//firesim/ax7a200b:rocket_eth_driver` and `:hello_riscv`, and copy both to srv with the three Spike libraries the driver needs (`ldd` lists them under `_solib_k8`).
+   A binary given `cap_net_raw` ignores `LD_LIBRARY_PATH`, so link it with `--linkopt=-Wl,-rpath,<the directory on srv>` and keep the libraries there.
+3. Run `./rocket_eth_driver +permissive +iface=fpga-a200t-eth0 +permissive-off hello.riscv`.
+   The driver's own plusargs go inside the `+permissive` block; outside it, fesvr takes the first one for the program.
+   `+device` defaults to 5, the device number `rocket_netlist.rs` builds in.
 
 `rules_firesim` itself is not a dependency yet; it comes in with the first change that uses its rules.
 `firesim_target` has already moved `rules_cc`, `dtc` and five more modules to the newer releases they share.
@@ -79,7 +97,7 @@ A run on hardware needs more than a platform.
 FireSim's host driver reaches the FPGA over PCIe, through XDMA's `/dev/xdma`, so the board must sit in a PCIe slot of a host that runs the driver.
 Today it does not: it hangs off a host over JTAG and a serial line only, and TxHDL's own PCIe endpoint has not run in a host yet, as `//docs:pcie` says.
 So the first platform for the board uses its Ethernet port instead (#1931), at a cost in speed: a register access takes tens of microseconds over a frame and its answer, against about one over PCIe.
-Milestone 1 is FireSim's GCD example, whose bridges are registers only; milestone 2 is a Rocket core, which needs DRAM through `//ddr3` and FireSim's streams carried over frames.
+Milestone 1 was FireSim's GCD example, whose bridges are registers only; milestone 2, a Rocket core with its DRAM on `//ddr3` and FireSim's streams carried over frames, passed as well.
 
 ## What it is not
 

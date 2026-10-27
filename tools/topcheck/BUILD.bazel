@@ -46,6 +46,14 @@ TOPS = [
         ],
     ),
     (
+        ["//firesim/ax7a200b:rocket_eth_top.v"],
+        [
+            "//firesim/ax7a200b:rocket_link_v",
+            "@firesim_rocket_nitefury//:FireSim-generated.sv",
+            "//eth:mac_v",
+        ],
+    ),
+    (
         ["//flagship:board/flagship.v"],
         [
             "//cpu/vreteno:board_boot_v",
