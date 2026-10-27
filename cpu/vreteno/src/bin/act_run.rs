@@ -49,6 +49,7 @@ use txhdl_parts::ExMon;
 use txhdl_parts::{AxiHost, AxiPer, Per, W};
 use vreteno32::core::Writeback;
 use vreteno32::hart::{Hart, HartIn, HartOut};
+use vreteno32::Hart;
 
 /// The link, as the board has it.
 const IW: usize = 2;
@@ -196,7 +197,13 @@ fn simulate<const EXCL: usize>(
     boot: &[u32],
     max_cycles: u64,
 ) -> (Htif, u64, u128, Vec<u32>) {
-    let mut hart = Hart::<2, 16384, 1, 0, EXCL>::with(boot);
+    let mut hart = <Hart![
+        ID = 2,
+        LANE_WORDS = 16384,
+        ICACHE = 1,
+        HART = 0,
+        EXCLUSIVE = EXCL
+    ]>::with(boot);
     let cpu = &hart.core;
     let (mcause, mepc, minstret, halted) =
         (cpu.mcause, cpu.mepc, cpu.minstret, cpu.halted);

@@ -27,7 +27,7 @@
 //!
 //! It is written on the tokens, as every macro of this crate is.
 use proc_macro::{
-    Delimiter, Group, Ident, Spacing, Span, TokenStream, TokenTree,
+    Delimiter, Group, Ident, Punct, Spacing, Span, TokenStream, TokenTree,
 };
 
 use super::{err, is_ident};
@@ -517,12 +517,12 @@ fn use_macro(name: &str, params: &[Param], public: bool) -> String {
             Param::Type(t) => slots.push(Slot {
                 name: t.name.to_string(),
                 kind: Kind::Type,
-                default: t.default.as_ref().map(|d| text(d)),
+                default: t.default.as_ref().map(|d| macro_text(d)),
             }),
             Param::Const(n, ts, has) => {
                 let default = if *has {
                     let e = top_level(ts, '=').expect("a default");
-                    Some(format!("{{ {} }}", text(&ts[e + 1..])))
+                    Some(format!("{{ {} }}", macro_text(&ts[e + 1..])))
                 } else {
                     None
                 };
@@ -854,6 +854,36 @@ fn is_punct(t: &TokenTree, c: char) -> bool {
 /// Tokens as source text, for the parts that are written as text.
 fn text(ts: &[TokenTree]) -> String {
     ts.iter().cloned().collect::<TokenStream>().to_string()
+}
+
+/// A default as the use-site macro writes it: `crate` becomes `$crate`,
+/// so a default the struct names by its own crate's path, such as
+/// `WORDS = crate::dmem::DMEM_WORDS`, resolves where the macro is used,
+/// in this crate or another. A bare `DMEM_WORDS` resolves only where it
+/// is in scope (#1966).
+fn macro_text(ts: &[TokenTree]) -> String {
+    dollar_crate(ts).to_string()
+}
+
+/// The tokens with each `crate` preceded by a `$`, inside groups too.
+fn dollar_crate(ts: &[TokenTree]) -> TokenStream {
+    let mut out: Vec<TokenTree> = Vec::new();
+    for t in ts {
+        match t {
+            TokenTree::Ident(i) if i.to_string() == "crate" => {
+                out.push(Punct::new('$', Spacing::Joint).into());
+                out.push(t.clone());
+            }
+            TokenTree::Group(g) => {
+                let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+                let mut ng = Group::new(g.delimiter(), dollar_crate(&inner));
+                ng.set_span(g.span());
+                out.push(ng.into());
+            }
+            t => out.push(t.clone()),
+        }
+    }
+    out.into_iter().collect()
 }
 
 /// `SetTable` as `set_table`, for the seal's module.

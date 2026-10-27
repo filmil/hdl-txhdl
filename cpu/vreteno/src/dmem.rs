@@ -25,33 +25,34 @@ use txhdl_parts::bus::axi::{Answer, PerPort, Resp, R};
 /// Words of data memory.
 pub const DMEM_WORDS: usize = 1024;
 
-/// `I` is the width of the link's identifier, `W` the words, a power
-/// of two, and `AW` the bits that number them, so that `W` is
-/// `1 << AW`. The data memory is the defaults.
+/// `ID` is the width of the link's identifier, `WORDS` the words, a power
+/// of two, and `ADDR` the bits that number them, so that `WORDS` is
+/// `1 << ADDR`. The data memory is the defaults.
+#[txhdl::named_type_params]
 #[derive(Trace, Default)]
 pub struct Dmem<
-    const I: usize,
-    const AW: usize = 10,
-    const W: usize = DMEM_WORDS,
+    const ID: usize,
+    const ADDR: usize = 10,
+    const WORDS: usize = { crate::dmem::DMEM_WORDS },
 > {
-    pub lane0: Mem<U<8>, W>,
-    pub lane1: Mem<U<8>, W>,
-    pub lane2: Mem<U<8>, W>,
-    pub lane3: Mem<U<8>, W>,
+    pub lane0: Mem<U<8>, WORDS>,
+    pub lane1: Mem<U<8>, WORDS>,
+    pub lane2: Mem<U<8>, WORDS>,
+    pub lane3: Mem<U<8>, WORDS>,
     /// The word a read landed in, whose identifier it answers, and
     /// whether it is to be answered.
     pub word: Reg<U<32>>,
-    pub rid: Reg<U<I>>,
+    pub rid: Reg<U<ID>>,
     pub answer: Reg<Bit>,
     /// The beats of a read burst left after the one in `word`, and
     /// the word the next of them reads.
     pub rleft: Reg<U<8>>,
-    pub raddr: Reg<U<AW>>,
+    pub raddr: Reg<U<ADDR>>,
     /// A write taken and waiting for its beat: where it goes and which
     /// identifier answers it.
     pub pend: Reg<U<1>>,
-    pub paddr: Reg<U<AW>>,
-    pub pid: Reg<U<I>>,
+    pub paddr: Reg<U<ADDR>>,
+    pub pid: Reg<U<ID>>,
 }
 
 impl<const I: usize, const AW: usize, const W: usize> Dmem<I, AW, W> {

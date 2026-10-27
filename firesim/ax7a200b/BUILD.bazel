@@ -94,7 +94,14 @@ vivado_place_and_route2(
 )
 
 # Write it into the board where it is, as //eth:echo_prog does, over the
-# tunnel the Vreteno board's daemon opens. Needs the BOARD TOKEN.
+# tunnel the Vreteno board's daemon opens. Needs the BOARD TOKEN. Bring
+# the tunnel up first:
+#
+#   bazel run //cpu/vreteno/board/remote:hw_server
+#   bazel run //firesim/ax7a200b:gcd_eth_prog -- \
+#       --hostport localhost:3122 --device '*/xilinx_tcf/Digilent/*'
+#
+# This writes the FPGA itself, which the next power cycle forgets.
 vivado_program_device(
     name = "gcd_eth_prog",
     prog_daemon = "//cpu/vreteno/board/remote:hw_server",

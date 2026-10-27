@@ -43,6 +43,7 @@ use vreteno32::core::Writeback;
 use vreteno32::hart::{Hart, HartIn, HartOut};
 use vreteno32::term::Terminal;
 use vreteno32::uart::Uart;
+use vreteno32::Hart;
 
 /// Where the serial port is, behind its bridge: a nibble of the
 /// address space at 0x3000.
@@ -231,7 +232,7 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
         IDS = NIDS
     ]>::default();
     let mut cbr = Bridge::<0, 0>::default();
-    let mut hart = Hart::<IW>::with(text);
+    let mut hart = <Hart![ID = IW]>::with(text);
     let cpu = &hart.core;
     let (rst_out, rst) = signal::<Bit, DefaultClock>();
     let (irq_out, irq) = signal::<Bit, DefaultClock>();

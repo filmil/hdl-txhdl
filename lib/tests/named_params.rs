@@ -209,3 +209,34 @@ mod wires {
         assert_eq!((r.go.get(), l.word.get().raw()), (Bit::One, 5));
     }
 }
+
+/// A default given by its crate's path (#1966): the use-site macro
+/// writes `crate` as `$crate`, so `Grid![ROWS = 2]` takes `COLS` from
+/// `deep::COLS` in a module that has not imported it. (`#[macro_use]`
+/// carries the macro out of `deep`, as a crate's own macro needs.) With a bare
+/// `COLS` as the default the call below would not compile.
+#[macro_use]
+mod deep {
+    pub const COLS: usize = 7;
+
+    #[txhdl::named_type_params]
+    pub struct Grid<
+        const ROWS: usize,
+        const COLS: usize = { crate::deep::COLS },
+    >;
+
+    impl<const ROWS: usize, const COLS: usize> Grid<ROWS, COLS> {
+        pub fn cells() -> usize {
+            ROWS * COLS
+        }
+    }
+}
+
+mod elsewhere {
+    use crate::deep::Grid;
+
+    #[test]
+    fn a_default_by_crate_path_resolves_outside_its_module() {
+        assert_eq!(<Grid![ROWS = 2]>::cells(), 14);
+    }
+}
