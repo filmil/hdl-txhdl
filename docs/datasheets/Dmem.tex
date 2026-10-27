@@ -8,7 +8,7 @@
 \subsection*{Function}
 
 \code{Dmem} is the data memory of the Vreteno machine, a device on its
-bus. It holds \code{W} words, \code{DMEM\_WORDS}, 1024, by default,
+bus. It holds \code{WORDS} words, \code{DMEM\_WORDS}, 1024, by default,
 in four memories of a byte, \code{lane0} to \code{lane3}, one per
 lane of the word. A store of a byte or a half writes only its lanes and
 reads nothing. The board had a second, \code{Dmem<5, 14, 16384>}, the
@@ -31,18 +31,18 @@ answers once, after the last beat (issue 1208).
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{I} & The width of the AXI identifier on \code{bus\_req},
+\code{ID} & The width of the AXI identifier on \code{bus\_req},
 \code{bus\_ans} and \code{bus\_r}, in bits. The tables use 4, as the board
 does since its bus has two hosts behind an arbiter (issue 241). \\
-\code{AW} & The bits that number the words, 10 by default. \\
-\code{W} & The words, \code{1 << AW}, 1024 by default. \\
+\code{ADDR} & The bits that number the words, 10 by default. \\
+\code{WORDS} & The words, \code{1 << ADDR}, 1024 by default. \\
 \bottomrule
 \end{tabular}
 \end{center}
 
 \subsection*{Address map}
 
-The word a burst names is bits \code{AW + 1} to 2 of its address,
+The word a burst names is bits \code{ADDR + 1} to 2 of its address,
 11 to 2 by default. Lane $k$ is
 byte $k$ of the word: \code{lane0} is bits 7 to 0, \code{lane3} bits 31
 to 24. The memory looks at no other address bits.
@@ -109,7 +109,7 @@ demonstration \code{//cpu/vreteno:vreteno}, the lockstep test and
 
 It does not read a write burst's length: the last beat ends it. It
 checks no address, since the router sends it only its own range, so
-an address beyond word \code{W} $-$ 1 wraps. One write is held at a time. Nothing
+an address beyond word \code{WORDS} $-$ 1 wraps. One write is held at a time. Nothing
 on the machine fills it at run time except stores, so a program's
 constants have to be in it before the first cycle.
 \code{cpu/vreteno/board/ax7a200.xdc} constrains the four lanes to block

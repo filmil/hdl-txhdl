@@ -23,7 +23,7 @@ reset key and the scratch.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{ID} & The design's identifier, read at \code{0x00}. \\
+\code{DESIGN} & The design's identifier, read at \code{0x00}. \\
 \code{VERSION} & Its version, read at \code{0x04}. \\
 \code{STAMP0} & The build stamp's low word, read at \code{0x08}. A
 build would put a commit here. \\
@@ -42,7 +42,7 @@ Offsets from the block's base. The block selects the word by bits 4 to
 
 \dsregs{Syscon}
 
-The four constants are the parameters \code{ID}, \code{VERSION},
+The four constants are the parameters \code{DESIGN}, \code{VERSION},
 \code{STAMP0} and \code{STAMP1}. A write of \code{KEY} to \code{reset}
 asks for a reset, a write of anything else does nothing, and
 \code{reset} reads zero.

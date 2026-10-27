@@ -9,7 +9,7 @@
 
 A channel is a buffer of two. \code{Fifo} is the depth a channel does
 not have, for a unit whose consumer takes in bursts or holds off. It
-has a channel in, \code{inp}, a channel out, \code{out}, and \code{D}
+has a channel in, \code{inp}, a channel out, \code{out}, and \code{DEPTH}
 words between. \code{//docs:station} puts one behind a reservation
 station for that reason.
 
@@ -20,16 +20,16 @@ station for that reason.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{T} & What it holds: a \code{Transaction} and \code{Value} type. \\
-\code{AW} & The width of its pointers, in bits. \\
-\code{D} & How many words it holds, which must be \code{1 << AW}. \\
+\code{Data} & What it holds: a \code{Transaction} and \code{Value} type. \\
+\code{PTRS} & The width of its pointers, in bits. \\
+\code{DEPTH} & How many words it holds, which must be \code{1 << PTRS}. \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-\code{D} is stated rather than computed, because an expression in a
+\code{DEPTH} is stated rather than computed, because an expression in a
 const parameter's position needs nightly Rust. The tables below use
-\code{Fifo<U<8>, 2, 4>}, the FIFO of \code{ex\_queue}: four bytes.
+\code{Fifo<Data<U<8>>, 2, 4>}, the FIFO of \code{ex\_queue}: four bytes.
 
 \dstables{Fifo}
 
@@ -56,7 +56,7 @@ meets \code{head}.
 \begin{itemize}
 \item \code{fifo\_keeps\_every\_word\_in\_order} in
 \code{txhdl\_parts}, in \code{//lib/parts:parts\_test}, runs
-\code{Fifo<U<8>, 2, 4>} against a queue. It offers words at random
+\code{Fifo<Data<U<8>>, 2, 4>} against a queue. It offers words at random
 for 200 cycles and takes none for the first 40, so the FIFO fills. It
 checks every word comes out in order, that \code{full} was seen, and
 that it is empty at the end.
@@ -71,11 +71,12 @@ against that run under nvc and Verilator:
 \subsection*{Used by}
 
 The example \code{ex\_queue}. \code{ex\_fifo} uses a different unit:
-its \code{Fifo} is a name for \code{ChanCdc<U<8>, 2, 4, 3, ClkW, ClkR>},
+its \code{Fifo} is a name for a \code{ChanCdc} of \code{U<8>} from \code{ClkW}
+to \code{ClkR},
 the asynchronous FIFO, and defines no FIFO of its own.
 
 \subsection*{Limits}
 
-It runs on one clock, \code{DefaultClock}. \code{D} must be
-\code{1 << AW}, and nothing checks it. When \code{full} is set it
+It runs on one clock, \code{DefaultClock}. \code{DEPTH} must be
+\code{1 << PTRS}, and nothing checks it. When \code{full} is set it
 takes no word, even in a cycle in which it sends one.

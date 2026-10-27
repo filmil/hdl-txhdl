@@ -54,7 +54,7 @@ through. \code{lr.w}, \code{sc.w} and an AMO go around the cache and
 take their line out of it. Another host's write into the DDR3 is named
 to the core on \code{dc\_snoop}, a line's index in bits 7 to 0 and bit
 8 valid, from the board's \code{DcSnoop}, and the core clears that
-line. With \code{IC} of 0 the data cache, as the instruction cache, is
+line. With \code{ICACHE} of 0 the data cache, as the instruction cache, is
 off, and every load goes to the bus.
 
 The bus side is an AXI host written as hardware. The core issues a
@@ -102,20 +102,20 @@ request a step late, and in hardware.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{IW} & The width of the AXI identifier on \code{rdata}, \code{done},
+\code{ID} & The width of the AXI identifier on \code{rdata}, \code{done},
 \code{grant} and \code{release}, in bits. The tables use 2, as the
 board and the runs do. \\
-\code{DW} & The data RAM's words a lane, a power of two, 16384 by
+\code{LANE\_WORDS} & The data RAM's words a lane, a power of two, 16384 by
 default, which is 64~KiB. The netlist the documents simulate and the
 layout maps uses 4, where the window's addresses wrap, since the cell
 library has no RAM. The tables use the default. \\
-\code{IC} & 1 for the instruction and the data cache, the default and
+\code{ICACHE} & 1 for the instruction and the data cache, the default and
 the board's; 0 for none, in the netlist the documents simulate and the
 layout maps, where the caches' arrays are never written and fold away
 (issue 1323). \\
-\code{HID} & The hart's number, which \code{mhartid} reads, 0 by
+\code{HART} & The hart's number, which \code{mhartid} reads, 0 by
 default; the board's second hart has 1 (issue 1408). \\
-\code{EXCL} & 1 on a board whose arbiter and exclusive monitor keep
+\code{EXCLUSIVE} & 1 on a board whose arbiter and exclusive monitor keep
 exclusive pairs: then \code{lr.w}, \code{sc.w} and an AMO into the
 DDR3 go out with \code{lock}. 0, the default, for none. \\
 \bottomrule
@@ -195,7 +195,7 @@ machine mode as \code{mcounteren} and \code{scounteren} allow. \\
 \code{mhpmcounter3} to \code{mhpmcounter7} and their halves & The
 instruction cache's lookups, hits, fills started, fills kept and fills
 dropped, in that order (issue 1752), writable a half at a time; zero
-with \code{IC} of 0, which neither counts nor keeps a write. \\
+with \code{ICACHE} of 0, which neither counts nor keeps a write. \\
 \code{0xc03} to \code{0xc07}, \code{0xc83} to \code{0xc87} &
 \code{hpmcounter3} to \code{hpmcounter7} and their halves & Read
 only: the cache's five counters, in machine mode only (issue
@@ -218,7 +218,7 @@ zero, and a store it refuses is dropped, instead of trapping (issue
 417). \\
 \code{0xf11} to \code{0xf13} & \code{mvendorid}, \code{marchid},
 \code{mimpid} & Nothing: zero. Read only. \\
-\code{0xf14} & \code{mhartid} & The hart's number, \code{HID}. Read
+\code{0xf14} & \code{mhartid} & The hart's number, \code{HART}. Read
 only. \\
 \bottomrule
 \end{tabular}
@@ -260,7 +260,7 @@ cycle, and a lookup waits until they are clear. A store does not reach
 the cache, so code written by stores runs after a \code{fence.i}.
 \item The data cache's valid bits are cleared at \code{rst}, when the bus
 refuses a store of the core's, whose line is not known, and, in a hart
-whose \code{HID} is not 0, as it wakes from \code{wfi}: the other
+whose \code{HART} is not 0, as it wakes from \code{wfi}: the other
 harts' writes are not named to it while it waits (issue 1408).
 \item \code{ir\_c} says the instruction in execute was compressed.
 \code{jal} and \code{jalr} link the address two bytes on for a

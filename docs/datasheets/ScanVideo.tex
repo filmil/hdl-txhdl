@@ -4,8 +4,8 @@
 beside it, programmed over one AXI-Lite slot.}
 
 \dsfacts{\code{lib/parts/src/scanout.rs}}%
-{\code{txhdl\_parts::scanout::ScanVideo<HV, HFP, HSW, HBP, VV, VFP,
-VSW, VBP, SHIFT, AW, TOTAL, STRIDE, LO, HI>}}%
+{\code{txhdl\_parts::scanout::ScanVideo}, its fourteen parameters in the
+table below}%
 {\code{//docs:examples}}
 
 \subsection*{Function}
@@ -54,10 +54,10 @@ Counting the beam twice is what keeps that order possible, and
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{HV} to \code{VBP}, \code{SHIFT} & \code{Hdmi}'s: the video mode, and
+\code{H\_ACTIVE} to \code{V\_BACK}, \code{SHIFT} & \code{Hdmi}'s: the video mode, and
 a framebuffer pixel's size on the screen. \\
-\code{AW} & The width of a column; \code{HV} is at most \code{1 << AW}. \\
-\code{TOTAL} & The rows of a frame, \code{VV + VFP + VSW + VBP}; the
+\code{COL} & The width of a column; \code{H\_ACTIVE} is at most \code{1 << COL}. \\
+\code{TOTAL} & The rows of a frame, \code{V\_ACTIVE + V\_FRONT + V\_SYNC + V\_BACK}; the
 \code{Default} refuses one that disagrees. \\
 \code{STRIDE} & The bytes from one line to the next in memory. \\
 \code{LO}, \code{HI} & The frame's memory, the bytes from \code{LO} up
@@ -78,7 +78,7 @@ are shown (issue 985). The frame's memory is the board's gigabyte from
 \subsection*{Behaviour}
 
 \begin{itemize}
-\item The pair's line is \code{HV} words, and its rows are \code{VV}
+\item The pair's line is \code{H\_ACTIVE} words, and its rows are \code{V\_ACTIVE}
 visible of \code{TOTAL}.
 \item A line not wholly inside \code{LO} to \code{HI} is not asked
 for: the pair sets its stuck bit with that line's address, the row

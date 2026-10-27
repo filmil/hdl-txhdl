@@ -7,7 +7,7 @@
 
 \subsection*{Function}
 
-\code{Fb} is \code{N} words of memory, \code{px}, behind the
+\code{Fb} is \code{WORDS} words of memory, \code{px}, behind the
 peripheral end of an AXI link. A pixel is one word. The rasteriser
 writes pixels into it, and in Razboj's runs the same memory also
 holds the display list and its count, which the rasteriser reads.
@@ -36,9 +36,9 @@ the link was busy and how many pixels it wrote.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{A} & The width of the link's address, in bits. \\
-\code{I} & The width of the AXI identifier, in bits. \\
-\code{N} & Words of memory, a power of two. \\
+\code{ADDR} & The width of the link's address, in bits. \\
+\code{ID} & The width of the AXI identifier, in bits. \\
+\code{WORDS} & Words of memory, a power of two. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -49,9 +49,9 @@ The tables use \code{Fb<16, 2, 1024>}, the framebuffer of
 \subsection*{Address map}
 
 The word a burst names is its address shifted down by two, cut to
-sixteen bits, and masked with \code{N}~$-$~1. The memory itself gives
+sixteen bits, and masked with \code{WORDS}~$-$~1. The memory itself gives
 no word a meaning. In \code{//gpu/razboj:trace} and the tests of
-\code{gpu/razboj/src/sim.rs}, with \code{N} of 1024:
+\code{gpu/razboj/src/sim.rs}, with \code{WORDS} of 1024:
 
 \begin{center}\footnotesize
 \begin{tabular}{@{}lp{0.6\textwidth}@{}}

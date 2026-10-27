@@ -3,7 +3,7 @@
 \datasheet{Plic}{The platform-level interrupt controller: one to thirty-one sources and four targets, the machine and supervisor modes of each of two harts, at the RISC-V PLIC's offsets.}
 
 \dsfacts{\code{lib/parts/src/plic.rs}}%
-{\code{txhdl\_parts::plic::Plic<N, EDGE>}, and \code{Plic1} to \code{Plic8}, which name the counts}%
+{\code{txhdl\_parts::plic::Plic<SOURCES, EDGE>}, and \code{Plic1} to \code{Plic8}, which name the counts}%
 {\code{//docs:vreteno}}
 
 \subsection*{Function}
@@ -28,13 +28,13 @@ and are answered on \code{bus\_b}. It sits behind a
 The input \code{rst} clears the requests, the four lines, the
 priorities, and the four targets' enable bits and thresholds.
 
-It is one unit for any count of sources, \code{N} a const parameter
+It is one unit for any count of sources, \code{SOURCES} a const parameter
 (issue 500): the sources are an array of ports and the priorities an
 array of registers, \code{prio\_0} for source 1 onward, and the
-lowering unrolls the loops over them for each \code{N}. The pending,
+lowering unrolls the loops over them for each \code{SOURCES}. The pending,
 enable, active, held and previous-line words are 32 bits whatever
-\code{N} is, bit \textit{i} for source \textit{i}, and the bits above
-\code{N} stay zero; a source's number is 5 bits. \code{Plic1} to
+\code{SOURCES} is, bit \textit{i} for source \textit{i}, and the bits above
+\code{SOURCES} stay zero; a source's number is 5 bits. \code{Plic1} to
 \code{Plic8} are type aliases that name counts. \code{plic.rs} also names the
 offsets, \code{PENDING}, \code{ENABLE}, \code{THRESHOLD} and
 \code{CLAIM} for the machine target, \code{S\_ENABLE},
@@ -50,7 +50,7 @@ offsets, \code{PENDING}, \code{ENABLE}, \code{THRESHOLD} and
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{N} & The count of sources, from 1 to 31, the most one word of
+\code{SOURCES} & The count of sources, from 1 to 31, the most one word of
 pending bits holds. Nothing checks it. \\
 \code{EDGE} & A bit per source: bit \textit{i} set makes source
 \textit{i} ask on a rising edge rather than while its line is high.

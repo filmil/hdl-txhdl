@@ -18,7 +18,7 @@ system bus access (0.13, section 3.12), served here, where the bus
 master is. It is answered at once, and the access it starts runs on
 the link behind it, as the specification has it.
 \item Any other address is one of the debug module's registers. The
-module sits on the link at \code{DM}, each register a word at four
+module sits on the link at \code{DM\_AT}, each register a word at four
 times its number; the access goes on the link and is answered when
 its word comes back.
 \end{itemize}
@@ -33,9 +33,9 @@ for, so the bridge's host needs identifiers of one bit.
 \toprule
 Parameter & What it is \\
 \midrule
-\code{DM} & the debug module's base on the link; the board gives
+\code{DM\_AT} & the debug module's base on the link; the board gives
 \code{0x1000\_0000} \\
-\code{I} & the width of the host's identifiers; the board gives 1 \\
+\code{ID} & the width of the host's identifiers; the board gives 1 \\
 \bottomrule
 \end{tabular}
 \end{center}
