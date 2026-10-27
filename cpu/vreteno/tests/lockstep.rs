@@ -11,6 +11,9 @@ use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, PerPort};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::bus::router::Router;
+use txhdl_parts::bus::Map;
+use txhdl_parts::LiteBridge;
+use txhdl_parts::Router;
 use txhdl_parts::{AxiHost, AxiPer};
 use vreteno32::core::{is_load_word, Writeback};
 use vreteno32::dmem::Dmem;
@@ -57,11 +60,25 @@ impl AddrMap<5> for RunMap {
 const DDR_BASE: u32 = 0x4000_0000;
 const DDR_WORDS: usize = 4096;
 
-type Rtr = Router<5, RunMap, 32, 32, 4, IW>;
+type Rtr = Router![
+    PORTS = 5,
+    Map = RunMap,
+    ADDR = 32,
+    DATA = 32,
+    STRB = 4,
+    ID = IW
+];
 
 /// The bridge the serial port sits behind: one AXI-Lite peripheral,
 /// at the range the router gives the port.
-type Serial = LiteBridge<1, SerialMap, 32, 32, 4, IW>;
+type Serial = LiteBridge![
+    PORTS = 1,
+    Map = SerialMap,
+    ADDR = 32,
+    DATA = 32,
+    STRB = 4,
+    ID = IW
+];
 
 /// Where the serial port is: a nibble of the address space at 0x3000.
 pub struct SerialMap;

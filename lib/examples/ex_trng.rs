@@ -28,18 +28,27 @@ use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
+use txhdl_parts::bus::Map;
 use txhdl_parts::trng::{
     RingOsc, Trng, CAP, CAPIDX, CAPWORD, CAP_DONE, CAP_START, CAP_WORDS, CTRL,
     CTRL_RUN, DATA, RAW, RINGS, STATUS, STATUS_READY,
 };
 use txhdl_parts::AxiHost;
+use txhdl_parts::LiteBridge;
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
 /// identifiers, four of them.
 type HostUnit = AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4];
 
 /// The bridge, with the peripheral at `0x1000`.
-type Bridge = LiteBridge<1, TrngMap, 32, 32, 4, 2>;
+type Bridge = LiteBridge![
+    PORTS = 1,
+    Map = TrngMap,
+    ADDR = 32,
+    DATA = 32,
+    STRB = 4,
+    ID = 2
+];
 
 /// Where the bridge's one peripheral is: a nibble of the address
 /// space at 0x1000.

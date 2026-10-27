@@ -24,6 +24,7 @@ use txhdl_parts::remote::eth::{FRAME_LEN, KIND_ANSWER, KIND_ASK};
 use txhdl_parts::scanout::LinePair;
 use txhdl_parts::sd::SdCard;
 use txhdl_parts::spi::FlashDevice;
+use txhdl_parts::LiteW;
 use txhdl_parts::{Addr, R, W};
 use vreteno32::board::{
     Board, BoardIn, BoardMap, BoardOut, Bscan, Ddr3Pins, JtagAnswers, SlotMap,
@@ -742,7 +743,7 @@ fn run_all_in<const LO: usize, const HI: usize>(
     // and the words written to it.
     let (vaw_tx, vaw_rx) = chan::<LiteAw<32>, DefaultClock>();
     let (var_tx, var_rx) = chan::<LiteAr<32>, DefaultClock>();
-    let (vw_tx, vw_rx) = chan::<LiteW<32, 4>, DefaultClock>();
+    let (vw_tx, vw_rx) = chan::<LiteW![DATA = 32, STRB = 4], DefaultClock>();
     let (vb_tx, vb_rx) = chan::<LiteB, DefaultClock>();
     let (vr_tx, vr_rx) = chan::<LiteR<32>, DefaultClock>();
     let mut vwords: HashMap<u32, u32> = HashMap::new();

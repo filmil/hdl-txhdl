@@ -1054,7 +1054,7 @@ pub struct ScanVideo<
     const HI: usize,
 > {
     /// The slot, split by address bit 7.
-    pub split: LiteSplit<32, 32, 4, SCAN_BIT>,
+    pub split: LiteSplit![ADDR = 32, DATA = 32, STRB = 4, BIT = SCAN_BIT],
     /// The scanout's registers, from `0x80`.
     pub ctl: ScanCtl,
     /// The beam, counted again for the pair.
@@ -1305,7 +1305,7 @@ mod tests {
         let mut ctl = ScanCtl::default();
         let (aw_tx, aw) = chan::<LiteAw<32>, DefaultClock>();
         let (ar_tx, ar) = chan::<LiteAr<32>, DefaultClock>();
-        let (w_tx, w) = chan::<LiteW<32, 4>, DefaultClock>();
+        let (w_tx, w) = chan::<LiteW![DATA = 32, STRB = 4], DefaultClock>();
         let (b, b_rx) = chan::<LiteB, DefaultClock>();
         let (r, r_rx) = chan::<LiteR<32>, DefaultClock>();
         let (_tap_tx, tap_rx) = chan::<ScanState, DefaultClock>();
@@ -1600,7 +1600,7 @@ mod tests {
         let mut ctl = ScanCtl::default();
         let (aw_tx, aw) = chan::<LiteAw<32>, DefaultClock>();
         let (ar_tx, ar) = chan::<LiteAr<32>, DefaultClock>();
-        let (w_tx, w) = chan::<LiteW<32, 4>, DefaultClock>();
+        let (w_tx, w) = chan::<LiteW![DATA = 32, STRB = 4], DefaultClock>();
         let (b, b_rx) = chan::<LiteB, DefaultClock>();
         let (r, r_rx) = chan::<LiteR<32>, DefaultClock>();
         let (tap_tx, tap_rx) = chan::<ScanState, DefaultClock>();
@@ -1673,7 +1673,7 @@ mod tests {
         let mut ctl = ScanCtl::default();
         let (_aw_tx, aw) = chan::<LiteAw<32>, DefaultClock>();
         let (ar_tx, ar) = chan::<LiteAr<32>, DefaultClock>();
-        let (_w_tx, w) = chan::<LiteW<32, 4>, DefaultClock>();
+        let (_w_tx, w) = chan::<LiteW![DATA = 32, STRB = 4], DefaultClock>();
         let (b, _b_rx) = chan::<LiteB, DefaultClock>();
         let (r, r_rx) = chan::<LiteR<32>, DefaultClock>();
         let (tap_tx, tap_rx) = chan::<ScanState, DefaultClock>();

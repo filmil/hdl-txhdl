@@ -41,17 +41,26 @@ use txhdl_parts::bus::axi::{
     axi, axi_units, Answer, AxiHost, AxiPer, Link, PerPort, Rd, Resp, Wr, R,
 };
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
+use txhdl_parts::bus::Map;
 use txhdl_parts::dma::{LineFetch, LineStore, NoBeats, NoReads};
 use txhdl_parts::sd::{
     regs, Sd, SdCard, SdLines, CMD_BUSY, CMD_CLOCKS, CMD_LONG, CMD_NOCRC,
     CMD_READ, CMD_SHORT, CMD_WRITE, CTRL_WIDE, STATUS_DCRC, STATUS_DONE,
     STATUS_DTIMEOUT, STATUS_RCRC, STATUS_RTIMEOUT, WORDS,
 };
+use txhdl_parts::LiteBridge;
 use txhdl_parts::{AxiHost, AxiPer, PerPort};
 
 /// The client's link to the host's registers.
 type HostUnit = AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4];
-type Bridge = LiteBridge<1, SdMap, 32, 32, 4, 2>;
+type Bridge = LiteBridge![
+    PORTS = 1,
+    Map = SdMap,
+    ADDR = 32,
+    DATA = 32,
+    STRB = 4,
+    ID = 2
+];
 
 /// The host's registers at 0x1000.
 pub struct SdMap;

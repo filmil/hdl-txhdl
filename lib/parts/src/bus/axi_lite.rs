@@ -21,17 +21,21 @@
 //! 500), where `lite_bridge!` used to write one unit per count from one
 //! to eight.
 //!
-//! The widths are stated, as everywhere in this library: `A` the
-//! address width, `D` the data width and `S` the strobe width, which
-//! is `D / 8`.
+//! The widths are stated, as everywhere in this library: `ADDR` the
+//! address width, `DATA` the data width and `STRB` the strobe width,
+//! which is `DATA / 8`. The structs take them by name, and the bridge
+//! its map by the `Map` marker of [`crate::bus::named`]:
+//! `LiteBridge![PORTS = 1, Map = SerialMap, ADDR = 32, DATA = 32, STRB =
+//! 4, ID = 2]`. The impls write them `N`, `M`, `A`, `D`, `S` and `I`.
 use crate::bus::axi::{Ar, Aw, BurstKind, Resp, B, R, W};
+use crate::bus::{IsMap, Map};
 use std::marker::PhantomData;
 use txhdl::comp::{
     chan, mux, Clock, DefaultClock, Driver, Receiver, Reg, Rx, Side, Tx, Unit,
 };
 use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
-use txhdl::{lower, with, Trace};
+use txhdl::{lower, named_type_params, with, Trace};
 use txhdl::{
     Ports as PortsDerive, Transaction as TransactionDerive,
     Value as ValueDerive,
@@ -63,12 +67,13 @@ pub const LiteAr: txhdl::types::Fields = LiteAddr;
 
 /// The write data channel's beat: the word, and which of its bytes
 /// are meant.
+#[named_type_params]
 #[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
-pub struct LiteW<const D: usize, const S: usize> {
+pub struct LiteW<const DATA: usize, const STRB: usize> {
     /// The word written.
-    pub data: U<D>,
+    pub data: U<DATA>,
     /// A bit per byte lane; a lane whose bit is low is not written.
-    pub strb: U<S>,
+    pub strb: U<STRB>,
 }
 
 /// The write response channel's beat: how the write went.
@@ -154,12 +159,13 @@ impl<const A: usize, const D: usize, const S: usize> From<LitePer<A, D, S>>
 }
 
 /// An AXI-Lite link: the ends of its five channels, by side.
-pub struct LiteLink<const A: usize, const D: usize, const S: usize> {
+#[named_type_params]
+pub struct LiteLink<const ADDR: usize, const DATA: usize, const STRB: usize> {
     /// What the host holds: a bridge's `aw`, `ar` and `w` it drives
     /// and `b` and `r` it reads for this peripheral.
-    pub host: LiteHost<A, D, S>,
+    pub host: LiteHost<ADDR, DATA, STRB>,
     /// What the peripheral holds.
-    pub per: LitePer<A, D, S>,
+    pub per: LitePer<ADDR, DATA, STRB>,
 }
 
 /// Make an AXI-Lite link: its five channels, and the ends each side
@@ -180,10 +186,11 @@ pub fn axi_lite<const A: usize, const D: usize, const S: usize>(
 }
 
 // begin{part}
-/// An AXI4 to AXI-Lite bridge of `N` peripherals, whose address ranges
-/// the map `M` states (issue 593). The five AXI4 channels of one link
-/// come in; five AXI-Lite channels go out per peripheral, as arrays
-/// of `N`, and a peripheral's range is its entry of `M::RANGES`,
+/// An AXI4 to AXI-Lite bridge of `PORTS` peripherals, whose address
+/// ranges the map `Map` states (issue 593). The five AXI4 channels of
+/// one link come in; five AXI-Lite channels go out per peripheral, as
+/// arrays of `PORTS`, and a peripheral's range is its entry of
+/// `Map::RANGES`,
 /// matched on a burst's address, the first that matches winning. The
 /// bridge takes one burst at a time, since AXI-Lite has no identifier
 /// to tell two apart. Each beat of a burst is one AXI-Lite
@@ -195,17 +202,20 @@ pub fn axi_lite<const A: usize, const D: usize, const S: usize>(
 /// by beat, so a read still gets every beat it asked for. Written in
 /// the lowered subset, so it is a netlist too.
 // begin{state}
+#[named_type_params(reuse(Map))]
 #[derive(Trace)]
 pub struct LiteBridge<
-    const N: usize,
-    M: AddrMap<N>,
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
-> {
+    const PORTS: usize,
+    Map,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+> where
+    Map: AddrMap<PORTS>,
+{
     /// The map, which holds no signal: a marker the netlist ignores.
-    pub map: PhantomData<M>,
+    pub map: PhantomData<Map>,
     /// A burst is in progress, and the next waits for it.
     pub busy: Reg<Bit>,
     /// The burst is a read.
@@ -213,18 +223,18 @@ pub struct LiteBridge<
     /// The read address channel goes first when both offer.
     pub rfirst: Reg<Bit>,
     /// The burst's identifier, which every answer to it names.
-    pub xid: Reg<U<I>>,
+    pub xid: Reg<U<ID>>,
     /// The address of the current beat.
-    pub addr: Reg<U<A>>,
+    pub addr: Reg<U<ADDR>>,
     /// How far the address moves per beat: none for a fixed burst.
-    pub stride: Reg<U<A>>,
+    pub stride: Reg<U<ADDR>>,
     /// Beats left after this one.
     pub left: Reg<U<8>>,
     /// The burst's protection bits, given with every beat.
     pub prot: Reg<U<3>>,
     /// Which peripheral the burst decoded to, one bit each; none set
     /// is a hole, answered here.
-    pub sel: Reg<U<N>>,
+    pub sel: Reg<U<PORTS>>,
     /// The beat's AXI-Lite request is out, and its answer awaited.
     pub sent: Reg<Bit>,
     /// A write burst's response so far: its first error, or `Okay`.
@@ -243,7 +253,7 @@ impl<
         const D: usize,
         const S: usize,
         const I: usize,
-    > Default for LiteBridge<N, M, A, D, S, I>
+    > Default for LiteBridge<N, Map<M>, A, D, S, I>
 {
     fn default() -> Self {
         LiteBridge {
@@ -277,7 +287,7 @@ impl<
         const D: usize,
         const S: usize,
         const I: usize,
-    > Unit for LiteBridge<N, M, A, D, S, I>
+    > Unit for LiteBridge<N, Map<M>, A, D, S, I>
 {
     async fn run(
         &mut self,
@@ -499,7 +509,14 @@ mod tests {
         const RANGES: [(usize, usize); 2] =
             [(0x1000, 0xf000), (0x2000, 0xf000)];
     }
-    type Bridge = LiteBridge<2, TwoMap, 16, 32, 4, 2>;
+    type Bridge = LiteBridge![
+        PORTS = 2,
+        Map = TwoMap,
+        ADDR = 16,
+        DATA = 32,
+        STRB = 4,
+        ID = 2
+    ];
 
     /// A memory behind an AXI-Lite link, written as a simulation: it
     /// counts the transactions it serves, so the test can see that a
@@ -674,7 +691,14 @@ mod tests {
             o.borrow_mut().push("done".to_string());
         };
         let mut h = Host::default();
-        let mut bridge = LiteBridge::<2, SingleMap, 16, 32, 4, 2>::default();
+        let mut bridge = <LiteBridge![
+            PORTS = 2,
+            Map = SingleMap,
+            ADDR = 16,
+            DATA = 32,
+            STRB = 4,
+            ID = 2
+        ]>::default();
         let (s0, s1) = (served0.clone(), served1.clone());
         let mut sim = Running::new(join2(
             join2(

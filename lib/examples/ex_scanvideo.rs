@@ -38,6 +38,7 @@ use txhdl_parts::bus::axi_lite::{
 };
 use txhdl_parts::dma::LineFetch;
 use txhdl_parts::scanout::{scan, ScanFetch, ScanVideo};
+use txhdl_parts::LiteW;
 use txhdl_parts::{AxiHost, AxiPer, PerPort};
 
 const ADDR: usize = 32;
@@ -159,7 +160,11 @@ impl
             Rx<LiteB>,
             Rx<LiteR<32>>,
         ),
-        (Tx<LiteAw<32>>, Tx<LiteAr<32>>, Tx<LiteW<32, 4>>),
+        (
+            Tx<LiteAw<32>>,
+            Tx<LiteAr<32>>,
+            Tx<LiteW![DATA = 32, STRB = 4]>,
+        ),
     > for Prog
 {
     async fn run(
@@ -173,7 +178,11 @@ impl
             Rx<LiteB>,
             Rx<LiteR<32>>,
         ),
-        (aw, ar, w): (Tx<LiteAw<32>>, Tx<LiteAr<32>>, Tx<LiteW<32, 4>>),
+        (aw, ar, w): (
+            Tx<LiteAw<32>>,
+            Tx<LiteAr<32>>,
+            Tx<LiteW![DATA = 32, STRB = 4]>,
+        ),
     ) {
         // The write answers are drained, and the last word read is
         // kept in `got`, which the testbench reads.
@@ -218,7 +227,7 @@ fn main() {
     // The slot.
     let (aw_tx, aw) = chan::<LiteAw<32>, DefaultClock>();
     let (ar_tx, ar) = chan::<LiteAr<32>, DefaultClock>();
-    let (w_tx, w) = chan::<LiteW<32, 4>, DefaultClock>();
+    let (w_tx, w) = chan::<LiteW![DATA = 32, STRB = 4], DefaultClock>();
     let (b, b_rx) = chan::<LiteB, DefaultClock>();
     let (r, r_rx) = chan::<LiteR<32>, DefaultClock>();
     let (rgb_o, rgb) = signal::<U<24>, DefaultClock>();

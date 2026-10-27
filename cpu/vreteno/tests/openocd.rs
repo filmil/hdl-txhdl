@@ -21,6 +21,7 @@ use txhdl_parts::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
 use txhdl_parts::bus::axi_pins::AxiHostPins;
 use txhdl_parts::dtm::Tck;
 use txhdl_parts::eth::EthByte;
+use txhdl_parts::LiteW;
 use txhdl_parts::{Addr, R, W};
 use vreteno32::board::{
     Board, BoardIn, BoardOut, Bscan, Ddr3Pins, JtagAnswers, SysIn, SysOut,
@@ -368,7 +369,7 @@ fn rig_with(text: Vec<u32>, busy: bool) -> Rig {
             dqs_n: pad::<U<4>, DefaultClock>(),
             vaw: chan::<LiteAw<32>, DefaultClock>().0,
             var: chan::<LiteAr<32>, DefaultClock>().0,
-            vw: chan::<LiteW<32, 4>, DefaultClock>().0,
+            vw: chan::<LiteW![DATA = 32, STRB = 4], DefaultClock>().0,
             net_tx: chan::<EthByte, DefaultClock>().0,
             bscan_tdo: tdo_o,
             // No scanout runs here: nothing asks for a line.

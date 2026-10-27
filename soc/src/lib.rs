@@ -35,6 +35,8 @@ use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::bus::noc::bridge::{HostBridge, PerBridge};
 use txhdl_parts::bus::noc::mesh::lattice;
 use txhdl_parts::bus::noc::node::Node;
+use txhdl_parts::bus::Map;
+use txhdl_parts::LiteBridge;
 use txhdl_parts::{AxiHost, AxiPer, HostBridge, Node, PerBridge, Ram};
 use vreteno32::core::Writeback;
 use vreteno32::hart::{Hart, HartIn, HartOut};
@@ -330,7 +332,14 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     let sl = axi_lite::<32, 32, 4>();
     let ubus: LitePort<32, 32, 4> = sl.per.into();
     let (baw, bar, bw, bb, br) = sl.host;
-    let mut ubridge = LiteBridge::<1, SerialMap, 32, 32, 4, IW>::default();
+    let mut ubridge = <LiteBridge![
+        PORTS = 1,
+        Map = SerialMap,
+        ADDR = 32,
+        DATA = 32,
+        STRB = 4,
+        ID = IW
+    ]>::default();
     let mut ubr = <PerBridge![
         COL = 1,
         ROW = 1,

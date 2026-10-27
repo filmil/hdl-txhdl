@@ -34,6 +34,7 @@ use txhdl_parts::bus::noc::mesh::Mesh;
 use txhdl_parts::bus::noc::node::Node;
 use txhdl_parts::bus::noc::switch::Switch;
 use txhdl_parts::bus::wb::AxiWb;
+use txhdl_parts::bus::Map;
 use txhdl_parts::cdc::ChanCdc;
 use txhdl_parts::cfgflash::CfgFlash;
 use txhdl_parts::dma::{LineBuf, LineFetch, LineStore, NoBeats, NoReads};
@@ -64,6 +65,8 @@ use txhdl_parts::tracer::Tracer;
 use txhdl_parts::trng::{Entropy, Trng};
 use txhdl_parts::udprx::UdpRx;
 use txhdl_parts::wdog::Wdog;
+use txhdl_parts::LiteBridge;
+use txhdl_parts::LiteSplit;
 use txhdl_parts::{
     AxiHost, AxiPer, AxiPerPins, AxiPins, HostBridge, Mesh, Node, PerBridge,
     Switch, R,
@@ -539,12 +542,21 @@ fn main() {
     sheet(
         "LiteBridge",
         "LiteBridge<1, SerialMap, 32, 32, 4, 2>",
-        LiteBridge::<1, SerialMap, 32, 32, 4, 2>::lowered("lite_bridge"),
+        <LiteBridge![
+            PORTS = 1,
+            Map = SerialMap,
+            ADDR = 32,
+            DATA = 32,
+            STRB = 4,
+            ID = 2
+        ]>::lowered("lite_bridge"),
     );
     sheet(
         "LiteSplit",
         "LiteSplit<32, 32, 4, 7>",
-        LiteSplit::<32, 32, 4, 7>::lowered("lite_split"),
+        <LiteSplit![ADDR = 32, DATA = 32, STRB = 4, BIT = 7]>::lowered(
+            "lite_split",
+        ),
     );
     sheet(
         "AxiWb",

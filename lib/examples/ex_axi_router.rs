@@ -25,6 +25,8 @@ use txhdl_parts::bus::axi::{
     axi, serve, AxiHost, AxiPer, Link, Per, Rd, Resp, Wr, Xact,
 };
 use txhdl_parts::bus::router::Router;
+use txhdl_parts::bus::Map;
+use txhdl_parts::Router;
 use txhdl_parts::{AxiHost, AxiPer, Per};
 
 /// The link of this example: sixteen-bit addresses, thirty-two-bit
@@ -45,7 +47,14 @@ impl AddrMap<3> for ThreeMap {
         [(0x1000, 0xf000), (0x2000, 0xf000), (0x3000, 0xf000)];
 }
 
-type Rtr = Router<3, ThreeMap, 16, 32, 4, 3>;
+type Rtr = Router![
+    PORTS = 3,
+    Map = ThreeMap,
+    ADDR = 16,
+    DATA = 32,
+    STRB = 4,
+    ID = 3
+];
 
 /// How long peripheral `k` takes over a transaction. The three differ,
 /// which is what puts the answers out of the order they were issued.
