@@ -873,7 +873,7 @@ most of them the wait for the previous one's store.
 
 On the board, where the arbiter keeps exclusive pairs and a monitor
 answers them (issue~\#1408), the A instructions on the DDR3 are such
-pairs, which the core's \code{EXCL} parameter turns on; everywhere
+pairs, which the core's \code{EXCLUSIVE} parameter turns on; everywhere
 else it is zero and they are as above. \code{lr.w} and an AMO's load
 go out with \code{lock} set, and so do \code{sc.w} and the AMO's store.
 An exclusive store waits in writeback for its answer: \code{sc.w}'s
