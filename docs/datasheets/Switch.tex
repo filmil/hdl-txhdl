@@ -26,15 +26,15 @@ one per virtual channel.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{XB} & The width of a column coordinate, and of \code{col}, in
+\code{X\_BITS} & The width of a column coordinate, and of \code{col}, in
 bits. A lattice is at
-most \code{1 << XB} columns wide. \\
-\code{YB} & The width of a row coordinate, and of \code{row}, in bits. A lattice is at
-most \code{1 << YB} rows high. \\
-\code{A} & The address width of the AXI link. \\
-\code{D} & The data width of the AXI link. \\
-\code{S} & The strobe width, which is \code{D / 8}. \\
-\code{I} & The identifier width of the AXI link. \\
+most \code{1 << X\_BITS} columns wide. \\
+\code{Y\_BITS} & The width of a row coordinate, and of \code{row}, in bits. A lattice is at
+most \code{1 << Y\_BITS} rows high. \\
+\code{ADDR} & The address width of the AXI link. \\
+\code{DATA} & The data width of the AXI link. \\
+\code{STRB} & The strobe width, which is \code{DATA / 8}. \\
+\code{ID} & The identifier width of the AXI link. \\
 \bottomrule
 \end{tabular}
 \end{center}

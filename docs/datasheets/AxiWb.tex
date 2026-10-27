@@ -29,15 +29,15 @@ controller of Vreteno's board is behind one.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{A} & The link's address width, in bits. \\
-\code{I} & The link's identifier width, in bits. \\
-\code{AW} & The width of the Wishbone word address, in bits. \\
+\code{ADDR} & The link's address width, in bits. \\
+\code{ID} & The link's identifier width, in bits. \\
+\code{WB\_ADDR} & The width of the Wishbone word address, in bits. \\
 \bottomrule
 \end{tabular}
 \end{center}
 
 Words are 32 bits with four lanes, fixed in the source. The tables
-below use \code{AxiWb<32, 2, 28>}. There \code{AW} is \code{ddr3::AW},
+below use \code{AxiWb<32, 2, 28>}. There \code{WB\_ADDR} is \code{ddr3::AW},
 28 bits, a gigabyte of words, which was the board's DDR3 memory's word
 address while this bridge was in front of it.
 
@@ -77,7 +77,7 @@ its channel.
 Every line depends only on the bridge's registers, so nothing
 combinational passes from the link to the lines or back.
 \item The Wishbone address is a word address: the burst's byte address
-shifted down by two and cut to \code{AW} bits. A peripheral decoded at
+shifted down by two and cut to \code{WB\_ADDR} bits. A peripheral decoded at
 a region of the link's map sees offsets from the region's base, as
 long as the base lies above those bits. A write at
 \code{0x4000\_0010} lands in word 4.
@@ -140,4 +140,4 @@ before their acknowledgements would remove more, and wants somewhere
 to hold answers the link is not ready for, which the bridge does not
 have. It always answers \code{Okay}, and it reads no
 error line from the peripheral. Words are 32 bits with four lanes.
-Address bits above the \code{AW} bits it keeps are dropped.
+Address bits above the \code{WB\_ADDR} bits it keeps are dropped.

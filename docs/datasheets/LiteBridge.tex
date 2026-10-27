@@ -3,7 +3,7 @@
 \datasheet{LiteBridge}{The AXI4 to AXI-Lite bridge: one AXI4 link to any count of AXI-Lite peripherals, by an address map.}
 
 \dsfacts{\code{lib/parts/src/bus/axi\_lite.rs}}%
-{\code{txhdl\_parts::bus::axi\_lite::LiteBridge<N, M, ..>}, with \code{M} an address map, \code{txhdl::map::AddrMap<N>}}%
+{\code{txhdl\_parts::bus::axi\_lite::LiteBridge<PORTS, Map, ..>}, with the map given as \code{Map<M>}, \code{M} an \code{AddrMap<PORTS>}}%
 {\code{//docs:axi}, \code{//docs:vreteno}, \code{//docs:eth}, \code{//docs:hdmi}}
 
 \subsection*{Function}
@@ -16,7 +16,7 @@ would take, and gives the \code{b} and \code{r} it would give. So it
 goes where an \code{AxiPer} would: behind a host's tracker, or behind
 one of a router's peripheral ports.
 
-Its peripheral side is arrays of \code{N} ports: it drives
+Its peripheral side is arrays of \code{PORTS} ports: it drives
 \code{aws}, \code{ars} and \code{ws}, and reads \code{bs} and
 \code{rs}, entry \textit{i} of each being peripheral \textit{i}'s, so
 the netlist's ports are \code{aws\_}\textit{i} and the like. An
@@ -36,14 +36,14 @@ parameters.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{A} & The address width, in bits, on both sides. \\
-\code{D} & The data width, in bits, on both sides. \\
-\code{S} & The write strobe width, one bit per byte lane, so \code{D / 8}. \\
-\code{I} & The identifier width of the AXI4 side, in bits. \\
-\code{N} & The count of peripherals, one or more. \\
-\code{M} & The address map: a type implementing \code{AddrMap<N>},
-whose \code{RANGES} holds each peripheral's base and mask, in the
-order of the ports. \\
+\code{ADDR} & The address width, in bits, on both sides. \\
+\code{DATA} & The data width, in bits, on both sides. \\
+\code{STRB} & The write strobe width, one bit per byte lane, so \code{DATA / 8}. \\
+\code{ID} & The identifier width of the AXI4 side, in bits. \\
+\code{PORTS} & The count of peripherals, one or more. \\
+\code{Map} & The address map, given as the marker \code{Map<M>}: \code{M}
+implements \code{AddrMap<PORTS>}, and its \code{RANGES} holds each
+peripheral's base and mask, in the order of the ports. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -51,12 +51,12 @@ order of the ports. \\
 \subsection*{Address map}
 
 An address \code{a} is peripheral \textit{i}'s when
-\code{(a \& mask) == base} for \code{(base, mask) = M::RANGES[}\textit{i}\code{]}.
+\code{(a \& mask) == base} for \code{(base, mask) = Map::RANGES[}\textit{i}\code{]}.
 The bridge decodes a burst's first address, and the lowest range that
-matches wins. An address in no range is a hole. \code{M::SINGLE} marks
+matches wins. An address in no range is a hole. \code{Map::SINGLE} marks
 the ranges that take single beats only; a map that says nothing marks
 none. The tables below are
-generated for \code{LiteBridge<1, SerialMap, 32, 32, 4, 2>}, the bridge
+generated for \code{LiteBridge<1, Map<SerialMap>, 32, 32, 4, 2>}, the bridge
 in front of Vreteno's serial port, whose map is this one:
 
 \begin{center}\footnotesize
@@ -93,7 +93,7 @@ goes first, and after a write the read channel.
 \item Taking a burst records its identifier in \code{xid}, its address
 in \code{addr}, its \code{len} in \code{left}, its \code{prot}, and
 its peripheral in \code{sel}, a bit each. A hole has no bit set.
-\code{sel} is \code{N} bits wide; a bridge of one has a one-bit
+\code{sel} is \code{PORTS} bits wide; a bridge of one has a one-bit
 \code{sel}, which the netlist writes as a single bit.
 \item \code{stride} is how far the address moves per beat:
 \code{1 << size} bytes, or zero for a \code{Fixed} burst. Every other
@@ -109,7 +109,7 @@ on \code{w}. To a hole, the beat is taken and dropped.
 that peripheral's answer. A hole's answer is there at once:
 \code{DecErr}, with zero data for a read.
 \item \textbf{A refused burst.} A burst of more than one beat whose
-first address is in a range \code{M::SINGLE} marks goes to no
+first address is in a range \code{Map::SINGLE} marks goes to no
 peripheral. The bridge sets \code{refused} and answers it as it
 answers a hole, but \code{SlvErr}. A single beat there goes through.
 \item \textbf{A read's answer} goes up on \code{r} as a beat of the
@@ -129,7 +129,7 @@ burst's identifier and that response.
 \begin{itemize}
 \item \code{bursts\_cross\_the\_bridge\_a\_beat\_at\_a\_time} in
 \code{bus::axi\_lite}, in \code{//lib/parts:parts\_test}, puts
-\code{LiteBridge<2, TwoMap, 16, 32, 4, 2>} behind
+\code{LiteBridge<2, Map<TwoMap>, 16, 32, 4, 2>} behind
 a host tracker, with two simulated memories. It writes three words and
 reads four, reads one word three times in a fixed burst, uses the
 second peripheral, and sends a write and a read of two beats to a hole.

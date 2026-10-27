@@ -30,7 +30,7 @@ halves apart: the request half before the client and the response
 half after it, since an unregistered channel's sender runs first in a
 step. The board joins its data memory's tracker that way (\#1755).
 Both halves take \code{AxiPer}'s four parameters, so the response
-half carries \code{A} and \code{S} without using them.
+half carries \code{ADDR} and \code{STRB} without using them.
 
 \subsection*{Parameters}
 
@@ -39,15 +39,15 @@ half carries \code{A} and \code{S} without using them.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{A} & The address width, in bits. \\
-\code{D} & The data width, in bits. \\
-\code{S} & The write strobe width, one bit per byte lane, so \code{D / 8}. \\
-\code{I} & The identifier width, in bits. \\
+\code{ADDR} & The address width, in bits. \\
+\code{DATA} & The data width, in bits. \\
+\code{STRB} & The write strobe width, one bit per byte lane, so \code{DATA / 8}. \\
+\code{ID} & The identifier width, in bits. \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-There is no \code{NIDS}, since this end hands out no identifiers. The
+There is no \code{IDS}, since this end hands out no identifiers. The
 tables below use \code{AxiPer<32, 32, 4, 2>}, the tracker in front of
 Vreteno's data memory and timer.
 

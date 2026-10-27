@@ -26,15 +26,15 @@ identifier, and the bridge sends the packet home under the original.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{X}, \code{Y} & The column and row of the bridge's node. The
+\code{COL}, \code{ROW} & The column and row of the bridge's node. The
 bridge stamps them on every answer as its source. \\
-\code{XB}, \code{YB} & The widths of a column and a row coordinate, in
+\code{X\_BITS}, \code{Y\_BITS} & The widths of a column and a row coordinate, in
 bits. \\
-\code{A} & The address width of the AXI link. \\
-\code{D} & The data width of the AXI link. \\
-\code{S} & The strobe width, which is \code{D / 8}. \\
-\code{I} & The identifier width of the AXI link. \\
-\code{NIDS} & How many local identifiers the bridge gives out, and so
+\code{ADDR} & The address width of the AXI link. \\
+\code{DATA} & The data width of the AXI link. \\
+\code{STRB} & The strobe width, which is \code{DATA / 8}. \\
+\code{ID} & The identifier width of the AXI link. \\
+\code{IDS} & How many local identifiers the bridge gives out, and so
 how many bursts the peripheral has in flight at most. \\
 \bottomrule
 \end{tabular}
@@ -67,7 +67,7 @@ been answered. The bridge does not look for another free identifier.
 \code{rsp} has room, and a write response before a read beat. The
 packet goes to the \code{sx} and \code{sy} stored under the answer's
 identifier, under the \code{oid} stored there, with the source
-\code{X}, \code{Y}.
+\code{COL}, \code{ROW}.
 \item A write response goes with \code{chan} \code{B}, its response,
 and \code{last} high. A read beat goes with \code{chan} \code{R}, its
 data, its response and its \code{last}.
@@ -113,8 +113,8 @@ memory's \code{AxiPer}, and at 1,1 in front of the serial port, behind
 
 A write request is one packet with one beat. A write burst crosses as
 several: \code{HostBridge} splits it into single-beat writes, and the
-peripheral sees each as a write of its own. At most \code{NIDS} bursts are in
-flight at the peripheral. \code{turn} is a register of \code{I} bits
-and \code{busy} has \code{NIDS} bits. Every use in the tree sets
-\code{NIDS} to 4 with \code{I} of 2. The bridge sends one answer per
+peripheral sees each as a write of its own. At most \code{IDS} bursts are in
+flight at the peripheral. \code{turn} is a register of \code{ID} bits
+and \code{busy} has \code{IDS} bits. Every use in the tree sets
+\code{IDS} to 4 with \code{ID} of 2. The bridge sends one answer per
 cycle.

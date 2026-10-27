@@ -30,20 +30,20 @@ channels it runs on. Its ports are named types, \code{HostIn} and
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{A} & The address width, in bits. \\
-\code{D} & The data width, in bits. \\
-\code{S} & The write strobe width, one bit per byte lane, so \code{D / 8}. \\
-\code{I} & The identifier width, in bits. \\
-\code{NIDS} & How many identifiers it hands out, so \code{1 << I}. It is
+\code{ADDR} & The address width, in bits. \\
+\code{DATA} & The data width, in bits. \\
+\code{STRB} & The write strobe width, one bit per byte lane, so \code{DATA / 8}. \\
+\code{ID} & The identifier width, in bits. \\
+\code{IDS} & How many identifiers it hands out, so \code{1 << ID}. It is
 the width of \code{busy}, and the most bursts in flight at once. \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-\code{S} and \code{NIDS} are stated rather than computed, because an
+\code{STRB} and \code{IDS} are stated rather than computed, because an
 expression in a const parameter's position needs nightly Rust. The
-source states that a link whose \code{S} and \code{NIDS} disagree with
-its \code{D} and \code{I} will not behave. The tables below use
+source states that a link whose \code{STRB} and \code{IDS} disagree with
+its \code{DATA} and \code{ID} will not behave. The tables below use
 \code{AxiHost<32, 32, 4, 2, 4>}, the tracker of Vreteno's link and of
 its board.
 
@@ -67,7 +67,7 @@ most one burst goes out per cycle.
 \item In a cycle in which the identifier \code{next} names is
 outstanding, \code{next} moves on by one as well. So the identifiers
 go round, and a burst waits only while every identifier is
-outstanding; it finds a free one within \code{NIDS} cycles.
+outstanding; it finds a free one within \code{IDS} cycles.
 \item \code{release} is taken whenever it offers, and it clears the
 bit of the identifier it names. An identifier is therefore outstanding
 from its address phase until the client has taken its answer.
@@ -141,10 +141,10 @@ once for Razboj. Razboj's simulation in \code{gpu/razboj/src/sim.rs}.
 
 \subsection*{Limits}
 
-At most \code{NIDS} bursts are in flight at once. A client that never
+At most \code{IDS} bursts are in flight at once. A client that never
 releases an identifier stops the unit when the turn reaches that
 identifier. It sends \code{lock}, \code{cache}, \code{qos} and
 \code{region} as the client gave them and acts on none of them; nothing
 in \code{bus::axi} makes an exclusive access, which is
 \code{bus::exmon}'s work. It does not check
-\code{S} and \code{NIDS} against \code{D} and \code{I}.
+\code{STRB} and \code{IDS} against \code{DATA} and \code{ID}.
