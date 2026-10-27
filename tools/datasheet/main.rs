@@ -451,7 +451,7 @@ fn main() {
     sheet("Buffer", "Buffer<8>", Buffer::<8>::lowered("buffer"));
     sheet(
         "ChanCdc",
-        "ChanCdc<U<32>, 4, 16, 5, DefaultClock, ClkPix>",
+        "ChanCdc<Data<U<32>>, 4, 16, 5, WriteClock<DefaultClock>, ReadClock<ClkPix>>",
         <ChanCdc![
             Data = U<32>,
             ADDR = 4,
@@ -463,7 +463,7 @@ fn main() {
     );
     sheet(
         "Fifo",
-        "Fifo<U<8>, 2, 4>",
+        "Fifo<Data<U<8>>, 2, 4>",
         <Fifo![Data = U<8>, PTRS = 2, DEPTH = 4]>::lowered("fifo"),
     );
     sheet(
@@ -479,7 +479,7 @@ fn main() {
     );
     sheet(
         "LineBuf",
-        "LineBuf<32, 5, ClkPix>",
+        "LineBuf<32, 5, Domain<ClkPix>>",
         <LineBuf![LEN = 32, COL = 5, Domain = ClkPix]>::lowered("linebuf"),
     );
     sheet(
@@ -491,7 +491,7 @@ fn main() {
     );
     sheet(
         "LinePair",
-        "LinePair<8, 3, 4, 6, 32, 0, 1024, ClkPix>",
+        "LinePair<8, 3, 4, 6, 32, 0, 1024, Domain<ClkPix>>",
         <LinePair![
             LEN = 8,
             COL = 3,
