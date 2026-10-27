@@ -34,6 +34,7 @@ use vreteno32::rom::Rom;
 use vreteno32::term::Terminal;
 use vreteno32::timer::Timer;
 use vreteno32::uart::Uart;
+use vreteno32::{Dmem, Hart};
 
 /// The link the core sits on, as the demonstration has it.
 const IW: usize = 2;
@@ -143,7 +144,10 @@ fn lockstep_hart<const HID: usize>(
     reset_at: Option<u64>,
     seip: Option<fn(u64) -> bool>,
 ) -> Model {
-    let mut hart = Hart::<2, 16384, 1, HID>::with(program);
+    let mut hart =
+        <Hart![ID = 2, LANE_WORDS = 16384, ICACHE = 1, HART = HID]>::with(
+            program,
+        );
     let cpu = &hart.core;
     let (pc, ir_pc, valid, regs, halted) =
         (cpu.pc, cpu.ir_pc, cpu.valid, cpu.regs.clone(), cpu.halted);
@@ -151,7 +155,7 @@ fn lockstep_hart<const HID: usize>(
     // The data memory starts with `data` in it, which is how a program
     // that lives above the boot memory gets there.
     let bytes: Vec<u8> = data.iter().flat_map(|w| w.to_le_bytes()).collect();
-    let mut dmem = Dmem::<IW>::with(&bytes);
+    let mut dmem = <Dmem![ID = IW]>::with(&bytes);
     let lanes = (
         dmem.lane0.clone(),
         dmem.lane1.clone(),
@@ -261,7 +265,7 @@ fn lockstep_hart<const HID: usize>(
     let xbus = PerPort::from(xl.per_client);
     let mut xper =
         <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = IW]>::default();
-    let mut ddr = Dmem::<IW, 12, DDR_WORDS>::default();
+    let mut ddr = <Dmem![ID = IW, ADDR = 12, WORDS = DDR_WORDS]>::default();
     let mut rom = Rom::<IW>::with(program);
     let mut rper =
         <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = IW]>::default();

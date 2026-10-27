@@ -24,6 +24,7 @@ use vreteno32::pair::{Pair, PairIn, PairOut};
 use vreteno32::program::random;
 use vreteno32::timer::Timer;
 use vreteno32::uart::Uart;
+use vreteno32::Dmem;
 
 const IW: usize = 2;
 const NIDS: usize = 4;
@@ -73,7 +74,7 @@ fn pair_says(program: &[u32], cycles: usize, fault: &[usize]) -> (bool, bool) {
         two: Hart::with(program),
         ..Default::default()
     };
-    let mut dmem = Dmem::<IW>::default();
+    let mut dmem = <Dmem![ID = IW]>::default();
     let mut timer = Timer::<IW>::default();
     let mut uart = Uart::<4>::default();
     let (rst_out, rst) = signal::<Bit, DefaultClock>();

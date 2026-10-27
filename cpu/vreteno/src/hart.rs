@@ -21,16 +21,17 @@ use crate::core::{Vreteno, VretenoIn, VretenoOut, Writeback};
 
 /// The core and its unit, eight entries in each of the unit's two
 /// translation buffers.
+#[txhdl::named_type_params]
 #[derive(Trace, Default)]
 pub struct Hart<
-    const IW: usize,
-    const DW: usize = 16384,
-    const IC: usize = 1,
-    const HID: usize = 0,
-    const EXCL: usize = 0,
+    const ID: usize,
+    const LANE_WORDS: usize = 16384,
+    const ICACHE: usize = 1,
+    const HART: usize = 0,
+    const EXCLUSIVE: usize = 0,
 > {
     pub mmu: Mmu8,
-    pub core: Vreteno<IW, DW, IC, HID, EXCL>,
+    pub core: Vreteno<ID, LANE_WORDS, ICACHE, HART, EXCLUSIVE>,
 }
 
 impl<
