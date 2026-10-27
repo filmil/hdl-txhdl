@@ -111,6 +111,21 @@ fn the_structs_macro_gives_every_parameter_by_name() {
     assert_eq!(size_of::<Lanes![WIDTH = 2, COUNT = 3]>(), 6);
 }
 
+/// A type alias of const parameters takes them by name too (#1946). Its
+/// order is its own, rows then columns, and not `Lanes`'s.
+#[named_type_params]
+pub type Matrix<const ROWS: usize, const COLS: usize> = Lanes<COLS, ROWS>;
+
+#[test]
+fn an_aliases_macro_gives_its_const_parameters_by_name() {
+    let g: Matrix![COLS = 2, ROWS = 3] = Lanes { lanes: [[0; 2]; 3] };
+    assert_eq!(g.lanes.len(), 3);
+    // The same type as the alias written in its own order.
+    let same: Matrix<3, 2> = g;
+    assert_eq!(same.lanes[0].len(), 2);
+    assert_eq!(size_of::<Matrix![ROWS = 3, COLS = 2]>(), 6);
+}
+
 /// More shapes of field type: a function pointer, a reference, a slice,
 /// a projection written `<P as Trait>::..`, and a field named like a
 /// parameter, which keeps its name, after a field attribute, which is
