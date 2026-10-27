@@ -34,8 +34,8 @@ use txhdl_parts::bus::Map;
 use txhdl_parts::syscon::{
     regs, Syscon, CAUSE_BUTTON, CAUSE_POWER, CAUSE_SOFTWARE,
 };
-use txhdl_parts::LiteBridge;
 use txhdl_parts::{AxiHost, Host};
+use txhdl_parts::{LiteBridge, Syscon};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
 /// identifiers, four of them.
@@ -68,7 +68,13 @@ const STAMP1: usize = 0x2026_0917;
 /// The word that has to be written to ask for a reset.
 const KEY: usize = 0x5253_5421;
 
-type Block = Syscon<ID, VERSION, STAMP0, STAMP1, KEY>;
+type Block = Syscon![
+    DESIGN = ID,
+    VERSION = VERSION,
+    STAMP0 = STAMP0,
+    STAMP1 = STAMP1,
+    KEY = KEY
+];
 
 /// The block's words: its base, and the offsets its map states.
 const BASE: u32 = 0x1000;

@@ -22,6 +22,7 @@ use txhdl_parts::bus::axi::{
     axi_units, Answer, AxiHost, AxiPer, PerPort, Resp, R,
 };
 use txhdl_parts::dma::LineStore;
+use txhdl_parts::LineStore;
 use txhdl_parts::{AxiHost, AxiPer, PerPort};
 
 const ADDR: usize = 32;
@@ -180,7 +181,12 @@ fn main() {
     ]>::default();
     let mut per =
         <AxiPer![ADDR = ADDR, DATA = 32, STRB = 4, ID = IDB]>::default();
-    let mut store = LineStore::<ADDR, IDB, BEATS, 16>::default();
+    let mut store = <LineStore![
+        ADDR = ADDR,
+        ID = IDB,
+        BEATS = BEATS,
+        COUNT = 16
+    ]>::default();
 
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();
@@ -278,10 +284,15 @@ fn main() {
 
     print!(
         "\n{}",
-        LineStore::<ADDR, IDB, BEATS, 16>::verilog("linestore")
+        <LineStore![ADDR = ADDR, ID = IDB, BEATS = BEATS, COUNT = 16]>::verilog(
+            "linestore"
+        )
     );
     stop();
-    txhdl::netlist::write_vhdl_from_env(
-        &LineStore::<ADDR, IDB, BEATS, 16>::lowered("linestore"),
-    );
+    txhdl::netlist::write_vhdl_from_env(&<LineStore![
+        ADDR = ADDR,
+        ID = IDB,
+        BEATS = BEATS,
+        COUNT = 16
+    ]>::lowered("linestore"));
 }

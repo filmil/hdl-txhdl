@@ -40,6 +40,7 @@ use txhdl_parts::dma::LineFetch;
 use txhdl_parts::scanout::{scan, ScanFetch, ScanVideo};
 use txhdl_parts::LiteW;
 use txhdl_parts::{AxiHost, AxiPer, PerPort};
+use txhdl_parts::{LineFetch, ScanFetch, ScanVideo};
 
 const ADDR: usize = 32;
 const IDB: usize = 2;
@@ -70,23 +71,23 @@ const FB: u32 = 0xabc;
 /// The scanout's registers, at the upper half of the slot.
 const SCAN: u32 = 0x80;
 
-type Video = ScanVideo<
-    HV,
-    HFP,
-    HSW,
-    HBP,
-    VV,
-    VFP,
-    VSW,
-    VBP,
-    0,
-    AW,
-    TOTAL,
-    STRIDE,
-    0,
-    MEM,
->;
-type Fetch = ScanFetch<ADDR, 16, HV>;
+type Video = ScanVideo![
+    H_ACTIVE = HV,
+    H_FRONT = HFP,
+    H_SYNC = HSW,
+    H_BACK = HBP,
+    V_ACTIVE = VV,
+    V_FRONT = VFP,
+    V_SYNC = VSW,
+    V_BACK = VBP,
+    SHIFT = 0,
+    COL = AW,
+    TOTAL = TOTAL,
+    STRIDE = STRIDE,
+    LO = 0,
+    HI = MEM
+];
+type Fetch = ScanFetch![ADDR = ADDR, COUNT = 16, LEN = HV];
 
 /// The memory, whose beats a `hold` stalls, as in `ex_scanpair`.
 #[derive(Trace, Default)]
@@ -255,7 +256,12 @@ fn main() {
     ]>::default();
     let mut per =
         <AxiPer![ADDR = ADDR, DATA = 32, STRB = 4, ID = IDB]>::default();
-    let mut fetch = LineFetch::<ADDR, IDB, BEATS, 16>::default();
+    let mut fetch = <LineFetch![
+        ADDR = ADDR,
+        ID = IDB,
+        BEATS = BEATS,
+        COUNT = 16
+    ]>::default();
     let mut sfetch = Fetch::default();
     let mut video = Video::default();
     let mut prog = Prog::default();

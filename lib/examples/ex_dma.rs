@@ -24,6 +24,7 @@ use txhdl_parts::bus::axi::{
     axi_units, Answer, AxiHost, AxiPer, PerPort, Resp, R,
 };
 use txhdl_parts::dma::LineFetch;
+use txhdl_parts::LineFetch;
 use txhdl_parts::{AxiHost, AxiPer, PerPort};
 
 const ADDR: usize = 32;
@@ -135,7 +136,12 @@ fn main() {
     ]>::default();
     let mut per =
         <AxiPer![ADDR = ADDR, DATA = 32, STRB = 4, ID = IDB]>::default();
-    let mut fetch = LineFetch::<ADDR, IDB, BEATS, 16>::default();
+    let mut fetch = <LineFetch![
+        ADDR = ADDR,
+        ID = IDB,
+        BEATS = BEATS,
+        COUNT = 16
+    ]>::default();
 
     // Every port under the name the port has, and the unit under the
     // entity's name: the testbench generator reads the trace by those
@@ -210,10 +216,15 @@ fn main() {
 
     print!(
         "\n{}",
-        LineFetch::<ADDR, IDB, BEATS, 16>::verilog("linefetch")
+        <LineFetch![ADDR = ADDR, ID = IDB, BEATS = BEATS, COUNT = 16]>::verilog(
+            "linefetch"
+        )
     );
     stop();
-    txhdl::netlist::write_vhdl_from_env(
-        &LineFetch::<ADDR, IDB, BEATS, 16>::lowered("linefetch"),
-    );
+    txhdl::netlist::write_vhdl_from_env(&<LineFetch![
+        ADDR = ADDR,
+        ID = IDB,
+        BEATS = BEATS,
+        COUNT = 16
+    ]>::lowered("linefetch"));
 }

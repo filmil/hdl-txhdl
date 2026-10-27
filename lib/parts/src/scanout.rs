@@ -68,8 +68,8 @@ use crate::bus::axi_lite::{LiteAr, LiteAw, LiteB, LitePort, LiteR, LiteW};
 use crate::bus::lite_split::LiteSplit;
 use crate::hdmi::{Hdmi, Raster, VideoOut};
 use txhdl::comp::{
-    chan, join2, mux, signal, Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx,
-    Unit,
+    chan, join2, mux, signal, Clock, DefaultClock, Domain, In, IsDomain, Mem,
+    Out, Reg, Rx, Tx, Unit,
 };
 use txhdl::types::{Bit, U};
 use txhdl::{lower, regmap, with, Trace};
@@ -84,137 +84,138 @@ pub const LATE: u32 = 0x00ff_00ff;
 /// Two lines of pixels on the clock that shows them, and the requests
 /// that fill them.
 ///
-/// `LEN` is the words in a visible line, `AW` the width of a column,
-/// with `LEN` at most `1 << AW`. `ROWS` is the visible rows and
+/// `LEN` is the words in a visible line, `COL` the width of a column,
+/// with `LEN` at most `1 << COL`. `ROWS` is the visible rows and
 /// `TOTAL` the rows of a frame, blanking included. `STRIDE` is the
 /// bytes from one line's start in memory to the next's. `LO` and `HI`
 /// are the frame's memory, the bytes from `LO` up to but not including
 /// `HI`: a line not wholly inside them is not asked for (issue 1382).
+#[txhdl::named_type_params(reuse(Domain))]
 #[derive(Trace)]
 pub struct LinePair<
     const LEN: usize,
-    const AW: usize,
+    const COL: usize,
     const ROWS: usize,
     const TOTAL: usize,
     const STRIDE: usize,
     const LO: usize,
     const HI: usize,
-    C: Clock,
+    Domain: Clock,
 > {
     /// One line.
-    pub a: Mem<U<32>, LEN, C>,
+    pub a: Mem<U<32>, LEN, Domain>,
     /// The other.
-    pub b: Mem<U<32>, LEN, C>,
+    pub b: Mem<U<32>, LEN, Domain>,
     /// Which line is filling: `b` when set, `a` when clear. The beam
     /// reads the other.
-    pub wsel: Reg<Bit, C>,
+    pub wsel: Reg<Bit, Domain>,
     /// The words that have arrived in the line filling.
-    pub at: Reg<U<16>, C>,
+    pub at: Reg<U<16>, Domain>,
     /// The words that arrived in the line the beam reads.
-    pub rgot: Reg<U<16>, C>,
+    pub rgot: Reg<U<16>, Domain>,
     /// The pixel the column named at the last edge.
-    pub shown: Reg<U<32>, C>,
+    pub shown: Reg<U<32>, Domain>,
     /// A column was shown before its word arrived. Sticky.
-    pub under: Reg<Bit, C>,
+    pub under: Reg<Bit, Domain>,
     /// The first line of a frame has been asked for, so a short line
     /// is a fault from here on and not the start of the run.
-    pub armed: Reg<Bit, C>,
+    pub armed: Reg<Bit, Domain>,
     /// The frame's base address, taken at the vertical sync.
-    pub fbase: Reg<U<32>, C>,
+    pub fbase: Reg<U<32>, Domain>,
     /// Where the next line to ask for starts.
-    pub next: Reg<U<32>, C>,
+    pub next: Reg<U<32>, Domain>,
     /// The address of the oldest line asked for and not yet come
     /// whole (issue 1197).
-    pub owed0: Reg<U<32>, C>,
+    pub owed0: Reg<U<32>, Domain>,
     /// The next oldest's.
-    pub owed1: Reg<U<32>, C>,
+    pub owed1: Reg<U<32>, Domain>,
     /// The third's.
-    pub owed2: Reg<U<32>, C>,
+    pub owed2: Reg<U<32>, Domain>,
     /// The fourth's: no more are asked for while four are owed.
-    pub owed3: Reg<U<32>, C>,
+    pub owed3: Reg<U<32>, Domain>,
     /// How many lines are owed.
-    pub owing: Reg<U<3>, C>,
+    pub owing: Reg<U<3>, Domain>,
     /// How many words of the oldest line owed have come.
-    pub came: Reg<U<16>, C>,
+    pub came: Reg<U<16>, Domain>,
     /// A word has come since the last line started.
-    pub heard: Reg<Bit, C>,
+    pub heard: Reg<Bit, Domain>,
     /// How many line starts in a row found lines owed and no word
     /// come.
-    pub quiet: Reg<U<2>, C>,
+    pub quiet: Reg<U<2>, Domain>,
     /// A line asked for got no word for two line times. Sticky.
-    pub hung: Reg<Bit, C>,
+    pub hung: Reg<Bit, Domain>,
     /// That line's address.
-    pub hung_at: Reg<U<32>, C>,
+    pub hung_at: Reg<U<32>, Domain>,
     /// The line being shown had not come whole when it started, so its
     /// words, as they come, go into the half the beam reads (issue
     /// 1233).
-    pub late: Reg<Bit, C>,
+    pub late: Reg<Bit, Domain>,
     /// Lines owed whose time has passed: their words are dropped rather
     /// than written where another line's go (issue 1233).
-    pub behind: Reg<U<3>, C>,
+    pub behind: Reg<U<3>, Domain>,
     /// Lines asked for whose rows have not begun (issue 1523).
-    pub ahead: Reg<U<3>, C>,
+    pub ahead: Reg<U<3>, Domain>,
     /// Lines are asked for two rows ahead rather than one, as `two`
     /// said at the last vertical sync.
-    pub two_ahead: Reg<Bit, C>,
+    pub two_ahead: Reg<Bit, Domain>,
     /// A count of the pixel clock's edges, which a line's time is
     /// measured in.
-    pub tick: Reg<U<16>, C>,
+    pub tick: Reg<U<16>, Domain>,
     /// The row each line owed is for, oldest first: two rows ahead, a
     /// line's words wait in the crossing until the row before its own,
     /// whose half is the one it is shown from.
-    pub g0: Reg<U<12>, C>,
+    pub g0: Reg<U<12>, Domain>,
     /// The next oldest's.
-    pub g1: Reg<U<12>, C>,
+    pub g1: Reg<U<12>, Domain>,
     /// The third's.
-    pub g2: Reg<U<12>, C>,
+    pub g2: Reg<U<12>, Domain>,
     /// The fourth's.
-    pub g3: Reg<U<12>, C>,
+    pub g3: Reg<U<12>, Domain>,
     /// The tick each line owed was asked for at, oldest first.
-    pub t0: Reg<U<16>, C>,
+    pub t0: Reg<U<16>, Domain>,
     /// The next oldest's.
-    pub t1: Reg<U<16>, C>,
+    pub t1: Reg<U<16>, Domain>,
     /// The third's.
-    pub t2: Reg<U<16>, C>,
+    pub t2: Reg<U<16>, Domain>,
     /// The fourth's.
-    pub t3: Reg<U<16>, C>,
+    pub t3: Reg<U<16>, Domain>,
     /// The longest any line took from being asked for to its last
     /// word, in pixels. Kept until cleared.
-    pub longest: Reg<U<16>, C>,
+    pub longest: Reg<U<16>, Domain>,
     /// How many lines had not come whole when their rows began. Kept
     /// until cleared, and stops at its largest.
-    pub late_lines: Reg<U<16>, C>,
+    pub late_lines: Reg<U<16>, Domain>,
     /// The tick the current row started at (issue 1524).
-    pub row_tick: Reg<U<16>, C>,
+    pub row_tick: Reg<U<16>, Domain>,
     /// A row's length in pixel clocks, measured between two starts.
-    pub period: Reg<U<16>, C>,
+    pub period: Reg<U<16>, Domain>,
     /// A row start has been seen, so the next measures `period`.
-    pub row_seen: Reg<Bit, C>,
+    pub row_seen: Reg<Bit, Domain>,
     /// `period` has been measured.
-    pub period_known: Reg<Bit, C>,
+    pub period_known: Reg<Bit, Domain>,
     /// From a row's start to the tick its first column is shown.
-    pub lead: Reg<U<16>, C>,
+    pub lead: Reg<U<16>, Domain>,
     /// `lead` has been measured.
-    pub lead_known: Reg<Bit, C>,
+    pub lead_known: Reg<Bit, Domain>,
     /// The row being shown is a visible one.
-    pub row_shown: Reg<Bit, C>,
+    pub row_shown: Reg<Bit, Domain>,
     /// A column of the row being shown showed `LATE`.
-    pub row_late: Reg<Bit, C>,
+    pub row_late: Reg<Bit, Domain>,
     /// A row of this frame showed `LATE`.
-    pub frame_late: Reg<Bit, C>,
+    pub frame_late: Reg<Bit, Domain>,
     /// Shown rows in which a column showed `LATE`, until cleared, and
     /// stops at its largest.
-    pub late_row_count: Reg<U<16>, C>,
+    pub late_row_count: Reg<U<16>, Domain>,
     /// Frames in which a row did, the same way.
-    pub late_frame_count: Reg<U<16>, C>,
+    pub late_frame_count: Reg<U<16>, Domain>,
     /// The least margin since the last clear, in pixel clocks, as a
     /// two's complement sixteen bits: a word's column's showing less
     /// its arrival, less one, so that nought is the last tick a word
     /// may come and a word on its column's own tick, which `LATE`
     /// shows, is minus one.
-    pub least: Reg<U<16>, C>,
+    pub least: Reg<U<16>, Domain>,
     /// `least` holds a margin: none has been taken since the clear.
-    pub has_least: Reg<Bit, C>,
+    pub has_least: Reg<Bit, Domain>,
 }
 // end{pair}
 
@@ -229,7 +230,7 @@ impl<
         const LO: usize,
         const HI: usize,
         C: Clock,
-    > Default for LinePair<LEN, AW, ROWS, TOTAL, STRIDE, LO, HI, C>
+    > Default for LinePair<LEN, AW, ROWS, TOTAL, STRIDE, LO, HI, Domain<C>>
 {
     fn default() -> Self {
         LinePair {
@@ -296,7 +297,7 @@ impl<
         const LO: usize,
         const HI: usize,
         C: Clock,
-    > Unit for LinePair<LEN, AW, ROWS, TOTAL, STRIDE, LO, HI, C>
+    > Unit for LinePair<LEN, AW, ROWS, TOTAL, STRIDE, LO, HI, Domain<C>>
 {
     async fn run(
         &mut self,
@@ -710,14 +711,15 @@ impl<
 /// The bus side: a line request taken from the crossing, and
 /// `LineFetch` started on it.
 ///
-/// `A` is the address width, `WC` the width of the word count and
+/// `ADDR` is the address width, `COUNT` the width of the word count and
 /// `LEN` the words in a line. One request at a time: the next is taken
 /// only once the fetch has started on this one and finished, which
 /// `running` says.
+#[txhdl::named_type_params]
 #[derive(Trace, Default)]
-pub struct ScanFetch<const A: usize, const WC: usize, const LEN: usize> {
+pub struct ScanFetch<const ADDR: usize, const COUNT: usize, const LEN: usize> {
     /// Where the line asked for starts.
-    pub base: Reg<U<A>>,
+    pub base: Reg<U<ADDR>>,
     /// High for the one cycle that starts the fetch.
     pub go: Reg<Bit>,
     /// A request has been handed on and the fetch has not yet said it
@@ -1025,7 +1027,7 @@ pub const SCAN_BIT: usize = 7;
 /// `req` and takes their words on `words`, both of which leave this
 /// unit for the bus clock. [`VidMux`] puts either picture on the pins.
 ///
-/// `HV` to `VBP` and `SHIFT` are [`Hdmi`]'s. `AW` is the width of a
+/// `H_ACTIVE` to `V_BACK` and `SHIFT` are [`Hdmi`]'s. `COL` is the width of a
 /// column, `TOTAL` the rows of a frame, which must be `VV + VFP + VSW +
 /// VBP`, `STRIDE` the bytes from one line to the next in memory, and
 /// `LO` to `HI` the frame's memory, outside which no line is asked for.
@@ -1036,18 +1038,19 @@ pub const SCAN_BIT: usize = 7;
 /// its reader: [`Raster`] and [`ScanCtl`], then [`LinePair`], then
 /// [`ScanTap`] and [`Hdmi`], then [`VidMux`]. The one path the other
 /// way, the underflow bit back to [`ScanCtl`], is a channel.
+#[txhdl::named_type_params]
 #[derive(Trace)]
 pub struct ScanVideo<
-    const HV: usize,
-    const HFP: usize,
-    const HSW: usize,
-    const HBP: usize,
-    const VV: usize,
-    const VFP: usize,
-    const VSW: usize,
-    const VBP: usize,
+    const H_ACTIVE: usize,
+    const H_FRONT: usize,
+    const H_SYNC: usize,
+    const H_BACK: usize,
+    const V_ACTIVE: usize,
+    const V_FRONT: usize,
+    const V_SYNC: usize,
+    const V_BACK: usize,
     const SHIFT: usize,
-    const AW: usize,
+    const COL: usize,
     const TOTAL: usize,
     const STRIDE: usize,
     const LO: usize,
@@ -1058,13 +1061,42 @@ pub struct ScanVideo<
     /// The scanout's registers, from `0x80`.
     pub ctl: ScanCtl,
     /// The beam, counted again for the pair.
-    pub raster: Raster<HV, HFP, HSW, HBP, VV, VFP, VSW, VBP, AW>,
+    pub raster: Raster<
+        H_ACTIVE,
+        H_FRONT,
+        H_SYNC,
+        H_BACK,
+        V_ACTIVE,
+        V_FRONT,
+        V_SYNC,
+        V_BACK,
+        COL,
+    >,
     /// The two lines.
-    pub pair: LinePair<HV, AW, VV, TOTAL, STRIDE, LO, HI, DefaultClock>,
+    pub pair: LinePair![
+        LEN = H_ACTIVE,
+        COL = COL,
+        ROWS = V_ACTIVE,
+        TOTAL = TOTAL,
+        STRIDE = STRIDE,
+        LO = LO,
+        HI = HI,
+        Domain = DefaultClock
+    ],
     /// The underflow bit back to the registers.
     pub tap: ScanTap,
     /// The video peripheral, below `0x80`.
-    pub hdmi: Hdmi<HV, HFP, HSW, HBP, VV, VFP, VSW, VBP, SHIFT>,
+    pub hdmi: Hdmi<
+        H_ACTIVE,
+        H_FRONT,
+        H_SYNC,
+        H_BACK,
+        V_ACTIVE,
+        V_FRONT,
+        V_SYNC,
+        V_BACK,
+        SHIFT,
+    >,
     /// Which picture reaches the pins.
     pub vmux: VidMux,
 }
@@ -1377,16 +1409,16 @@ mod tests {
     }
 
     /// The flagship's pair, as `timed_run` runs it.
-    type FlagPair = LinePair<
-        { vga::HV },
-        10,
-        { vga::VV },
-        525,
-        4096,
-        0x4000_0000,
-        0x8000_0000,
-        DefaultClock,
-    >;
+    type FlagPair = LinePair![
+        LEN = vga::HV,
+        COL = 10,
+        ROWS = vga::VV,
+        TOTAL = 525,
+        STRIDE = 4096,
+        LO = 0x4000_0000,
+        HI = 0x8000_0000,
+        Domain = DefaultClock
+    ];
 
     /// `timed_run`, with `clear` high on the cycles in `clears`, the
     /// pair handed to `setup` before the run, so that a test can start a
@@ -1748,16 +1780,16 @@ mod tests {
             { vga::VBP },
             10,
         >;
-        type P = LinePair<
-            { vga::HV },
-            10,
-            { vga::VV },
-            525,
-            4096,
-            0x4000_0000,
-            0x8000_0000,
-            DefaultClock,
-        >;
+        type P = LinePair![
+            LEN = vga::HV,
+            COL = 10,
+            ROWS = vga::VV,
+            TOTAL = 525,
+            STRIDE = 4096,
+            LO = 0x4000_0000,
+            HI = 0x8000_0000,
+            Domain = DefaultClock
+        ];
         let mut raster = R::default();
         let mut pair = P::default();
         let (col_o, col) = signal::<U<10>, DefaultClock>();

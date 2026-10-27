@@ -36,54 +36,57 @@
 //! this one, `dreq` and `dans` in `cpu/vreteno/src/board.rs`, which
 //! carry the debug transport's accesses from the cable's clock to the
 //! board's and its answers back.
-use txhdl::comp::{join2, Clock, Mem, Reg, Rx, Tx, Unit};
+use txhdl::comp::{join2, Clock, Data, IsData, Mem, Reg, Rx, Tx, Unit};
 use txhdl::types::{Transaction, Value, U};
 use txhdl::{lower, with, Trace};
 
-/// A channel of `D` words of `T` from clock `W` to clock `R`.
+/// A channel of `DEPTH` words of `Data` from clock `WriteClock` to clock
+/// `ReadClock`.
 ///
-/// `AW` is the address width, `D` is `1 << AW`, and `PW` is `AW + 1`,
-/// the width of the pointers. All three are stated because an
+/// `ADDR` is the address width, `DEPTH` is `1 << ADDR`, and `PTRS` is
+/// `ADDR + 1`, the width of the pointers. All three are stated because an
 /// expression in a const parameter's position needs nightly Rust,
-/// which is the same reason [`crate::fifo::Fifo`] takes both `AW` and
-/// `D`.
+/// which is the same reason [`crate::fifo::Fifo`] takes both `ADDR` and
+/// `DEPTH`.
 // begin{state}
+#[txhdl::named_type_params(reuse(Data))]
 #[derive(Trace)]
 pub struct ChanCdc<
-    T: Transaction + Value,
-    const AW: usize,
-    const D: usize,
-    const PW: usize,
-    W: Clock,
-    R: Clock,
+    Data: Transaction + Value,
+    const ADDR: usize,
+    const DEPTH: usize,
+    const PTRS: usize,
+    WriteClock: Clock,
+    ReadClock: Clock,
 > {
-    /// The words. Written on `W`, read on `R`, as a dual-port memory.
-    pub mem: Mem<T, D, W>,
+    /// The words. Written on `WriteClock`, read on `ReadClock`, as a
+    /// dual-port memory.
+    pub mem: Mem<Data, DEPTH, WriteClock>,
     /// Where the next word lands, in binary, on the writing clock.
-    pub wbin: Reg<U<PW>, W>,
+    pub wbin: Reg<U<PTRS>, WriteClock>,
     /// The same pointer Gray coded, which is what the other side
     /// samples.
-    pub wgray: Reg<U<PW>, W>,
+    pub wgray: Reg<U<PTRS>, WriteClock>,
     /// The reading side's Gray pointer, caught once on the writing
     /// clock. Possibly mid-change, which is what the second flop is
     /// for.
     #[async_reg]
-    pub rgray_w1: Reg<U<PW>, W>,
+    pub rgray_w1: Reg<U<PTRS>, WriteClock>,
     /// The same, a cycle later and settled: the one the writing side
     /// reads.
     #[async_reg]
-    pub rgray_w2: Reg<U<PW>, W>,
+    pub rgray_w2: Reg<U<PTRS>, WriteClock>,
     /// Where the oldest word is, in binary, on the reading clock.
-    pub rbin: Reg<U<PW>, R>,
+    pub rbin: Reg<U<PTRS>, ReadClock>,
     /// The same pointer Gray coded.
-    pub rgray: Reg<U<PW>, R>,
+    pub rgray: Reg<U<PTRS>, ReadClock>,
     /// The writing side's Gray pointer, caught once on the reading
     /// clock.
     #[async_reg]
-    pub wgray_r1: Reg<U<PW>, R>,
+    pub wgray_r1: Reg<U<PTRS>, ReadClock>,
     /// The same, settled: the one the reading side reads.
     #[async_reg]
-    pub wgray_r2: Reg<U<PW>, R>,
+    pub wgray_r2: Reg<U<PTRS>, ReadClock>,
 }
 // end{state}
 
@@ -97,7 +100,7 @@ impl<
         const PW: usize,
         W: Clock,
         R: Clock,
-    > Default for ChanCdc<T, AW, D, PW, W, R>
+    > Default for ChanCdc<Data<T>, AW, D, PW, WriteClock<W>, ReadClock<R>>
 {
     fn default() -> Self {
         ChanCdc {
@@ -122,7 +125,8 @@ impl<
         const PW: usize,
         W: Clock,
         R: Clock,
-    > Unit<Rx<T, W>, Tx<T, R>> for ChanCdc<T, AW, D, PW, W, R>
+    > Unit<Rx<T, W>, Tx<T, R>>
+    for ChanCdc<Data<T>, AW, D, PW, WriteClock<W>, ReadClock<R>>
 {
     async fn run(&mut self, inp: Rx<T, W>, out: Tx<T, R>) {
         join2(
@@ -193,7 +197,14 @@ mod tests {
         const NAME: &'static str = "clk_r";
         const PERIOD: u64 = 6;
     }
-    type Cdc = ChanCdc<U<8>, 4, 16, 5, ClkW, ClkR>;
+    type Cdc = ChanCdc![
+        Data = U<8>,
+        ADDR = 4,
+        DEPTH = 16,
+        PTRS = 5,
+        WriteClock = ClkW,
+        ReadClock = ClkR,
+    ];
 
     const STAGES: [&str; 4] = ["rgray_w1", "rgray_w2", "wgray_r1", "wgray_r2"];
 

@@ -5,14 +5,19 @@
 //! every cycle. The table is the pointers and the full bit per cycle;
 //! the netlist is checked against this run.
 use txhdl::comp::trace::{stop, Wave};
+use txhdl::comp::Data;
 use txhdl::comp::{chan, now, DefaultClock, Running, Unit};
 use txhdl::types::U;
 use txhdl_parts::fifo::Fifo;
+use txhdl_parts::Fifo;
+
+/// Four words of eight bits.
+type Queue4 = Fifo![Data = U<8>, PTRS = 2, DEPTH = 4];
 
 fn main() {
     let (tx, a_rx) = chan::<U<8>, DefaultClock>();
     let (b_tx, rx) = chan::<U<8>, DefaultClock>();
-    let mut fifo = Fifo::<U<8>, 2, 4>::default();
+    let mut fifo = Queue4::default();
     let (head, tail, full) = (fifo.head, fifo.tail, fifo.full);
     if let Some(mut w) = Wave::from_env() {
         w.clock::<DefaultClock>();
@@ -48,6 +53,6 @@ fn main() {
         );
     }
     stop();
-    txhdl::netlist::write_vhdl_from_env(&Fifo::<U<8>, 2, 4>::lowered("queue4"));
-    print!("\n{}", Fifo::<U<8>, 2, 4>::verilog("queue4"));
+    txhdl::netlist::write_vhdl_from_env(&Queue4::lowered("queue4"));
+    print!("\n{}", Queue4::verilog("queue4"));
 }

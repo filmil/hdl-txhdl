@@ -11,46 +11,47 @@
 //! two thirds, a grey ramp under them, and a white border.
 use txhdl_parts::hdmi::{vga, Hdmi, I2cInit, FB_WORDS};
 use txhdl_parts::scanout::ScanVideo;
+use txhdl_parts::{Hdmi, I2cInit, ScanVideo};
 
 /// The framebuffer is 160 by 120, a framebuffer pixel 4 by 4.
-type Video = Hdmi<
-    { vga::HV },
-    { vga::HFP },
-    { vga::HSW },
-    { vga::HBP },
-    { vga::VV },
-    { vga::VFP },
-    { vga::VSW },
-    { vga::VBP },
-    2,
->;
+type Video = Hdmi![
+    H_ACTIVE = vga::HV,
+    H_FRONT = vga::HFP,
+    H_SYNC = vga::HSW,
+    H_BACK = vga::HBP,
+    V_ACTIVE = vga::VV,
+    V_FRONT = vga::VFP,
+    V_SYNC = vga::VSW,
+    V_BACK = vga::VBP,
+    SHIFT = 2
+];
 
 /// The same peripheral with a scanout beside it: a line is 640 words,
 /// a column ten bits, a frame 525 rows and a line 4096 bytes apart in
 /// memory, the 1024 words of Razboj's row, of which the first 640 are
 /// shown (issue 985). The frame is in the board's memory, the gigabyte
 /// from `0x4000_0000`, and no line outside it is fetched (issue 1382).
-type Scan = ScanVideo<
-    { vga::HV },
-    { vga::HFP },
-    { vga::HSW },
-    { vga::HBP },
-    { vga::VV },
-    { vga::VFP },
-    { vga::VSW },
-    { vga::VBP },
-    2,
-    10,
-    525,
-    4096,
-    0x4000_0000,
-    0x8000_0000,
->;
+type Scan = ScanVideo![
+    H_ACTIVE = vga::HV,
+    H_FRONT = vga::HFP,
+    H_SYNC = vga::HSW,
+    H_BACK = vga::HBP,
+    V_ACTIVE = vga::VV,
+    V_FRONT = vga::VFP,
+    V_SYNC = vga::VSW,
+    V_BACK = vga::VBP,
+    SHIFT = 2,
+    COL = 10,
+    TOTAL = 525,
+    STRIDE = 4096,
+    LO = 0x4000_0000,
+    HI = 0x8000_0000
+];
 
 /// A quarter of an I2C bit is 63 cycles of 25.2 MHz, so a bit is at
 /// 100 kHz; the reset, and the wait after it, are 2 520 000 cycles,
 /// a tenth of a second each.
-type Master = I2cInit<63, 2_520_000>;
+type Master = I2cInit![DIV = 63, HOLD = 2_520_000];
 
 /// The colour of the test picture at a framebuffer pixel, as 12 bits.
 fn picture(x: usize, y: usize) -> u128 {

@@ -5,12 +5,12 @@
 A channel is a buffer of two. Where a unit's output needs more room
 than that, because the unit behind it takes in bursts or holds off
 for a while, \code{Fifo} in \code{txhdl\_parts} is the depth: a
-channel in, a channel out, and \code{D} words between, \code{D} a
-power of two stated with its address width \code{AW}. A word is
+channel in, a channel out, and \code{DEPTH} words between, a
+power of two stated with its address width \code{PTRS}. A word is
 taken from the input whenever there is room and the oldest word is
 offered on the output whenever there is one, so a word is visible the
 cycle after it entered; the pointers are a head and a tail of
-\code{AW} bits with a full bit to tell full from empty. The part is
+\code{PTRS} bits with a full bit to tell full from empty. The part is
 written in the lowered subset, as every part is, and its test in the
 crate runs it against a queue through three hundred cycles.
 

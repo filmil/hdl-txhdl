@@ -42,6 +42,7 @@ use txhdl_parts::bus::wb::AxiWb;
 use txhdl_parts::bus::wb::WbMaster;
 use txhdl_parts::dma::{LineFetch, LineStore};
 use txhdl_parts::{AxiHost, AxiPer};
+use txhdl_parts::{LineFetch, LineStore};
 
 const ADDR: usize = 32;
 const IDB: usize = 2;
@@ -96,7 +97,12 @@ fn main() {
     let mut r_per =
         <AxiPer![ADDR = ADDR, DATA = 32, STRB = 4, ID = IDB]>::default();
     let mut r_bridge = AxiWb::<ADDR, IDB, AW>::default();
-    let mut fetch = LineFetch::<ADDR, IDB, BEATS, 16>::default();
+    let mut fetch = <LineFetch![
+        ADDR = ADDR,
+        ID = IDB,
+        BEATS = BEATS,
+        COUNT = 16
+    ]>::default();
 
     // The writing stack: a store engine, its own bridge, its own
     // memory, and a source of words.
@@ -131,7 +137,12 @@ fn main() {
     let mut w_per =
         <AxiPer![ADDR = ADDR, DATA = 32, STRB = 4, ID = IDB]>::default();
     let mut w_bridge = AxiWb::<ADDR, IDB, AW>::default();
-    let mut store = LineStore::<ADDR, IDB, BEATS, 16>::default();
+    let mut store = <LineStore![
+        ADDR = ADDR,
+        ID = IDB,
+        BEATS = BEATS,
+        COUNT = 16
+    ]>::default();
 
     if let Some(mut wv) = Wave::from_env() {
         wv.clock::<DefaultClock>();

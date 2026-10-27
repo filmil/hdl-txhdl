@@ -8,6 +8,7 @@
 //! reaches as frames on the Ethernet port with a program in this file
 //! answering them. Its netlist is checked in `board_netlist.rs`.
 use std::collections::{HashMap, VecDeque};
+use txhdl::comp::Domain;
 use txhdl::comp::{
     chan, join2, pad, set_reset, signal, Clock, DefaultClock, In, Out, Running,
     Rx, Tx, Unit,
@@ -24,8 +25,8 @@ use txhdl_parts::remote::eth::{FRAME_LEN, KIND_ANSWER, KIND_ASK};
 use txhdl_parts::scanout::LinePair;
 use txhdl_parts::sd::SdCard;
 use txhdl_parts::spi::FlashDevice;
-use txhdl_parts::LiteW;
 use txhdl_parts::{Addr, R, W};
+use txhdl_parts::{LinePair, LiteW};
 use vreteno32::board::{
     Board, BoardIn, BoardMap, BoardOut, Bscan, Ddr3Pins, JtagAnswers, SlotMap,
     SysIn, SysOut, REMOTE_DEV,
@@ -572,8 +573,16 @@ const SCAN_LINE: u64 = 3200;
 /// four visible rows of six. The frame's memory is the board's, the
 /// gigabyte from `0x4000_0000`, unless a run gives another (issue
 /// 1382).
-type ScanPair<const LO: usize, const HI: usize> =
-    LinePair<640, 10, 4, 6, 4096, LO, HI, Pix>;
+type ScanPair<const LO: usize, const HI: usize> = LinePair![
+    LEN = 640,
+    COL = 10,
+    ROWS = 4,
+    TOTAL = 6,
+    STRIDE = 4096,
+    LO = LO,
+    HI = HI,
+    Domain = Pix
+];
 
 /// The pixel clock: one edge in four of the board's, 25 MHz to its 100,
 /// as the flagship's 25.2 MHz is to its 100 (issue 1523). The pair runs
