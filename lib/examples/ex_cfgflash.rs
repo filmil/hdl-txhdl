@@ -30,6 +30,7 @@ use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::cfgflash::CfgFlash;
 use txhdl_parts::flashwin::FlashWin;
 use txhdl_parts::spi::{regs, FlashDevice, Spi, SpiLines};
+use txhdl_parts::FlashWin;
 use txhdl_parts::{AxiHost, AxiPer, Host, PerPort};
 
 /// The master's link: its host, and the bridge with the master at
@@ -133,7 +134,7 @@ fn main() {
         <AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4]>::default();
     let mut wper_unit =
         <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = 2]>::default();
-    let mut win = FlashWin::<DIV, 2>::default();
+    let mut win = <FlashWin![DIV = DIV, ID = 2]>::default();
     let mut flash = CfgFlash::<GUARD>::default();
 
     if let Some(mut wave) = Wave::from_env() {

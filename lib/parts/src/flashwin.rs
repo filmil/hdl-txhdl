@@ -40,9 +40,10 @@ use crate::bus::axi::{Answer, PerPort, Resp, R};
 // begin{state}
 /// The window. `DIV` sets the clock: a half of a bit takes `DIV + 1`
 /// cycles, so the flash is clocked at the system's rate over
-/// `2 * (DIV + 1)`. `I` is the width of the AXI identifier.
+/// `2 * (DIV + 1)`. `ID` is the width of the AXI identifier.
+#[txhdl::named_type_params]
 #[derive(Trace, Default)]
-pub struct FlashWin<const DIV: usize, const I: usize> {
+pub struct FlashWin<const DIV: usize, const ID: usize> {
     /// A read is on the wires.
     pub busy: Reg<Bit>,
     /// Cycles since the clock last turned, which is the same shape
@@ -64,14 +65,14 @@ pub struct FlashWin<const DIV: usize, const I: usize> {
     /// The word being built from the four bytes as they arrive.
     pub word: Reg<U<32>>,
     /// The identifier that answers this read.
-    pub rid: Reg<U<I>>,
+    pub rid: Reg<U<ID>>,
     /// Whether an answer is waiting for room on the channel.
     pub ready: Reg<Bit>,
     /// A write taken and waiting for its beat. The window is read
     /// only, so the beat is dropped and the answer is an error.
     pub wpend: Reg<U<1>>,
     /// The identifier that write is answered under.
-    pub wid: Reg<U<I>>,
+    pub wid: Reg<U<ID>>,
     /// The beats of a read burst left after the word being read: each
     /// is a fast read of its own at the next word (issue 1208).
     pub rleft: Reg<U<8>>,
@@ -271,7 +272,7 @@ mod tests {
         ]>::default();
         let mut per_unit =
             <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = 2]>::default();
-        let mut win = FlashWin::<1, 2>::default();
+        let mut win = <FlashWin![DIV = 1, ID = 2]>::default();
         let got = Rc::new(Cell::new(None));
         let seen = got.clone();
         let client = async move {
@@ -333,7 +334,7 @@ mod tests {
         ]>::default();
         let mut per_unit =
             <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = 2]>::default();
-        let mut win = FlashWin::<1, 2>::default();
+        let mut win = <FlashWin![DIV = 1, ID = 2]>::default();
         let got = Rc::new(Cell::new(None));
         let seen = got.clone();
         let client = async move {

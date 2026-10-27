@@ -66,13 +66,14 @@ pub const CAUSE_SOFTWARE: u32 = regs::cause_software.mask();
 // begin{state}
 /// The system control block.
 ///
-/// `ID` and `VERSION` say what the design is. `STAMP0` and `STAMP1`
+/// `DESIGN` and `VERSION` say what the design is. `STAMP0` and `STAMP1`
 /// are two words a build puts in, a commit and a date for instance.
 /// `KEY` is the word that has to be written to `reset` for a reset to
 /// happen, so that a wild store does not restart the machine.
+#[txhdl::named_type_params]
 #[derive(Trace, Default)]
 pub struct Syscon<
-    const ID: usize,
+    const DESIGN: usize,
     const VERSION: usize,
     const STAMP0: usize,
     const STAMP1: usize,

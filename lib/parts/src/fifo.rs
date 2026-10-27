@@ -2,7 +2,9 @@
 //! A FIFO with a channel at each end: the depth a channel's own
 //! buffer of two does not have, for a unit whose consumer takes in
 //! bursts or holds off.
-use txhdl::comp::{mux, Clock, DefaultClock, Mem, Reg, Rx, Tx, Unit};
+use txhdl::comp::{
+    mux, Clock, Data, DefaultClock, IsData, Mem, Reg, Rx, Tx, Unit,
+};
 use txhdl::types::{Bit, Transaction, Value, U};
 use txhdl::{lower, with, Trace};
 
@@ -14,19 +16,24 @@ use txhdl::{lower, with, Trace};
 /// offered the step after, so the latency is one cycle; `full`
 /// holds the input off, and the output's `ready` is the channel's.
 /// Written in the lowered subset, so it is a netlist too.
-#[derive(Trace, Default)]
 ///
-/// `T` is what it carries, `AW` the width of its pointers, and `D`
-/// how many words it holds, which must be `1 << AW`. `D` is stated
+/// `Data` is what it carries, `PTRS` the width of its pointers, and
+/// `DEPTH` how many words it holds, which must be `1 << PTRS`. `D` is stated
 /// rather than computed because an expression in a const parameter's
 /// position needs nightly Rust.
-pub struct Fifo<T: Transaction + Value, const AW: usize, const D: usize> {
-    /// The words, `D` of them.
-    pub mem: Mem<T, D>,
+#[txhdl::named_type_params(reuse(Data))]
+#[derive(Trace, Default)]
+pub struct Fifo<
+    Data: Transaction + Value,
+    const PTRS: usize,
+    const DEPTH: usize,
+> {
+    /// The words, `DEPTH` of them.
+    pub mem: Mem<Data, DEPTH>,
     /// Where the oldest word is: what the output offers.
-    pub head: Reg<U<AW>>,
+    pub head: Reg<U<PTRS>>,
     /// Where the next word to arrive lands.
-    pub tail: Reg<U<AW>>,
+    pub tail: Reg<U<PTRS>>,
     /// The pointers are equal when the FIFO is empty and when it is
     /// full; this says which.
     pub full: Reg<Bit>,
@@ -34,7 +41,7 @@ pub struct Fifo<T: Transaction + Value, const AW: usize, const D: usize> {
 
 #[lower]
 impl<T: Transaction + Value, const AW: usize, const D: usize> Unit
-    for Fifo<T, AW, D>
+    for Fifo<Data<T>, AW, D>
 {
     async fn run(&mut self, inp: Rx<T>, out: Tx<T>) {
         loop {
@@ -68,14 +75,14 @@ impl<T: Transaction + Value, const AW: usize, const D: usize> Unit
 mod tests {
     use super::Fifo;
     use std::collections::VecDeque;
-    use txhdl::comp::{chan, DefaultClock, Running, Unit};
+    use txhdl::comp::{chan, Data, DefaultClock, Running, Unit};
     use txhdl::types::U;
 
     #[test]
     fn fifo_keeps_every_word_in_order() {
         let (tx, a_rx) = chan::<U<8>, DefaultClock>();
         let (b_tx, rx) = chan::<U<8>, DefaultClock>();
-        let mut fifo = Fifo::<U<8>, 2, 4>::default();
+        let mut fifo = <Fifo![Data = U<8>, PTRS = 2, DEPTH = 4]>::default();
         let (full, head, tail) = (fifo.full, fifo.head, fifo.tail);
         let mut sim = Running::new(fifo.run(a_rx, b_tx));
         let mut sent: VecDeque<u8> = VecDeque::new();

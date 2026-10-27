@@ -23,6 +23,7 @@ use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::hdmi::VideoOut;
 use txhdl_parts::hdmi::{regs, Hdmi, I2cDevice, I2cInit, SII9134_WRITES};
 use txhdl_parts::AxiHost;
+use txhdl_parts::{Hdmi, I2cInit};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
 /// identifiers, four of them.
@@ -41,12 +42,22 @@ impl AddrMap<1> for VideoMap {
 
 /// The mode: 16 visible columns, 2 of front porch, 3 of sync and 3 of
 /// back porch; 12 visible rows, 1, 2 and 2; a framebuffer pixel 2 by 2.
-type Video = Hdmi<16, 2, 3, 3, 12, 1, 2, 2, 1>;
+type Video = Hdmi![
+    H_ACTIVE = 16,
+    H_FRONT = 2,
+    H_SYNC = 3,
+    H_BACK = 3,
+    V_ACTIVE = 12,
+    V_FRONT = 1,
+    V_SYNC = 2,
+    V_BACK = 2,
+    SHIFT = 1
+];
 const COLS: usize = 8;
 const ROWS: usize = 6;
 
 /// The I2C master: a quarter bit of four cycles, and a reset of ten.
-type Master = I2cInit<4, 10>;
+type Master = I2cInit![DIV = 4, HOLD = 10];
 
 /// The peripheral's words, at the offsets its map states, from where
 /// the bridge puts it.

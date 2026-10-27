@@ -150,16 +150,17 @@ pub struct VideoOut {
 /// The chip's inputs are registers: the pixel read at the edge from the
 /// framebuffer, and the syncs and the enable delayed to meet it.
 // begin{state}
+#[txhdl::named_type_params]
 #[derive(Trace, Default)]
 pub struct Hdmi<
-    const HV: usize,
-    const HFP: usize,
-    const HSW: usize,
-    const HBP: usize,
-    const VV: usize,
-    const VFP: usize,
-    const VSW: usize,
-    const VBP: usize,
+    const H_ACTIVE: usize,
+    const H_FRONT: usize,
+    const H_SYNC: usize,
+    const H_BACK: usize,
+    const V_ACTIVE: usize,
+    const V_FRONT: usize,
+    const V_SYNC: usize,
+    const V_BACK: usize,
     const SHIFT: usize,
 > {
     /// The framebuffer.
@@ -313,21 +314,22 @@ impl<
 /// and across a reset.
 ///
 /// Every output is a register or a function of registers, so it is
-/// this step's whatever reads it. `col` is the column's low `AW` bits,
+/// this step's whatever reads it. `col` is the column's low `COL` bits,
 /// `vis` the visible part, `line` the first column of every row,
 /// `row` the row, and `frame` the first column of the first row after
 /// the visible ones, where a new frame's base is taken.
+#[txhdl::named_type_params]
 #[derive(Trace, Default)]
 pub struct Raster<
-    const HV: usize,
-    const HFP: usize,
-    const HSW: usize,
-    const HBP: usize,
-    const VV: usize,
-    const VFP: usize,
-    const VSW: usize,
-    const VBP: usize,
-    const AW: usize,
+    const H_ACTIVE: usize,
+    const H_FRONT: usize,
+    const H_SYNC: usize,
+    const H_BACK: usize,
+    const V_ACTIVE: usize,
+    const V_FRONT: usize,
+    const V_SYNC: usize,
+    const V_BACK: usize,
+    const COL: usize,
 > {
     /// The column, as [`Hdmi`]'s `hc`.
     pub hc: Reg<U<12>>,
@@ -467,6 +469,7 @@ fn table_byte(e: U<3>, b: U<2>) -> U<8> {
 /// as the clock is pulled low.
 /// Its last wait never returns, since `written` stays up.
 // begin{i2cstate}
+#[txhdl::named_type_params]
 #[derive(Trace, Default)]
 pub struct I2cInit<const DIV: usize, const HOLD: usize> {
     /// Cycles into the quarter.
@@ -739,7 +742,17 @@ mod tests {
     /// A tiny mode: 8 by 6 visible, 2 of front porch, 3 of sync and 3
     /// of back porch across, 1, 2 and 2 down; each framebuffer pixel is
     /// 2 by 2 on the screen, so the framebuffer is 4 by 3.
-    type Tiny = Hdmi<8, 2, 3, 3, 6, 1, 2, 2, 1>;
+    type Tiny = Hdmi![
+        H_ACTIVE = 8,
+        H_FRONT = 2,
+        H_SYNC = 3,
+        H_BACK = 3,
+        V_ACTIVE = 6,
+        V_FRONT = 1,
+        V_SYNC = 2,
+        V_BACK = 2,
+        SHIFT = 1
+    ];
 
     #[test]
     fn the_raster_is_where_the_mode_puts_it() {
@@ -793,7 +806,7 @@ mod tests {
         let (sdal_out, sdal) = signal::<Bit, DefaultClock>();
         let (done_out, done) = signal::<Bit, DefaultClock>();
         let (fail_out, fail) = signal::<Bit, DefaultClock>();
-        let mut master = I2cInit::<3, 5>::default();
+        let mut master = <I2cInit![DIV = 3, HOLD = 5]>::default();
         let mut sim = Running::new(join2(
             master
                 .run(sda_in, (rst_out, scl_out, sdal_out, done_out, fail_out)),
