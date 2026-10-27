@@ -70,7 +70,8 @@ pub(crate) fn named_type_params(
     }) else {
         return err(
             Span::call_site(),
-            "`#[named_type_params]` goes on a struct",
+            "`#[named_type_params]` goes on a struct, or on a type alias of \
+             const parameters",
         );
     };
     if is_ident(&toks[kw], "type") {
@@ -79,7 +80,8 @@ pub(crate) fn named_type_params(
     if !is_ident(&toks[kw], "struct") {
         return err(
             toks[kw].span(),
-            "`#[named_type_params]` goes on a struct, not an enum or a union",
+            "`#[named_type_params]` goes on a struct or a type alias, not an \
+             enum or a union",
         );
     }
     // What comes before `struct`: attributes, doc comments, and the
@@ -329,6 +331,13 @@ fn alias(
         Ok(p) => p,
         Err(e) => return e,
     };
+    if params.is_empty() {
+        return err(
+            name.span(),
+            "`#[named_type_params]` names const parameters, and this alias \
+             has none",
+        );
+    }
     if let Some(Param::Type(t)) =
         params.iter().find(|p| matches!(p, Param::Type(_)))
     {
