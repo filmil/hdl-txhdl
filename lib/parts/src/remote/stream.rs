@@ -167,10 +167,14 @@ impl Unit for BeatMaster {
             let head = ask.head();
             let take = !busy & !answering & ask.peek().is_some();
             let _ = ask.recv_if(take);
-            let repeat =
-                self.have_last.get() & (head.tag == self.last_tag.get());
+            // A no-op is never a repeat: answered as one, it would bring
+            // back the kept answer, an error included, at the start of a
+            // run.
+            let repeat = self.have_last.get()
+                & (head.tag == self.last_tag.get())
+                & !head.noop;
             let start = take & !repeat & !head.noop;
-            let noop = take & !repeat & head.noop;
+            let noop = take & head.noop;
             let send_aw = busy & writing & !addr_sent & aw.ready();
             let send_w = busy & writing & !data_sent & w.ready();
             let send_ar = busy & !writing & !addr_sent & ar.ready();
@@ -331,6 +335,10 @@ impl<const DEV: usize> Unit for StreamLink<DEV> {
                 | (got == 13) & (value != U::<8>::from(0xb6u8))
                 | (got == 14) & (value != U::<8>::from(KIND_STREAM_ASK))
                 | (got == 15) & (value != dev);
+            // As HostLink's: a frame that ends by byte 43 is not a whole
+            // ask, since the strobe's last byte is held a cycle after
+            // it arrives. The MAC pads every frame to sixty bytes, so a
+            // real ask always goes on past it.
             let short = took & inb.last & (got < STREAM_FRAME_LEN);
             let ends = took & inb.last;
             let asking = ends & !alien & !bad & !short & ask.ready();
@@ -680,12 +688,30 @@ mod tests {
             vec![
                 (5, 9, 0, false),
                 (5, 10, BEAT, false),
-                (5, 10, BEAT, false),
+                (5, 10, 0, false),
                 (5, 11, !BEAT, false)
             ],
-            "a no-op that repeats the kept tag is answered as the repeat"
+            "a no-op on the kept tag is a no-op, not the repeat"
         );
         assert_eq!(seen.borrow().reads, vec![0x200, 0x200]);
         assert!(seen.borrow().writes.is_empty());
+    }
+
+    #[test]
+    fn a_noop_on_a_failed_transfers_tag_does_not_bring_back_the_error() {
+        // The last run ended on a refused read under tag 4; the next
+        // run's no-op happens to draw tag 4.
+        let (got, _) = serve(
+            &[
+                ask_frame(5, 4, false, 0x2000, 0, 0),
+                noop_frame(4),
+                ask_frame(5, 5, false, 0x200, 0, 0),
+            ],
+            vec![BEAT],
+        );
+        assert_eq!(
+            got,
+            vec![(5, 4, 0, true), (5, 4, 0, false), (5, 5, BEAT, false)]
+        );
     }
 }
