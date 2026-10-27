@@ -10,6 +10,7 @@ load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
 load("@rules_rust//rust:defs.bzl", "rust_binary")
 load(
     "@rules_vivado//build/vivado:rules.bzl",
+    "vivado_ip",
     "vivado_program_device",
 )
 load("//tools/vivado:defs.bzl", "vivado_place_and_route2", "vivado_synthesis2")
@@ -32,6 +33,63 @@ genrule(
     outs = ["hostlink.v"],
     cmd = "$(location :netlist) > $@",
     tools = [":netlist"],
+)
+
+# The Verilog of `rocket_link`: EthShare, HostBridge and StreamBridge
+# joined, the Rocket design's host link (issue 1988).
+rust_binary(
+    name = "rocket_netlist",
+    srcs = ["rocket_netlist.rs"],
+    edition = "2021",
+    proc_macro_deps = ["//lib:txhdl_macros"],
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+)
+
+genrule(
+    name = "rocket_link_v",
+    outs = ["rocket_link.v"],
+    cmd = "$(location :rocket_netlist) > $@",
+    tools = [":rocket_netlist"],
+)
+
+# The Rocket design's memory (issue 1988). FPGATop's mem_0 port is AXI4
+# with 64-bit data, 16-bit IDs and a 30-bit address. The MIG is
+# //ddr3's ddr3_mig_axi with its AXI port at those widths (the MIG
+# upsizes to its 256-bit native port inside); mig/rocket_mig.prj differs
+# from ddr3/mig/ddr3_mig_axi.prj in those two widths and the module name
+# alone. Manual, as every Vivado target is.
+vivado_ip(
+    name = "rocket_mig",
+    config = {"XML_INPUT_FILE": "data:rocket_mig.prj"},
+    data = ["mig/rocket_mig.prj"],
+    part = "xc7a200tfbg484-2",
+    tags = ["manual"],
+    vlnv = "xilinx.com:ip:mig_7series:4.2",
+)
+
+# mem_0 from the simulator's 50 MHz to the MIG's 100 MHz user clock.
+vivado_ip(
+    name = "rocket_mem_cc",
+    config = {
+        "PROTOCOL": "AXI4",
+        "READ_WRITE_MODE": "READ_WRITE",
+        "ADDR_WIDTH": "30",
+        "DATA_WIDTH": "64",
+        "ID_WIDTH": "16",
+        "AWUSER_WIDTH": "0",
+        "ARUSER_WIDTH": "0",
+        "RUSER_WIDTH": "0",
+        "WUSER_WIDTH": "0",
+        "BUSER_WIDTH": "0",
+        "ACLK_ASYNC": "1",
+        "SYNCHRONIZATION_STAGES": "3",
+    },
+    part = "xc7a200tfbg484-2",
+    tags = ["manual"],
+    vlnv = "xilinx.com:ip:axi_clock_converter:2.1",
 )
 
 # GCD through Golden Gate for the Nitefury II platform config, which this
@@ -90,6 +148,47 @@ vivado_place_and_route2(
     name = "gcd_eth_pnr",
     synthesis = ":gcd_eth_synth",
     xdcs = [":xdc"],
+    tags = ["manual"],
+)
+
+# FireSim's Rocket design on the board (issue 1988): the prebuilt
+# design from bazel_rules_firesim, the host link with the stream port,
+# and the target's DRAM on the MIG. Manual:
+#
+#   bazel build //firesim/ax7a200b:rocket_eth_pnr
+filegroup(
+    name = "rocket_xdc",
+    srcs = [
+        "ax7a200b_rocket.xdc",
+        "//cpu/vreteno:board/ax7a200_ddr3.xdc",
+        "//eth:echo_xdc",
+    ],
+)
+
+vivado_synthesis2(
+    name = "rocket_eth_synth",
+    srcs = [
+        ":rocket_link_v",
+        "@firesim_rocket_nitefury//:sv",
+        "//eth:mac_v",
+        "//eth:eth_rgmii",
+        "//lib/board:chan_cdc",
+        "rocket_eth_top.v",
+    ],
+    part = "xc7a200tfbg484-2",
+    top = "rocket_eth_top",
+    xdcs = [":rocket_xdc"],
+    deps = [
+        ":rocket_mem_cc",
+        ":rocket_mig",
+    ],
+    tags = ["manual"],
+)
+
+vivado_place_and_route2(
+    name = "rocket_eth_pnr",
+    synthesis = ":rocket_eth_synth",
+    xdcs = [":rocket_xdc"],
     tags = ["manual"],
 )
 
