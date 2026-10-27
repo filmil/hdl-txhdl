@@ -92,16 +92,13 @@ module rocket_eth_top (
   wire rx_clk;
   (* ASYNC_REG = "TRUE" *) reg [1:0] rx_rst_sync = 2'b11;
   (* ASYNC_REG = "TRUE" *) reg [1:0] tx_rst_sync = 2'b11;
-  (* ASYNC_REG = "TRUE" *) reg [1:0] h_rst_sync = 2'b11;
   (* ASYNC_REG = "TRUE" *) reg [1:0] sim_rst_sync = 2'b11;
   always @(posedge rx_clk) rx_rst_sync <= {rx_rst_sync[0], ~locked};
   always @(posedge clk125) tx_rst_sync <= {tx_rst_sync[0], ~locked};
-  always @(posedge clk50) h_rst_sync <= {h_rst_sync[0], ~locked};
   always @(posedge clk50)
     sim_rst_sync <= {sim_rst_sync[0], ~locked | ~calib | ui_rst};
   wire rx_rst = rx_rst_sync[1];
   wire tx_rst = tx_rst_sync[1];
-  wire h_rst = h_rst_sync[1];
   wire sim_rst = sim_rst_sync[1];
   reg ui_aresetn = 1'b0;
   always @(posedge ui_clk) ui_aresetn <= ~ui_rst;
@@ -129,7 +126,7 @@ module rocket_eth_top (
     .rx_data(rx_data), .rx_valid(rx_valid), .rx_ready(rx_ready)
   );
   chan_cdc #(.W(9), .AW(4)) rx_cross (
-    .wr_rst(rx_rst), .rd_rst(h_rst),
+    .wr_rst(rx_rst), .rd_rst(sim_rst),
     .wr_clk(rx_clk), .wr_data(rx_data), .wr_valid(rx_valid),
     .wr_ready(rx_ready),
     .rd_clk(clk50), .rd_data(h_rx_data), .rd_valid(h_rx_valid),
@@ -158,8 +155,11 @@ module rocket_eth_top (
   wire [134:0] s_r;
   wire s_aw_valid, s_aw_ready, s_ar_valid, s_ar_ready, s_w_valid, s_w_ready;
   wire s_b_valid, s_b_ready, s_r_valid, s_r_ready;
+  // The link waits for the simulator's reset too, so no frame becomes a
+  // transaction on a port of FPGATop while it is held in reset; the
+  // driver sends again what is lost meanwhile.
   rocket_link link (
-    .clk(clk50), .rst(h_rst),
+    .clk(clk50), .rst(sim_rst),
     .rx_data(h_rx_data), .rx_valid(h_rx_valid), .rx_ready(h_rx_ready),
     .tx_data(h_tx_data), .tx_valid(h_tx_valid), .tx_ready(h_tx_ready),
     .bus_aw_data(c_aw), .bus_aw_valid(c_aw_valid), .bus_aw_ready(c_aw_ready),
@@ -496,7 +496,7 @@ module rocket_eth_top (
   wire [8:0] tx_data;
   wire tx_valid, tx_ready;
   chan_cdc #(.W(9), .AW(4)) tx_cross (
-    .wr_rst(h_rst), .rd_rst(tx_rst),
+    .wr_rst(sim_rst), .rd_rst(tx_rst),
     .wr_clk(clk50), .wr_data(h_tx_data), .wr_valid(h_tx_valid),
     .wr_ready(h_tx_ready),
     .rd_clk(clk125), .rd_data(tx_data), .rd_valid(tx_valid),
