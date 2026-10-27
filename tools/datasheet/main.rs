@@ -67,11 +67,11 @@ use txhdl_parts::tracer::Tracer;
 use txhdl_parts::trng::{Entropy, Trng};
 use txhdl_parts::udprx::UdpRx;
 use txhdl_parts::wdog::Wdog;
+use txhdl_parts::AxiWb;
 use txhdl_parts::{
     AxiHost, AxiPer, AxiPerPins, AxiPins, HostBridge, Mesh, Node, PerBridge,
     Switch, R,
 };
-use txhdl_parts::{AxiWb, ExMon};
 use txhdl_parts::{
     ChanCdc, DtmBridge, ExMon, Fifo, FlashWin, Hdmi, I2cInit, LineBuf,
     LineFetch, LinePair, LineStore, LiteBridge, LiteSplit, ScanFetch,
