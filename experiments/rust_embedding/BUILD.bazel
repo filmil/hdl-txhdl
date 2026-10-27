@@ -119,6 +119,17 @@ rust_binary(
     ]
 ]
 
+# Expected to fail (#1971): a Dmem whose WORDS is not 1 << ADDR, refused
+# by Dmem::SHAPE when it is compiled. Apart from the list above because
+# it needs the core's crate.
+rust_library(
+    name = "probe_dmem_shape",
+    srcs = ["probe_dmem_shape.rs"],
+    edition = "2021",
+    deps = DEPS + ["//cpu/vreteno:vreteno32"],
+    tags = ["manual"],
+)
+
 # Expected to compile, on nightly only:
 #   --@rules_rust//rust/toolchain/channel=nightly
 rust_library(
