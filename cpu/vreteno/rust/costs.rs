@@ -596,7 +596,7 @@ fn icache5() {
     }
 }
 
-/// Five more loops for #1918, which the four above could not tell
+/// Five more loops for #1918, which `icache5`'s four could not tell
 /// apart. Those cost the crossing and the branch back about 5 together,
 /// where the model charges 7, and the copy's load and store 1, where it
 /// charges 4: the board seems to overlap the fetch's stalls and the
@@ -622,6 +622,11 @@ const _: () = assert!((ONE_LW - map::DDR3) % 0x4000 == 0x2000);
 const _: () = assert!((ONE_SW - map::DDR3) % 0x4000 == 0x2000);
 const _: () = assert!((ONE_COPY - map::DDR3) % 0x4000 == 0x2000);
 const _: () = assert!((TWO_LW - map::DDR3) % 0x4000 == 0x2000);
+// The two below 0x30_2000 sit past `STRETCH`'s 64 KiB and before the
+// first `icache` block, a line of four words and a loop of four lines
+// each.
+const _: () = assert!(ONE_COPY >= STRETCH + 0x1_0000);
+const _: () = assert!(TWO_LW + 64 <= map::DDR3 + 0x30_2000);
 
 /// A loop of one line at `at`: the header, then `a`, `b`, `c`, `d`, the
 /// counter and the branch in the second line's first three words, the
@@ -655,7 +660,7 @@ fn icache6() {
     ];
     for ret in rets {
         if unsafe { core::ptr::read_volatile(ret as *const u32) != RET } {
-            Uart::say(b"costs loop1 blocks not written\n");
+            Uart::say(b"costs icache6 blocks not written\n");
             return;
         }
     }
