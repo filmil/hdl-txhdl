@@ -53,7 +53,7 @@ values of 8.
 
 \begin{itemize}
 \item \textbf{The set.} A key's set is \code{(key * 0x9E3779B1) >> (32
-- B)} over the key widened to 32 bits: the top \code{ROW\_ADDR} bits of the
+- ROW\_ADDR)} over the key widened to 32 bits: the top \code{ROW\_ADDR} bits of the
 product, a Fibonacci hash. A key's low bits would crowd keys allocated
 in strides into a few sets, and the product spreads them.
 \item \textbf{The ways.} Each way is three memories: its keys, its
