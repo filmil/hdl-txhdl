@@ -848,13 +848,14 @@ fn m_result(f3: U<3>, hi: U<33>, lo: U<32>, neg_q: Bit, neg_r: Bit) -> U<32> {
 /// load with the lane and the width to take from it, and whether it
 /// halts. The halt itself, which the writeback stage sets. And the two
 /// memories, the registers and the boot memory.
+#[txhdl::named_type_params]
 #[derive(Trace, Default)]
 pub struct Vreteno<
-    const IW: usize,
-    const DW: usize = 16384,
-    const IC: usize = 1,
-    const HID: usize = 0,
-    const EXCL: usize = 0,
+    const ID: usize,
+    const LANE_WORDS: usize = 16384,
+    const ICACHE: usize = 1,
+    const HART: usize = 0,
+    const EXCLUSIVE: usize = 0,
 > {
     pub pc: Reg<U<32>>,
     pub ir: Reg<U<32>>,
@@ -947,10 +948,10 @@ pub struct Vreteno<
     /// the core reaches it. DW words a lane: 16384 on the board, and a
     /// few in the netlist the documents and the layout take, where the
     /// window's addresses wrap.
-    pub dl0: Mem<U<8>, DW>,
-    pub dl1: Mem<U<8>, DW>,
-    pub dl2: Mem<U<8>, DW>,
-    pub dl3: Mem<U<8>, DW>,
+    pub dl0: Mem<U<8>, LANE_WORDS>,
+    pub dl1: Mem<U<8>, LANE_WORDS>,
+    pub dl2: Mem<U<8>, LANE_WORDS>,
+    pub dl3: Mem<U<8>, LANE_WORDS>,
     /// The word the lanes read, at the address the access in execute
     /// had, a cycle ago; and whether the load in writeback is one of
     /// theirs.

@@ -22,6 +22,7 @@ use vreteno32::program::demo;
 use vreteno32::term::Terminal;
 use vreteno32::timer::Timer;
 use vreteno32::uart::Uart;
+use vreteno32::{Dmem, Hart};
 
 /// The link: thirty-two bit addresses and words, four lanes, and
 /// two-bit identifiers, four of them. The core has one load in flight
@@ -91,12 +92,13 @@ fn main() {
     } else {
         demo()
     };
-    let mut hart = Hart::<IW, DW, IC>::with(&program);
+    let mut hart =
+        <Hart![ID = IW, LANE_WORDS = DW, ICACHE = IC]>::with(&program);
     let cpu = &hart.core;
     let (wb_pc, regs) = (cpu.wb_pc, cpu.regs.clone());
     // Read to know when the external interrupt has been taken.
     let mcause = cpu.mcause;
-    let mut dmem: Dmem<2> = Dmem::default();
+    let mut dmem: Dmem![ID = 2] = Dmem::default();
     let lanes = (
         dmem.lane0.clone(),
         dmem.lane1.clone(),
@@ -466,11 +468,12 @@ fn main() {
     // goes into its core's memory (issue 1014), by hand, since an
     // `init` the hart has no memory for is dropped without a word
     // (#1104).
-    let mut lowered = Hart::<IW, DW, IC>::lowered(if atomics {
-        "vreteno_amo"
-    } else {
-        "vreteno"
-    });
+    let mut lowered =
+        <Hart![ID = IW, LANE_WORDS = DW, ICACHE = IC]>::lowered(if atomics {
+            "vreteno_amo"
+        } else {
+            "vreteno"
+        });
     let words: Vec<u128> = program.iter().map(|&w| w as u128).collect();
     for c in &mut lowered.instances {
         if c.name == "core" {
@@ -483,7 +486,7 @@ fn main() {
     // again at the board's baud rate; and the two trackers, which the
     // AXI document already checks but which the board needs too.
     let router = Rtr::lowered("router");
-    let mut dmem = Dmem::<IW>::lowered("dmem");
+    let mut dmem = <Dmem![ID = IW]>::lowered("dmem");
     dmem.trace_as("bus_req", "dreq");
     dmem.trace_as("bus_w", "dwd");
     dmem.trace_as("bus_ans", "dans");

@@ -87,6 +87,7 @@ use vreteno32::pair::{Inject, Pair, Watch};
 use vreteno32::rom::Rom;
 use vreteno32::timer::Timer;
 use vreteno32::uart::Uart;
+use vreteno32::{Dmem, Hart, Vreteno};
 
 /// The map of the bridge the sheet is written for: Vreteno's serial
 /// port, a nibble of the address space at 0x3000.
@@ -734,10 +735,14 @@ fn main() {
     sheet("Watch", "Watch", Watch::lowered("watch"));
     sheet("Inject", "Inject", Inject::lowered("inject"));
     sheet("Pair", "Pair<2>", Pair::<2>::lowered("pair"));
-    sheet("Vreteno", "Vreteno<2>", Vreteno::<2>::lowered("vreteno"));
-    sheet("Hart", "Hart<2>", Hart::<2>::lowered("hart"));
+    sheet(
+        "Vreteno",
+        "Vreteno<2>",
+        <Vreteno![ID = 2]>::lowered("vreteno"),
+    );
+    sheet("Hart", "Hart<2>", <Hart![ID = 2]>::lowered("hart"));
     sheet("Mmu", "Mmu8", Mmu8::lowered("mmu"));
-    sheet("Dmem", "Dmem<4>", Dmem::<4>::lowered("dmem"));
+    sheet("Dmem", "Dmem<4>", <Dmem![ID = 4]>::lowered("dmem"));
     sheet("DcSnoop", "DcSnoop<7>", DcSnoop::<7>::lowered("dcsnoop"));
     sheet("Rom", "Rom<4>", Rom::<4>::lowered("rom"));
     sheet("Timer", "Timer<4>", Timer::<4>::lowered("timer"));
