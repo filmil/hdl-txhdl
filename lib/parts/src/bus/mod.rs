@@ -25,6 +25,7 @@
 // after it (#1915).
 #[macro_use]
 pub mod axi;
+#[macro_use]
 pub mod arbiter;
 pub mod axi_lite;
 pub mod axi_per_pins;

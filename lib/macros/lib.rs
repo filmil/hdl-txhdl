@@ -143,8 +143,11 @@ fn parse_item(input: TokenStream) -> Item {
             generics = names.into_iter().zip(full).collect();
         }
     }
-    // A tuple struct's fields come before its `where`, a braced
-    // struct's after it.
+    // A tuple struct's `(fields)` come before its `where`; a braced
+    // struct's `{ body }` comes after it. The clause runs to the body,
+    // which is the item's last token, or to a tuple struct's last `;`,
+    // so a braced const inside the clause, `Foo<{ N }>: Bar`, is not
+    // taken for either.
     let mut j = i;
     if let Some(TokenTree::Group(g)) = toks.get(j) {
         if g.delimiter() == Delimiter::Parenthesis {
@@ -157,23 +160,26 @@ fn parse_item(input: TokenStream) -> Item {
         _ => false,
     };
     if at_where(toks.get(j)) {
-        let end = toks[j..]
-            .iter()
-            .position(|t| match t {
-                TokenTree::Group(g) => g.delimiter() == Delimiter::Brace,
-                TokenTree::Punct(p) => p.as_char() == ';',
-                _ => false,
-            })
-            .map_or(toks.len(), |k| j + k);
+        let end = match toks.last() {
+            Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => {
+                toks.len() - 1
+            }
+            _ => toks
+                .iter()
+                .rposition(
+                    |t| matches!(t, TokenTree::Punct(p) if p.as_char() == ';'),
+                )
+                .unwrap_or(toks.len()),
+        };
         let clause: TokenStream = toks[j..end].iter().cloned().collect();
         wheres = format!(" {clause}");
     }
-    let body = toks[i..].iter().find_map(|t| match t {
-        TokenTree::Group(g) if g.delimiter() == Delimiter::Brace => {
+    let body = match toks.last() {
+        Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => {
             Some(g.clone())
         }
         _ => None,
-    });
+    };
     Item {
         vis,
         kind,
@@ -967,7 +973,7 @@ pub fn derive_link(input: TokenStream) -> TokenStream {
         "/// What the other side holds of [`{n}`]: each end turned round, \
          as `#[derive(Link)]` writes it (issue 1695).\n\
          #[derive(::txhdl::Ports)]\n\
-         {v} struct {n}Host{b} {{\n{fields}}}\n\
+         {v} struct {n}Host{b}{w} {{\n{fields}}}\n\
          impl{b} ::txhdl::comp::Link for {n}{a}{w} {{\n\
          type Host = {n}Host{a};\n\
          fn link() -> (Self::Host, Self) {{ {lets} \

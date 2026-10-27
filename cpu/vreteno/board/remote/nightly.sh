@@ -18,7 +18,8 @@
 # canonical demos, by demos.sh, each to its end, with its tx_dropped;
 # the Ethernet port, its link from the PHY's registers, a hundred pings
 # from the board server while Linux is up, and ethperf's transmit and
-# receive, `ethtest send` answering each `rx waiting`; and the costs
+# receive, `ethtest send` answering each `rx waiting` with a paced
+# burst (#1955); and the costs
 # image. It writes DIR/<start>-<sha>/: a log per check, results.tsv
 # (check, metric, value, unit, status) and diff.tsv against the night
 # before, the newest results.tsv in DIR before this one, or --prev.
@@ -293,8 +294,11 @@ if [[ -z "$dry" ]]; then
       # Built above; run as it is, with no Bazel in the board's wait,
       # and with its own runfiles rather than the nightly's (#1898).
       sent=0
+      # Paced, so that the count is the board's and not the server's
+      # send rate (#1955).
       [[ -n "$size" ]] && { BUILD_WORKSPACE_DIRECTORY="$ws" bare "$ethtest" \
         --server="$server" --mode=send --count=1000 --size="$size" \
+        --gap-us="$(rx_gap_us "$size")" \
         >>"$dir/ethtest.log" 2>&1 || sent=$?; }
       # Exit 2 is the sender unable to start at all, no tester or a bad
       # argument, which no later burst will mend: say so and stop

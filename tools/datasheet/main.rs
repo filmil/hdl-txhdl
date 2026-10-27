@@ -64,6 +64,7 @@ use txhdl_parts::tracer::Tracer;
 use txhdl_parts::trng::{Entropy, Trng};
 use txhdl_parts::udprx::UdpRx;
 use txhdl_parts::wdog::Wdog;
+use txhdl_parts::ExMon;
 use txhdl_parts::{
     AxiHost, AxiPer, AxiPerPins, AxiPins, HostBridge, Mesh, Node, PerBridge,
     Switch, R,
@@ -534,7 +535,14 @@ fn main() {
     sheet(
         "ExMon",
         "ExMon<5, 2, 0, 7, 0x40000000, 0xc0000000>",
-        ExMon::<5, 2, 0, 7, 0x4000_0000, 0xc000_0000>::lowered("exmon"),
+        <ExMon![
+            PER_ID = 5,
+            ID = 2,
+            PORT0 = 0,
+            PORT1 = 7,
+            BASE = 0x4000_0000,
+            MASK = 0xc000_0000
+        ]>::lowered("exmon"),
     );
     sheet(
         "LiteBridge",
