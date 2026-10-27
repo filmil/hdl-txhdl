@@ -111,8 +111,16 @@ read_ping() {
 # the server's socket takes it, which changes from burst to burst, and
 # the one-frame receiver keeps less of a faster one, so the count
 # would measure the server rather than the board (#1955).
+# ethperf receives four bursts in a fixed order, dma 60, copy 60,
+# dma 1514, copy 1514, and `burst` is the burst's number in it. In the
+# copy of 1514 the core moves each frame out of its slot itself, which
+# keeps about 9700 frames a second, so that burst comes at 120, about
+# 15% under it; at 60 it kept 582 of 1000 (#1981).
 rx_gap_us() {
-  if (($1 <= 60)); then echo 40; else echo 60; fi
+  local size="$1" burst="${2:-1}"
+  if ((size <= 60)); then echo 40
+  elif ((burst % 2 == 0)); then echo 120
+  else echo 60; fi
 }
 
 # ethperf: each transmit run's frames a second, recorded, and each

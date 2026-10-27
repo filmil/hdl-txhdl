@@ -64,8 +64,12 @@ printf '00:00:01.000Z rx dma 60 got 989 of 1000 lost 11 other 0 ticks 1 cycles/f
 # More got than sent is not a pass either.
 printf '00:00:01.000Z rx dma 60 got 1001 of 1000 lost 0 other 0 ticks 1 cycles/frame 1\n' >"$bad"
 [[ "$(read_ethperf "$bad" | cut -f5)" == fail ]]
-# Each burst's gap: #1038's 40 us for the 60-byte frames, 60 for 1514.
-[[ "$(rx_gap_us 60)" == 40 && "$(rx_gap_us 1514)" == 60 ]]
+# Each burst's gap, by its size and its place in ethperf's order: #1038's
+# 40 us for the 60-byte frames and 60 for 1514, and 120 for the copy of
+# 1514, which the core's own copy cannot take faster (#1981).
+[[ "$(rx_gap_us 60 1)" == 40 && "$(rx_gap_us 60 2)" == 40 ]]
+[[ "$(rx_gap_us 1514 3)" == 60 && "$(rx_gap_us 1514 4)" == 120 ]]
+[[ "$(rx_gap_us 1514)" == 60 ]]
 # Listening with no load before it is not a time.
 printf '00:00:01.000Z fastboot: listening on port 5554\n' >"$bad"
 [[ "$(read_fastboot "$bad" yes | head -1 | cut -f5)" == fail ]]
