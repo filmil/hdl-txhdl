@@ -43,6 +43,7 @@ use txhdl_parts::remote::eth::{RemoteLink, FRAME_LEN, KIND_ANSWER};
 use txhdl_parts::remote::Remote;
 use txhdl_parts::AxiHost;
 use txhdl_parts::LiteBridge;
+use txhdl_parts::LitePort;
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
 /// identifiers, four of them.
@@ -92,7 +93,7 @@ fn main() {
     let (_, _, b, r) = per_out;
     let lite = axi_lite::<32, 32, 4>();
     let (law, lar, lw, lb, lr) = lite.host;
-    let bus: LitePort<32, 32, 4> = lite.per.into();
+    let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = lite.per.into();
     let (ask_tx, ask_rx) = chan::<_, DefaultClock>();
     let (ans_tx, ans_rx) = chan::<_, DefaultClock>();
     // The bytes of a frame, between the link and a MAC at each end.

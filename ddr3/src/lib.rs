@@ -708,6 +708,7 @@ mod tests {
     use txhdl_parts::bus::axi::{
         axi, Ar, Aw, AxiHost, Link, Rd, Resp, Wr, B, R, W,
     };
+    use txhdl_parts::{Ar, Aw};
     use txhdl_parts::{AxiHost, R, W};
 
     /// Words written across the memory and read back, the first ones
@@ -763,7 +764,7 @@ mod tests {
                         w,
                         b,
                         r,
-                        xar: chan::<Ar<32, 5>, DefaultClock>().1,
+                        xar: chan::<Ar![ADDR = 32, ID = 5], DefaultClock>().1,
                         xr: chan::<
                             R![DATA = 256, ID = 5, LIMBS = 2],
                             DefaultClock,
@@ -832,7 +833,8 @@ mod tests {
         ]>::default();
         let mut mem = Ddr3Per::default();
         let mut wide = WideRead::<5>::on(mem.ctl.memory());
-        let (wide_ar, wide_ar_rx) = chan::<Ar<32, 5>, DefaultClock>();
+        let (wide_ar, wide_ar_rx) =
+            chan::<Ar![ADDR = 32, ID = 5], DefaultClock>();
         let (wide_r_tx, wide_r) =
             chan::<R![DATA = 256, ID = 5, LIMBS = 2], DefaultClock>();
         let now = Rc::new(Cell::new(0u32));
@@ -870,7 +872,7 @@ mod tests {
                         w,
                         b,
                         r,
-                        xar: chan::<Ar<32, 5>, DefaultClock>().1,
+                        xar: chan::<Ar![ADDR = 32, ID = 5], DefaultClock>().1,
                         xr: chan::<
                             R![DATA = 256, ID = 5, LIMBS = 2],
                             DefaultClock,
@@ -951,7 +953,8 @@ mod tests {
                 .insert(0x800 + k, U::new(0x2000_0000 + k));
         }
         let (rst_o, rst) = signal::<Bit, DefaultClock>();
-        let (wide_ar, wide_ar_rx) = chan::<Ar<32, 5>, DefaultClock>();
+        let (wide_ar, wide_ar_rx) =
+            chan::<Ar![ADDR = 32, ID = 5], DefaultClock>();
         let (wide_r_tx, wide_r) =
             chan::<R![DATA = 256, ID = 5, LIMBS = 2], DefaultClock>();
         let now = Rc::new(Cell::new(0u32));
@@ -996,8 +999,8 @@ mod tests {
             mem.run(
                 Ddr3PerBus {
                     rst,
-                    aw: chan::<Aw<32, 5>, DefaultClock>().1,
-                    ar: chan::<Ar<32, 5>, DefaultClock>().1,
+                    aw: chan::<Aw![ADDR = 32, ID = 5], DefaultClock>().1,
+                    ar: chan::<Ar![ADDR = 32, ID = 5], DefaultClock>().1,
                     w: chan::<W![DATA = 32, STRB = 4], DefaultClock>().1,
                     b: chan::<B<5>, DefaultClock>().0,
                     r: chan::<R![DATA = 32, ID = 5], DefaultClock>().0,

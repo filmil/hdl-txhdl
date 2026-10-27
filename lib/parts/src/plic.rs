@@ -433,7 +433,7 @@ mod tests {
     use txhdl::comp::{join2, signal, Clock, DefaultClock, Out, Running, Unit};
     use txhdl::types::{Bit, U};
 
-    type Host = LiteHost<32, 32, 4>;
+    type Host = LiteHost![ADDR = 32, DATA = 32, STRB = 4];
 
     /// A write of one word, and the wait for its response.
     async fn write(h: &Host, addr: u32, data: u32) {
@@ -483,7 +483,7 @@ mod tests {
         F: std::future::Future<Output = ()>,
     {
         let link = axi_lite::<32, 32, 4>();
-        let bus: LitePort<32, 32, 4> = link.per.into();
+        let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = link.per.into();
         let (rst_o, rst) = signal::<Bit, DefaultClock>();
         let (s1_o, s1) = signal::<Bit, DefaultClock>();
         let (s2_o, s2) = signal::<Bit, DefaultClock>();

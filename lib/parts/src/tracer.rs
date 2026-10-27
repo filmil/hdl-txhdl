@@ -178,7 +178,7 @@ mod tests {
     use std::rc::Rc;
     use txhdl::comp::{join2, signal, Out, Running};
 
-    type Host = LiteHost<32, 32, 4>;
+    type Host = LiteHost![ADDR = 32, DATA = 32, STRB = 4];
 
     /// A ring of eight entries, which is what the tests use.
     type Ring = Tracer<8>;
@@ -244,7 +244,7 @@ mod tests {
         F: std::future::Future<Output = ()>,
     {
         let link = axi_lite::<32, 32, 4>();
-        let bus: LitePort<32, 32, 4> = link.per.into();
+        let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = link.per.into();
         let (take_o, take) = signal::<Bit, DefaultClock>();
         let (entry_o, entry) = signal::<U<128>, DefaultClock>();
         let (halt_o, halt) = signal::<Bit, DefaultClock>();

@@ -687,8 +687,8 @@ mod tests {
         // on the five AXI channels between the two.
         let mut pbr = Peri::default();
         let mut rtr = Rtr::default();
-        let (aw_tx, aw_rx) = chan::<Aw<A, I>, DefaultClock>();
-        let (ar_tx, ar_rx) = chan::<Ar<A, I>, DefaultClock>();
+        let (aw_tx, aw_rx) = chan::<Aw![ADDR = A, ID = I], DefaultClock>();
+        let (ar_tx, ar_rx) = chan::<Ar![ADDR = A, ID = I], DefaultClock>();
         let (w_tx, w_rx) = chan::<W<D, S>, DefaultClock>();
         let (b_tx, b_rx) = chan::<B<I>, DefaultClock>();
         let (r_tx, r_rx) = chan::<R<D, I>, DefaultClock>();

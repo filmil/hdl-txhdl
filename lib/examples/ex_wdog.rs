@@ -37,6 +37,7 @@ use txhdl_parts::wdog::{
     CTRL_WINDOW, STATUS_FAILED, STATUS_WARNED,
 };
 use txhdl_parts::LiteBridge;
+use txhdl_parts::LitePort;
 use txhdl_parts::{AxiHost, Host};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
@@ -106,7 +107,7 @@ fn main() {
     let (_, _, b, r) = per_out;
     let lite = axi_lite::<32, 32, 4>();
     let (law, lar, lw, lb, lr) = lite.host;
-    let bus: LitePort<32, 32, 4> = lite.per.into();
+    let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = lite.per.into();
     let (rst_req_out, rst_req) = signal::<Bit, DefaultClock>();
     let (irq_out, irq) = signal::<Bit, DefaultClock>();
 

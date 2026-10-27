@@ -802,7 +802,7 @@ mod tests {
     use txhdl::comp::{join2, signal, Clock, DefaultClock, Running, Unit};
     use txhdl::types::{Bit, U};
 
-    type Host = LiteHost<32, 32, 4>;
+    type Host = LiteHost![ADDR = 32, DATA = 32, STRB = 4];
 
     /// A quarter of a bit in these runs: four cycles, so a bit is
     /// sixteen and a byte with its acknowledge is a hundred and forty
@@ -884,7 +884,7 @@ mod tests {
         F: std::future::Future<Output = ()>,
     {
         let link = axi_lite::<32, 32, 4>();
-        let bus: LitePort<32, 32, 4> = link.per.into();
+        let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = link.per.into();
         let (scl_in_o, scl_in) = signal::<Bit, DefaultClock>();
         let (sda_in_o, sda_in) = signal::<Bit, DefaultClock>();
         let (scl_low_o, scl_low) = signal::<Bit, DefaultClock>();

@@ -112,8 +112,9 @@ mod tests {
     use std::rc::Rc;
     use txhdl::comp::{join2, signal, Running};
     use txhdl_parts::bus::axi_lite::{axi_lite, LiteAw, LiteHost, LiteW};
+    use txhdl_parts::{LiteHost, LitePort};
 
-    type Host = LiteHost<32, 32, 4>;
+    type Host = LiteHost![ADDR = 32, DATA = 32, STRB = 4];
 
     async fn write(h: &Host, addr: u32, data: u32) {
         let (aw, _, w, b, _) = h;
@@ -152,7 +153,7 @@ mod tests {
     #[test]
     fn the_count_holds_what_is_written_and_the_status_is_the_line() {
         let link = axi_lite::<32, 32, 4>();
-        let bus: LitePort<32, 32, 4> = link.per.into();
+        let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = link.per.into();
         let host = link.host;
         let (rst_o, rst) = signal::<Bit, DefaultClock>();
         let (idle_o, idle) = signal::<Bit, DefaultClock>();

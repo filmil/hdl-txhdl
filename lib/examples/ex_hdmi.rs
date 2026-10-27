@@ -24,6 +24,7 @@ use txhdl_parts::bus::Map;
 use txhdl_parts::hdmi::VideoOut;
 use txhdl_parts::hdmi::{regs, Hdmi, I2cDevice, I2cInit, SII9134_WRITES};
 use txhdl_parts::AxiHost;
+use txhdl_parts::LitePort;
 use txhdl_parts::{Hdmi, I2cInit, LiteBridge};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
@@ -109,7 +110,7 @@ fn main() {
     let (_, _, b, r) = per_out;
     let lite = axi_lite::<32, 32, 4>();
     let (law, lar, lw, lb, lr) = lite.host;
-    let bus: LitePort<32, 32, 4> = lite.per.into();
+    let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = lite.per.into();
     let (rgb_out, rgb) = signal::<U<24>, DefaultClock>();
     let (hs_out, hsync) = signal::<Bit, DefaultClock>();
     let (vs_out, vsync) = signal::<Bit, DefaultClock>();

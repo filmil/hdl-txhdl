@@ -32,6 +32,7 @@ use txhdl_parts::eth::gray16;
 use txhdl_parts::ethslots::{regs, EthSlots, SlotsMac};
 use txhdl_parts::AxiHost;
 use txhdl_parts::LiteBridge;
+use txhdl_parts::LitePort;
 
 /// Where the four buffers begin: sixteen megabytes into the board's
 /// memory, clear of where a program loads.
@@ -147,7 +148,7 @@ fn main() {
     } = axi::<32, 32, 4, 2, 4>();
     let lite = axi_lite::<32, 32, 4>();
     let (law, lar, lw, lb, lr) = lite.host;
-    let bus: LitePort<32, 32, 4> = lite.per.into();
+    let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = lite.per.into();
 
     // The engines are not here: this run is about the registers, and
     // what the engines do is checked in ex_dma and ex_dmaw. Their

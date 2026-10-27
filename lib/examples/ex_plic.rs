@@ -19,11 +19,12 @@ use txhdl_parts::bus::axi_lite::{axi_lite, LiteAw, LiteHost, LitePort, LiteW};
 use txhdl_parts::plic::{
     priority, Plic3, CLAIM, ENABLE, PENDING, S_CLAIM, S_ENABLE, THRESHOLD,
 };
+use txhdl_parts::{LiteHost, LitePort};
 
 /// Three sources; the second asks on an edge.
 type Plic = Plic3<0b100>;
 
-type Host = LiteHost<32, 32, 4>;
+type Host = LiteHost![ADDR = 32, DATA = 32, STRB = 4];
 
 /// A write of one word, and the wait for its response.
 async fn write(h: &Host, addr: u32, data: u32) {
@@ -67,7 +68,7 @@ async fn cycles(n: usize) {
 
 fn main() {
     let link = axi_lite::<32, 32, 4>();
-    let bus: LitePort<32, 32, 4> = link.per.into();
+    let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = link.per.into();
     let host = link.host;
     let (rst_o, rst) = signal::<Bit, DefaultClock>();
     let (src1_o, src1) = signal::<Bit, DefaultClock>();

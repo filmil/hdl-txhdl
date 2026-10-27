@@ -38,6 +38,7 @@ use txhdl_parts::bus::arbiter::Arbiter2;
 use txhdl_parts::bus::axi::{
     axi, serve, AxiHost, AxiPer, Per, Rd, Resp, Wr, Xact,
 };
+use txhdl_parts::Arbiter2;
 use txhdl_parts::{AxiHost, AxiPer, Per};
 
 /// A host's link: sixteen-bit addresses, thirty-two-bit words, four
@@ -51,7 +52,14 @@ type End = Per![ADDR = 16, DATA = 32, STRB = 4, ID = 5];
 
 /// Two hosts, identifiers two bits wide on their side and five on the
 /// peripheral's, round robin rather than fixed priority.
-type Arb = Arbiter2<16, 32, 4, 2, 5, 0>;
+type Arb = Arbiter2![
+    ADDR = 16,
+    DATA = 32,
+    STRB = 4,
+    ID = 2,
+    PER_ID = 5,
+    FIXED = 0
+];
 
 /// The memory behind the arbiter. It answers a read with the address
 /// it was asked for, so an answer says which burst it belongs to, and

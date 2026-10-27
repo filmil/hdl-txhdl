@@ -377,7 +377,7 @@ mod tests {
     use std::rc::Rc;
     use txhdl::comp::{join2, signal, Running};
 
-    type Host = LiteHost<32, 32, 4>;
+    type Host = LiteHost![ADDR = 32, DATA = 32, STRB = 4];
 
     async fn write(h: &Host, word: u32, data: u32) {
         let (aw, _, w, b, _) = h;
@@ -422,7 +422,7 @@ mod tests {
     #[test]
     fn only_word_13_reads_tx_ev_enable() {
         let link = axi_lite::<32, 32, 4>();
-        let bus: LitePort<32, 32, 4> = link.per.into();
+        let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = link.per.into();
         let host = link.host;
         let (_tx_busy_o, tx_busy) = signal::<Bit, DefaultClock>();
         let (_rx_busy_o, rx_busy) = signal::<Bit, DefaultClock>();
@@ -496,7 +496,7 @@ mod tests {
     #[test]
     fn a_transmit_sets_its_event_and_raises_the_line_when_enabled() {
         let link = axi_lite::<32, 32, 4>();
-        let bus: LitePort<32, 32, 4> = link.per.into();
+        let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = link.per.into();
         let host = link.host;
         let (tx_busy_o, tx_busy) = signal::<Bit, DefaultClock>();
         let (_rx_busy_o, rx_busy) = signal::<Bit, DefaultClock>();

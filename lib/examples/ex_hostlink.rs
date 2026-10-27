@@ -32,6 +32,7 @@ use txhdl_parts::remote::host::{
     HostBridge, HostLink, LiteMaster, KIND_HOST_ANSWER, KIND_HOST_ASK,
 };
 use txhdl_parts::remote::{Answer, Ask};
+use txhdl_parts::LitePort;
 
 /// This design's device number on the wire.
 const DEVICE: usize = 5;
@@ -51,7 +52,7 @@ fn ask_frame(tag: u8, write: bool, addr: u32, data: u32) -> Vec<u8> {
 }
 
 fn main() {
-    let (host, per) = link::<LitePort<32, 32, 4>>();
+    let (host, per) = link::<LitePort![ADDR = 32, DATA = 32, STRB = 4]>();
     let (ask_tx, ask_rx) = chan::<Ask, DefaultClock>();
     let (ans_tx, ans_rx) = chan::<Answer, DefaultClock>();
     let (in_tx, in_rx) = chan::<EthByte, DefaultClock>();

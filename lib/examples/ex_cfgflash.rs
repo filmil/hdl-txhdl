@@ -31,6 +31,7 @@ use txhdl_parts::bus::Map;
 use txhdl_parts::cfgflash::CfgFlash;
 use txhdl_parts::flashwin::FlashWin;
 use txhdl_parts::spi::{regs, FlashDevice, Spi, SpiLines};
+use txhdl_parts::LitePort;
 use txhdl_parts::{AxiHost, AxiPer, Host, PerPort};
 use txhdl_parts::{FlashWin, LiteBridge};
 
@@ -114,7 +115,7 @@ fn main() {
     let (_, _, b, r) = per_out;
     let lite = axi_lite::<32, 32, 4>();
     let (law, lar, lw, lb, lr) = lite.host;
-    let lbus: LitePort<32, 32, 4> = lite.per.into();
+    let lbus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = lite.per.into();
     // The window, on a link of its own.
     let u = axi_units::<32, 32, 4, 2>();
     let whost = host_end::<32, 32, 4, 2, 4>(u.host_client);

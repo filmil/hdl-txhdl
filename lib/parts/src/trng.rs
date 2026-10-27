@@ -516,7 +516,7 @@ mod tests {
     use std::rc::Rc;
     use txhdl::comp::Running;
 
-    type Host = LiteHost<32, 32, 4>;
+    type Host = LiteHost![ADDR = 32, DATA = 32, STRB = 4];
 
     async fn write(h: &Host, addr: u32, data: u32) {
         let (aw, _, w, b, _) = h;
@@ -579,7 +579,7 @@ mod tests {
         F: std::future::Future<Output = ()>,
     {
         let link = axi_lite::<32, 32, 4>();
-        let bus: LitePort<32, 32, 4> = link.per.into();
+        let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = link.per.into();
         let done = Rc::new(RefCell::new(false));
         let d = done.clone();
         let body = client(link.host);

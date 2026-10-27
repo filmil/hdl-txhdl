@@ -68,6 +68,7 @@ use txhdl_parts::tracer::Tracer;
 use txhdl_parts::trng::{Entropy, Trng};
 use txhdl_parts::udprx::UdpRx;
 use txhdl_parts::wdog::Wdog;
+use txhdl_parts::Arbiter2;
 use txhdl_parts::AxiWb;
 use txhdl_parts::{
     AxiHost, AxiPer, AxiPerPins, AxiPins, HostBridge, Mesh, Node, PerBridge,
@@ -566,7 +567,14 @@ fn main() {
     sheet(
         "Arbiter",
         "Arbiter2<16, 32, 4, 2, 5, 0>",
-        Arbiter2::<16, 32, 4, 2, 5, 0>::lowered("arbiter"),
+        <Arbiter2![
+            ADDR = 16,
+            DATA = 32,
+            STRB = 4,
+            ID = 2,
+            PER_ID = 5,
+            FIXED = 0
+        ]>::lowered("arbiter"),
     );
     sheet(
         "ExMon",

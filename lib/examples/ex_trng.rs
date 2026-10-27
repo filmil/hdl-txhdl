@@ -35,6 +35,7 @@ use txhdl_parts::trng::{
 };
 use txhdl_parts::AxiHost;
 use txhdl_parts::LiteBridge;
+use txhdl_parts::LitePort;
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
 /// identifiers, four of them.
@@ -74,7 +75,7 @@ fn main() {
     let (_, _, b, r) = per_out;
     let lite = axi_lite::<32, 32, 4>();
     let (law, lar, lw, lb, lr) = lite.host;
-    let bus: LitePort<32, 32, 4> = lite.per.into();
+    let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = lite.per.into();
     let (raw_o, raw) = signal::<U<RINGS>, DefaultClock>();
     let (en_o, en) = signal::<Bit, DefaultClock>();
 

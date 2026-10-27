@@ -75,6 +75,7 @@ use txhdl_parts::scanout::ScanFetch;
 use txhdl_parts::sd::{Sd, SdLines};
 use txhdl_parts::spi::{Spi, SpiLines};
 use txhdl_parts::trng::Entropy;
+use txhdl_parts::Arbiter2;
 use txhdl_parts::{Arbiter, ExMon, LiteBridge, Router};
 use txhdl_parts::{
     AxiHost, AxiHostPins, AxiPer, AxiPerReq, AxiPerRsp, AxiPins,
@@ -291,7 +292,14 @@ pub struct Board<const DIV: u32> {
     /// second host, each with one bit of identifier, so that nothing
     /// past the arbiter widens: the JTAG master's IP only ever used one
     /// of the two bits it had. Taking turns, as the arbiter does.
-    pub jarb: Arbiter2<32, 32, 4, 1, 2, 0>,
+    pub jarb: Arbiter2![
+        ADDR = 32,
+        DATA = 32,
+        STRB = 4,
+        ID = 1,
+        PER_ID = 2,
+        FIXED = 0
+    ],
     /// The eight ports onto one link, in order: the core, the JTAG
     /// master with the debug transport behind `jarb`, the Ethernet
     /// port's two engines behind `etharb` (issue 1634), the board top's
@@ -488,7 +496,14 @@ pub struct Board<const DIV: u32> {
     /// apply: hosts that share a port share its turns, and these two
     /// never offer at the same time, so neither takes a turn from the
     /// other. It keeps two ports free, for Razboj and a texture fetch.
-    pub sdarb: Arbiter2<32, 32, 4, 1, 2, 0>,
+    pub sdarb: Arbiter2![
+        ADDR = 32,
+        DATA = 32,
+        STRB = 4,
+        ID = 1,
+        PER_ID = 2,
+        FIXED = 0
+    ],
     /// The window's tracker, on the router's eighth port.
     pub pflash: AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = 5],
     /// The window.
@@ -534,7 +549,14 @@ pub struct Board<const DIV: u32> {
     /// the turns of reads and writes apart, so sharing a port costs
     /// neither a turn at the arbiter; the memory behind it they share as
     /// before.
-    pub etharb: Arbiter2<32, 32, 4, 1, 2, 0>,
+    pub etharb: Arbiter2![
+        ADDR = 32,
+        DATA = 32,
+        STRB = 4,
+        ID = 1,
+        PER_ID = 2,
+        FIXED = 0
+    ],
     // end{ethdma}
     // begin{scan}
     /// The video scanout's bus side (issue 151): `ScanFetch` takes each

@@ -49,6 +49,7 @@ use txhdl_parts::sd::{
     STATUS_DTIMEOUT, STATUS_RCRC, STATUS_RTIMEOUT, WORDS,
 };
 use txhdl_parts::LiteBridge;
+use txhdl_parts::{Arbiter2, LitePort};
 use txhdl_parts::{AxiHost, AxiPer, PerPort};
 use txhdl_parts::{LineFetch, LineStore};
 
@@ -166,7 +167,7 @@ fn main() {
     let (_, _, b, r) = per_out;
     let lite = axi_lite::<32, 32, 4>();
     let (law, lar, lw, lb, lr) = lite.host;
-    let bus: LitePort<32, 32, 4> = lite.per.into();
+    let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = lite.per.into();
     // The card's lines.
     let (cmd_in_o, cmd_in) = signal::<Bit, DefaultClock>();
     let (dat_in_o, dat_in) = signal::<U<4>, DefaultClock>();
@@ -224,7 +225,14 @@ fn main() {
         <AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 1, IDS = 2]>::default();
     let mut noreads = NoReads::<1>::default();
     let mut nobeats = NoBeats::default();
-    let mut arb = Arbiter2::<32, 32, 4, 1, 2, 0>::default();
+    let mut arb = <Arbiter2![
+        ADDR = 32,
+        DATA = 32,
+        STRB = 4,
+        ID = 1,
+        PER_ID = 2,
+        FIXED = 0
+    ]>::default();
     let mut per = <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = 2]>::default();
     // The words to write, in the memory's upper half.
     let image: Vec<U<32>> = (0..M as u32)
