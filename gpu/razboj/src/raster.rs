@@ -23,12 +23,12 @@
 //!
 //! It finds its own work. The display list is in memory, in the
 //! format `crate::dl` states, and the rasteriser reads it over the
-//! same link it writes pixels on: it reads the count at `CTRL` until
-//! it is not zero, then the sixteen words of each instruction at `DL`,
-//! as one read burst of sixteen beats, then walks what they say. The
-//! count is sixteen bits, so a list holds up to 65535 entries. That
-//! front end is written as the sequence it is, and a second process
-//! takes the link's answers every cycle.
+//! same link it writes pixels on: it reads the count at `COUNT_AT`
+//! until it is not zero, then the sixteen words of each instruction at
+//! `LIST_AT`, as one read burst of sixteen beats, then walks what they
+//! say. The count is sixteen bits, so a list holds up to 65535
+//! entries. That front end is written as the sequence it is, and a
+//! second process takes the link's answers every cycle.
 //!
 //! It draws list after list. When a list is drawn and every write it
 //! made has been answered, it writes the count back to zero and reads
@@ -52,8 +52,8 @@
 //! are in flight, as many as the tracker has identifiers. A read's
 //! identifier is handed back when its beat arrives on `rdata`.
 //!
-//! The framebuffer's first word is at `BASE` and a pixel is one word,
-//! so a pixel's address is `BASE + ((y << LOGW) + x) * 4`.
+//! The framebuffer's first word is at `FB_AT` and a pixel is one word,
+//! so a pixel's address is `FB_AT + ((y << LOG_WIDTH) + x) * 4`.
 use txhdl::comp::{
     join2, mux, until, Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx, Unit,
     Wire,
@@ -99,7 +99,9 @@ const SHIFT: usize = 6;
 /// The rasteriser. `ADDR` is the address width, `ID` the AXI identifier
 /// width, the screen is `1 << LOG_WIDTH` by `HEIGHT` pixels, and the
 /// framebuffer's first word is at byte address `FB_AT`, which is where
-/// a design puts it in whatever it writes into.
+/// a design puts it in whatever it writes into. `COUNT_AT` is the byte
+/// address the display list's count is read from, and `LIST_AT` the
+/// address of its first instruction.
 #[txhdl::named_type_params]
 #[derive(Trace, Default)]
 pub struct Raster<
