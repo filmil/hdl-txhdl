@@ -378,6 +378,11 @@ mod tests {
         f[86..90].copy_from_slice(&0x1234_5678u32.to_be_bytes());
         let got = answers_from(&[f]);
         assert_eq!(got, vec![(9, 0xdead_beef, false)]);
+        // And padded with zeros, which a wrapping count took at byte
+        // 76 for a wrong type and dropped the whole answer.
+        let mut padded = answer_frame(3, 10, 0x55, false);
+        padded.resize(100, 0);
+        assert_eq!(answers_from(&[padded]), vec![(10, 0x55, false)]);
     }
 
     #[test]
