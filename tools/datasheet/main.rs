@@ -64,6 +64,7 @@ use txhdl_parts::tracer::Tracer;
 use txhdl_parts::trng::{Entropy, Trng};
 use txhdl_parts::udprx::UdpRx;
 use txhdl_parts::wdog::Wdog;
+use txhdl_parts::AxiWb;
 use txhdl_parts::{
     AxiHost, AxiPer, AxiPerPins, AxiPins, HostBridge, Mesh, Node, PerBridge,
     Switch, R,
@@ -549,7 +550,7 @@ fn main() {
     sheet(
         "AxiWb",
         "AxiWb<32, 2, 28>",
-        AxiWb::<32, 2, { ddr3::AW }>::lowered("axi_wb"),
+        <AxiWb![ADDR = 32, ID = 2, WB_ADDR = ddr3::AW]>::lowered("axi_wb"),
     );
     sheet(
         "AxiPins",

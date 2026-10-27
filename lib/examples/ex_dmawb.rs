@@ -41,6 +41,7 @@ use txhdl_parts::bus::wb::sim::WbMem;
 use txhdl_parts::bus::wb::AxiWb;
 use txhdl_parts::bus::wb::WbMaster;
 use txhdl_parts::dma::{LineFetch, LineStore};
+use txhdl_parts::AxiWb;
 use txhdl_parts::{AxiHost, AxiPer};
 
 const ADDR: usize = 32;
@@ -95,7 +96,7 @@ fn main() {
     ]>::default();
     let mut r_per =
         <AxiPer![ADDR = ADDR, DATA = 32, STRB = 4, ID = IDB]>::default();
-    let mut r_bridge = AxiWb::<ADDR, IDB, AW>::default();
+    let mut r_bridge = <AxiWb![ADDR = ADDR, ID = IDB, WB_ADDR = AW]>::default();
     let mut fetch = LineFetch::<ADDR, IDB, BEATS, 16>::default();
 
     // The writing stack: a store engine, its own bridge, its own
@@ -130,7 +131,7 @@ fn main() {
     ]>::default();
     let mut w_per =
         <AxiPer![ADDR = ADDR, DATA = 32, STRB = 4, ID = IDB]>::default();
-    let mut w_bridge = AxiWb::<ADDR, IDB, AW>::default();
+    let mut w_bridge = <AxiWb![ADDR = ADDR, ID = IDB, WB_ADDR = AW]>::default();
     let mut store = LineStore::<ADDR, IDB, BEATS, 16>::default();
 
     if let Some(mut wv) = Wave::from_env() {
