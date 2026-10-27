@@ -20,7 +20,7 @@
 //! lies above those bits.
 use txhdl::comp::{mux, Clock, DefaultClock, In, Out, Reg, Unit};
 use txhdl::types::{Bit, U};
-use txhdl::{lower, with, Trace};
+use txhdl::{lower, named_type_params, with, Trace};
 
 use crate::bus::axi::{Answer, PerPort, Resp, R};
 
@@ -54,10 +54,13 @@ pub struct WbMaster<const AW: usize> {
 }
 
 // begin{state}
-/// The bridge. `A` and `I` are the link's address and identifier
-/// widths; `AW` is the width of the Wishbone word address.
+/// The bridge. `ADDR` and `ID` are the link's address and identifier
+/// widths; `WB_ADDR` is the width of the Wishbone word address. Given by
+/// name, `AxiWb![ADDR = 32, ID = 2, WB_ADDR = 28]`; the impls write them
+/// `A`, `I` and `AW`.
+#[named_type_params]
 #[derive(Trace, Default)]
-pub struct AxiWb<const A: usize, const I: usize, const AW: usize> {
+pub struct AxiWb<const ADDR: usize, const ID: usize, const WB_ADDR: usize> {
     /// Where the request is: 0 waiting for one, 1 a write waiting for
     /// its beat, 2 offered on the lines, 3 taken and waiting for the
     /// acknowledge, 4 answering on the link.
@@ -65,9 +68,9 @@ pub struct AxiWb<const A: usize, const I: usize, const AW: usize> {
     /// Whether the request is a read.
     pub reading: Reg<U<1>>,
     /// The burst's identifier, which the answer carries back.
-    pub rid: Reg<U<I>>,
+    pub rid: Reg<U<ID>>,
     /// The word address, as the lines carry it.
-    pub wadr: Reg<U<AW>>,
+    pub wadr: Reg<U<WB_ADDR>>,
     /// The word: for a write the one the beat brought, for a read the
     /// one the acknowledge brought.
     pub wdat: Reg<U<32>>,
@@ -242,7 +245,7 @@ mod tests {
         ]>::default();
         let mut p =
             <AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = 2]>::default();
-        let mut bridge = AxiWb::<32, 2, 28>::default();
+        let mut bridge = <AxiWb![ADDR = 32, ID = 2, WB_ADDR = 28]>::default();
         let mut mem = mem;
         // The memory before the bridge: the bridge reads the memory's
         // lines in the cycle they are driven, as the netlist does.
