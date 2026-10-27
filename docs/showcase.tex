@@ -120,6 +120,7 @@ A flash read as memory, mode 0 only & parts & both \\
 The configuration flash through \code{STARTUPE2}, write enable refused & parts & yes \\
 A peripheral written as software, behind a channel & parts & both \\
 Its wire: each transaction one Ethernet frame & parts & both \\
+The other way: a program's frames in, an AXI-Lite host, the two joined & parts & all three \\
 Vreteno, a hart with its Sv32 unit and data cache; boot and data memory, timer, serial port & \code{cpu} & four of five \\
 The board, one unit of units, with two harts and DDR3 & \code{cpu} & under Vivado \\
 Rasteriser; framebuffer & \code{gpu} & both \\
