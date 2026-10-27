@@ -46,7 +46,18 @@ Only Golden Gate, through one test (PR 1929):
 It takes FireSim's driver sources and example drivers from the module `firesim_target` 1.22.0.bcr.1.
 On the board, `HostBridge` (`//lib/parts`, `remote::host`) takes register reads and writes off the Ethernet port in frames and performs them on the control port of Golden Gate's `FPGATop`, at 50 MHz.
 On the host, `gcd_eth_driver` is FireSim's GCD test with a platform file, `simif_ax7a200b_eth.cc`, that sends those frames on a raw socket.
-`gcd_eth_pnr` meets timing; the run on the board, from srv over the cable, is still to come.
+`gcd_eth_pnr` meets timing, with 0.534 ns of setup slack.
+
+It passed on the board on 2026-10-27 at `main` 83a5613b, from srv over the cable (#1965).
+The driver read the simulator's fingerprint, stepped GCD on 64 and 48, read back 16, and printed `[GCD]PASS Test`, 12 cycles in all.
+To repeat it, holding the BOARD TOKEN:
+
+1. Program the board with `gcd_eth_prog`, as the comment beside it in `firesim/ax7a200b/BUILD.bazel` says.
+2. Copy `gcd_eth_driver` to srv and let it open a raw socket: `sudo setcap cap_net_raw+ep gcd_eth_driver`.
+3. Run it on the port cabled to the board, with nothing else sending there: `timeout 120 ./gcd_eth_driver +iface=fpga-a200t-eth0`.
+
+It passes when it exits 0 and prints `PASS Test`.
+`no answer to a read at 0x0` means no frame came back: the bitstream isn't loaded, or the interface is wrong.
 
 `rules_firesim` itself is not a dependency yet; it comes in with the first change that uses its rules.
 `firesim_target` has already moved `rules_cc`, `dtc` and five more modules to the newer releases they share.
