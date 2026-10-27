@@ -3,7 +3,7 @@
 \datasheet{ExMon}{The exclusive monitor: reservations for two ports, and the answer to each exclusive write.}
 
 \dsfacts{\code{lib/parts/src/bus/exmon.rs}}%
-{\code{txhdl\_parts::bus::exmon::ExMon<J, I, P0, P1, RB, RM>}}%
+{\code{txhdl\_parts::bus::exmon::ExMon<PER\_ID, ID, PORT0, PORT1, BASE, MASK>}}%
 {\code{//docs:axi}}
 
 \subsection*{Function}
@@ -12,7 +12,7 @@ The monitor makes \code{lr.w}, \code{sc.w} and the AMOs of two harts
 atomic against each other and against every other host on the memory
 (issue 1408). It stands on an AXI4 link after the arbiter, where every
 write passes in the order the peripherals take it, and watches two of
-the arbiter's ports, \code{P0} and \code{P1}.
+the arbiter's ports, \code{PORT0} and \code{PORT1}.
 
 An exclusive read, one with \code{lock} set, from a watched port makes
 a reservation for that port of the sixteen-byte line it reads. A write
@@ -26,7 +26,7 @@ never reaches the peripheral or anything between. An exclusive write,
 whether it stores or not, uses its port's reservation up, as \code{sc.w} does.
 
 The monitor keeps exclusives for one range of addresses, the memory's:
-an address \code{a} with \code{(a \& RM) == RB}. An exclusive read
+an address \code{a} with \code{(a \& MASK) == BASE}. An exclusive read
 outside it makes no reservation, and an exclusive write outside it
 fails.
 
@@ -41,14 +41,14 @@ goes back around it.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{J} & The identifier width on the link, in bits, at most five:
+\code{PER\_ID} & The identifier width on the link, in bits, at most five:
 \code{wids} keeps a bit for each identifier, 32 of them. \\
-\code{I} & The host's own bits at the bottom of the identifier; the
-port is the identifier shifted right by \code{I}. \\
-\code{P0} & The first watched port. \\
-\code{P1} & The second watched port. \\
-\code{RB} & The base of the range kept. \\
-\code{RM} & The mask of the range kept. \\
+\code{ID} & The host's own bits at the bottom of the identifier; the
+port is the identifier shifted right by \code{ID}. \\
+\code{PORT0} & The first watched port. \\
+\code{PORT1} & The second watched port. \\
+\code{BASE} & The base of the range kept. \\
+\code{MASK} & The mask of the range kept. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -71,8 +71,8 @@ identifier. So it reads what those writes wrote, and no write in flight
 when it was taken lands after it. Writes outside the range, which a slow
 peripheral may hold for long, it does not wait for.
 \item \textbf{Reservations.} An exclusive read into the range from port
-\code{P0} sets \code{v0} and keeps the line, the address above its four
-low bits, in \code{line0}; from \code{P1}, \code{v1} and \code{line1}.
+\code{PORT0} sets \code{v0} and keeps the line, the address above its four
+low bits, in \code{line0}; from \code{PORT1}, \code{v1} and \code{line1}.
 From any other port it makes none.
 \item \textbf{Clears.} A write into the range that passes is kept in
 \code{fwv}, \code{fwline} and \code{fwcnt}, its first line and how many
@@ -85,7 +85,7 @@ cycle.
 \item \textbf{The decision.} An exclusive write waits a cycle at the
 head, where it is decided into \code{xk\_v}, \code{xk\_ok} and
 \code{xk\_p0}, and goes on the next, so only registers stand before the
-router. It stores when its port is \code{P0} or \code{P1}, that port's
+router. It stores when its port is \code{PORT0} or \code{PORT1}, that port's
 reservation stands, is not being cleared, and is for its line, it is
 one beat (\code{len} zero), and it is in the range.
 \item \textbf{A stored exclusive write} passes, and \code{x0} or
@@ -165,7 +165,7 @@ range is the DDR3's. \code{act\_run} uses
 Two ports are watched; an exclusive read from any other makes no
 reservation. One range is kept. A reservation is a line of sixteen
 bytes, and an exclusive write of more than one beat fails. Write bursts
-pass one at a time. \code{J} is at most five, and nothing checks it.
+pass one at a time. \code{PER\_ID} is at most five, and nothing checks it.
 The monitor relies on the arbiter's hold to keep new writes from other
 hosts out while a pair is open, so that the wait of an exclusive read
 ends.

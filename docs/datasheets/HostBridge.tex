@@ -21,22 +21,22 @@ host tracker's \code{aw}, \code{ar} and \code{w}, and drives its
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{X}, \code{Y} & The column and row of the bridge's node. The
+\code{COL}, \code{ROW} & The column and row of the bridge's node. The
 bridge stamps them on every request as its source. \\
-\code{XB}, \code{YB} & The widths of a column and a row coordinate, in
+\code{X\_BITS}, \code{Y\_BITS} & The widths of a column and a row coordinate, in
 bits. \\
-\code{A} & The address width of the AXI link. \\
-\code{D} & The data width of the AXI link. \\
-\code{S} & The strobe width, which is \code{D / 8}. \\
-\code{I} & The identifier width of the AXI link. \\
-\code{B0}, \code{M0}, \code{X0}, \code{Y0} & The first range. An
-address whose bits under the mask \code{M0} equal \code{B0} goes to
-the node at \code{X0}, \code{Y0}. \\
-\code{B1}, \code{M1}, \code{X1}, \code{Y1} & The second range, in the
+\code{ADDR} & The address width of the AXI link. \\
+\code{DATA} & The data width of the AXI link. \\
+\code{STRB} & The strobe width, which is \code{DATA / 8}. \\
+\code{ID} & The identifier width of the AXI link. \\
+\code{BASE0}, \code{MASK0}, \code{COL0}, \code{ROW0} & The first range. An
+address whose bits under the mask \code{MASK0} equal \code{BASE0} goes to
+the node at \code{COL0}, \code{ROW0}. \\
+\code{BASE1}, \code{MASK1}, \code{COL1}, \code{ROW1} & The second range, in the
 same way. The first range wins where both match. \\
-\code{B2}, \code{M2}, \code{X2}, \code{Y2} & The third range, the
-default route. The \code{run} does not read \code{B2} or \code{M2}: it sends
-every address the first two ranges miss to \code{X2}, \code{Y2}. \\
+\code{BASE2}, \code{MASK2}, \code{COL2}, \code{ROW2} & The third range, the
+default route. The \code{run} does not read \code{BASE2} or \code{MASK2}: it sends
+every address the first two ranges miss to \code{COL2}, \code{ROW2}. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -85,7 +85,7 @@ and \code{ssize}, \code{slock}, \code{scache}, \code{sprot},
 \code{sqos} and \code{sregion}, sent again with every beat. Each beat
 after the first goes when \code{w} offers it and \code{req} has room,
 as a single-beat write at \code{saddr}, which then moves by a beat's
-width, \code{S} bytes, or not at all for a fixed burst. The beats are
+width, \code{STRB} bytes, or not at all for a fixed burst. The beats are
 routed by their own addresses.
 \item The answers to a split burst are merged: \code{pend} counts
 those still to come and \code{err} whether any was not \code{OKAY}. A
@@ -110,7 +110,7 @@ one packet with \code{chan} \code{Ar}.
 \item The bridge sends at most one request packet per cycle, and a
 write before a read.
 \item Every request packet has the destination the map gives for its
-address, the source \code{X}, \code{Y}, and the host's own identifier.
+address, the source \code{COL}, \code{ROW}, and the host's own identifier.
 \item A response packet with \code{chan} \code{B} goes to \code{b} as
 its identifier and response, when \code{b} is ready. Any other response
 packet goes to \code{r} as its identifier, data, response and

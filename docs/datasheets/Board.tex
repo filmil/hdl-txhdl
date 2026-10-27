@@ -113,7 +113,7 @@ runs \code{Board<4>}.
 
 \subsection*{Address map}
 
-\code{BoardRouter} is \code{Router<8, BoardMap, 32, 32, 4, 5>}, and
+\code{BoardRouter} is \code{Router<8, Map<BoardMap>, 32, 32, 4, 5>}, and
 \code{BoardMap} beside it in \code{board.rs} states the map. A
 peripheral gets an address when the address under the mask equals the
 base, the first range that matches deciding.

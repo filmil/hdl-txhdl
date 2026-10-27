@@ -18,10 +18,10 @@ and one \code{r}. In the netlist element \textit{i} of an array port is
 a port of its own, \code{aws\_}\textit{i} and so on.
 
 One unit serves every count of peripherals: the peripheral sides are
-arrays of \code{N}, and the lowering unrolls the loops over them when
+arrays of \code{PORTS}, and the lowering unrolls the loops over them when
 \code{lowered} runs (issue 500). Each peripheral's range is its entry
-of the map, a type \code{M} implementing \code{txhdl::map::AddrMap<N>}
-whose constant \code{RANGES} is \code{N} pairs of a base and a mask,
+of the map, a type \code{Map} implementing \code{txhdl::map::AddrMap<PORTS>}
+whose constant \code{RANGES} is \code{PORTS} pairs of a base and a mask,
 read the same way (issue 593). A burst whose address is in no range is
 answered \code{DecErr} by the router itself. The router was a family of
 units, \code{Router2} to \code{Router8}, written by \code{router!},
@@ -34,14 +34,14 @@ until \#648.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{N} & The number of peripherals. \\
-\code{M} & The address map: a type implementing \code{AddrMap<N>},
+\code{PORTS} & The number of peripherals. \\
+\code{Map} & The address map: a type implementing \code{AddrMap<PORTS>},
 whose \code{RANGES[i]} is peripheral \textit{i}'s base and mask. It
 holds no signal; the router keeps it as \code{PhantomData}. \\
-\code{A} & The address width, in bits. \\
-\code{D} & The data width, in bits. \\
-\code{S} & The write strobe width, one bit per byte lane, so \code{D / 8}. \\
-\code{I} & The identifier width, in bits. \\
+\code{ADDR} & The address width, in bits. \\
+\code{DATA} & The data width, in bits. \\
+\code{STRB} & The write strobe width, one bit per byte lane, so \code{DATA / 8}. \\
+\code{ID} & The identifier width, in bits. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -54,7 +54,7 @@ it: the first range that matches decides. The router decodes the
 address of each address phase. Every address in no range is a hole.
 The tables below are generated for the board's router,
 \code{BoardRouter} in \code{cpu/vreteno/src/board.rs}, which is
-\code{Router<8, BoardMap, 32, 32, 4, 4>} with \code{BoardMap} beside
+\code{Router<8, Map<BoardMap>, 32, 32, 4, 4>} with \code{BoardMap} beside
 it:
 
 \begin{center}\footnotesize
@@ -152,7 +152,7 @@ read a hole.
 
 \code{Router<3, RunMap, ..>} in Vreteno's run and its lockstep and
 pair tests; \code{Router<4, RunMap, ..>}, with the boot memory, in
-\code{cpu/vreteno/src/run.rs}; \code{Router<8, BoardMap, ..>} on the
+\code{cpu/vreteno/src/run.rs}; \code{Router<8, Map<BoardMap>, ..>} on the
 board; \code{Router<4, NocMap, ..>} in the network's test;
 \code{Router<3, ThreeMap, ..>} in \code{ex\_axi\_router}; and
 \code{Router<2, TwoMap, ..>} in the router's own tests.

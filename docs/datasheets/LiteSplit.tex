@@ -4,7 +4,7 @@
 so that two peripherals share a slot.}
 
 \dsfacts{\code{lib/parts/src/bus/lite\_split.rs}}%
-{\code{txhdl\_parts::bus::lite\_split::LiteSplit<A, D, S, BIT>}}%
+{\code{txhdl\_parts::bus::lite\_split::LiteSplit<ADDR, DATA, STRB, BIT>}}%
 {\code{//docs:examples}}
 
 \subsection*{Function}
@@ -24,9 +24,9 @@ own words (issue 151).
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{A} & The address width. \\
-\code{D} & The data width. \\
-\code{S} & The strobe width, \code{D / 8}. \\
+\code{ADDR} & The address width. \\
+\code{DATA} & The data width. \\
+\code{STRB} & The strobe width, \code{DATA / 8}. \\
 \code{BIT} & The address bit that picks the side. \\
 \bottomrule
 \end{tabular}

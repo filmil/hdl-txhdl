@@ -7,13 +7,13 @@
 
 \subsection*{Function}
 
-\code{Mesh<W, H, N, ..>} is \code{N} nodes, \code{W} wide and \code{H}
+\code{Mesh<COLS, ROWS, NODES, ..>} is \code{NODES} nodes, \code{COLS} wide and \code{ROWS}
 high, in row-major order, held as one field, \code{nodes:
-Units<Node, N>} (issue 635). Node \code{i} is at column \code{i \% W}
-and row \code{i / W}, which the mesh gives it by tying its \code{col}
+Units<Node, NODES>} (issue 635). Node \code{i} is at column \code{i \% COLS}
+and row \code{i / COLS}, which the mesh gives it by tying its \code{col}
 and \code{row} inputs to those constants.
 
-The mesh's ports are the nodes' exits, four arrays of \code{N}:
+The mesh's ports are the nodes' exits, four arrays of \code{NODES}:
 \code{qx\_in} the requests into each node, \code{px\_in} the responses
 into each, and \code{qx\_out} and \code{px\_out} what leaves by each.
 Everything between the nodes is inside. The links are one array of
@@ -29,17 +29,17 @@ from the opposite side.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{W} & The width of the lattice, in nodes. \\
-\code{H} & The height of the lattice, in nodes. \\
-\code{N} & The number of nodes, which must be \code{W * H}. \\
-\code{XB} & The width of a column coordinate, in bits: at least enough
-for \code{W - 1}. \\
-\code{YB} & The width of a row coordinate, in bits: at least enough
-for \code{H - 1}. \\
-\code{A} & The address width of the AXI link. \\
-\code{D} & The data width of the AXI link. \\
-\code{S} & The strobe width, which is \code{D / 8}. \\
-\code{I} & The identifier width of the AXI link. \\
+\code{COLS} & The width of the lattice, in nodes. \\
+\code{ROWS} & The height of the lattice, in nodes. \\
+\code{NODES} & The number of nodes, which must be \code{COLS * ROWS}. \\
+\code{X\_BITS} & The width of a column coordinate, in bits: at least enough
+for \code{COLS - 1}. \\
+\code{Y\_BITS} & The width of a row coordinate, in bits: at least enough
+for \code{ROWS - 1}. \\
+\code{ADDR} & The address width of the AXI link. \\
+\code{DATA} & The data width of the AXI link. \\
+\code{STRB} & The strobe width, which is \code{DATA / 8}. \\
+\code{ID} & The identifier width of the AXI link. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -64,9 +64,9 @@ so that every channel has one driver and one reader. Routing is
 dimension order, so no packet for a place on the lattice ever takes
 one: nothing leaves the east edge eastward, since no column is east of
 it.
-\item \code{Default} refuses a mesh whose \code{N} is not
-\code{W * H}, with a message naming both, since Rust cannot yet
-compute \code{N} from \code{W} and \code{H}.
+\item \code{Default} refuses a mesh whose \code{NODES} is not
+\code{COLS * ROWS}, with a message naming both, since Rust cannot yet
+compute \code{NODES} from \code{COLS} and \code{ROWS}.
 \end{itemize}
 
 \subsection*{Verification}
@@ -91,7 +91,7 @@ lattices with \code{mesh::lattice}, which does not lower.
 \subsection*{Limits}
 
 The lattice does not reject packets addressed beyond its boundaries,
-such as columns of \code{W} or greater. Wrapped links remain idle only
+such as columns of \code{COLS} or greater. Wrapped links remain idle only
 while every destination lies within the grid. The nodes' registers are
 checked at the mesh ports only, not inside the core logic. Each node
 switch moves one packet per cycle rather than one packet per port.

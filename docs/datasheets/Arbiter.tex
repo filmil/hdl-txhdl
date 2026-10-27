@@ -3,7 +3,7 @@
 \datasheet{Arbiter}{The AXI4 arbiter: up to eight hosts merged onto one peripheral link, answered by identifier.}
 
 \dsfacts{\code{lib/parts/src/bus/arbiter.rs}}%
-{\code{txhdl\_parts::bus::arbiter::Arbiter<N, ..>}, and \code{Arbiter2} to \code{Arbiter8}, which name the counts}%
+{\code{txhdl\_parts::bus::arbiter::Arbiter<HOSTS, ..>}, and \code{Arbiter2} to \code{Arbiter8}, which name the counts}%
 {\code{//docs:axi}}
 
 \subsection*{Function}
@@ -31,9 +31,9 @@ arbiter holds that channel for the host whose write address phase it
 granted until that burst's last beat, and a second host's address
 phase waits. Reads need no such lock.
 
-It is one unit for any count of hosts, \code{N} a const parameter:
+It is one unit for any count of hosts, \code{HOSTS} a const parameter:
 the hosts' channels are arrays of ports, and the grants are loops
-over them that the lowering unrolls for each \code{N} (issue 500).
+over them that the lowering unrolls for each \code{HOSTS} (issue 500).
 \code{Arbiter2} to \code{Arbiter8} are type aliases that name the
 counts.
 
@@ -44,15 +44,15 @@ counts.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{N} & The number of hosts, two to eight. \\
-\code{A} & The address width, in bits. \\
-\code{D} & The data width, in bits. \\
-\code{S} & The write strobe width, one bit per byte lane, so \code{D / 8}. \\
-\code{I} & The identifier width on each host, in bits. \\
-\code{J} & The identifier width on the peripheral side. It must be at
-least \code{I} plus the bits the port number needs, which is one bit
+\code{HOSTS} & The number of hosts, two to eight. \\
+\code{ADDR} & The address width, in bits. \\
+\code{DATA} & The data width, in bits. \\
+\code{STRB} & The write strobe width, one bit per byte lane, so \code{DATA / 8}. \\
+\code{ID} & The identifier width on each host, in bits. \\
+\code{PER\_ID} & The identifier width on the peripheral side. It must be at
+least \code{ID} plus the bits the port number needs, which is one bit
 for two hosts and three for five to eight. Nothing checks it; too
-small a \code{J} loses the top of the tag. \\
+small a \code{PER\_ID} loses the top of the tag. \\
 \code{FIXED} & Zero for round robin, anything else for fixed
 priority. \\
 \code{HOLD} & Zero, the default, for no exclusive hold; anything else
@@ -68,9 +68,9 @@ default, names none. \\
 \subsection*{The identifier}
 
 A host's address phase goes out encoding
-\code{(port << I) | id}, where \code{id} is the identifier that host's
+\code{(port << ID) | id}, where \code{id} is the identifier that host's
 own tracker allocated. An answer's identifier is read the other way:
-\code{id >> I} names the host, and its low \code{I} bits are given
+\code{id >> ID} names the host, and its low \code{ID} bits are given
 back to that host unchanged.
 
 So a host's identifiers stay its own, and what the peripheral sees is
@@ -168,8 +168,8 @@ time, so neither takes a turn from the other.
 \subsection*{Limits}
 
 The turn is three bits, which is what eight hosts need and no more,
-and nothing checks that \code{N} is at most eight.
-\code{J} is not checked against \code{I} and the count. There is no
+and nothing checks that \code{HOSTS} is at most eight.
+\code{PER\_ID} is not checked against \code{ID} and the count. There is no
 arbitration on quality of service, though the address phase provides
 the field, and \code{PRIO} favours one host's reads and no writes.
 The hold is one, for one host at a time, and its length, 128 cycles,
