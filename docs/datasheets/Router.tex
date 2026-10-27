@@ -20,7 +20,8 @@ a port of its own, \code{aws\_}\textit{i} and so on.
 One unit serves every count of peripherals: the peripheral sides are
 arrays of \code{PORTS}, and the lowering unrolls the loops over them when
 \code{lowered} runs (issue 500). Each peripheral's range is its entry
-of the map, a type \code{Map} implementing \code{txhdl::map::AddrMap<PORTS>}
+of the map, given as the marker \code{Map<M>}, with \code{M} a type
+implementing \code{txhdl::map::AddrMap<PORTS>}
 whose constant \code{RANGES} is \code{PORTS} pairs of a base and a mask,
 read the same way (issue 593). A burst whose address is in no range is
 answered \code{DecErr} by the router itself. The router was a family of
@@ -35,8 +36,9 @@ until \#648.
 Parameter & Meaning \\
 \midrule
 \code{PORTS} & The number of peripherals. \\
-\code{Map} & The address map: a type implementing \code{AddrMap<PORTS>},
-whose \code{RANGES[i]} is peripheral \textit{i}'s base and mask. It
+\code{Map} & The address map, given as the marker \code{Map<M>}: \code{M}
+implements \code{AddrMap<PORTS>}, and its \code{RANGES[i]} is peripheral
+\textit{i}'s base and mask. It
 holds no signal; the router keeps it as \code{PhantomData}. \\
 \code{ADDR} & The address width, in bits. \\
 \code{DATA} & The data width, in bits. \\
@@ -54,7 +56,7 @@ it: the first range that matches decides. The router decodes the
 address of each address phase. Every address in no range is a hole.
 The tables below are generated for the board's router,
 \code{BoardRouter} in \code{cpu/vreteno/src/board.rs}, which is
-\code{Router<8, Map<BoardMap>, 32, 32, 4, 4>} with \code{BoardMap} beside
+\code{Router<8, Map<BoardMap>, 32, 32, 4, 5>} with \code{BoardMap} beside
 it:
 
 \begin{center}\footnotesize
@@ -123,7 +125,7 @@ response keeps the identifier the peripheral gave it.
 \subsection*{Verification}
 
 \begin{itemize}
-\item Two tests in \code{bus::router} run \code{Router<2, TwoMap, 16,
+\item Two tests in \code{bus::router} run \code{Router<2, Map<TwoMap>, 16,
 32, 4, 3>} between a host tracker and two peripheral trackers, in
 \code{//lib/parts:parts\_test}. \code{each\_burst\_reaches\_its\_range}
 reads from both ranges and reads three beats from a hole, and checks
@@ -137,25 +139,25 @@ a write to a hole. The build simulates the netlist of \code{Router<3,
 ThreeMap, 16, 32, 4, 3>} against that run under nvc and Verilator:
 \code{//docs:axi\_router\_sim\_axi\_router\_tb\_test} and
 \code{//docs:axi\_router\_vsim\_test}.
-\item Vreteno's run lowers its router, \code{Router<3, RunMap, 32, 32,
+\item Vreteno's run lowers its router, \code{Router<3, Map<RunMap>, 32, 32,
 4, 2>} in \code{cpu/vreteno/src/main.rs}, and the build simulates that
 netlist against the run: \code{//docs:vreteno\_sim\_router\_router\_tb\_test}
 and \code{//docs:vreteno\_vsim\_router\_test}.
 \code{//cpu/vreteno:lockstep\_test} runs the same router in simulation.
 \item \code{four\_peripherals\_share\_one\_node} in \code{bus::noc} puts
-a \code{Router<4, NocMap, ..>} behind a node of the network, with a
+a \code{Router<4, Map<NocMap>, ..>} behind a node of the network, with a
 memory in each range. Two hosts write and read every peripheral and
 read a hole.
 \end{itemize}
 
 \subsection*{Used by}
 
-\code{Router<3, RunMap, ..>} in Vreteno's run and its lockstep and
-pair tests; \code{Router<4, RunMap, ..>}, with the boot memory, in
+\code{Router<3, Map<RunMap>, ..>} in Vreteno's run and its lockstep and
+pair tests; \code{Router<4, Map<RunMap>, ..>}, with the boot memory, in
 \code{cpu/vreteno/src/run.rs}; \code{Router<8, Map<BoardMap>, ..>} on the
-board; \code{Router<4, NocMap, ..>} in the network's test;
-\code{Router<3, ThreeMap, ..>} in \code{ex\_axi\_router}; and
-\code{Router<2, TwoMap, ..>} in the router's own tests.
+board; \code{Router<4, Map<NocMap>, ..>} in the network's test;
+\code{Router<3, Map<ThreeMap>, ..>} in \code{ex\_axi\_router}; and
+\code{Router<2, Map<TwoMap>, ..>} in the router's own tests.
 
 \subsection*{Limits}
 

@@ -3,7 +3,7 @@
 \datasheet{LiteBridge}{The AXI4 to AXI-Lite bridge: one AXI4 link to any count of AXI-Lite peripherals, by an address map.}
 
 \dsfacts{\code{lib/parts/src/bus/axi\_lite.rs}}%
-{\code{txhdl\_parts::bus::axi\_lite::LiteBridge<PORTS, Map, ..>}, with \code{Map} an address map, \code{txhdl::map::AddrMap<PORTS>}}%
+{\code{txhdl\_parts::bus::axi\_lite::LiteBridge<PORTS, Map, ..>}, with the map given as \code{Map<M>}, \code{M} an \code{AddrMap<PORTS>}}%
 {\code{//docs:axi}, \code{//docs:vreteno}, \code{//docs:eth}, \code{//docs:hdmi}}
 
 \subsection*{Function}
@@ -41,9 +41,9 @@ Parameter & Meaning \\
 \code{STRB} & The write strobe width, one bit per byte lane, so \code{DATA / 8}. \\
 \code{ID} & The identifier width of the AXI4 side, in bits. \\
 \code{PORTS} & The count of peripherals, one or more. \\
-\code{Map} & The address map: a type implementing \code{AddrMap<PORTS>},
-whose \code{RANGES} holds each peripheral's base and mask, in the
-order of the ports. \\
+\code{Map} & The address map, given as the marker \code{Map<M>}: \code{M}
+implements \code{AddrMap<PORTS>}, and its \code{RANGES} holds each
+peripheral's base and mask, in the order of the ports. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -129,7 +129,7 @@ burst's identifier and that response.
 \begin{itemize}
 \item \code{bursts\_cross\_the\_bridge\_a\_beat\_at\_a\_time} in
 \code{bus::axi\_lite}, in \code{//lib/parts:parts\_test}, puts
-\code{LiteBridge<2, TwoMap, 16, 32, 4, 2>} behind
+\code{LiteBridge<2, Map<TwoMap>, 16, 32, 4, 2>} behind
 a host tracker, with two simulated memories. It writes three words and
 reads four, reads one word three times in a fixed burst, uses the
 second peripheral, and sends a write and a read of two beats to a hole.

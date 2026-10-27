@@ -560,7 +560,7 @@ fn main() {
     );
     sheet(
         "Router",
-        "Router<8, Map<BoardMap>, 32, 32, 4, 4>",
+        "Router<8, Map<BoardMap>, 32, 32, 4, 5>",
         BoardRouter::lowered("router"),
     );
     sheet(
