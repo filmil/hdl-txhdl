@@ -26,21 +26,22 @@ the clock that reads it.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{T} & The payload data type: a \code{Transaction} and \code{Value} type. \\
-\code{AW} & The width of the address, in bits. \\
-\code{D} & How many words it holds, which must be \code{1 << AW}. \\
-\code{PW} & The width of the pointers, which must be \code{AW + 1}. \\
-\code{W} & The writing clock. \\
-\code{R} & The reading clock. \\
+\code{Data} & The payload data type: a \code{Transaction} and \code{Value} type. \\
+\code{ADDR} & The width of the address, in bits. \\
+\code{DEPTH} & How many words it holds, which must be \code{1 << ADDR}. \\
+\code{PTRS} & The width of the pointers, which must be \code{ADDR + 1}. \\
+\code{WriteClock} & The writing clock. \\
+\code{ReadClock} & The reading clock. \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-\code{D} and \code{PW} are stated rather than computed, because an
+\code{DEPTH} and \code{PTRS} are stated rather than computed, because an
 expression in a const parameter's position needs nightly Rust, which
-is the same reason \code{Fifo} takes both \code{AW} and \code{D}. The
-tables below use \code{ChanCdc<U<32>, 4, 16, 5, DefaultClock,
-ClkPix>}, the crossing of \code{ex\_scanout} and \code{ex\_scanpair}
+is the same reason \code{Fifo} takes both \code{ADDR} and \code{DEPTH}. The
+tables below use a \code{ChanCdc} of \code{U<32>} words from
+\code{DefaultClock} to \code{ClkPix}, with \code{ADDR} 4, \code{DEPTH} 16
+and \code{PTRS} 5, the crossing of \code{ex\_scanout} and \code{ex\_scanpair}
 from the system clock to the pixel clock: sixteen words of thirty-two
 bits. \code{ex\_cdc} crosses words of eight bits.
 
@@ -103,7 +104,7 @@ either language says anything about it. A passing test beside a
 synchroniser invites the opposite conclusion, which is why this
 paragraph is here rather than in a comment.
 
-\code{D} must be \code{1 << AW} and \code{PW} must be \code{AW + 1},
+\code{DEPTH} must be \code{1 << ADDR} and \code{PTRS} must be \code{ADDR + 1},
 and nothing checks either.
 
 It does not replace \code{lib/board/chan\_cdc.v}, of which the

@@ -5,8 +5,8 @@ lines, one shown while the other fills, each asked for one or two rows
 ahead.}
 
 \dsfacts{\code{lib/parts/src/scanout.rs}}%
-{\code{txhdl\_parts::scanout::LinePair<LEN, AW, ROWS, TOTAL, STRIDE, LO,
-HI, C>}}%
+{\code{txhdl\_parts::scanout::LinePair<LEN, COL, ROWS, TOTAL, STRIDE, LO,
+HI, Domain>}}%
 {\code{//docs:examples}}
 
 \subsection*{Function}
@@ -69,19 +69,19 @@ into the serial port's page, and the core's prints stopped behind it.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{LEN} & The words in a visible line, at most \code{1 << AW}. \\
-\code{AW} & The width of a column. \\
+\code{LEN} & The words in a visible line, at most \code{1 << COL}. \\
+\code{COL} & The width of a column. \\
 \code{ROWS} & The visible rows of a frame. \\
 \code{TOTAL} & The rows of a frame, blanking included. \\
 \code{STRIDE} & The bytes from one line's start in memory to the next's. \\
 \code{LO}, \code{HI} & The frame's memory: the bytes from \code{LO} up
 to but not including \code{HI}. \\
-\code{C} & The pixel clock. \\
+\code{Domain} & The pixel clock. \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-The tables below use \code{LinePair<8, 3, 4, 6, 32, 0, 1024, ClkPix>},
+The tables below use \code{LinePair<8, 3, 4, 6, 32, 0, 1024, Domain<ClkPix>>},
 the pair of \code{ex\_scanpair}: lines of eight words, four visible
 rows of six, and a memory of 1024 bytes from zero. The flagship's,
 inside \code{ScanVideo}, is \code{LinePair<640, 10, 480, 525, 4096,
@@ -141,7 +141,7 @@ in \code{g0} to \code{g3} and the \code{tick} it was asked at in
 \code{t0} to \code{t3}, and no line is asked for while four are owed.
 A word counts against the oldest owed, and that line's last word takes
 it off.
-\item \code{tick} counts the edges of \code{C}. When a line's last word
+\item \code{tick} counts the edges of \code{Domain}. When a line's last word
 comes, the ticks since it was asked for replace \code{worst} if they
 are more. At the start of each visible row, once armed, a line not
 whole adds one to \code{lates}, which stops at its largest.
@@ -200,7 +200,7 @@ that makes the margin negative (issue 1524).
 runs two lines of 640 words in 800 columns (issue 1194).
 \end{itemize}
 \item \code{//cpu/vreteno:board\_test} runs the flagship's line,
-\code{LinePair<640, 10, 4, 6, 4096, LO, HI, Pix>}, on a pixel clock a
+\code{LinePair<640, 10, 4, 6, 4096, LO, HI, Domain<Pix>>}, on a pixel clock a
 quarter of the board's, against the board:
 \begin{itemize}
 \item \code{a\_base\_outside\_the\_memory\_is\_never\_fetched} gives it
@@ -235,4 +235,4 @@ horizontal offset or scaling. A column of a line that arrives late
 shows \code{LATE} until its word comes, and \code{starved} says that
 it happened; a line that never comes sets \code{stuck}. A line outside
 \code{LO} to \code{HI} is never shown. It runs on one clock,
-\code{C}.
+\code{Domain}.

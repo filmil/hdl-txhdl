@@ -22,13 +22,13 @@ there.
 Parameter & Meaning \\
 \midrule
 \code{LEN} & How many pixels a line holds. \\
-\code{AW} & The width of a column index, in bits. \\
-\code{C} & The clock it runs on, which is the pixel clock. \\
+\code{COL} & The width of a column index, in bits. \\
+\code{Domain} & The clock it runs on, which is the pixel clock. \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-The tables below use \code{LineBuf<32, 5, ClkPix>}, the buffer of
+The tables below use \code{LineBuf<32, 5, Domain<ClkPix>>}, the buffer of
 \code{ex\_scanout}.
 
 \dstables{LineBuf}
@@ -83,4 +83,4 @@ visible artefact rather than a hang.
 One word a pixel, which is what a framebuffer holds and what the
 CDC channel transports. It does not pack several pixels to a word.
 
-\code{LEN} and \code{AW} are not checked against each other.
+\code{LEN} and \code{COL} are not checked against each other.

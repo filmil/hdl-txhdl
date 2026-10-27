@@ -7,7 +7,7 @@
 
 \subsection*{Function}
 
-\code{Hart<IW>} is a unit of two units: a \code{Vreteno<IW>} core and
+\code{Hart<ID>} is a unit of two units: a \code{Vreteno<ID>} core and
 the \code{Mmu8} that translates its addresses for Sv32 (issue 1014).
 Its ports are the core's, all of them and no others, so everything
 outside sees one core: the bus side, the interrupts, the debug
@@ -30,17 +30,17 @@ its own for the page tables.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{IW} & The width of the AXI identifier, passed to the core. The
+\code{ID} & The width of the AXI identifier, passed to the core. The
 tables use 2, as the board and the runs do. \\
-\code{DW} & The words in each lane of the core's data RAM, a power of
+\code{LANE\_WORDS} & The words in each lane of the core's data RAM, a power of
 two, which the core asserts (issue 1275). The default is 16384, as on
 the board. \\
-\code{IC} & 1, the default, for the core's instruction and data
+\code{ICACHE} & 1, the default, for the core's instruction and data
 caches; 0 leaves them out, as in the netlist the documents simulate and
 the layout maps (issue 1323). \\
-\code{HID} & The hart's number, which \code{mhartid} reads (issue
+\code{HART} & The hart's number, which \code{mhartid} reads (issue
 1408). The default is 0. \\
-\code{EXCL} & Zero, the default, or not zero on a board whose arbiter
+\code{EXCLUSIVE} & Zero, the default, or not zero on a board whose arbiter
 and exclusive monitor keep exclusive pairs (issue 1408). Then
 \code{lr.w}, \code{sc.w} and an AMO's read and store to the DDR3,
 \code{0x4000\_0000} to \code{0x7fff\_ffff}, go on the bus with
@@ -49,8 +49,8 @@ and exclusive monitor keep exclusive pairs (issue 1408). Then
 \end{tabular}
 \end{center}
 
-All five are passed to the core, \code{Vreteno<IW, DW, IC, HID,
-EXCL>}. The tables use \code{Hart<2>}, the defaults for the rest.
+All five are passed to the core, \code{Vreteno<ID, LANE\_WORDS, ICACHE,
+HART, EXCLUSIVE>}. The tables use \code{Hart<2>}, the defaults for the rest.
 
 \dstables{Hart}
 
@@ -70,10 +70,10 @@ in \code{wfi} for an interrupt (issue 275).
 \item \code{dc\_snoop} names a line of the data cache to invalidate, in
 bits 7 to 0, while bit 8 is set; on the board it comes from
 \code{DcSnoop} (issue 1275).
-\item A hart whose \code{HID} is not 0 clears its whole data cache as
+\item A hart whose \code{HART} is not 0 clears its whole data cache as
 it wakes from \code{wfi}, whatever woke it, since the other harts'
 writes are not named to it while it waits (issue 1408). A hart with
-\code{HID} 0 keeps its cache.
+\code{HART} 0 keeps its cache.
 \end{itemize}
 
 \subsection*{Verification}
@@ -113,7 +113,7 @@ place the hart's netlist; on the board it is in every flagship.
 
 \code{Hart<2, 16384, 1, 0, 1>} as \code{cpu} and
 \code{Hart<2, 16384, 1, 1, 1>} as \code{cpu1} in \code{Board}, and so
-in the flagship; two \code{Hart<IW>} in \code{Pair}; and the machine of
+in the flagship; two \code{Hart<ID>} in \code{Pair}; and the machine of
 \code{run.rs}.
 
 \subsection*{Limits}

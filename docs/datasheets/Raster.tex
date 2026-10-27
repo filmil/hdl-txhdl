@@ -8,9 +8,9 @@
 \subsection*{Function}
 
 \code{Raster} finds its work in memory and draws it there. While
-\code{ring} is high it reads a count at \code{CTRL}, until the count
+\code{ring} is high it reads a count at \code{COUNT\_AT}, until the count
 is not zero. It then reads the sixteen words of each instruction of
-the display list at \code{DL}, as one read burst of sixteen beats, and
+the display list at \code{LIST\_AT}, as one read burst of sixteen beats, and
 walks the instruction's box one pixel per cycle. It writes the
 instruction's colour, its alpha in the top byte, at every pixel inside
 the primitive: every pixel of a clear or a rectangle, and every pixel
@@ -75,13 +75,13 @@ no write is in flight.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{A} & The width of the link's address, in bits. \\
-\code{I} & The width of the AXI identifier, in bits. \\
-\code{LOGW} & The screen is \code{1 << LOGW} pixels wide. \\
-\code{H} & The screen is \code{H} pixels high. \\
-\code{BASE} & The byte address of the framebuffer's first word. \\
-\code{DL} & The byte address of the display list's first word. \\
-\code{CTRL} & The byte address of the count. \\
+\code{ADDR} & The width of the link's address, in bits. \\
+\code{ID} & The width of the AXI identifier, in bits. \\
+\code{LOG\_WIDTH} & The screen is \code{1 << LOG\_WIDTH} pixels wide. \\
+\code{HEIGHT} & The screen is \code{HEIGHT} pixels high. \\
+\code{FB\_AT} & The byte address of the framebuffer's first word. \\
+\code{LIST\_AT} & The byte address of the display list's first word. \\
+\code{COUNT\_AT} & The byte address of the count. \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -101,11 +101,11 @@ which 640 are shown, and the count in \code{Doorbell}.
 \toprule
 Address & What the rasteriser does there \\
 \midrule
-\code{CTRL} & Reads the count while \code{ring} is high, and writes
+\code{COUNT\_AT} & Reads the count while \code{ring} is high, and writes
 zero there when a list is drawn. \\
-\code{DL + (i << 6) + (k << 2)} & Reads word \code{k}, 0 to 15, of
+\code{LIST\_AT + (i << 6) + (k << 2)} & Reads word \code{k}, 0 to 15, of
 instruction \code{i}, as one burst. \\
-\code{BASE + (((y << LOGW) + x) << 2)} & Writes pixel \code{x},
+\code{FB\_AT + (((y << LOG\_WIDTH) + x) << 2)} & Writes pixel \code{x},
 \code{y}. \\
 \bottomrule
 \end{tabular}
@@ -177,7 +177,7 @@ declare, \code{at\_wait}, and keeps its loops' counts in \code{for0} to
 
 \begin{itemize}
 \item The front end waits for \code{ring}, then issues a read of the
-count at \code{CTRL} once \code{issue} has room, and waits for its
+count at \code{COUNT\_AT} once \code{issue} has room, and waits for its
 beat. The count's low sixteen bits go into \code{left}. A count of
 zero means wait for \code{ring} and read again.
 \item For each of \code{left} instructions it waits a cycle, for the
@@ -189,9 +189,9 @@ cycles: the differences of the vertices, then the six products side
 by side, then their sums. The products are computed there, and
 nowhere else.
 \item A clear's box is the whole screen, from its own type: all
-\code{1 << LOGW} columns of \code{H} rows. A rectangle's and a
+\code{1 << LOG\_WIDTH} columns of \code{HEIGHT} rows. A rectangle's and a
 triangle's box is \code{x0}, \code{y0} to \code{x1}, \code{y1}, and
-is not clipped to \code{H}. Vertices are sixteenths of a pixel in
+is not clipped to \code{HEIGHT}. Vertices are sixteenths of a pixel in
 sixteen bits of two's complement.
 \item After a cycle for the box to read back, the walk goes over every
 row of the box, a cycle at the start of each, and every column of the
@@ -221,7 +221,7 @@ beats only past the run's end.
 \item The walk steps when the pixel needs no write or its beat went
 out, so backpressure holds the walk.
 \item When the last instruction's box is walked and every write is
-answered, the count at \code{CTRL} is written back to zero, and
+answered, the count at \code{COUNT\_AT} is written back to zero, and
 \code{finished} is set as that write goes out. \code{inflight} is a
 wire, \code{issued} less \code{answered},
 the writes whose response has not come back, and \code{idle} is high
@@ -396,8 +396,8 @@ clips no geometry, only boxes, and the assembler \code{Op::encode} does
 that on the host. It has one read out at a time.
 
 The code adds these. It has no reset port. A list holds at most 65535
-entries, since \code{left} is sixteen bits. \code{BASE}, \code{DL}
-and \code{CTRL} are constants of its type, so a design that draws
+entries, since \code{left} is sixteen bits. \code{FB\_AT}, \code{LIST\_AT}
+and \code{COUNT\_AT} are constants of its type, so a design that draws
 into two buffers moves the second one's rows past the first's, as the
 flagship's icosahedron does (issue 986), rather than moving
-\code{BASE}. A colour is 24 bits and its alpha 8.
+\code{FB\_AT}. A colour is 24 bits and its alpha 8.

@@ -4,7 +4,7 @@
 request taken and \code{LineFetch} started on it.}
 
 \dsfacts{\code{lib/parts/src/scanout.rs}}%
-{\code{txhdl\_parts::scanout::ScanFetch<A, WC, LEN>}}%
+{\code{txhdl\_parts::scanout::ScanFetch<ADDR, COUNT, LEN>}}%
 {\code{//docs:examples}}
 
 \subsection*{Function}
@@ -23,8 +23,8 @@ and finished (issue 151).
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{A} & The width of an address, in bits. \\
-\code{WC} & The width of \code{LineFetch}'s word count. \\
+\code{ADDR} & The width of an address, in bits. \\
+\code{COUNT} & The width of \code{LineFetch}'s word count. \\
 \code{LEN} & The words in a line, the count every fetch asks for. \\
 \bottomrule
 \end{tabular}
@@ -44,7 +44,7 @@ and a pulse of one cycle.
 \item A request is taken from \code{lines} only when no fetch is
 running, none is about to start, and none has been started that has
 not yet said it is running.
-\item The request is cut to \code{A} bits.
+\item The request is cut to \code{ADDR} bits.
 \end{itemize}
 
 \subsection*{Verification}

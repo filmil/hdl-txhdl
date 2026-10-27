@@ -8,14 +8,14 @@ lookup, insert, update and remove, one operation a cycle.}
 
 \subsection*{Function}
 
-\code{SetTable} keeps keys and their values in \code{W} ways of
-\code{D} rows each. A key's set, the row it may live in, is chosen by
+\code{SetTable} keeps keys and their values in \code{WAYS} ways of
+\code{ROWS} rows each. A key's set, the row it may live in, is chosen by
 a multiplicative hash, and the key may sit in any way of that set.
 
-It takes operations on \code{Rx<TableOp<KW, VW>>}: \code{op}, one of
+It takes operations on \code{Rx<TableOp<KEY, VALUE>>}: \code{op}, one of
 \code{LOOKUP}, \code{INSERT}, \code{UPDATE} and \code{REMOVE}; the
 \code{key}; and the \code{val} an insert or an update puts in. It
-answers each on \code{Tx<TableResult<VW>>}: \code{res}, one of
+answers each on \code{Tx<TableResult<VALUE>>}: \code{res}, one of
 \code{HIT}, \code{MISS}, \code{EXISTS} and \code{FULL}, and a
 \code{val}. Its other output, \code{Out<U<32>>}, counts the inserts
 refused because their set was full.
@@ -32,18 +32,18 @@ the model both use.
 \toprule
 Parameter & Meaning \\
 \midrule
-\code{KW} & The key's width, at most 32 bits. \\
-\code{VW} & The value's width. \\
-\code{B} & The bits that number the sets, from 1 to 32. \\
-\code{D} & The rows of a way, which must be \code{1 << B}. \\
-\code{W} & The ways, at most 256. \\
+\code{KEY} & The key's width, at most 32 bits. \\
+\code{VALUE} & The value's width. \\
+\code{ROW\_ADDR} & The bits that number the sets, from 1 to 32. \\
+\code{ROWS} & The rows of a way, which must be \code{1 << ROW\_ADDR}. \\
+\code{WAYS} & The ways, at most 256. \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-Stable Rust cannot write \code{D} from \code{B} in a type, so both are
+Stable Rust cannot write \code{ROWS} from \code{ROW\_ADDR} in a type, so both are
 given; the plain-Rust \code{set\_of} and \code{SetTableModel::new}
-check \code{B}. The tables below use \code{SetTable<16, 8, 3, 8, 4>},
+check \code{ROW\_ADDR}. The tables below use \code{SetTable<16, 8, 3, 8, 4>},
 the table of the tests: eight sets of four ways, keys of 16 bits and
 values of 8.
 
@@ -53,11 +53,11 @@ values of 8.
 
 \begin{itemize}
 \item \textbf{The set.} A key's set is \code{(key * 0x9E3779B1) >> (32
-- B)} over the key widened to 32 bits: the top \code{B} bits of the
+- B)} over the key widened to 32 bits: the top \code{ROW\_ADDR} bits of the
 product, a Fibonacci hash. A key's low bits would crowd keys allocated
 in strides into a few sets, and the product spreads them.
 \item \textbf{The ways.} Each way is three memories: its keys, its
-values and whether each row is used, each a \code{Mems} of \code{W}.
+values and whether each row is used, each a \code{Mems} of \code{WAYS}.
 An operation reads every way at its set at once, into registers at the
 edge, the synchronous read a block RAM has. The cycle after, a loop
 over the ways finds a hit, the first free way and whether the set is
@@ -111,8 +111,8 @@ Verilog of \code{SetTable<16, 8, 3, 8, 4>}.
 \code{SetTable<32, 32, 10, 1024, 4>}, whose values are 1024 rows of 32
 bits a way, through the check that a memory of more than 4096 bits
 fits a block RAM's ports (issue 1285).
-\item \code{the\_parameters\_agree}: the tests' table has \code{D} as
-\code{1 << B}, and \code{set\_of} puts each of the first 1000 keys in
+\item \code{the\_parameters\_agree}: the tests' table has \code{ROWS} as
+\code{1 << ROW\_ADDR}, and \code{set\_of} puts each of the first 1000 keys in
 one of its eight sets.
 \end{itemize}
 \item Its netlist is not simulated against a trace.
@@ -124,7 +124,7 @@ Nothing in the tree yet, outside its own tests.
 
 \subsection*{Limits}
 
-A key is at most 32 bits, since the hash is over 32. \code{W} is at
-most 256, since a way's number is eight bits. \code{D} must be
-\code{1 << B}, given beside it. A set holds at most \code{W} keys, and
+A key is at most 32 bits, since the hash is over 32. \code{WAYS} is at
+most 256, since a way's number is eight bits. \code{ROWS} must be
+\code{1 << ROW\_ADDR}, given beside it. A set holds at most \code{WAYS} keys, and
 an insert beyond that is refused rather than placed elsewhere.
