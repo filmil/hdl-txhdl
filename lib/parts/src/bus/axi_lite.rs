@@ -96,22 +96,24 @@ pub struct LiteR<const D: usize> {
 /// The ends a host holds on an AXI-Lite link, in the order of the
 /// channels: the two address channels and the write data it drives,
 /// and the write response and read data it reads.
-pub type LiteHost<const A: usize, const D: usize, const S: usize> = (
-    Tx<LiteAw<A>>,
-    Tx<LiteAr<A>>,
-    Tx<LiteW<D, S>>,
+#[named_type_params]
+pub type LiteHost<const ADDR: usize, const DATA: usize, const STRB: usize> = (
+    Tx<LiteAw<ADDR>>,
+    Tx<LiteAr<ADDR>>,
+    Tx<LiteW<DATA, STRB>>,
     Rx<LiteB>,
-    Rx<LiteR<D>>,
+    Rx<LiteR<DATA>>,
 );
 
 /// The ends a peripheral holds on an AXI-Lite link, in the same order:
 /// what it reads, and then what it drives.
-pub type LitePer<const A: usize, const D: usize, const S: usize> = (
-    Rx<LiteAw<A>>,
-    Rx<LiteAr<A>>,
-    Rx<LiteW<D, S>>,
+#[named_type_params]
+pub type LitePer<const ADDR: usize, const DATA: usize, const STRB: usize> = (
+    Rx<LiteAw<ADDR>>,
+    Rx<LiteAr<ADDR>>,
+    Rx<LiteW<DATA, STRB>>,
     Tx<LiteB>,
-    Tx<LiteR<D>>,
+    Tx<LiteR<DATA>>,
 );
 
 /// An AXI-Lite link's five channels as one port, written once for both
@@ -142,13 +144,15 @@ pub struct LiteBus<Si: Side, const A: usize, const D: usize, const S: usize> {
 /// What a peripheral holds on an AXI-Lite link, as one port rather
 /// than five: [`LiteBus`] on the receiving side, which takes the
 /// addresses and the data and sends the responses.
-pub type LitePort<const A: usize, const D: usize, const S: usize> =
-    LiteBus<Receiver, A, D, S>;
+#[named_type_params]
+pub type LitePort<const ADDR: usize, const DATA: usize, const STRB: usize> =
+    LiteBus<Receiver, ADDR, DATA, STRB>;
 
 /// What a host holds on an AXI-Lite link, as one port: [`LitePort`]'s
 /// five channels by the same names, each end turned round.
-pub type LiteHostPort<const A: usize, const D: usize, const S: usize> =
-    LiteBus<Driver, A, D, S>;
+#[named_type_params]
+pub type LiteHostPort<const ADDR: usize, const DATA: usize, const STRB: usize> =
+    LiteBus<Driver, ADDR, DATA, STRB>;
 
 impl<const A: usize, const D: usize, const S: usize> From<LitePer<A, D, S>>
     for LitePort<A, D, S>

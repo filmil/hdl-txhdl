@@ -140,9 +140,11 @@ pub struct Addr<const ADDR: usize, const ID: usize> {
 }
 
 /// The write address channel's beat.
-pub type Aw<const A: usize, const I: usize> = Addr<A, I>;
+#[named_type_params]
+pub type Aw<const ADDR: usize, const ID: usize> = Addr<ADDR, ID>;
 /// The read address channel's beat. The same fields.
-pub type Ar<const A: usize, const I: usize> = Addr<A, I>;
+#[named_type_params]
+pub type Ar<const ADDR: usize, const ID: usize> = Addr<ADDR, ID>;
 // A struct literal through an alias finds the field order of the
 // struct under a const of the alias's name (issue 1541).
 #[doc(hidden)]
@@ -661,32 +663,34 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize> Unit
 // The link: every channel of it, made at once
 
 /// The ports of a host tracker, what it reads.
+#[named_type_params]
 pub type HostIn<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
 > = (
-    Rx<Issue<A>>,
-    Rx<W<D, S>>,
-    Rx<B<I>>,
-    Rx<R<D, I>>,
-    Rx<Grant<I>>,
+    Rx<Issue<ADDR>>,
+    Rx<W<DATA, STRB>>,
+    Rx<B<ID>>,
+    Rx<R<DATA, ID>>,
+    Rx<Grant<ID>>,
 );
 
 /// The ports of a host tracker, what it drives.
+#[named_type_params]
 pub type HostOut<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
 > = (
-    Tx<Aw<A, I>>,
-    Tx<Ar<A, I>>,
-    Tx<W<D, S>>,
-    Tx<Grant<I>>,
-    Tx<Done<I>>,
-    Tx<R<D, I>>,
+    Tx<Aw<ADDR, ID>>,
+    Tx<Ar<ADDR, ID>>,
+    Tx<W<DATA, STRB>>,
+    Tx<Grant<ID>>,
+    Tx<Done<ID>>,
+    Tx<R<DATA, ID>>,
 );
 
 /// The ports of a peripheral tracker, what it reads.
@@ -695,27 +699,34 @@ pub type HostOut<
 /// line, as it would write it, the alias is 82 columns, and the
 /// documents set source at 80 and never break a line; that is issue
 /// 165.
+#[named_type_params]
 #[rustfmt::skip]
 pub type PerIn<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
 > = (
-    Rx<Aw<A, I>>,
-    Rx<Ar<A, I>>,
-    Rx<W<D, S>>,
-    Rx<Answer<I>>,
-    Rx<R<D, I>>,
+    Rx<Aw<ADDR, ID>>,
+    Rx<Ar<ADDR, ID>>,
+    Rx<W<DATA, STRB>>,
+    Rx<Answer<ID>>,
+    Rx<R<DATA, ID>>,
 );
 
 /// The ports of a peripheral tracker, what it drives.
+#[named_type_params]
 pub type PerOut<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
-> = (Tx<PerReq<A, I>>, Tx<W<D, S>>, Tx<B<I>>, Tx<R<D, I>>);
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+> = (
+    Tx<PerReq<ADDR, ID>>,
+    Tx<W<DATA, STRB>>,
+    Tx<B<ID>>,
+    Tx<R<DATA, ID>>,
+);
 
 /// The ends a host client holds when it is a unit rather than an
 /// async client: what it drives, and what it reads. `Host` is a
@@ -723,29 +734,36 @@ pub type PerOut<
 /// written as hardware holds these instead. In order: the issue
 /// channel, the write beats, the release, and then the grant, the
 /// write responses and the read beats.
+#[named_type_params]
 pub type HostClient<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
 > = (
-    Tx<Issue<A>>,
-    Tx<W<D, S>>,
-    Tx<Grant<I>>,
-    Rx<Grant<I>>,
-    Rx<Done<I>>,
-    Rx<R<D, I>>,
+    Tx<Issue<ADDR>>,
+    Tx<W<DATA, STRB>>,
+    Tx<Grant<ID>>,
+    Rx<Grant<ID>>,
+    Rx<Done<ID>>,
+    Rx<R<DATA, ID>>,
 );
 
 /// The same for a peripheral client that is a unit: the requests and
 /// the write beats it reads, and the answers and read beats it
 /// drives.
+#[named_type_params]
 pub type PerClient<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
-> = (Rx<PerReq<A, I>>, Rx<W<D, S>>, Tx<Answer<I>>, Tx<R<D, I>>);
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+> = (
+    Rx<PerReq<ADDR, ID>>,
+    Rx<W<DATA, STRB>>,
+    Tx<Answer<ID>>,
+    Tx<R<DATA, ID>>,
+);
 
 /// What a peripheral unit holds on an AXI4 link, as one port rather
 /// than four: `run(&mut self, bus: PerPort<32, 32, 4, 4>, ..)` and
