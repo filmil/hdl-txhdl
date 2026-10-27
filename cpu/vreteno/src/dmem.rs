@@ -28,8 +28,13 @@ pub const DMEM_WORDS: usize = 1024;
 /// `ID` is the width of the link's identifier, `WORDS` the words, a power
 /// of two, and `ADDR` the bits that number them, so that `WORDS` is
 /// `1 << ADDR`. The data memory is the defaults.
+///
+/// `WORDS` and `ADDR` are both stated, since a computed width in a type
+/// needs nightly Rust, and they must agree: a `Dmem` built through
+/// `Default` or `with`, as every one in the tree is, whose `WORDS` is not
+/// `1 << ADDR` does not compile (#1971). Give both, or neither.
 #[txhdl::named_type_params]
-#[derive(Trace, Default)]
+#[derive(Trace)]
 pub struct Dmem<
     const ID: usize,
     const ADDR: usize = 10,
@@ -56,6 +61,14 @@ pub struct Dmem<
 }
 
 impl<const I: usize, const AW: usize, const W: usize> Dmem<I, AW, W> {
+    /// `WORDS` is `1 << ADDR`, checked once for each `Dmem` the program
+    /// builds, when it is compiled (#1971). `Default` reads it, and every
+    /// other way of building one goes through `Default`.
+    const SHAPE: () = assert!(
+        AW < usize::BITS as usize && W == 1 << AW,
+        "Dmem: WORDS must be 1 << ADDR"
+    );
+
     /// A memory holding `bytes` from its base before the first cycle:
     /// a compiled program's initialised data. Its constants live in
     /// the boot memory beside the code, which is on the bus read-only
@@ -87,6 +100,28 @@ impl<const I: usize, const AW: usize, const W: usize> Dmem<I, AW, W> {
             | lane(&self.lane1) << 8
             | lane(&self.lane2) << 16
             | lane(&self.lane3) << 24
+    }
+}
+
+impl<const I: usize, const AW: usize, const W: usize> Default
+    for Dmem<I, AW, W>
+{
+    fn default() -> Self {
+        let () = Self::SHAPE;
+        Dmem {
+            lane0: Default::default(),
+            lane1: Default::default(),
+            lane2: Default::default(),
+            lane3: Default::default(),
+            word: Default::default(),
+            rid: Default::default(),
+            answer: Default::default(),
+            rleft: Default::default(),
+            raddr: Default::default(),
+            pend: Default::default(),
+            paddr: Default::default(),
+            pid: Default::default(),
+        }
     }
 }
 
