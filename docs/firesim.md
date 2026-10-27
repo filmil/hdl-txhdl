@@ -76,6 +76,7 @@ The design is `rocket_nitefury-v0.2.1.tar.gz`, Golden Gate's outputs for `FireSi
 `rocket_eth_pnr` meets timing with 0.096 ns of setup slack, in the L2 cache's logic on the simulator's clock, and uses 60% of the LUTs.
 The driver, `rocket_eth_driver`, loaded `hello.riscv` into the DDR3 over TSI; the target printed `Hello from Rocket on the AX7A200B, over Ethernet.` on its UART and ended with `*** PASSED ***` after 68,162,012 target cycles.
 The bitstream merged with PR 1991, whose host link waits for the simulator's reset, passed the same run again the same evening, after 48,114,362 target cycles.
+The count differs from run to run because the target waits in its boot ROM while the driver loads the program over Ethernet, so it measures the host's pace more than the design's.
 To repeat it, holding the BOARD TOKEN:
 
 1. Program the board with `rocket_eth_prog`, as the comment beside it says.
