@@ -71,6 +71,7 @@ use txhdl_parts::scanout::ScanFetch;
 use txhdl_parts::sd::{Sd, SdLines};
 use txhdl_parts::spi::{Spi, SpiLines};
 use txhdl_parts::trng::Entropy;
+use txhdl_parts::{Arbiter, ExMon};
 use txhdl_parts::{
     AxiHost, AxiHostPins, AxiPer, AxiPerReq, AxiPerRsp, AxiPins,
 };
@@ -285,12 +286,29 @@ pub struct Board<const DIV: u32> {
     ///
     /// No host's reads go first: [`SCAN_PRIO`] names none, since the
     /// scanout's priority made no difference on the board (issue 1523).
-    pub arb: Arbiter<8, 32, 32, 4, 2, 5, 0, 1, SCAN_PRIO>,
+    pub arb: Arbiter![
+        HOSTS = 8,
+        ADDR = 32,
+        DATA = 32,
+        STRB = 4,
+        ID = 2,
+        PER_ID = 5,
+        FIXED = 0,
+        HOLD = 1,
+        PRIO = SCAN_PRIO
+    ],
     /// The exclusive monitor (issue 1408), between the arbiter and the
     /// router, which every host's writes pass in the order each
     /// peripheral takes them: the reservations of the harts on ports 0
     /// and 7, and the answer to each exclusive write.
-    pub exmon: ExMon<5, 2, 0, 7, 0x4000_0000, 0xc000_0000>,
+    pub exmon: ExMon![
+        PER_ID = 5,
+        ID = 2,
+        PORT0 = 0,
+        PORT1 = 7,
+        BASE = 0x4000_0000,
+        MASK = 0xc000_0000
+    ],
     /// The data cache's snoop (issue 1275), on the router's port to the
     /// DDR3: another host's write into the DDR3, once answered,
     /// invalidates its lines in the core's data cache before the answer
