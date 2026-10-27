@@ -596,6 +596,103 @@ fn icache5() {
     }
 }
 
+/// Five more loops for #1918, which the four above could not tell
+/// apart. Those cost the crossing and the branch back about 5 together,
+/// where the model charges 7, and the copy's load and store 1, where it
+/// charges 4: the board seems to overlap the fetch's stalls and the
+/// data's, which the model adds. These separate the two:
+///
+/// * `ONE`: the same six instructions in one line, the branch's target
+///   at its start, so a round has no crossing.
+/// * `ONE_LW`: a load the data cache holds, in one line.
+/// * `ONE_SW`: a store into the DDR3, in one line.
+/// * `ONE_COPY`: `copy_in`'s loop in one line.
+/// * `TWO_LW`: the load alone in the loop of two lines, beside `CROSS`.
+///
+/// Reported as `icache6 one <cold> <warm> ..`, then
+/// `costs loop1-<kind>` and `costs loop2-lw`, hundredths of a cycle a
+/// round.
+const ONE: usize = map::DDR3 + 0x3d_2000;
+const ONE_LW: usize = map::DDR3 + 0x3e_2000;
+const ONE_SW: usize = map::DDR3 + 0x3f_2000;
+const ONE_COPY: usize = map::DDR3 + 0x2e_2000;
+const TWO_LW: usize = map::DDR3 + 0x2f_2000;
+const _: () = assert!((ONE - map::DDR3) % 0x4000 == 0x2000);
+const _: () = assert!((ONE_LW - map::DDR3) % 0x4000 == 0x2000);
+const _: () = assert!((ONE_SW - map::DDR3) % 0x4000 == 0x2000);
+const _: () = assert!((ONE_COPY - map::DDR3) % 0x4000 == 0x2000);
+const _: () = assert!((TWO_LW - map::DDR3) % 0x4000 == 0x2000);
+
+/// A loop of one line at `at`: the header, then `a`, `b`, `c`, `d`, the
+/// counter and the branch in the second line's first three words, the
+/// branch's target its first word, so no round crosses a line. The
+/// branch's offset is `loop2`'s, -10.
+fn loop1(at: usize, [a, b, c, d]: [u32; 4]) {
+    put(at, [CSRR_T0, LI_A1, LUI_A2, LUI_A5]);
+    put(
+        at + 16,
+        [pair(a, b), pair(c, d), pair(C_DEC_A1, C_BNEZ_A1), CSRR_T1],
+    );
+    put(at + 32, [SUB_A0, RET, NOP, NOP]);
+}
+
+/// The five loops that separate the fetch's stalls from the data's
+/// (#1918).
+fn icache6() {
+    loop1(ONE, [C_NOP, C_NOP, C_NOP, C_NOP]);
+    loop1(ONE_LW, [C_LW, C_NOP, C_NOP, C_NOP]);
+    loop1(ONE_SW, [C_NOP, C_NOP, C_SW, C_NOP]);
+    loop1(ONE_COPY, [C_LW, C_ADD_A2, C_SW, C_ADD_A5]);
+    loop2(TWO_LW, [C_LW, C_NOP, C_NOP, C_NOP]);
+    fence_i();
+    let blocks = [ONE, ONE_LW, ONE_SW, ONE_COPY, TWO_LW];
+    let rets = [
+        ONE + 36,
+        ONE_LW + 36,
+        ONE_SW + 36,
+        ONE_COPY + 36,
+        TWO_LW + 48,
+    ];
+    for ret in rets {
+        if unsafe { core::ptr::read_volatile(ret as *const u32) != RET } {
+            Uart::say(b"costs loop1 blocks not written\n");
+            return;
+        }
+    }
+    let names = [&b"one"[..], b"one-lw", b"one-sw", b"one-copy", b"two-lw"];
+    let keys = [
+        &b"loop1-nop"[..],
+        b"loop1-lw",
+        b"loop1-sw",
+        b"loop1-copy",
+        b"loop2-lw",
+    ];
+    let mut cold = [0u32; 5];
+    let mut warm = [0u32; 5];
+    for (i, at) in blocks.into_iter().enumerate() {
+        fence_i();
+        cold[i] = run(at);
+        warm[i] = run(at);
+    }
+    Uart::say(b"icache6");
+    for (i, name) in names.iter().enumerate() {
+        Uart::put(b' ');
+        Uart::say(name);
+        Uart::put(b' ');
+        Uart::put_decimal(cold[i]);
+        Uart::put(b' ');
+        Uart::put_decimal(warm[i]);
+    }
+    Uart::put(b'\n');
+    for (i, key) in keys.iter().enumerate() {
+        Uart::say(b"costs ");
+        Uart::say(key);
+        Uart::put(b' ');
+        Uart::put_decimal(warm[i] * 100 / 64);
+        Uart::put(b'\n');
+    }
+}
+
 /// The bulk blocks' two megabytes: a read and a set walk `FROM`, and a
 /// copy moves it to `TO`, a word at a time, four words a round, as the
 /// kernel's `memset` and `memcpy` do (issue 1561).
@@ -1039,6 +1136,7 @@ fn main() -> ! {
     icache_guess_contend();
     icache4();
     icache5();
+    icache6();
     // A load from the data memory at 0x1000, `DATA_BASE`, over the bus
     // (#1755): the data cache holds only the DDR3's lines, so the load
     // goes around it every time. The `lui` is a cycle the row carries on
