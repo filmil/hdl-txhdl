@@ -48,8 +48,8 @@ On the board, `HostBridge` (`//lib/parts`, `remote::host`) takes register reads 
 On the host, `gcd_eth_driver` is FireSim's GCD test with a platform file, `simif_ax7a200b_eth.cc`, that sends those frames on a raw socket.
 `gcd_eth_pnr` meets timing; the run on the board, from srv over the cable, is still to come.
 
-`rules_firesim` itself is not a dependency yet.
-It moves `rules_cc`, `dtc` and five more modules to newer releases, so it comes in with the first change that uses its rules, and that change checks what `bazel mod graph` moves.
+`rules_firesim` itself is not a dependency yet; it comes in with the first change that uses its rules.
+`firesim_target` has already moved `rules_cc`, `dtc` and five more modules to the newer releases they share.
 
 ## What comes next
 
