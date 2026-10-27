@@ -188,8 +188,10 @@ impl<const DEV: usize> Unit for RemoteLink<DEV> {
                 put & !last ? at: at + 1,
                 put & last ? { sending: Bit::Zero, at: 0 },
                 // A frame's bytes are counted from zero, and the
-                // count starts again on the byte after the last.
-                took & !inb.last ? got: got + 1,
+                // count starts again on the byte after the last. It
+                // holds at 63 rather than wrap, so that a frame longer
+                // than 64 bytes reads each field once (#1940).
+                took & !inb.last & (got != 63) ? got: got + 1,
                 took & inb.last ? got: 0,
                 took & bad ? alien: Bit::One,
                 took & inb.last ? alien: Bit::Zero,
@@ -360,6 +362,27 @@ mod tests {
         assert_eq!(got, vec![(9, 0xdead_beef, false)]);
         let bad = answers_from(&[answer_frame(3, 10, 0, true)]);
         assert_eq!(bad, vec![(10, 0, true)], "the error comes across");
+    }
+
+    #[test]
+    fn a_long_answer_is_read_once() {
+        // An answer with trailing bytes past 64. A wrapping count
+        // checks bytes 76 to 79 as the header again, which here say
+        // an answer for this device, and then latches the tag, the
+        // error bit and the word from bytes 80 to 89 (#1940).
+        let mut f = answer_frame(3, 9, 0xdead_beef, false);
+        f.resize(100, 0);
+        f[76..80].copy_from_slice(&[0x88, 0xb5, KIND_ANSWER as u8, 3]);
+        f[80] = 0x77;
+        f[81] = 1;
+        f[86..90].copy_from_slice(&0x1234_5678u32.to_be_bytes());
+        let got = answers_from(&[f]);
+        assert_eq!(got, vec![(9, 0xdead_beef, false)]);
+        // And padded with zeros, which a wrapping count took at byte
+        // 76 for a wrong type and dropped the whole answer.
+        let mut padded = answer_frame(3, 10, 0x55, false);
+        padded.resize(100, 0);
+        assert_eq!(answers_from(&[padded]), vec![(10, 0x55, false)]);
     }
 
     #[test]
