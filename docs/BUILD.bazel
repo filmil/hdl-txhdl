@@ -2375,6 +2375,7 @@ waveform(
     lowered = [
         ("host_link", "host_link"),
         ("lite_master", "lite_master"),
+        ("host_bridge", "host_bridge"),
     ],
     signals = [
         "//clocks/clk=>clk",
