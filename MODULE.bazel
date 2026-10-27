@@ -285,6 +285,10 @@ bazel_dep(name = "rules_vivado", version = "4.1.1")
 # rules_firesim itself comes in when TxHDL first uses its rules: it moves
 # rules_cc, dtc and five more modules to newer releases.
 bazel_dep(name = "firesim_goldengate", version = "1.22.0")
+# FireSim's driver sources and its example drivers (TestGCD), for the
+# FireSim host link over Ethernet on the AX7A200B (//firesim/ax7a200b,
+# issue 1931).
+bazel_dep(name = "firesim_target", version = "1.22.0.bcr.1")
 
 # Shell binaries: the remote programmer and the serial watcher.
 bazel_dep(name = "rules_shell", version = "0.8.0")

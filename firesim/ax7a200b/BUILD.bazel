@@ -1,0 +1,141 @@
+# SPDX-License-Identifier: Apache-2.0
+# FireSim on the AX7A200B with Ethernet as the host link (issue 1931),
+# milestone 1: FireSim's GCD example, whose bridges are registers only.
+#
+# The board: the MAC's two halves and the PHY's RGMII, as //eth's echo
+# design has them; HostLink and LiteMaster (//lib/parts, remote::host),
+# lowered; and Golden Gate's FPGATop for GCD at 50 MHz. The host: FireSim's
+# driver for GCD with a platform file that speaks frames instead of PCIe.
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+load(
+    "@rules_vivado//build/vivado:rules.bzl",
+    "vivado_program_device",
+)
+load("//tools/vivado:defs.bzl", "vivado_place_and_route2", "vivado_synthesis2")
+
+package(default_visibility = ["//visibility:public"])
+
+# The hand-written top, for //tools/topcheck (issue 508).
+exports_files(["firesim_eth_top.v"])
+
+# The Verilog of `host_link` and `lite_master`.
+rust_binary(
+    name = "netlist",
+    srcs = ["netlist.rs"],
+    edition = "2021",
+    deps = ["//lib/parts:txhdl_parts"],
+)
+
+genrule(
+    name = "hostlink_v",
+    outs = ["hostlink.v"],
+    cmd = "$(location :netlist) > $@",
+    tools = [":netlist"],
+)
+
+# GCD through Golden Gate for the Nitefury II platform config, which this
+# board shares for GCD: the control port is the same, and GCD uses none
+# of the ports where the two boards differ.
+genrule(
+    name = "gcd_goldengate",
+    srcs = [
+        "//firesim:testdata/GCD.fir",
+        "//firesim:testdata/GCD.anno.json",
+    ],
+    outs = [
+        "gcd/FireSim-generated.sv",
+        "gcd/FireSim-generated.const.h",
+    ],
+    cmd = "$(location @firesim_goldengate//:goldengate) " +
+          "-i $(location //firesim:testdata/GCD.fir) -td $(RULEDIR)/gcd " +
+          "-faf $(location //firesim:testdata/GCD.anno.json) " +
+          "-ggcp firesim.midasexamples -ggcs DefaultNitefuryConfig " +
+          "--output-filename-base FireSim-generated " +
+          "--allow-unrecognized-annotations --no-dedup " +
+          "> $(RULEDIR)/gcd/goldengate.log 2>&1 " +
+          "|| { tail -40 $(RULEDIR)/gcd/goldengate.log >&2; exit 1; }",
+    tools = ["@firesim_goldengate//:goldengate"],
+)
+
+filegroup(
+    name = "xdc",
+    srcs = [
+        "ax7a200b_firesim.xdc",
+        "//eth:echo_xdc",
+    ],
+)
+
+# The board through Vivado's synthesis, and then place and route to a
+# bitstream. Manual, as every Vivado target is:
+#
+#   bazel build //firesim/ax7a200b:gcd_eth_pnr
+vivado_synthesis2(
+    name = "gcd_eth_synth",
+    srcs = [
+        ":hostlink_v",
+        ":gcd/FireSim-generated.sv",
+        "//eth:mac_v",
+        "//eth:eth_rgmii",
+        "//lib/board:chan_cdc",
+        "firesim_eth_top.v",
+    ],
+    part = "xc7a200tfbg484-2",
+    top = "firesim_eth_top",
+    xdcs = [":xdc"],
+    tags = ["manual"],
+)
+
+vivado_place_and_route2(
+    name = "gcd_eth_pnr",
+    synthesis = ":gcd_eth_synth",
+    xdcs = [":xdc"],
+    tags = ["manual"],
+)
+
+# Write it into the board where it is, as //eth:echo_prog does, over the
+# tunnel the Vreteno board's daemon opens. Needs the BOARD TOKEN.
+vivado_program_device(
+    name = "gcd_eth_prog",
+    prog_daemon = "//cpu/vreteno/board/remote:hw_server",
+    deps = [":gcd_eth_pnr"],
+    tags = ["manual"],
+)
+
+# The host: FireSim's driver for GCD (main, entry, the example's test and
+# harness), with this platform file in place of FireSim's PCIe ones.
+cc_library(
+    name = "gcd_const",
+    hdrs = ["gcd/FireSim-generated.const.h"],
+    includes = ["gcd"],
+)
+
+# Run it on the machine cabled to the board, as one with cap_net_raw:
+#
+#   gcd_eth_driver +iface=<interface>
+cc_binary(
+    name = "gcd_eth_driver",
+    srcs = [
+        "simif_ax7a200b_eth.cc",
+        "@firesim_target//:sim/midas/src/main/cc/entry.cc",
+        "@firesim_target//:sim/midas/src/main/cc/main.cc",
+        "@firesim_target//:sim/src/main/cc/midasexamples/TestGCD.cc",
+        "@firesim_target//:sim/src/main/cc/midasexamples/TestHarness.cc",
+    ],
+    copts = [
+        "-std=c++20",
+        "-DFIRESIM",
+        "-Wno-unused-variable",
+    ],
+    deps = [
+        ":gcd_const",
+        "@firesim_target//:examples_driver_hdrs",
+        "@firesim_target//:midas_bridges",
+    ],
+)
+
+# The sources by name, for the documents' listings.
+filegroup(
+    name = "sources",
+    srcs = glob(["*.v", "*.xdc", "*.rs", "*.cc"]),
+)
