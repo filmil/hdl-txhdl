@@ -27,6 +27,7 @@ use txhdl_parts::bus::axi::{
 };
 use txhdl_parts::bus::axi_per_pins::sim::pins as pin_ram;
 use txhdl_parts::bus::axi_per_pins::AxiPerPins;
+use txhdl_parts::Ar;
 use txhdl_parts::{AxiHost, Host, Pending, R};
 
 use crate::{Ddr3Per, Ddr3PerBus, Ddr3PerPins};
@@ -167,7 +168,7 @@ pub fn ddr3_per(beats: usize, bursts: usize, write: bool) -> Measured {
                     w,
                     b,
                     r,
-                    xar: chan::<Ar<32, 5>, DefaultClock>().1,
+                    xar: chan::<Ar![ADDR = 32, ID = 5], DefaultClock>().1,
                     xr:
                         chan::<R![DATA = 256, ID = 5, LIMBS = 2], DefaultClock>(
                         )

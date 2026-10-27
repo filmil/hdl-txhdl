@@ -110,68 +110,75 @@ pub struct Arbiter<
 }
 
 /// Two hosts.
+#[named_type_params]
 pub type Arbiter2<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
-    const J: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+    const PER_ID: usize,
     const FIXED: usize,
-> = Arbiter<2, A, D, S, I, J, FIXED>;
+> = Arbiter<2, ADDR, DATA, STRB, ID, PER_ID, FIXED>;
 /// Three hosts.
+#[named_type_params]
 pub type Arbiter3<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
-    const J: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+    const PER_ID: usize,
     const FIXED: usize,
-> = Arbiter<3, A, D, S, I, J, FIXED>;
+> = Arbiter<3, ADDR, DATA, STRB, ID, PER_ID, FIXED>;
 /// Four hosts.
+#[named_type_params]
 pub type Arbiter4<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
-    const J: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+    const PER_ID: usize,
     const FIXED: usize,
-> = Arbiter<4, A, D, S, I, J, FIXED>;
+> = Arbiter<4, ADDR, DATA, STRB, ID, PER_ID, FIXED>;
 /// Five hosts.
+#[named_type_params]
 pub type Arbiter5<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
-    const J: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+    const PER_ID: usize,
     const FIXED: usize,
-> = Arbiter<5, A, D, S, I, J, FIXED>;
+> = Arbiter<5, ADDR, DATA, STRB, ID, PER_ID, FIXED>;
 /// Six hosts.
+#[named_type_params]
 pub type Arbiter6<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
-    const J: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+    const PER_ID: usize,
     const FIXED: usize,
-> = Arbiter<6, A, D, S, I, J, FIXED>;
+> = Arbiter<6, ADDR, DATA, STRB, ID, PER_ID, FIXED>;
 /// Seven hosts.
+#[named_type_params]
 pub type Arbiter7<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
-    const J: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+    const PER_ID: usize,
     const FIXED: usize,
-> = Arbiter<7, A, D, S, I, J, FIXED>;
+> = Arbiter<7, ADDR, DATA, STRB, ID, PER_ID, FIXED>;
 /// Eight hosts.
+#[named_type_params]
 pub type Arbiter8<
-    const A: usize,
-    const D: usize,
-    const S: usize,
-    const I: usize,
-    const J: usize,
+    const ADDR: usize,
+    const DATA: usize,
+    const STRB: usize,
+    const ID: usize,
+    const PER_ID: usize,
     const FIXED: usize,
-> = Arbiter<8, A, D, S, I, J, FIXED>;
+> = Arbiter<8, ADDR, DATA, STRB, ID, PER_ID, FIXED>;
 
 // The lowering reads a loop over an array of ports as `aws[i]`, so the
 // index is what it is written with, and Clippy would rather it were an

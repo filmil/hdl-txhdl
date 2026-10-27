@@ -3,8 +3,8 @@
 //! with the macro's own message:
 //!
 //! ```text
-//! error: `#[named_type_params]` goes on a struct, not an enum or a
-//!        union
+//! error: `#[named_type_params]` goes on a struct or a type alias, not
+//!        an enum or a union
 //! ```
 use txhdl::named_type_params;
 

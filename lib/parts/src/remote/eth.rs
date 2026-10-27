@@ -382,14 +382,14 @@ mod tests {
     #[test]
     fn the_bus_is_served_by_a_program_that_speaks_frames() {
         let link = axi_lite::<32, 32, 4>();
-        let bus: LitePort<32, 32, 4> = link.per.into();
+        let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = link.per.into();
         let (ask_tx, ask_rx) = chan::<Ask, DefaultClock>();
         let (ans_tx, ans_rx) = chan::<Answer, DefaultClock>();
         let (out_tx, out_rx) = chan::<EthByte, DefaultClock>();
         let (in_tx, in_rx) = chan::<EthByte, DefaultClock>();
         let mut remote = Remote::<2000>::default();
         let mut wire = RemoteLink::<3>::default();
-        let host: LiteHost<32, 32, 4> = link.host;
+        let host: LiteHost![ADDR = 32, DATA = 32, STRB = 4] = link.host;
         let done = Rc::new(RefCell::new(false));
         let d = done.clone();
         let client = async move {

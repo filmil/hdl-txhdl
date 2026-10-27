@@ -1478,7 +1478,7 @@ mod tests {
     use std::rc::Rc;
     use txhdl::comp::{chan, join2, signal, Running};
 
-    type Host = LiteHost<32, 32, 4>;
+    type Host = LiteHost![ADDR = 32, DATA = 32, STRB = 4];
 
     async fn write(h: &Host, addr: u32, data: u32) {
         let (aw, _, w, b, _) = h;
@@ -1704,7 +1704,7 @@ mod tests {
         F: std::future::Future<Output = ()>,
     {
         let link = axi_lite::<32, 32, 4>();
-        let bus: LitePort<32, 32, 4> = link.per.into();
+        let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = link.per.into();
         let (cmd_in_o, cmd_in) = signal::<Bit, DefaultClock>();
         let (dat_in_o, dat_in) = signal::<U<4>, DefaultClock>();
         let (sclk_o, sclk) = signal::<Bit, DefaultClock>();

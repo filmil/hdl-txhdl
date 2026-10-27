@@ -25,6 +25,10 @@
 //! visibility and are put beside it, so their names are the parameters'
 //! and should say what each is.
 //!
+//! On a type alias of const parameters it makes no markers and changes
+//! nothing: it writes the alias's macro only, so `Aw![ADDR = 32, ID = 2]`
+//! names an alias's parameters as a struct's macro does (#1946).
+//!
 //! It is written on the tokens, as every macro of this crate is.
 use proc_macro::{
     Delimiter, Group, Ident, Punct, Spacing, Span, TokenStream, TokenTree,
@@ -59,17 +63,25 @@ pub(crate) fn named_type_params(
     };
     let toks: Vec<TokenTree> = item.into_iter().collect();
     let Some(kw) = toks.iter().position(|t| {
-        is_ident(t, "struct") || is_ident(t, "enum") || is_ident(t, "union")
+        is_ident(t, "struct")
+            || is_ident(t, "enum")
+            || is_ident(t, "union")
+            || is_ident(t, "type")
     }) else {
         return err(
             Span::call_site(),
-            "`#[named_type_params]` goes on a struct",
+            "`#[named_type_params]` goes on a struct, or on a type alias of \
+             const parameters",
         );
     };
+    if is_ident(&toks[kw], "type") {
+        return alias(&reused, &toks, kw);
+    }
     if !is_ident(&toks[kw], "struct") {
         return err(
             toks[kw].span(),
-            "`#[named_type_params]` goes on a struct, not an enum or a union",
+            "`#[named_type_params]` goes on a struct or a type alias, not an \
+             enum or a union",
         );
     }
     // What comes before `struct`: attributes, doc comments, and the
@@ -269,6 +281,76 @@ pub(crate) fn named_type_params(
         .expect("the parameters parse");
     ts.extend(g);
     ts.extend(rest);
+    ts
+}
+
+/// `#[named_type_params]` on a type alias (#1946): the alias as it is,
+/// and the macro of its name that takes its parameters by name, as a
+/// struct's does. An alias makes no markers, so it names const
+/// parameters only; a type parameter is refused, and so is `reuse(..)`.
+fn alias(
+    reused: &[(String, Span)],
+    toks: &[TokenTree],
+    kw: usize,
+) -> TokenStream {
+    if let Some((_, span)) = reused.first() {
+        return err(
+            *span,
+            "`reuse(..)` names markers, which a type alias does not take",
+        );
+    }
+    let head = &toks[..kw];
+    let public = head.iter().any(|t| is_ident(t, "pub"));
+    let Some(TokenTree::Ident(name)) = toks.get(kw + 1) else {
+        return err(toks[kw].span(), "a type alias needs a name");
+    };
+    let Some(lt) = toks.get(kw + 2).filter(|t| is_punct(t, '<')) else {
+        return err(
+            name.span(),
+            "`#[named_type_params]` names const parameters, and this alias \
+             has none",
+        );
+    };
+    let mut depth = 0i32;
+    let mut close = None;
+    for (k, t) in toks.iter().enumerate().skip(kw + 2) {
+        if is_punct(t, '<') {
+            depth += 1;
+        } else if is_punct(t, '>') && !after_dash(toks, k) {
+            depth -= 1;
+            if depth == 0 {
+                close = Some(k);
+                break;
+            }
+        }
+    }
+    let Some(close) = close else {
+        return err(lt.span(), "the generic parameters do not close");
+    };
+    let params = match parse_params(&toks[kw + 3..close]) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if params.is_empty() {
+        return err(
+            name.span(),
+            "`#[named_type_params]` names const parameters, and this alias \
+             has none",
+        );
+    }
+    if let Some(Param::Type(t)) =
+        params.iter().find(|p| matches!(p, Param::Type(_)))
+    {
+        return err(
+            t.name.span(),
+            "on a type alias, `#[named_type_params]` names const \
+             parameters only: an alias has no markers to name a type by",
+        );
+    }
+    let mut ts: TokenStream = use_macro(&name.to_string(), &params, public)
+        .parse()
+        .expect("the macro parses");
+    ts.extend(toks.iter().cloned());
     ts
 }
 

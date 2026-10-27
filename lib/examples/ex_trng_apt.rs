@@ -23,8 +23,9 @@ use txhdl_parts::trng::{
     Trng, APT_CUTOFF, APT_WINDOW, CTRL, CTRL_CLEAR, CTRL_RUN, RINGS, STATUS,
     STATUS_APTFAULT, STATUS_FAULT,
 };
+use txhdl_parts::{LiteHost, LitePort};
 
-type Host = LiteHost<32, 32, 4>;
+type Host = LiteHost![ADDR = 32, DATA = 32, STRB = 4];
 
 async fn write(h: &Host, addr: u32, data: u32) {
     let (aw, _, w, b, _) = h;
@@ -61,7 +62,7 @@ async fn read(h: &Host, addr: u32) -> u32 {
 fn main() {
     let lite = axi_lite::<32, 32, 4>();
     let host = lite.host;
-    let bus: LitePort<32, 32, 4> = lite.per.into();
+    let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = lite.per.into();
     let (raw_o, raw) = signal::<U<RINGS>, DefaultClock>();
     let (en_o, en) = signal::<Bit, DefaultClock>();
     let mut trng = Trng::default();

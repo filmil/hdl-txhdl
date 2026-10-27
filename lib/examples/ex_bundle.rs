@@ -26,6 +26,7 @@ use txhdl_parts::bus::axi::Resp;
 use txhdl_parts::bus::axi_lite::{
     axi_lite, LiteAw, LiteB, LiteHost, LitePort, LiteR, LiteW,
 };
+use txhdl_parts::{LiteHost, LitePort};
 
 // begin{unit}
 /// One word, written and read from either of two links.
@@ -87,7 +88,7 @@ impl Unit for Shared {
 }
 // end{unit}
 
-type Host = LiteHost<32, 32, 4>;
+type Host = LiteHost![ADDR = 32, DATA = 32, STRB = 4];
 
 /// Send a write's address and word, without waiting.
 fn put(h: &Host, data: u32) {
@@ -129,8 +130,8 @@ async fn get(h: &Host) -> u32 {
 fn main() {
     let l = axi_lite::<32, 32, 4>();
     let r = axi_lite::<32, 32, 4>();
-    let left: LitePort<32, 32, 4> = l.per.into();
-    let right: LitePort<32, 32, 4> = r.per.into();
+    let left: LitePort![ADDR = 32, DATA = 32, STRB = 4] = l.per.into();
+    let right: LitePort![ADDR = 32, DATA = 32, STRB = 4] = r.per.into();
     let (lh, rh) = (l.host, r.host);
     let mut shared = Shared::default();
     if let Some(mut w) = Wave::from_env() {

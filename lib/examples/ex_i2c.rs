@@ -19,8 +19,9 @@ use txhdl_parts::bus::axi_lite::{axi_lite, LiteAw, LiteHost, LitePort, LiteW};
 use txhdl_parts::i2c::sim::I2cDev;
 use txhdl_parts::i2c::I2cLines;
 use txhdl_parts::i2c::{cmd, reg, I2c};
+use txhdl_parts::{LiteHost, LitePort};
 
-type Host = LiteHost<32, 32, 4>;
+type Host = LiteHost![ADDR = 32, DATA = 32, STRB = 4];
 
 /// A quarter of a bit in this run: four cycles, so a byte and its
 /// acknowledge take about a hundred and fifty.
@@ -76,7 +77,7 @@ async fn command(h: &Host, word: u32) -> u32 {
 
 fn main() {
     let link = axi_lite::<32, 32, 4>();
-    let bus: LitePort<32, 32, 4> = link.per.into();
+    let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = link.per.into();
     let host = link.host;
     let (scl_in_o, scl_in) = signal::<Bit, DefaultClock>();
     let (sda_in_o, sda_in) = signal::<Bit, DefaultClock>();

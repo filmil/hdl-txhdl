@@ -211,7 +211,7 @@ mod tests {
     use std::rc::Rc;
     use txhdl::comp::{join2, signal, In, Running};
 
-    type Host = LiteHost<32, 32, 4>;
+    type Host = LiteHost![ADDR = 32, DATA = 32, STRB = 4];
 
     /// A write of one word, and the wait for its response.
     async fn write(h: &Host, addr: u32, data: u32) {

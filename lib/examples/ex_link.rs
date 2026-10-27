@@ -27,6 +27,7 @@ use txhdl_parts::bus::axi_lite::{
     axi_lite, LiteAr, LiteAw, LiteB, LiteHost, LiteHostPort, LitePort, LiteR,
     LiteW,
 };
+use txhdl_parts::{LiteHost, LitePort};
 
 // begin{unit}
 /// Each channel of a link, from the side it came in on to the other.
@@ -123,7 +124,7 @@ impl Unit for Slice {
 }
 // end{unit}
 
-type Host = LiteHost<32, 32, 4>;
+type Host = LiteHost![ADDR = 32, DATA = 32, STRB = 4];
 
 /// Send a write's address and word, without waiting.
 fn put(h: &Host, data: u32) {
@@ -164,7 +165,7 @@ async fn get(h: &Host) -> u32 {
 
 fn main() {
     let l = axi_lite::<32, 32, 4>();
-    let bus: LitePort<32, 32, 4> = l.per.into();
+    let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = l.per.into();
     let h = l.host;
     let mut slice = Slice::default();
     if let Some(mut w) = Wave::from_env() {

@@ -757,7 +757,7 @@ mod tests {
     #[test]
     fn the_raster_is_where_the_mode_puts_it() {
         let lite = crate::bus::axi_lite::axi_lite::<32, 32, 4>();
-        let bus: LitePort<32, 32, 4> = lite.per.into();
+        let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = lite.per.into();
         let (rgb_out, _rgb) = signal::<U<24>, DefaultClock>();
         let (hs_out, hs) = signal::<Bit, DefaultClock>();
         let (vs_out, vs) = signal::<Bit, DefaultClock>();

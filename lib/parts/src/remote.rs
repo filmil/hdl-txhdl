@@ -197,7 +197,7 @@ mod tests {
     use std::rc::Rc;
     use txhdl::comp::{chan, join2, Running};
 
-    type Host = LiteHost<32, 32, 4>;
+    type Host = LiteHost![ADDR = 32, DATA = 32, STRB = 4];
 
     /// A write of one word, and the wait for its response.
     async fn write(h: &Host, addr: u32, data: u32) -> Resp {
@@ -285,7 +285,7 @@ mod tests {
         F: std::future::Future<Output = ()>,
     {
         let link = axi_lite::<32, 32, 4>();
-        let bus: LitePort<32, 32, 4> = link.per.into();
+        let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = link.per.into();
         let (ask_tx, ask_rx) = chan::<Ask, DefaultClock>();
         let (ans_tx, ans_rx) = chan::<Answer, DefaultClock>();
         let done = Rc::new(RefCell::new(false));

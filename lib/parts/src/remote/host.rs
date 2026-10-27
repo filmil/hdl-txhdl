@@ -431,7 +431,7 @@ mod tests {
         frames: &[Vec<u8>],
         delay: u32,
     ) -> (Vec<(u8, u8, u32, bool)>, usize, Vec<u8>) {
-        let (host, per) = link::<LitePort<32, 32, 4>>();
+        let (host, per) = link::<LitePort![ADDR = 32, DATA = 32, STRB = 4]>();
         let (ask_tx, ask_rx) = chan::<Ask, DefaultClock>();
         let (ans_tx, ans_rx) = chan::<Answer, DefaultClock>();
         let (in_tx, in_rx) = chan::<EthByte, DefaultClock>();
@@ -635,7 +635,7 @@ mod tests {
     #[test]
     fn the_bridge_is_the_two_units_joined() {
         // The same asks through HostBridge as through the two units.
-        let (host, per) = link::<LitePort<32, 32, 4>>();
+        let (host, per) = link::<LitePort![ADDR = 32, DATA = 32, STRB = 4]>();
         let (in_tx, in_rx) = chan::<EthByte, DefaultClock>();
         let (out_tx, out_rx) = chan::<EthByte, DefaultClock>();
         let mut bridge = HostBridge::<5>::default();

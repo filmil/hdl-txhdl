@@ -508,7 +508,7 @@ mod tests {
     use txhdl::comp::{join2, signal, Clock, DefaultClock, Running, Unit};
     use txhdl::types::{Bit, U};
 
-    type Host = LiteHost<32, 32, 4>;
+    type Host = LiteHost![ADDR = 32, DATA = 32, STRB = 4];
 
     /// Each `let` the netlist's comments name is paired with the wire it
     /// became, its own name or that name with `_w` added where a field
@@ -593,7 +593,7 @@ mod tests {
         F: std::future::Future<Output = ()>,
     {
         let link = axi_lite::<32, 32, 4>();
-        let bus: LitePort<32, 32, 4> = link.per.into();
+        let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = link.per.into();
         let (in_o, mdio_in) = signal::<Bit, DefaultClock>();
         let (mdc_o, mdc) = signal::<Bit, DefaultClock>();
         let (out_o, out) = signal::<Bit, DefaultClock>();

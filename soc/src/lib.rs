@@ -38,6 +38,7 @@ use txhdl_parts::bus::noc::mesh::lattice;
 use txhdl_parts::bus::noc::node::Node;
 use txhdl_parts::bus::Map;
 use txhdl_parts::LiteBridge;
+use txhdl_parts::LitePort;
 use txhdl_parts::{AxiHost, AxiPer, HostBridge, Node, PerBridge, Ram};
 use vreteno32::core::Writeback;
 use vreteno32::hart::{Hart, HartIn, HartOut};
@@ -339,7 +340,7 @@ pub fn run(text: &[u32], data: &[u8], limit: u64) -> Ran {
     // The serial port is an AXI-Lite peripheral, behind a bridge
     // from its corner's AXI4 link.
     let sl = axi_lite::<32, 32, 4>();
-    let ubus: LitePort<32, 32, 4> = sl.per.into();
+    let ubus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = sl.per.into();
     let (baw, bar, bw, bb, br) = sl.host;
     let mut ubridge = <LiteBridge![
         PORTS = 1,

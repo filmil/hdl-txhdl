@@ -18,8 +18,9 @@ use txhdl_parts::bus::axi_lite::{axi_lite, LiteAw, LiteHost, LitePort, LiteW};
 use txhdl_parts::mdio::sim::MdioPhy;
 use txhdl_parts::mdio::MdioLines;
 use txhdl_parts::mdio::{cmd, reg, Mdio};
+use txhdl_parts::{LiteHost, LitePort};
 
-type Host = LiteHost<32, 32, 4>;
+type Host = LiteHost![ADDR = 32, DATA = 32, STRB = 4];
 
 /// Half of an MDC cycle in this run: two cycles, so a frame of 64 bits
 /// takes 256.
@@ -69,7 +70,7 @@ async fn read(h: &Host, phy: u8, r: u8) -> u16 {
 
 fn main() {
     let link = axi_lite::<32, 32, 4>();
-    let bus: LitePort<32, 32, 4> = link.per.into();
+    let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = link.per.into();
     let host = link.host;
     let (in_o, mdio_in) = signal::<Bit, DefaultClock>();
     let (mdc_o, mdc) = signal::<Bit, DefaultClock>();

@@ -276,7 +276,7 @@ mod tests {
     use std::rc::Rc;
     use txhdl::comp::{join2, signal, Running};
 
-    type Host = LiteHost<32, 32, 4>;
+    type Host = LiteHost![ADDR = 32, DATA = 32, STRB = 4];
     const KEY: usize = 0x5744_4f47;
 
     async fn write(h: &Host, at: u32, data: u32) {
@@ -335,7 +335,7 @@ mod tests {
         cycles: u32,
     ) -> Seen {
         let link = axi_lite::<32, 32, 4>();
-        let bus: LitePort<32, 32, 4> = link.per.into();
+        let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = link.per.into();
         let host = link.host;
         let (rst_req, rst_in) = signal::<Bit, DefaultClock>();
         let (irq, irq_in) = signal::<Bit, DefaultClock>();
@@ -431,7 +431,7 @@ mod tests {
     #[test]
     fn a_smaller_scale_starts_a_new_tick() {
         let link = axi_lite::<32, 32, 4>();
-        let bus: LitePort<32, 32, 4> = link.per.into();
+        let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = link.per.into();
         let host = link.host;
         let (rst_req, rst_in) = signal::<Bit, DefaultClock>();
         let (irq, _) = signal::<Bit, DefaultClock>();
@@ -467,7 +467,7 @@ mod tests {
     #[test]
     fn lock_freezes_the_scale() {
         let link = axi_lite::<32, 32, 4>();
-        let bus: LitePort<32, 32, 4> = link.per.into();
+        let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = link.per.into();
         let host = link.host;
         let (rst_req, _) = signal::<Bit, DefaultClock>();
         let (irq, _) = signal::<Bit, DefaultClock>();

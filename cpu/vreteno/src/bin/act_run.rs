@@ -46,6 +46,7 @@ use txhdl_parts::bus::axi::{
 };
 use txhdl_parts::bus::exmon::ExMon;
 use txhdl_parts::ExMon;
+use txhdl_parts::{Ar, Aw};
 use txhdl_parts::{AxiHost, AxiPer, Per, W};
 use vreteno32::core::Writeback;
 use vreteno32::hart::{Hart, HartIn, HartOut};
@@ -257,8 +258,8 @@ fn simulate<const EXCL: usize>(
     let hardware: Pin<Box<dyn Future<Output = ()> + '_>> = if EXCL != 0 {
         let (aw_rx, ar_rx, w_rx, ans_rx, rb_rx) = link.per_in;
         let (req_tx, wd_tx, b_tx, r_tx) = link.per_out;
-        let (maw_tx, maw_rx) = chan::<Aw<32, IW>, DefaultClock>();
-        let (mar_tx, mar_rx) = chan::<Ar<32, IW>, DefaultClock>();
+        let (maw_tx, maw_rx) = chan::<Aw![ADDR = 32, ID = IW], DefaultClock>();
+        let (mar_tx, mar_rx) = chan::<Ar![ADDR = 32, ID = IW], DefaultClock>();
         let (mw_tx, mw_rx) = chan::<W![DATA = 32, STRB = 4], DefaultClock>();
         let (mb_tx, mb_rx) = chan::<B<IW>, DefaultClock>();
         Box::pin(join2(
