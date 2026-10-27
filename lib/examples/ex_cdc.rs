@@ -24,9 +24,12 @@
 //! protocol; the second flop is an argument about silicon, and no
 //! simulation of either language says anything about it.
 use txhdl::comp::trace::{stop, Wave};
+use txhdl::comp::Data;
 use txhdl::comp::{chan, join2, now, until, Clock, Reg, Running, Rx, Tx, Unit};
 use txhdl::types::U;
 use txhdl_parts::cdc::ChanCdc;
+use txhdl_parts::cdc::{ReadClock, WriteClock};
+use txhdl_parts::ChanCdc;
 
 /// The writing clock: an edge every four ticks.
 pub struct ClkW;
@@ -45,7 +48,14 @@ impl Clock for ClkR {
 }
 
 /// Sixteen words of eight bits, so the pointers are five.
-pub type Cdc = ChanCdc<U<8>, 4, 16, 5, ClkW, ClkR>;
+pub type Cdc = ChanCdc![
+    Data = U<8>,
+    ADDR = 4,
+    DEPTH = 16,
+    PTRS = 5,
+    WriteClock = ClkW,
+    ReadClock = ClkR,
+];
 
 /// Offers a counting sequence on the writing clock, as fast as the
 /// channel will take it.

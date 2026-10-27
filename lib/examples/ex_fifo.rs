@@ -10,9 +10,12 @@
 //! for its own event, and the channel's own handshake is the
 //! backpressure: the producer waits until the channel is ready, the
 //! consumer for a word.
+use txhdl::comp::Data;
 use txhdl::comp::{chan, join2, now, until, Clock, Reg, Running, Rx, Tx, Unit};
 use txhdl::types::U;
 use txhdl_parts::cdc::ChanCdc;
+use txhdl_parts::cdc::{ReadClock, WriteClock};
+use txhdl_parts::ChanCdc;
 
 pub struct ClkW;
 impl Clock for ClkW {
@@ -27,7 +30,14 @@ impl Clock for ClkR {
 }
 
 /// Four words of `U<8>`, two address bits and three pointer bits.
-pub type Fifo = ChanCdc<U<8>, 2, 4, 3, ClkW, ClkR>;
+pub type Fifo = ChanCdc![
+    Data = U<8>,
+    ADDR = 2,
+    DEPTH = 4,
+    PTRS = 3,
+    WriteClock = ClkW,
+    ReadClock = ClkR,
+];
 
 /// Offers a counting sequence whenever the channel can take one.
 #[derive(Default)]

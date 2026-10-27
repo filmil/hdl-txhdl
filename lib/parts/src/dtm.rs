@@ -270,12 +270,13 @@ pub const SBERROR_ALIGN: u32 = 3;
 /// where the bus master is. It is answered at once, and the access it
 /// starts runs on the link behind it, as the specification has it. Any
 /// other address is one of the debug module's registers, which sits on
-/// the link at `DM`, each register a word at four times its number; that
+/// the link at `DM_AT`, each register a word at four times its number; that
 /// access is answered when its word comes back. One access is on the
 /// link at a time, which is all a transport asks for, so the bridge's
-/// host needs identifiers of one bit, `I`.
+/// host needs identifiers of one bit, `ID`.
+#[txhdl::named_type_params]
 #[derive(Trace, Default)]
-pub struct DtmBridge<const DM: usize, const I: usize> {
+pub struct DtmBridge<const DM_AT: usize, const ID: usize> {
     /// An access is on the link, from its address phase to its answer.
     pub busy: Reg<Bit>,
     /// Its address phase has gone out.
@@ -283,7 +284,7 @@ pub struct DtmBridge<const DM: usize, const I: usize> {
     /// Its identifier, once granted.
     pub held: Reg<Bit>,
     /// The identifier.
-    pub id: Reg<U<I>>,
+    pub id: Reg<U<ID>>,
     /// It reads.
     pub isrd: Reg<Bit>,
     /// It is a debug module register, which the transport waits on,
@@ -839,7 +840,7 @@ mod bridge_tests {
         let (req, wd, answer, rb) = link.per_client;
         let (dmi_tx, dmi_rx) = chan::<U<41>, DefaultClock>();
         let (ans_tx, ans_rx) = chan::<U<34>, DefaultClock>();
-        let mut bridge = DtmBridge::<DM, 1>::default();
+        let mut bridge = <DtmBridge![DM_AT = DM, ID = 1]>::default();
         let mut host = <AxiHost![
             ADDR = 32,
             DATA = 32,

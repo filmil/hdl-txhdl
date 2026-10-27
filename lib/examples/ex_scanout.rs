@@ -28,14 +28,17 @@ use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{
     chan, join2, now, signal, Clock, DefaultClock, Mem, Reg, Running, Unit,
 };
+use txhdl::comp::{Data, Domain};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 use txhdl_parts::bus::axi::{
     axi_units, Answer, AxiHost, AxiPer, PerPort, Resp, R,
 };
 use txhdl_parts::cdc::ChanCdc;
+use txhdl_parts::cdc::{ReadClock, WriteClock};
 use txhdl_parts::dma::{LineBuf, LineFetch};
 use txhdl_parts::{AxiHost, AxiPer, PerPort};
+use txhdl_parts::{ChanCdc, LineBuf, LineFetch};
 
 const ADDR: usize = 32;
 const IDB: usize = 2;
@@ -151,9 +154,22 @@ fn main() {
     ]>::default();
     let mut per =
         <AxiPer![ADDR = ADDR, DATA = 32, STRB = 4, ID = IDB]>::default();
-    let mut fetch = LineFetch::<ADDR, IDB, BEATS, 16>::default();
-    let mut cross = ChanCdc::<U<32>, 4, 16, 5, DefaultClock, ClkPix>::default();
-    let mut line = LineBuf::<LINE, LINE_AW, ClkPix>::default();
+    let mut fetch = <LineFetch![
+        ADDR = ADDR,
+        ID = IDB,
+        BEATS = BEATS,
+        COUNT = 16
+    ]>::default();
+    let mut cross = <ChanCdc![
+        Data = U<32>,
+        ADDR = 4,
+        DEPTH = 16,
+        PTRS = 5,
+        WriteClock = DefaultClock,
+        ReadClock = ClkPix,
+    ]>::default();
+    let mut line =
+        <LineBuf![LEN = LINE, COL = LINE_AW, Domain = ClkPix]>::default();
 
     // The far end is the unit under check here: its ports under
     // their own names, and the unit under the entity's name, which is
@@ -234,9 +250,16 @@ fn main() {
     }
     println!("the line crossed intact: {LINE} pixels");
 
-    print!("\n{}", LineBuf::<LINE, LINE_AW, ClkPix>::verilog("linebuf"));
-    stop();
-    txhdl::netlist::write_vhdl_from_env(
-        &LineBuf::<LINE, LINE_AW, ClkPix>::lowered("linebuf"),
+    print!(
+        "\n{}",
+        <LineBuf![LEN = LINE, COL = LINE_AW, Domain = ClkPix]>::verilog(
+            "linebuf"
+        )
     );
+    stop();
+    txhdl::netlist::write_vhdl_from_env(&<LineBuf![
+        LEN = LINE,
+        COL = LINE_AW,
+        Domain = ClkPix
+    ]>::lowered("linebuf"));
 }

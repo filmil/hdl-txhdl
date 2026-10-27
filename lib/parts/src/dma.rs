@@ -20,7 +20,9 @@
 //! to what happens when they come back out of order, and none of that
 //! buys anything until the memory is faster than the consumer. The
 //! consumer here is a raster taking a pixel per visible cycle.
-use txhdl::comp::{mux, Clock, DefaultClock, In, Mem, Out, Reg, Rx, Tx, Unit};
+use txhdl::comp::{
+    mux, Clock, DefaultClock, Domain, In, IsDomain, Mem, Out, Reg, Rx, Tx, Unit,
+};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 
@@ -29,27 +31,28 @@ use crate::bus::axi::{BurstKind, Done, Grant, Issue, R, W};
 // begin{state}
 /// A reader of memory, into a channel.
 ///
-/// `A` is the address width, `I` the width of a burst identifier, and
+/// `ADDR` is the address width, `ID` the width of a burst identifier, and
 /// `BEATS` how many beats a burst asks for, which is the most the bus
-/// will carry in one go. `WC` is the width of the word count, which
+/// will carry in one go. `COUNT` is the width of the word count, which
 /// says how long a run is.
+#[txhdl::named_type_params]
 #[derive(Trace, Default)]
 pub struct LineFetch<
-    const A: usize,
-    const I: usize,
+    const ADDR: usize,
+    const ID: usize,
     const BEATS: usize,
-    const WC: usize,
+    const COUNT: usize,
 > {
     /// Where the next burst starts.
-    pub addr: Reg<U<A>>,
+    pub addr: Reg<U<ADDR>>,
     /// Words still wanted in this run, across all its bursts.
-    pub want: Reg<U<WC>>,
+    pub want: Reg<U<COUNT>>,
     /// Beats still to come back in the burst in flight.
     pub left: Reg<U<9>>,
     /// Whether a burst is out.
     pub busy: Reg<Bit>,
     /// The identifier the burst in flight was granted.
-    pub id: Reg<U<I>>,
+    pub id: Reg<U<ID>>,
     /// Whether an identifier is held and not yet given back.
     pub held: Reg<Bit>,
 }
@@ -193,13 +196,14 @@ impl<const A: usize, const I: usize, const BEATS: usize, const WC: usize> Unit
 /// video timing rather than to a buffer. A line that is not filled in
 /// time shows the previous line's pixel at that column, which is a
 /// visible artefact rather than a hang.
+#[txhdl::named_type_params(reuse(Domain))]
 #[derive(Trace)]
-pub struct LineBuf<const LEN: usize, const AW: usize, C: Clock> {
+pub struct LineBuf<const LEN: usize, const COL: usize, Domain: Clock> {
     /// The line. One word a pixel, which is what the framebuffer
     /// holds and what the crossing carries.
-    pub px: Mem<U<32>, LEN, C>,
+    pub px: Mem<U<32>, LEN, Domain>,
     /// Where the next word taken lands.
-    pub at: Reg<U<AW>, C>,
+    pub at: Reg<U<COL>, Domain>,
     /// The pixel the column named at the last edge.
     ///
     /// Registered rather than read straight out of the memory,
@@ -208,7 +212,7 @@ pub struct LineBuf<const LEN: usize, const AW: usize, C: Clock> {
     /// port does not carry a memory read that settles whenever the
     /// column moves. It costs the raster one cycle of lead, which it
     /// has.
-    pub shown: Reg<U<32>, C>,
+    pub shown: Reg<U<32>, Domain>,
 }
 // end{linebuf}
 
@@ -216,7 +220,7 @@ pub struct LineBuf<const LEN: usize, const AW: usize, C: Clock> {
 /// [`crate::cdc::ChanCdc`] gives: a derived `Default` would ask the
 /// clock to be `Default`, and a clock is a type with nothing in it.
 impl<const LEN: usize, const AW: usize, C: Clock> Default
-    for LineBuf<LEN, AW, C>
+    for LineBuf<LEN, AW, Domain<C>>
 {
     fn default() -> Self {
         LineBuf {
@@ -230,7 +234,7 @@ impl<const LEN: usize, const AW: usize, C: Clock> Default
 #[lower]
 impl<const LEN: usize, const AW: usize, C: Clock>
     Unit<(Rx<U<32>, C>, In<U<AW>, C>, In<Bit, C>), Out<U<32>, C>>
-    for LineBuf<LEN, AW, C>
+    for LineBuf<LEN, AW, Domain<C>>
 {
     async fn run(
         &mut self,
@@ -283,23 +287,24 @@ impl<const LEN: usize, const AW: usize, C: Clock>
 /// the first one's beats are out would take them. That is the other
 /// reason for one burst at a time here, beyond the one the fetcher
 /// gives: it is not an optimisation being declined, it is a rule.
+#[txhdl::named_type_params]
 #[derive(Trace, Default)]
 pub struct LineStore<
-    const A: usize,
-    const I: usize,
+    const ADDR: usize,
+    const ID: usize,
     const BEATS: usize,
-    const WC: usize,
+    const COUNT: usize,
 > {
     /// Where the next burst starts.
-    pub addr: Reg<U<A>>,
+    pub addr: Reg<U<ADDR>>,
     /// Words still wanted in this run, across all its bursts.
-    pub want: Reg<U<WC>>,
+    pub want: Reg<U<COUNT>>,
     /// Beats of the burst in flight still to go out.
     pub left: Reg<U<9>>,
     /// Whether a burst's beats are still going out.
     pub busy: Reg<Bit>,
     /// The identifier the burst in flight was granted.
-    pub id: Reg<U<I>>,
+    pub id: Reg<U<ID>>,
     /// Whether an identifier is held and not yet given back.
     pub held: Reg<Bit>,
     /// How many bytes of the run's last word are real, zero meaning
@@ -558,7 +563,8 @@ mod tests {
                 }
             }
         };
-        let mut fetch = LineFetch::<16, 2, 128, 16>::default();
+        let mut fetch =
+            <LineFetch![ADDR = 16, ID = 2, BEATS = 128, COUNT = 16]>::default();
         let mut sim = Running::new(join2(
             fetch.run(
                 (grant, done, rdata, base, words, go),

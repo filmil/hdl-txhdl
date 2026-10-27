@@ -36,6 +36,7 @@ use crate::uart::Uart;
 use ddr3::{Ddr3Per, Ddr3PerBus, Ddr3PerPins};
 use razboj::doorbell::Doorbell;
 use razboj::raster::Raster;
+use txhdl::comp::Data;
 use txhdl::comp::{
     chan, join2, signal, tie, DefaultClock, In, Out, Pad, Rx, Tx, Unit,
 };
@@ -54,6 +55,7 @@ use txhdl_parts::bus::axi_pins::{AxiHostPins, AxiPins, AxiPinsIn, AxiPinsOut};
 use txhdl_parts::bus::exmon::ExMon;
 use txhdl_parts::bus::router::Router;
 use txhdl_parts::cdc::ChanCdc;
+use txhdl_parts::cdc::{ReadClock, WriteClock};
 use txhdl_parts::cfgflash::CfgFlash;
 use txhdl_parts::dma::{LineFetch, LineStore, NoBeats, NoReads};
 use txhdl_parts::dtm::{Dtm, DtmBridge, Tck};
@@ -73,6 +75,9 @@ use txhdl_parts::spi::{Spi, SpiLines};
 use txhdl_parts::trng::Entropy;
 use txhdl_parts::{
     AxiHost, AxiHostPins, AxiPer, AxiPerReq, AxiPerRsp, AxiPins,
+};
+use txhdl_parts::{
+    ChanCdc, DtmBridge, FlashWin, LineFetch, LineStore, ScanFetch,
 };
 
 /// Which device this board answers to on the wire. Every frame the
@@ -250,13 +255,27 @@ pub struct Board<const DIV: u32> {
     pub dtm: Dtm,
     /// The transport's accesses across to the board's clock, and the
     /// answers back across to the cable's.
-    pub dreq: ChanCdc<U<41>, 2, 4, 3, Tck, DefaultClock>,
-    pub dans: ChanCdc<U<34>, 2, 4, 3, DefaultClock, Tck>,
+    pub dreq: ChanCdc![
+        Data = U<41>,
+        ADDR = 2,
+        DEPTH = 4,
+        PTRS = 3,
+        WriteClock = Tck,
+        ReadClock = DefaultClock,
+    ],
+    pub dans: ChanCdc![
+        Data = U<34>,
+        ADDR = 2,
+        DEPTH = 4,
+        PTRS = 3,
+        WriteClock = DefaultClock,
+        ReadClock = Tck,
+    ],
     /// The transport's half on the board's clock: each access a read or
     /// a write on the link, the debug module's registers at `DM_AT`
     /// and its system bus access served here, through a host of its
     /// own. One access at a time, so one bit of identifier.
-    pub dbridge: DtmBridge<DM_AT, 1>,
+    pub dbridge: DtmBridge![DM_AT = DM_AT, ID = 1],
     pub dhost: AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 1, IDS = 2],
     /// The JTAG master and the transport's bridge share the arbiter's
     /// second host, each with one bit of identifier, so that nothing
@@ -408,8 +427,8 @@ pub struct Board<const DIV: u32> {
     /// never move words at once: the `dmaon` state with the command
     /// word's read and write bits makes them exclusive, and the host
     /// checks that the two busy lines are never high together.
-    pub sdstore: LineStore<32, 1, 16, 16>,
-    pub sdfetch: LineFetch<32, 1, 16, 16>,
+    pub sdstore: LineStore![ADDR = 32, ID = 1, BEATS = 16, COUNT = 16],
+    pub sdfetch: LineFetch![ADDR = 32, ID = 1, BEATS = 16, COUNT = 16],
     pub sdshost: AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 1, IDS = 2],
     pub sdfhost: AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 1, IDS = 2],
     /// The store engine never reads, and the fetch engine never writes.
@@ -425,7 +444,7 @@ pub struct Board<const DIV: u32> {
     /// The window's tracker, on the router's eighth port.
     pub pflash: AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = 5],
     /// The window.
-    pub flashwin: FlashWin<FLASH_DIV, 5>,
+    pub flashwin: FlashWin![DIV = FLASH_DIV, ID = 5],
     /// The startup block and the pins, write enable refused.
     pub cfgflash: CfgFlash<1>,
     // end{cfgflash}
@@ -446,8 +465,8 @@ pub struct Board<const DIV: u32> {
     /// share the arbiter's third port behind `etharb` (issue 1634).
     pub fhost: AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 1, IDS = 2],
     pub shost: AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 1, IDS = 2],
-    pub fetch: LineFetch<32, 1, 16, 16>,
-    pub store: LineStore<32, 1, 16, 16>,
+    pub fetch: LineFetch![ADDR = 32, ID = 1, BEATS = 16, COUNT = 16],
+    pub store: LineStore![ADDR = 32, ID = 1, BEATS = 16, COUNT = 16],
     pub fout: FrameOut,
     pub flen: FrameLen,
     pub fin: FrameIn,
@@ -475,7 +494,7 @@ pub struct Board<const DIV: u32> {
     /// starts `vfetch` on it, whose words leave on `scan_words` for the
     /// line pair. The crossings are the board top's, as the video
     /// slot's are.
-    pub scan: ScanFetch<32, 16, 640>,
+    pub scan: ScanFetch![ADDR = 32, COUNT = 16, LEN = 640],
     /// Bursts of 64 beats, a line in ten, so that a line pays the DDR3
     /// path's latency and waits its turn at the arbiter ten times rather
     /// than forty: under the core's copying and the Ethernet port's
@@ -483,7 +502,7 @@ pub struct Board<const DIV: u32> {
     /// sixteen, and takes 1206 (issue 1209). Bursts of 128 took 942,
     /// but a load of the core's behind one waited up to 153 cycles
     /// where it waits 94 behind 64 and 88 with no scanout.
-    pub vfetch: LineFetch<32, 2, 64, 16>,
+    pub vfetch: LineFetch![ADDR = 32, ID = 2, BEATS = 64, COUNT = 16],
     pub vhost: AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4],
     /// The scanout's fetch never writes.
     pub vnobeats: NoBeats,

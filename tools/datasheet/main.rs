@@ -18,6 +18,7 @@ use pcie::bar::{BarRegs, PcieBar};
 use razboj::doorbell::Doorbell;
 use razboj::fb::Fb;
 use razboj::raster::Raster;
+use txhdl::comp::{Data, Domain};
 use txhdl::regmap::RegMap;
 use txhdl::types::U;
 use txhdl_parts::buffer::Buffer;
@@ -35,6 +36,7 @@ use txhdl_parts::bus::noc::node::Node;
 use txhdl_parts::bus::noc::switch::Switch;
 use txhdl_parts::bus::wb::AxiWb;
 use txhdl_parts::cdc::ChanCdc;
+use txhdl_parts::cdc::{ReadClock, WriteClock};
 use txhdl_parts::cfgflash::CfgFlash;
 use txhdl_parts::dma::{LineBuf, LineFetch, LineStore, NoBeats, NoReads};
 use txhdl_parts::dtm::{Dtm, DtmBridge};
@@ -67,6 +69,10 @@ use txhdl_parts::wdog::Wdog;
 use txhdl_parts::{
     AxiHost, AxiPer, AxiPerPins, AxiPins, HostBridge, Mesh, Node, PerBridge,
     Switch, R,
+};
+use txhdl_parts::{
+    ChanCdc, DtmBridge, Fifo, FlashWin, Hdmi, I2cInit, LineBuf, LineFetch,
+    LinePair, LineStore, ScanFetch, ScanVideo, SetTable, Syscon,
 };
 use vreteno32::board::{Board, BoardRouter};
 use vreteno32::core::Vreteno;
@@ -441,42 +447,68 @@ fn main() {
     sheet(
         "ChanCdc",
         "ChanCdc<U<32>, 4, 16, 5, DefaultClock, ClkPix>",
-        ChanCdc::<U<32>, 4, 16, 5, DefaultClock, ClkPix>::lowered("chan_cdc"),
+        <ChanCdc![
+            Data = U<32>,
+            ADDR = 4,
+            DEPTH = 16,
+            PTRS = 5,
+            WriteClock = DefaultClock,
+            ReadClock = ClkPix,
+        ]>::lowered("chan_cdc"),
     );
     sheet(
         "Fifo",
         "Fifo<U<8>, 2, 4>",
-        Fifo::<U<8>, 2, 4>::lowered("fifo"),
+        <Fifo![Data = U<8>, PTRS = 2, DEPTH = 4]>::lowered("fifo"),
     );
     sheet(
         "SetTable",
         "SetTable<16, 8, 3, 8, 4>",
-        SetTable::<16, 8, 3, 8, 4>::lowered("settable"),
+        <SetTable![
+            KEY = 16,
+            VALUE = 8,
+            ROW_ADDR = 3,
+            ROWS = 8,
+            WAYS = 4,
+        ]>::lowered("settable"),
     );
     sheet(
         "LineBuf",
         "LineBuf<32, 5, ClkPix>",
-        LineBuf::<32, 5, ClkPix>::lowered("linebuf"),
+        <LineBuf![LEN = 32, COL = 5, Domain = ClkPix]>::lowered("linebuf"),
     );
     sheet(
         "LineFetch",
         "LineFetch<32, 2, 16, 16>",
-        LineFetch::<32, 2, 16, 16>::lowered("linefetch"),
+        <LineFetch![ADDR = 32, ID = 2, BEATS = 16, COUNT = 16]>::lowered(
+            "linefetch",
+        ),
     );
     sheet(
         "LinePair",
         "LinePair<8, 3, 4, 6, 32, 0, 1024, ClkPix>",
-        LinePair::<8, 3, 4, 6, 32, 0, 1024, ClkPix>::lowered("linepair"),
+        <LinePair![
+            LEN = 8,
+            COL = 3,
+            ROWS = 4,
+            TOTAL = 6,
+            STRIDE = 32,
+            LO = 0,
+            HI = 1024,
+            Domain = ClkPix
+        ]>::lowered("linepair"),
     );
     sheet(
         "LineStore",
         "LineStore<32, 2, 16, 16>",
-        LineStore::<32, 2, 16, 16>::lowered("linestore"),
+        <LineStore![ADDR = 32, ID = 2, BEATS = 16, COUNT = 16]>::lowered(
+            "linestore",
+        ),
     );
     sheet(
         "ScanFetch",
         "ScanFetch<32, 16, 8>",
-        ScanFetch::<32, 16, 8>::lowered("scanfetch"),
+        <ScanFetch![ADDR = 32, COUNT = 16, LEN = 8]>::lowered("scanfetch"),
     );
     sheet("ScanCtl", "ScanCtl", ScanCtl::lowered("scan_ctl"));
     sheet(
@@ -485,22 +517,22 @@ fn main() {
             "ScanVideo<640, 16, 96, 48, 480, 10, 2, 33, 2, 10, 525, 4096, ",
             "0x4000_0000, 0x8000_0000>"
         ),
-        ScanVideo::<
-            { vga::HV },
-            { vga::HFP },
-            { vga::HSW },
-            { vga::HBP },
-            { vga::VV },
-            { vga::VFP },
-            { vga::VSW },
-            { vga::VBP },
-            2,
-            10,
-            525,
-            4096,
-            0x4000_0000,
-            0x8000_0000,
-        >::lowered("scan_video"),
+        <ScanVideo![
+            H_ACTIVE = vga::HV,
+            H_FRONT = vga::HFP,
+            H_SYNC = vga::HSW,
+            H_BACK = vga::HBP,
+            V_ACTIVE = vga::VV,
+            V_FRONT = vga::VFP,
+            V_SYNC = vga::VSW,
+            V_BACK = vga::VBP,
+            SHIFT = 2,
+            COL = 10,
+            TOTAL = 525,
+            STRIDE = 4096,
+            LO = 0x4000_0000,
+            HI = 0x8000_0000
+        ]>::lowered("scan_video"),
     );
     sheet("NoBeats", "NoBeats", NoBeats::lowered("nobeats"));
     sheet("NoReads", "NoReads", NoReads::<1>::lowered("noreads"));
@@ -663,22 +695,22 @@ fn main() {
     sheet(
         "Hdmi",
         "Hdmi<640, 16, 96, 48, 480, 10, 2, 33, 2>",
-        Hdmi::<
-            { vga::HV },
-            { vga::HFP },
-            { vga::HSW },
-            { vga::HBP },
-            { vga::VV },
-            { vga::VFP },
-            { vga::VSW },
-            { vga::VBP },
-            2,
-        >::lowered("hdmi_video"),
+        <Hdmi![
+            H_ACTIVE = vga::HV,
+            H_FRONT = vga::HFP,
+            H_SYNC = vga::HSW,
+            H_BACK = vga::HBP,
+            V_ACTIVE = vga::VV,
+            V_FRONT = vga::VFP,
+            V_SYNC = vga::VSW,
+            V_BACK = vga::VBP,
+            SHIFT = 2
+        ]>::lowered("hdmi_video"),
     );
     sheet(
         "I2cInit",
         "I2cInit<63, 2520000>",
-        I2cInit::<63, 2_520_000>::lowered("hdmi_i2c"),
+        <I2cInit![DIV = 63, HOLD = 2_520_000]>::lowered("hdmi_i2c"),
     );
     sheet("Watch", "Watch", Watch::lowered("watch"));
     sheet("Inject", "Inject", Inject::lowered("inject"));
@@ -696,7 +728,7 @@ fn main() {
     sheet(
         "DtmBridge",
         "DtmBridge<0x10000000, 1>",
-        DtmBridge::<0x1000_0000, 1>::lowered("dtm_bridge"),
+        <DtmBridge![DM_AT = 0x1000_0000, ID = 1]>::lowered("dtm_bridge"),
     );
     sheet("Gpio", "Gpio<8>", Gpio::<8>::lowered("gpio"));
     sheet("Pwm", "Pwm", Pwm::lowered("pwm"));
@@ -718,7 +750,7 @@ fn main() {
     sheet(
         "FlashWin",
         "FlashWin<1, 2>",
-        FlashWin::<1, 2>::lowered("flashwin"),
+        <FlashWin![DIV = 1, ID = 2]>::lowered("flashwin"),
     );
     sheet("Remote", "Remote<40>", Remote::<40>::lowered("remote"));
     sheet(
@@ -739,7 +771,13 @@ fn main() {
     sheet(
         "Syscon",
         "Syscon<0x74780001, 0x10000, 0, 0, 0x52535421>",
-        Syscon::<0x7478_0001, 0x1_0000, 0, 0, 0x5253_5421>::lowered("syscon"),
+        <Syscon![
+            DESIGN = 0x7478_0001,
+            VERSION = 0x1_0000,
+            STAMP0 = 0,
+            STAMP1 = 0,
+            KEY = 0x5253_5421
+        ]>::lowered("syscon"),
     );
     sheet("Uart", "Uart<868>", Uart::<868>::lowered("uart"));
     sheet("Ddr3Per", "Ddr3Per", Ddr3Per::lowered("ddr3"));
