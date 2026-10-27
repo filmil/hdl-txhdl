@@ -48,12 +48,12 @@ On the board, `HostBridge` (`//lib/parts`, `remote::host`) takes register reads 
 On the host, `gcd_eth_driver` is FireSim's GCD test with a platform file, `simif_ax7a200b_eth.cc`, that sends those frames on a raw socket.
 `gcd_eth_pnr` meets timing, with 0.534 ns of setup slack.
 
-It passed on the board on 2026-10-27 at `main` 83a5613b, from srv over the cable (#1965).
+It passed on the board on 2026-10-27 at `main` 83a5613b, from srv over the cable; the output is on #1931.
 The driver read the simulator's fingerprint, stepped GCD on 64 and 48, read back 16, and printed `[GCD]PASS Test`, 12 cycles in all.
 To repeat it, holding the BOARD TOKEN:
 
 1. Program the board with `gcd_eth_prog`, as the comment beside it in `firesim/ax7a200b/BUILD.bazel` says.
-2. Copy `gcd_eth_driver` to srv and let it open a raw socket: `sudo setcap cap_net_raw+ep gcd_eth_driver`.
+2. Build the driver with `bazel build //firesim/ax7a200b:gcd_eth_driver`, copy `bazel-bin/firesim/ax7a200b/gcd_eth_driver` to srv, which works since it needs no library beyond libc, and let it open a raw socket: `sudo setcap cap_net_raw+ep gcd_eth_driver`.
 3. Run it on the port cabled to the board, with nothing else sending there: `timeout 120 ./gcd_eth_driver +iface=fpga-a200t-eth0`.
 
 It passes when it exits 0 and prints `PASS Test`.
