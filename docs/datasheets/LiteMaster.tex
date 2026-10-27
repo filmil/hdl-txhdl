@@ -1,0 +1,81 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: LiteMaster
+\datasheet{LiteMaster}{An AXI-Lite host that performs one ask at a time and answers each, repeating the last answer to an ask that repeats its tag.}
+
+\dsfacts{\code{lib/parts/src/remote/host.rs}}{\code{txhdl\_parts::remote::host::LiteMaster}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+\code{LiteMaster} takes an \code{Ask} from \code{HostLink}, a program's
+read or write, performs it as an AXI-Lite host on the design's bus, and
+sends the \code{Answer} back. It is what lets a program on another
+machine read and write this design's registers over Ethernet (issue
+1931).
+
+A frame can be lost, so the program sends an ask again when its answer
+does not come. \code{LiteMaster} keeps the tag and the answer of the
+last transaction it performed, and an ask with that tag again is
+answered from them rather than performed twice: a write repeated on a
+register with a side effect would do the effect twice.
+
+\subsection*{Parameters}
+
+None. The bus is AXI-Lite of 32-bit addresses and words, a
+\code{LiteHostPort<32, 32, 4>}.
+
+\dstables{LiteMaster}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item An ask is taken when nothing is on the bus and no answer is
+waiting to go.
+\item An ask whose tag is the last transaction's is answered again from
+\code{last\_tag}, \code{last\_data} and \code{last\_err}, and not
+performed. \code{have\_last} says whether those hold an answer, so the
+first ask is performed whatever its tag, though the kept tag starts at
+zero.
+\item A write sends its address on \code{aw} and its word and strobe on
+\code{w}, each once and each when its channel has room; a read sends its
+address on \code{ar}. The protection bits are zero.
+\item The response is taken only once the request has gone whole, so a
+bus that answers early cannot end a write whose word is still waiting.
+\item A response other than \code{Okay} becomes an answer with its error
+bit set. A write answers the word zero.
+\item The answer goes on \code{back} when it has room, and the next ask
+is taken after it.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item The tests in \code{lib/parts/src/remote/host.rs}, in
+\code{//lib/parts:parts\_test}, run it with \code{HostLink<5>} and a
+memory on the bus:
+\code{a\_program\_writes\_and\_reads\_the\_bus};
+\code{a\_repeated\_ask\_is\_answered\_again\_and\_not\_performed\_again},
+whose memory counts one write;
+\code{an\_error\_on\_the\_bus\_comes\_back\_as\_an\_error};
+\code{a\_partial\_write\_keeps\_its\_strobe};
+\code{tag\_zero\_first\_is\_performed\_not\_taken\_for\_a\_repeat}; and
+\code{a\_slow\_bus\_is\_waited\_for}, with a memory 50 cycles slow.
+\item \code{//lib/examples:ex\_hostlink}, and the build simulates its
+netlist against that run under nvc and Verilator:\newline
+\code{//docs:hostlink\_sim\_lite\_master\_lite\_master\_tb\_test}\newline
+\code{//docs:hostlink\_vsim\_lite\_master\_test}.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{HostBridge}, which joins it to \code{HostLink}; \code{ex\_hostlink};
+and \code{//firesim/ax7a200b} through \code{HostBridge<5>}.
+
+\subsection*{Limits}
+
+One transaction at a time, and one 32-bit word per transaction. A
+repeat is known by its tag alone, so a program must give each new ask a
+tag other than the last one's: a new ask under the last tag is answered
+with the last answer and not performed, whatever its address. Only the
+last answer is kept, so an ask repeated after a newer one has been
+performed is performed again.
