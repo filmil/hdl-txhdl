@@ -22,7 +22,7 @@
 //! of the last transaction it performed, and an ask with that tag again
 //! is answered from them rather than performed twice: a write repeated
 //! on a register with a side effect would do the effect twice.
-use txhdl::comp::{mux, Clock, DefaultClock, Reg, Rx, Tx, Unit};
+use txhdl::comp::{chan, join2, mux, Clock, DefaultClock, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
 
@@ -338,6 +338,41 @@ impl<const DEV: usize> Unit for HostLink<DEV> {
 }
 // end{linkrun}
 
+// begin{bridge}
+/// [`HostLink`] and [`LiteMaster`] as one unit: frames in and out on one
+/// side, an AXI-Lite host on the other.
+///
+/// The two are joined by their `ask` and `back` channels inside the
+/// unit, where the lowering buffers them. Joined by wires instead, in a
+/// hand-written top, each channel's valid would depend on its own ready
+/// through the other unit, a combinational loop (issue 1931 met it on
+/// the board).
+#[derive(Trace, Default)]
+pub struct HostBridge<const DEV: usize> {
+    /// The frames.
+    pub link: HostLink<DEV>,
+    /// The bus.
+    pub master: LiteMaster,
+}
+
+#[lower]
+impl<const DEV: usize> Unit for HostBridge<DEV> {
+    async fn run(
+        &mut self,
+        rx: Rx<EthByte>,
+        (tx, bus): (Tx<EthByte>, LiteHostPort<32, 32, 4>),
+    ) {
+        let (ask_tx, ask_rx) = chan::<Ask, DefaultClock>();
+        let (ans_tx, ans_rx) = chan::<Answer, DefaultClock>();
+        join2(
+            self.link.run((rx, ans_rx), (ask_tx, tx)),
+            self.master.run(bus, (ask_rx, ans_tx)),
+        )
+        .await;
+    }
+}
+// end{bridge}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -595,5 +630,65 @@ mod tests {
         );
         assert_eq!(got, vec![(5, 1, 0, false), (5, 2, 0x77, false)]);
         assert_eq!(writes, 1);
+    }
+
+    #[test]
+    fn the_bridge_is_the_two_units_joined() {
+        // The same asks through HostBridge as through the two units.
+        let (host, per) = link::<LitePort<32, 32, 4>>();
+        let (in_tx, in_rx) = chan::<EthByte, DefaultClock>();
+        let (out_tx, out_rx) = chan::<EthByte, DefaultClock>();
+        let mut bridge = HostBridge::<5>::default();
+        let memory = async move {
+            let mut word = 0u32;
+            loop {
+                DefaultClock::rising().await;
+                if per.aw.peek().is_some() && per.w.peek().is_some() {
+                    let _ = per.aw.recv();
+                    word = per.w.recv().unwrap().data.raw() as u32;
+                    per.b.send(LiteB { resp: Resp::Okay });
+                }
+                if per.ar.recv().is_some() {
+                    per.r.send(LiteR {
+                        data: U::from(word),
+                        resp: Resp::Okay,
+                    });
+                }
+            }
+        };
+        let mut sim =
+            Running::new(join2(bridge.run(in_rx, (out_tx, host)), memory));
+        let mut answers = Vec::new();
+        let mut cur: Vec<u8> = Vec::new();
+        for f in [
+            ask_frame(5, 1, true, 0x40, 0x99),
+            ask_frame(5, 2, false, 0x40, 0),
+        ] {
+            let mut i = 0;
+            let before = answers.len();
+            for _ in 0..400 {
+                if i < f.len() && in_tx.ready().to_bool() {
+                    in_tx.send(EthByte {
+                        data: U::from(f[i]),
+                        last: Bit::from(i == f.len() - 1),
+                    });
+                    i += 1;
+                }
+                if let Some(b) = out_rx.recv() {
+                    cur.push(b.data.raw() as u8);
+                    if b.last.to_bool() {
+                        if let Some(a) = answer_of(&cur) {
+                            answers.push(a);
+                        }
+                        cur.clear();
+                    }
+                }
+                sim.cycle();
+                if i == f.len() && answers.len() > before {
+                    break;
+                }
+            }
+        }
+        assert_eq!(answers, vec![(5, 1, 0, false), (5, 2, 0x99, false)]);
     }
 }
