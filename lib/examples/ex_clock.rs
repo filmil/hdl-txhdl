@@ -5,12 +5,9 @@
 //! in on one clock and gives it out on the other (issue 1017); a unit
 //! that reads a port of the other clock does not compile, so the
 //! crossing cannot be forgotten.
-use txhdl::comp::Data;
 use txhdl::comp::{chan, Clock, DefaultClock, Reg, Rx, Tx};
 use txhdl::types::U;
 use txhdl_parts::cdc::ChanCdc;
-use txhdl_parts::cdc::{ReadClock, WriteClock};
-use txhdl_parts::ChanCdc;
 
 pub struct Clk400;
 impl Clock for Clk400 {

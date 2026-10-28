@@ -8,7 +8,6 @@
 //! reaches as frames on the Ethernet port with a program in this file
 //! answering them. Its netlist is checked in `board_netlist.rs`.
 use std::collections::{HashMap, VecDeque};
-use txhdl::comp::Domain;
 use txhdl::comp::{
     chan, join2, pad, set_reset, signal, Clock, DefaultClock, In, Out, Running,
     Rx, Tx, Unit,
@@ -25,7 +24,6 @@ use txhdl_parts::remote::eth::{FRAME_LEN, KIND_ANSWER, KIND_ASK};
 use txhdl_parts::scanout::LinePair;
 use txhdl_parts::sd::SdCard;
 use txhdl_parts::spi::FlashDevice;
-use txhdl_parts::LinePair;
 use vreteno32::board::{
     Board, BoardIn, BoardMap, BoardOut, Bscan, Ddr3Pins, JtagAnswers, SlotMap,
     SysIn, SysOut, REMOTE_DEV,

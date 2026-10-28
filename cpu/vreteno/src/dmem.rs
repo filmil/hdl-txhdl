@@ -33,7 +33,7 @@ pub const DMEM_WORDS: usize = 1024;
 /// needs nightly Rust, and they must agree: a `Dmem` built through
 /// `Default` or `with`, as every one in the tree is, whose `WORDS` is not
 /// `1 << ADDR` does not compile (#1971). Give both, or neither.
-#[txhdl::named_type_params]
+#[txhdl::named_type_params(path = crate::dmem)]
 #[derive(Trace)]
 pub struct Dmem<
     const ID: usize,

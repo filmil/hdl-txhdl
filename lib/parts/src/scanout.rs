@@ -90,7 +90,10 @@ pub const LATE: u32 = 0x00ff_00ff;
 /// bytes from one line's start in memory to the next's. `LO` and `HI`
 /// are the frame's memory, the bytes from `LO` up to but not including
 /// `HI`: a line not wholly inside them is not asked for (issue 1382).
-#[txhdl::named_type_params(reuse(Domain))]
+#[txhdl::named_type_params(
+    reuse(::txhdl::comp::named::Domain),
+    path = crate::scanout
+)]
 #[derive(Trace)]
 pub struct LinePair<
     const LEN: usize,
@@ -715,7 +718,7 @@ impl<
 /// `LEN` the words in a line. One request at a time: the next is taken
 /// only once the fetch has started on this one and finished, which
 /// `running` says.
-#[txhdl::named_type_params]
+#[txhdl::named_type_params(path = crate::scanout)]
 #[derive(Trace, Default)]
 pub struct ScanFetch<const ADDR: usize, const COUNT: usize, const LEN: usize> {
     /// Where the line asked for starts.
@@ -1038,7 +1041,7 @@ pub const SCAN_BIT: usize = 7;
 /// its reader: [`Raster`] and [`ScanCtl`], then [`LinePair`], then
 /// [`ScanTap`] and [`Hdmi`], then [`VidMux`]. The one path the other
 /// way, the underflow bit back to [`ScanCtl`], is a channel.
-#[txhdl::named_type_params]
+#[txhdl::named_type_params(path = crate::scanout)]
 #[derive(Trace)]
 pub struct ScanVideo<
     const H_ACTIVE: usize,
@@ -1061,17 +1064,17 @@ pub struct ScanVideo<
     /// The scanout's registers, from `0x80`.
     pub ctl: ScanCtl,
     /// The beam, counted again for the pair.
-    pub raster: Raster<
-        H_ACTIVE,
-        H_FRONT,
-        H_SYNC,
-        H_BACK,
-        V_ACTIVE,
-        V_FRONT,
-        V_SYNC,
-        V_BACK,
-        COL,
-    >,
+    pub raster: Raster![
+        H_ACTIVE = H_ACTIVE,
+        H_FRONT = H_FRONT,
+        H_SYNC = H_SYNC,
+        H_BACK = H_BACK,
+        V_ACTIVE = V_ACTIVE,
+        V_FRONT = V_FRONT,
+        V_SYNC = V_SYNC,
+        V_BACK = V_BACK,
+        COL = COL,
+    ],
     /// The two lines.
     pub pair: LinePair![
         LEN = H_ACTIVE,
@@ -1086,17 +1089,17 @@ pub struct ScanVideo<
     /// The underflow bit back to the registers.
     pub tap: ScanTap,
     /// The video peripheral, below `0x80`.
-    pub hdmi: Hdmi<
-        H_ACTIVE,
-        H_FRONT,
-        H_SYNC,
-        H_BACK,
-        V_ACTIVE,
-        V_FRONT,
-        V_SYNC,
-        V_BACK,
-        SHIFT,
-    >,
+    pub hdmi: Hdmi![
+        H_ACTIVE = H_ACTIVE,
+        H_FRONT = H_FRONT,
+        H_SYNC = H_SYNC,
+        H_BACK = H_BACK,
+        V_ACTIVE = V_ACTIVE,
+        V_FRONT = V_FRONT,
+        V_SYNC = V_SYNC,
+        V_BACK = V_BACK,
+        SHIFT = SHIFT,
+    ],
     /// Which picture reaches the pins.
     pub vmux: VidMux,
 }
@@ -1432,17 +1435,17 @@ mod tests {
         setup: impl FnOnce(&mut FlagPair),
         mut probe: impl FnMut(usize, &Seen),
     ) -> Seen {
-        type R = Raster<
-            { vga::HV },
-            { vga::HFP },
-            { vga::HSW },
-            { vga::HBP },
-            { vga::VV },
-            { vga::VFP },
-            { vga::VSW },
-            { vga::VBP },
-            10,
-        >;
+        type R = Raster![
+            H_ACTIVE = vga::HV,
+            H_FRONT = vga::HFP,
+            H_SYNC = vga::HSW,
+            H_BACK = vga::HBP,
+            V_ACTIVE = vga::VV,
+            V_FRONT = vga::VFP,
+            V_SYNC = vga::VSW,
+            V_BACK = vga::VBP,
+            COL = 10,
+        ];
         let mut raster = R::default();
         let mut pair = FlagPair::default();
         setup(&mut pair);
@@ -1769,17 +1772,17 @@ mod tests {
     /// line given as they are asked for.
     #[test]
     fn the_blanking_columns_read_nothing_past_the_line() {
-        type R = Raster<
-            { vga::HV },
-            { vga::HFP },
-            { vga::HSW },
-            { vga::HBP },
-            { vga::VV },
-            { vga::VFP },
-            { vga::VSW },
-            { vga::VBP },
-            10,
-        >;
+        type R = Raster![
+            H_ACTIVE = vga::HV,
+            H_FRONT = vga::HFP,
+            H_SYNC = vga::HSW,
+            H_BACK = vga::HBP,
+            V_ACTIVE = vga::VV,
+            V_FRONT = vga::VFP,
+            V_SYNC = vga::VSW,
+            V_BACK = vga::VBP,
+            COL = 10,
+        ];
         type P = LinePair![
             LEN = vga::HV,
             COL = 10,

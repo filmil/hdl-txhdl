@@ -12,7 +12,6 @@
 //! The same for the other half given alone, by name: 4096 words with
 //! `ADDR` left at 10.
 use vreteno32::dmem::Dmem;
-use vreteno32::Dmem;
 
 /// A data memory of twelve address bits and the default 1024 words.
 pub fn mismatched() -> Dmem<2, 12> {

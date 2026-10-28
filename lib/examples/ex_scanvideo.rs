@@ -38,7 +38,6 @@ use txhdl_parts::bus::axi_lite::{
 };
 use txhdl_parts::dma::LineFetch;
 use txhdl_parts::scanout::{scan, ScanFetch, ScanVideo};
-use txhdl_parts::{LineFetch, ScanFetch, ScanVideo};
 
 const ADDR: usize = 32;
 const IDB: usize = 2;

@@ -150,7 +150,7 @@ pub struct VideoOut {
 /// The chip's inputs are registers: the pixel read at the edge from the
 /// framebuffer, and the syncs and the enable delayed to meet it.
 // begin{state}
-#[txhdl::named_type_params]
+#[txhdl::named_type_params(path = crate::hdmi)]
 #[derive(Trace, Default)]
 pub struct Hdmi<
     const H_ACTIVE: usize,
@@ -318,7 +318,7 @@ impl<
 /// `vis` the visible part, `line` the first column of every row,
 /// `row` the row, and `frame` the first column of the first row after
 /// the visible ones, where a new frame's base is taken.
-#[txhdl::named_type_params]
+#[txhdl::named_type_params(path = crate::hdmi)]
 #[derive(Trace, Default)]
 pub struct Raster<
     const H_ACTIVE: usize,
@@ -469,7 +469,7 @@ fn table_byte(e: U<3>, b: U<2>) -> U<8> {
 /// as the clock is pulled low.
 /// Its last wait never returns, since `written` stays up.
 // begin{i2cstate}
-#[txhdl::named_type_params]
+#[txhdl::named_type_params(path = crate::hdmi)]
 #[derive(Trace, Default)]
 pub struct I2cInit<const DIV: usize, const HOLD: usize> {
     /// Cycles into the quarter.

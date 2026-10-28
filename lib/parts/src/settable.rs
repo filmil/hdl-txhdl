@@ -82,7 +82,7 @@ pub const FULL: u32 = 3;
 pub const GOLDEN: u32 = 0x9E37_79B1;
 
 /// An operation on the table.
-#[txhdl::named_type_params]
+#[txhdl::named_type_params(path = crate::settable)]
 #[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
 pub struct TableOp<const KEY: usize, const VALUE: usize> {
     /// `LOOKUP`, `INSERT`, `UPDATE` or `REMOVE`.
@@ -113,7 +113,7 @@ pub fn set_of(key: u32, b: usize) -> usize {
 // begin{state}
 /// `WAYS` ways, 1 to 256, of `ROWS = 1 << ROW_ADDR` rows, `ROW_ADDR` from 1
 /// to 32, of a key of `KEY` bits, 1 to 32, and a value of `VALUE` bits.
-#[txhdl::named_type_params]
+#[txhdl::named_type_params(path = crate::settable)]
 #[derive(Trace)]
 pub struct SetTable<
     const KEY: usize,

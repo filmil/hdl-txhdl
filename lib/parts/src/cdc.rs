@@ -49,7 +49,10 @@ use txhdl::{lower, with, Trace};
 /// which is the same reason [`crate::fifo::Fifo`] takes both `ADDR` and
 /// `DEPTH`.
 // begin{state}
-#[txhdl::named_type_params(reuse(Data))]
+#[txhdl::named_type_params(
+    reuse(::txhdl::comp::named::Data),
+    path = crate::cdc
+)]
 #[derive(Trace)]
 pub struct ChanCdc<
     Data: Transaction + Value,

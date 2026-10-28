@@ -9,7 +9,6 @@ use razboj::model;
 use razboj::op::{assemble, Op};
 use razboj::raster::Raster;
 use razboj::sim;
-use razboj::Raster;
 
 /// The board's row, and enough rows to pass the sixteenth.
 const LOGW: usize = 10;

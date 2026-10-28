@@ -70,7 +70,7 @@ pub const CAUSE_SOFTWARE: u32 = regs::cause_software.mask();
 /// are two words a build puts in, a commit and a date for instance.
 /// `KEY` is the word that has to be written to `reset` for a reset to
 /// happen, so that a wild store does not restart the machine.
-#[txhdl::named_type_params]
+#[txhdl::named_type_params(path = crate::syscon)]
 #[derive(Trace, Default)]
 pub struct Syscon<
     const DESIGN: usize,

@@ -10,7 +10,6 @@
 //! (issue 985): they are constants the logic adds, so their values move
 //! a few gates and not the size or the timing.
 use razboj::raster::Raster;
-use razboj::Raster;
 
 /// Address bits, as on the board's bus.
 const A: usize = 32;

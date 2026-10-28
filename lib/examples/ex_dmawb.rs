@@ -41,7 +41,6 @@ use txhdl_parts::bus::wb::sim::WbMem;
 use txhdl_parts::bus::wb::AxiWb;
 use txhdl_parts::bus::wb::WbMaster;
 use txhdl_parts::dma::{LineFetch, LineStore};
-use txhdl_parts::{LineFetch, LineStore};
 
 const ADDR: usize = 32;
 const IDB: usize = 2;

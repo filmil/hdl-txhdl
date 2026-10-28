@@ -18,7 +18,6 @@ use vreteno32::program::demo;
 use vreteno32::term::Terminal;
 use vreteno32::timer::Timer;
 use vreteno32::uart::Uart;
-use vreteno32::{Dmem, Hart};
 
 /// The link: thirty-two bit addresses and words, four lanes, and
 /// two-bit identifiers, four of them. The core has one load in flight

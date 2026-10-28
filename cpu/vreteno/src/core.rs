@@ -848,7 +848,7 @@ fn m_result(f3: U<3>, hi: U<33>, lo: U<32>, neg_q: Bit, neg_r: Bit) -> U<32> {
 /// load with the lane and the width to take from it, and whether it
 /// halts. The halt itself, which the writeback stage sets. And the two
 /// memories, the registers and the boot memory.
-#[txhdl::named_type_params]
+#[txhdl::named_type_params(path = crate::core)]
 #[derive(Trace, Default)]
 pub struct Vreteno<
     const ID: usize,

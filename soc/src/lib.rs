@@ -25,7 +25,6 @@
 //! on the other through anything but the memory they share.
 use razboj::op::Insn;
 use razboj::raster::Raster;
-use razboj::Raster;
 use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{join2, join_all, signal, DefaultClock, Running, Unit};
 use txhdl::map::AddrMap;
@@ -40,7 +39,6 @@ use vreteno32::core::Writeback;
 use vreteno32::hart::{Hart, HartIn, HartOut};
 use vreteno32::term::Terminal;
 use vreteno32::uart::Uart;
-use vreteno32::Hart;
 
 /// Where the serial port is, behind its bridge: a nibble of the
 /// address space at 0x3000.

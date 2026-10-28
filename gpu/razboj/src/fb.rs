@@ -26,7 +26,7 @@ const WORD: usize = 2;
 // begin{state}
 /// The framebuffer, `WORDS` words of one pixel each, behind an AXI link
 /// of `ADDR` address bits and `ID` identifier bits.
-#[txhdl::named_type_params]
+#[txhdl::named_type_params(path = crate::fb)]
 #[derive(Trace, Default)]
 pub struct Fb<const ADDR: usize, const ID: usize, const WORDS: usize> {
     pub px: Mem<U<32>, WORDS>,

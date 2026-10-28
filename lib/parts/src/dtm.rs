@@ -274,7 +274,7 @@ pub const SBERROR_ALIGN: u32 = 3;
 /// access is answered when its word comes back. One access is on the
 /// link at a time, which is all a transport asks for, so the bridge's
 /// host needs identifiers of one bit, `ID`.
-#[txhdl::named_type_params]
+#[txhdl::named_type_params(path = crate::dtm)]
 #[derive(Trace, Default)]
 pub struct DtmBridge<const DM_AT: usize, const ID: usize> {
     /// An access is on the link, from its address phase to its answer.

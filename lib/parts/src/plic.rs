@@ -64,7 +64,7 @@ use txhdl::{lower, with, Trace};
 /// registers, and the lowering unrolls the loops over them for each
 /// `SOURCES` (issue 500). The words are 32 bits whatever `SOURCES` is,
 /// bit `s` for source `s`, and the bits above `SOURCES` stay zero.
-#[txhdl::named_type_params]
+#[txhdl::named_type_params(path = crate::plic)]
 #[derive(Trace, Default)]
 pub struct Plic<const SOURCES: usize, const EDGE: usize> {
     /// The priority of each source, `prio[s - 1]` for source `s`.

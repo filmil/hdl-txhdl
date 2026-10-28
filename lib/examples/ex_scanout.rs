@@ -28,16 +28,13 @@ use txhdl::comp::trace::{stop, Wave};
 use txhdl::comp::{
     chan, join2, now, signal, Clock, DefaultClock, Mem, Reg, Running, Unit,
 };
-use txhdl::comp::{Data, Domain};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 use txhdl_parts::bus::axi::{
     axi_units, Answer, AxiHost, AxiPer, PerPort, Resp, R,
 };
 use txhdl_parts::cdc::ChanCdc;
-use txhdl_parts::cdc::{ReadClock, WriteClock};
 use txhdl_parts::dma::{LineBuf, LineFetch};
-use txhdl_parts::{ChanCdc, LineBuf, LineFetch};
 
 const ADDR: usize = 32;
 const IDB: usize = 2;

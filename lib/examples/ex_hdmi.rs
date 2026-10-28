@@ -22,7 +22,6 @@ use txhdl_parts::bus::axi::{axi, AxiHost, BurstKind, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::hdmi::VideoOut;
 use txhdl_parts::hdmi::{regs, Hdmi, I2cDevice, I2cInit, SII9134_WRITES};
-use txhdl_parts::{Hdmi, I2cInit};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
 /// identifiers, four of them.

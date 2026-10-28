@@ -21,7 +21,7 @@ use crate::core::{Vreteno, VretenoIn, VretenoOut, Writeback};
 
 /// The core and its unit, eight entries in each of the unit's two
 /// translation buffers.
-#[txhdl::named_type_params]
+#[txhdl::named_type_params(path = crate::hart)]
 #[derive(Trace, Default)]
 pub struct Hart<
     const ID: usize,
@@ -31,7 +31,13 @@ pub struct Hart<
     const EXCLUSIVE: usize = 0,
 > {
     pub mmu: Mmu8,
-    pub core: Vreteno<ID, LANE_WORDS, ICACHE, HART, EXCLUSIVE>,
+    pub core: Vreteno![
+        ID = ID,
+        LANE_WORDS = LANE_WORDS,
+        ICACHE = ICACHE,
+        HART = HART,
+        EXCLUSIVE = EXCLUSIVE,
+    ],
 }
 
 impl<

@@ -36,8 +36,6 @@ use crate::uart::Uart;
 use ddr3::{Ddr3Per, Ddr3PerBus, Ddr3PerPins};
 use razboj::doorbell::Doorbell;
 use razboj::raster::Raster;
-use razboj::Raster;
-use txhdl::comp::Data;
 use txhdl::comp::{
     chan, join2, signal, tie, DefaultClock, In, Out, Pad, Rx, Tx, Unit,
 };
@@ -56,7 +54,6 @@ use txhdl_parts::bus::axi_pins::{AxiHostPins, AxiPins, AxiPinsIn, AxiPinsOut};
 use txhdl_parts::bus::exmon::ExMon;
 use txhdl_parts::bus::router::Router;
 use txhdl_parts::cdc::ChanCdc;
-use txhdl_parts::cdc::{ReadClock, WriteClock};
 use txhdl_parts::cfgflash::CfgFlash;
 use txhdl_parts::dma::{LineFetch, LineStore, NoBeats, NoReads};
 use txhdl_parts::dtm::{Dtm, DtmBridge, Tck};
@@ -74,9 +71,6 @@ use txhdl_parts::scanout::ScanFetch;
 use txhdl_parts::sd::{Sd, SdLines};
 use txhdl_parts::spi::{Spi, SpiLines};
 use txhdl_parts::trng::Entropy;
-use txhdl_parts::{
-    ChanCdc, DtmBridge, FlashWin, LineFetch, LineStore, ScanFetch,
-};
 
 /// Which device this board answers to on the wire. Every frame the
 /// remote peripheral sends carries it, and a program answers each
@@ -237,14 +231,26 @@ pub const DM_AT: usize = <DmMap as AddrMap<1>>::RANGES[0].0;
 pub struct Board<const DIV: u32> {
     /// The hart, its A instructions on the DDR3 exclusive pairs, which
     /// the arbiter and the monitor keep (issue 1408).
-    pub cpu: Hart<2, 16384, 1, 0, 1>,
+    pub cpu: Hart![
+        ID = 2,
+        LANE_WORDS = 16384,
+        ICACHE = 1,
+        HART = 0,
+        EXCLUSIVE = 1,
+    ],
     pub host: AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4],
     /// The second hart and its tracker (issue 1408), on the arbiter's
     /// eighth port. Its boot memory holds `park`, where it waits until
     /// the first starts it through the mailbox. Its external lines are
     /// the controller's third and fourth targets; it is not on the
     /// debug module yet.
-    pub cpu1: Hart<2, 16384, 1, 1, 1>,
+    pub cpu1: Hart![
+        ID = 2,
+        LANE_WORDS = 16384,
+        ICACHE = 1,
+        HART = 1,
+        EXCLUSIVE = 1,
+    ],
     pub host1: AxiHost![ADDR = 32, DATA = 32, STRB = 4, ID = 2, IDS = 4],
     /// The second host: Vivado's JTAG-to-AXI master, on the top beside
     /// the board's, reached over the cable that programs the part, so
@@ -415,7 +421,7 @@ pub struct Board<const DIV: u32> {
     /// so a load can read a constant beside the code (#268).
     pub prom: AxiPer![ADDR = 32, DATA = 32, STRB = 4, ID = 5],
     pub rom: Rom<5>,
-    pub dmem: Dmem<5>,
+    pub dmem: Dmem![ID = 5],
     pub timer: Timer<5>,
     pub uart: Uart<DIV>,
     pub pwm: Pwm,
