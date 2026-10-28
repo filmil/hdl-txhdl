@@ -1,0 +1,123 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: StreamLink, StreamBridge
+\datasheet{StreamLink}{The wire under a program that moves 16-byte beats through a wide AXI4 port: each ask one Ethernet frame in, each answer one frame out.}
+
+\dsfacts{\code{lib/parts/src/remote/stream.rs}}{\code{txhdl\_parts::remote::stream::StreamLink}, and \code{StreamBridge}, it and \code{BeatMaster} joined}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+\code{HostLink} and \code{LiteMaster} carry 32-bit words to an AXI-Lite
+port. FireSim's CPU-managed streams need more: its host driver moves
+them with \code{cpu\_managed\_axi4\_read} and
+\code{cpu\_managed\_axi4\_write}, on an AXI4 port 128 bits wide with
+64-bit addresses (issue 1984). \code{StreamLink} takes a program's ask
+for one such beat off the wire and passes it on \code{ask} as a
+\code{BeatAsk}; the \code{BeatAnswer} that comes back on \code{back}
+leaves as a frame. \code{BeatMaster} performs the ask on the port.
+
+The frames have their own EtherType, \code{0x88b6}, the other one IEEE
+leaves for local use, so \code{EthShare} can split them from
+\code{HostLink}'s \code{0x88b5} frames by the type alone, and each unit
+sees only its own.
+
+\code{StreamBridge} is \code{StreamLink} and \code{BeatMaster} as one
+unit, frames on one side and the AXI4 port on the other, joined inside
+for the reason \code{HostBridge} is: joined by wires in a hand-written
+top, each channel's valid would depend on its own ready through the
+other unit. It has no tables of its own here: its ports are
+\code{StreamLink}'s \code{rx} and \code{tx} and \code{BeatMaster}'s
+port, below and on the next sheet.
+
+\subsection*{Parameters}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.7\textwidth}@{}}
+\toprule
+Parameter & Meaning \\
+\midrule
+\code{DEV} & The device number, which every ask this accepts must carry
+and every answer it sends carries, as for \code{HostLink}. The tables
+use 5, as \code{ex\_stream} and \code{//firesim/ax7a200b} do. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{The frame}
+
+44 bytes, before the padding the sender's MAC adds to reach sixty.
+The answer has the same layout.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}llp{0.52\textwidth}@{}}
+\toprule
+Bytes & Field & What \\
+\midrule
+0 to 14 & header & Ethernet's; type \code{0x88b6}. \\
+14 & kind & \code{0x03} asks, \code{0x83} answers. \\
+15 & device & \code{DEV}. \\
+16 & tag & The ask's, which the answer repeats. \\
+17 & flags & On an ask, bit 0 a write and bit 1 a no-op; on an answer,
+1 if the transfer failed. \\
+18 to 26 & address & 64 bits, most significant byte first. \\
+26 to 42 & beat & In memory order: byte 26 is lane 0. On an answer, what
+a read read. \\
+42 to 44 & strobe & A bit per lane, most significant byte first. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\dstables{StreamLink}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item Every byte coming in is taken, and four are checked as they pass:
+the two of the type, the kind and the device. A mismatch sets
+\code{alien}, which the last byte clears.
+\item \code{got} counts the bytes of the frame coming in and stops at
+63 rather than wrapping, so a long frame's later bytes are never read
+as its header or its fields again.
+\item The address and the strobe are shift registers filled from the
+bottom, most significant byte first; the beat is filled from the top,
+lane 0 first, so lane 0 ends lowest.
+\item An ask goes on \code{ask} at the end of a frame nothing objected
+to. A frame that ends by byte 43 is not a whole ask, since the strobe's
+last byte is held a cycle after it arrives; the sender's MAC pads every
+frame to sixty bytes, so a real ask always goes on past it. With no
+room on \code{ask} the ask is dropped, and the program asks again.
+\item An answer is taken from \code{back} when no frame is going out,
+and its bytes leave one a cycle that \code{tx} has room, spelled from
+registers by \code{at}.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item Nine tests in \code{lib/parts/src/remote/stream.rs}, in
+\code{//lib/parts:parts\_test}, run the two units with a port that keeps
+a queue. Among them: \code{a\_wide\_address\_arrives\_whole};
+\code{a\_partial\_write\_keeps\_its\_strobe}; and
+\code{other\_frames\_are\_ignored}, which sends another device's ask
+and another protocol's frame.
+\item \code{//lib/examples:ex\_stream} runs a program's asks over a
+wire, and the build simulates the three netlists against that run under
+nvc and Verilator, among them\newline
+\code{//docs:streamlink\_sim\_stream\_link\_stream\_link\_tb\_test}\newline
+\code{//docs:streamlink\_sim\_stream\_bridge\_stream\_bridge\_tb\_test}\newline
+and their \code{vsim} twins.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{ex\_stream}, and \code{//firesim/ax7a200b}'s \code{rocket\_link},
+where \code{EthShare} sends the control frames to a \code{HostBridge}
+and every other frame to a \code{StreamBridge<5>}, the stream port of
+FireSim's Rocket design on the AX7A200B (issue 1988).
+
+\subsection*{Limits}
+
+One answer frame goes out at a time, and an ask that finds \code{ask}
+full is dropped; a program that does not hear an answer asks again.
+A frame carries one beat, so a stream moves at a beat per round trip.
+Frames carry no authentication.
