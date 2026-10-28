@@ -443,8 +443,22 @@ the macro is what checks.
 It is exported at the crate's root under the struct's name, calls
 itself and writes the struct and the markers by their bare names, since
 Rust lets no path reach a macro another macro made from inside its own
-crate; so a use has them in scope, and another crate imports it by its
-name.
+crate (\code{probe\_named\_path}); so a use has them in scope, and
+another crate imports it by its name.
+With \code{path = crate::m}, the module the struct is in, the macro is
+made under a hidden name, \code{\_\_Name\_named}, and re-exported
+beside the struct as \code{Name}: a re-export is a path Rust does let
+reach it, in its own crate and in others (\#1915).
+It is then \code{crate::m::Name![..]}, or \code{Name![..]} after
+\code{use crate::m::Name;}, which brings the struct too; it calls
+itself through the re-export, and writes the struct and the markers it
+makes as \code{\$crate::m::..}.
+A marker \code{reuse(..)} names by its path,
+\code{reuse(crate::bus::named::Map)}, is written by that path, so a
+use imports nothing else.
+The attribute makes one form or the other, never both, since two
+macros of one name in one module are ambiguous (E0659); the bus modules
+of \code{txhdl\_parts} use \code{path}.
 A private struct's macro is not exported, and a lifetime is given by
 name too, \code{'a = 'static}, so the macro can stand in a type alias.
 

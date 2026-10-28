@@ -24,6 +24,11 @@
 //! `#[named_type_params(reuse(..))]`, its own bounds in its `where`
 //! clause. Here `Bus` and `Beat` both take `Word`.
 //!
+//! A struct that names its module, `#[named_type_params(path = ..)]`,
+//! has its macro re-exported beside it, so the macro is reached by the
+//! module's path, `crate::port::Gate![..]`, from anywhere, with nothing
+//! imported (#1915).
+//!
 //! The runtime's `Signal` is written this way: `Signal<Data<T>>` is a
 //! wire of `T`, and `Signal<Data<T>, Domain<C>>` one in clock domain
 //! `C`.
@@ -63,6 +68,18 @@ pub struct Lanes<const WIDTH: usize, const COUNT: usize> {
 pub type Row<const COUNT: usize, const WIDTH: usize> = Lanes<WIDTH, COUNT>;
 // end{bus}
 
+// begin{path}
+/// A struct whose macro is reached by its module's path (#1915).
+mod port {
+    use txhdl::named_type_params;
+
+    #[named_type_params(path = crate::port)]
+    pub struct Gate<Word: Copy, const WAYS: usize> {
+        pub ways: [Word; WAYS],
+    }
+}
+// end{path}
+
 /// The fields are plain numbers: this takes a `u32` and a `u64`.
 fn show(b: &Axi) -> String {
     let (a, d): (u32, u64) = (b.addr, b.data[0] + b.data[1]);
@@ -92,6 +109,10 @@ fn main() {
     // The alias's macro: the same type as `Lanes![COUNT = 4, WIDTH = 8]`.
     let r: Row![WIDTH = 8, COUNT = 4] = l;
     println!("the row has {} lanes", r.lanes.len());
+    // From outside its module, by path, with nothing imported.
+    let g: crate::port::Gate![WAYS = 2, Word = u16] =
+        port::Gate { ways: [7, 8] };
+    println!("the gate has {} ways of {}", g.ways.len(), g.ways[1]);
     println!(
         "Bus is {} bytes, as its fields are; Addr<u32> is {}",
         std::mem::size_of::<Axi>(),
