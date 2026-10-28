@@ -18,7 +18,6 @@ use txhdl_parts::bus::axi_lite::{axi_lite, LiteAw, LiteHost, LitePort, LiteW};
 use txhdl_parts::mdio::sim::MdioPhy;
 use txhdl_parts::mdio::MdioLines;
 use txhdl_parts::mdio::{cmd, reg, Mdio};
-use txhdl_parts::{LiteHost, LitePort};
 
 type Host = LiteHost![ADDR = 32, DATA = 32, STRB = 4];
 

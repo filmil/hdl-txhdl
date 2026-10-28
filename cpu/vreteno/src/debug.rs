@@ -340,7 +340,6 @@ mod tests {
     use super::*;
     use txhdl::comp::{join2, signal, Running};
     use txhdl_parts::bus::axi_lite::{axi_lite, LiteAw, LiteHost, LiteW};
-    use txhdl_parts::{LiteHost, LitePort};
 
     type Host = LiteHost![ADDR = 32, DATA = 32, STRB = 4];
 

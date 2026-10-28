@@ -27,12 +27,8 @@ use txhdl::types::{Bit, U};
 use txhdl::Trace;
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
-use txhdl_parts::bus::Map;
 use txhdl_parts::eth::gray16;
 use txhdl_parts::ethslots::{regs, EthSlots, SlotsMac};
-use txhdl_parts::AxiHost;
-use txhdl_parts::LiteBridge;
-use txhdl_parts::LitePort;
 
 /// Where the four buffers begin: sixteen megabytes into the board's
 /// memory, clear of where a program loads.

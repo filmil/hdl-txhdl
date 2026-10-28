@@ -22,7 +22,6 @@ use txhdl_parts::bus::axi::{
 use txhdl_parts::flashwin::FlashWin;
 use txhdl_parts::spi::FlashDevice;
 use txhdl_parts::FlashWin;
-use txhdl_parts::{AxiHost, AxiPer, PerPort};
 
 /// The identifier width, and how many a host may have out at once.
 const IW: usize = 2;

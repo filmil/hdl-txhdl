@@ -24,9 +24,6 @@ use txhdl_parts::bus::axi::{axi, AxiHost, BurstKind, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{
     axi_lite, LiteB, LiteBridge, LitePort, LiteR,
 };
-use txhdl_parts::bus::Map;
-use txhdl_parts::AxiHost;
-use txhdl_parts::LiteBridge;
 
 /// The link: sixteen-bit addresses, thirty-two-bit words, four lanes,
 /// two-bit identifiers, four of them.

@@ -23,7 +23,6 @@ use txhdl_parts::trng::{
     Trng, APT_CUTOFF, APT_WINDOW, CTRL, CTRL_CLEAR, CTRL_RUN, RINGS, STATUS,
     STATUS_APTFAULT, STATUS_FAULT,
 };
-use txhdl_parts::{LiteHost, LitePort};
 
 type Host = LiteHost![ADDR = 32, DATA = 32, STRB = 4];
 

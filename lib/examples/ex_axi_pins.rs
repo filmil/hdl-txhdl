@@ -17,7 +17,6 @@ use txhdl_parts::bus::axi::sim::Ram;
 use txhdl_parts::bus::axi::{axi, AxiPer, Link};
 use txhdl_parts::bus::axi_pins::sim::pins;
 use txhdl_parts::bus::axi_pins::AxiPins;
-use txhdl_parts::{AxiPer, AxiPins, Ram};
 
 /// The pins' widths: the endpoint's.
 type Pins = AxiPins![ADDR = 32, DATA = 64, STRB = 8, ID = 4];

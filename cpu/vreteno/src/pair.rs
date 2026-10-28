@@ -31,7 +31,6 @@ use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 use txhdl_parts::bus::axi::{Done, Grant, Issue, R, W};
 use txhdl_parts::redundant::{Check, Tee};
-use txhdl_parts::{R, W};
 
 use crate::core::Writeback;
 use crate::hart::{Hart, HartIn, HartOut};

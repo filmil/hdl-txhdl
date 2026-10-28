@@ -26,16 +26,12 @@ use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
-use txhdl_parts::bus::Map;
 use txhdl_parts::sd::SdLines;
 use txhdl_parts::sd::{
     regs, Sd, SdCard, CMD_BUSY, CMD_CLOCKS, CMD_LONG, CMD_NOCRC, CMD_READ,
     CMD_SHORT, CMD_WRITE, CTRL_CLEAR, CTRL_WIDE, STATUS_DCRC, STATUS_DONE,
     STATUS_DTIMEOUT, STATUS_RCRC, STATUS_RTIMEOUT, WORDS,
 };
-use txhdl_parts::AxiHost;
-use txhdl_parts::LiteBridge;
-use txhdl_parts::LitePort;
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
 /// identifiers, four of them.

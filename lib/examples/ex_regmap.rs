@@ -27,10 +27,6 @@ use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{
     axi_lite, LiteB, LiteBridge, LitePort, LiteR,
 };
-use txhdl_parts::bus::Map;
-use txhdl_parts::AxiHost;
-use txhdl_parts::LiteBridge;
-use txhdl_parts::LitePort;
 
 // begin{map}
 regmap! { knobs (knobs_read, knobs_we), 2: [

@@ -27,8 +27,6 @@ use txhdl_parts::bus::axi::{
 };
 use txhdl_parts::bus::axi_per_pins::sim::pins as pin_ram;
 use txhdl_parts::bus::axi_per_pins::AxiPerPins;
-use txhdl_parts::Ar;
-use txhdl_parts::{AxiHost, Host, Pending, R};
 
 use crate::{Ddr3Per, Ddr3PerBus, Ddr3PerPins};
 

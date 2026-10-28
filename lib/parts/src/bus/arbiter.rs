@@ -75,7 +75,7 @@ use txhdl::{lower, named_type_params, with, Trace};
 /// for the scanout and sets none (`SCAN_PRIO` in
 /// `cpu/vreteno/src/board.rs` says why).
 /// Writes are not affected.
-#[named_type_params]
+#[named_type_params(path = crate::bus::arbiter)]
 #[derive(Trace, Default)]
 pub struct Arbiter<
     const HOSTS: usize,
@@ -110,7 +110,7 @@ pub struct Arbiter<
 }
 
 /// Two hosts.
-#[named_type_params]
+#[named_type_params(path = crate::bus::arbiter)]
 pub type Arbiter2<
     const ADDR: usize,
     const DATA: usize,
@@ -120,7 +120,7 @@ pub type Arbiter2<
     const FIXED: usize,
 > = Arbiter<2, ADDR, DATA, STRB, ID, PER_ID, FIXED>;
 /// Three hosts.
-#[named_type_params]
+#[named_type_params(path = crate::bus::arbiter)]
 pub type Arbiter3<
     const ADDR: usize,
     const DATA: usize,
@@ -130,7 +130,7 @@ pub type Arbiter3<
     const FIXED: usize,
 > = Arbiter<3, ADDR, DATA, STRB, ID, PER_ID, FIXED>;
 /// Four hosts.
-#[named_type_params]
+#[named_type_params(path = crate::bus::arbiter)]
 pub type Arbiter4<
     const ADDR: usize,
     const DATA: usize,
@@ -140,7 +140,7 @@ pub type Arbiter4<
     const FIXED: usize,
 > = Arbiter<4, ADDR, DATA, STRB, ID, PER_ID, FIXED>;
 /// Five hosts.
-#[named_type_params]
+#[named_type_params(path = crate::bus::arbiter)]
 pub type Arbiter5<
     const ADDR: usize,
     const DATA: usize,
@@ -150,7 +150,7 @@ pub type Arbiter5<
     const FIXED: usize,
 > = Arbiter<5, ADDR, DATA, STRB, ID, PER_ID, FIXED>;
 /// Six hosts.
-#[named_type_params]
+#[named_type_params(path = crate::bus::arbiter)]
 pub type Arbiter6<
     const ADDR: usize,
     const DATA: usize,
@@ -160,7 +160,7 @@ pub type Arbiter6<
     const FIXED: usize,
 > = Arbiter<6, ADDR, DATA, STRB, ID, PER_ID, FIXED>;
 /// Seven hosts.
-#[named_type_params]
+#[named_type_params(path = crate::bus::arbiter)]
 pub type Arbiter7<
     const ADDR: usize,
     const DATA: usize,
@@ -170,7 +170,7 @@ pub type Arbiter7<
     const FIXED: usize,
 > = Arbiter<7, ADDR, DATA, STRB, ID, PER_ID, FIXED>;
 /// Eight hosts.
-#[named_type_params]
+#[named_type_params(path = crate::bus::arbiter)]
 pub type Arbiter8<
     const ADDR: usize,
     const DATA: usize,

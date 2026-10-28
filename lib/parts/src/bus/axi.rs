@@ -104,7 +104,7 @@ pub enum BurstKind {
 #[derive(
     TransactionDerive, ValueDerive, Clone, Copy, Default, Debug, PartialEq,
 )]
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 pub struct Addr<const ADDR: usize, const ID: usize> {
     /// Which burst this is. Answers carry it back, which is what
     /// lets several be in flight and be answered out of order. The
@@ -140,10 +140,10 @@ pub struct Addr<const ADDR: usize, const ID: usize> {
 }
 
 /// The write address channel's beat.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 pub type Aw<const ADDR: usize, const ID: usize> = Addr<ADDR, ID>;
 /// The read address channel's beat. The same fields.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 pub type Ar<const ADDR: usize, const ID: usize> = Addr<ADDR, ID>;
 // A struct literal through an alias finds the field order of the
 // struct under a const of the alias's name (issue 1541).
@@ -164,7 +164,7 @@ pub const Ar: txhdl::types::Fields = Addr;
 #[derive(
     TransactionDerive, ValueDerive, Clone, Copy, Default, Debug, PartialEq,
 )]
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 pub struct W<const DATA: usize, const STRB: usize, const LIMBS: usize = 1> {
     /// The word written, in `LIMBS` limbs of 128 bits: one up to 128 bits
     /// wide, two for 256 (issue 1696).
@@ -196,7 +196,7 @@ pub struct B<const I: usize> {
 #[derive(
     TransactionDerive, ValueDerive, Clone, Copy, Default, Debug, PartialEq,
 )]
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 pub struct R<const DATA: usize, const ID: usize, const LIMBS: usize = 1> {
     /// The burst this belongs to. Beats of different bursts may be
     /// interleaved, and this is what sorts them out again.
@@ -273,7 +273,7 @@ pub struct Done<const I: usize> {
 #[derive(
     TransactionDerive, ValueDerive, Clone, Copy, Default, Debug, PartialEq,
 )]
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 pub struct PerReq<const ADDR: usize, const ID: usize> {
     /// Whether this is a read. A peripheral answers a read on its
     /// read beat channel and a write on its answer channel, so this
@@ -341,7 +341,7 @@ pub struct Answer<const I: usize> {
 /// needs nightly Rust, and it is the width of the register of
 /// outstanding identifiers, a bit each.
 // begin{hostunit}
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 #[derive(Trace, Default)]
 pub struct AxiHost<
     const ADDR: usize,
@@ -501,7 +501,7 @@ impl<
 /// states. There is no `IDS`: this end allocates no identifiers, it answers
 /// with the one each burst arrived under.
 // begin{perunit}
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 #[derive(Trace, Default)]
 pub struct AxiPer<
     const ADDR: usize,
@@ -542,7 +542,7 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize> Unit
 /// into one stream of requests, taking turns so that neither starves
 /// the other however long one of them streams, and the write beats
 /// handed to the client.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 #[derive(Trace, Default)]
 pub struct AxiPerReq<
     const ADDR: usize,
@@ -614,7 +614,7 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize> Unit
 /// The response half of [`AxiPer`]: the client's answers back onto
 /// the response channels, a write's as a `B` beat and a read's as an
 /// `R` beat. It keeps nothing, so it is wires and the two hand-offs.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 #[derive(Trace, Default)]
 pub struct AxiPerRsp<
     const ADDR: usize,
@@ -663,7 +663,7 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize> Unit
 // The link: every channel of it, made at once
 
 /// The ports of a host tracker, what it reads.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 pub type HostIn<
     const ADDR: usize,
     const DATA: usize,
@@ -678,7 +678,7 @@ pub type HostIn<
 );
 
 /// The ports of a host tracker, what it drives.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 pub type HostOut<
     const ADDR: usize,
     const DATA: usize,
@@ -699,7 +699,7 @@ pub type HostOut<
 /// line, as it would write it, the alias is 82 columns, and the
 /// documents set source at 80 and never break a line; that is issue
 /// 165.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 #[rustfmt::skip]
 pub type PerIn<
     const ADDR: usize,
@@ -715,7 +715,7 @@ pub type PerIn<
 );
 
 /// The ports of a peripheral tracker, what it drives.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 pub type PerOut<
     const ADDR: usize,
     const DATA: usize,
@@ -734,7 +734,7 @@ pub type PerOut<
 /// written as hardware holds these instead. In order: the issue
 /// channel, the write beats, the release, and then the grant, the
 /// write responses and the read beats.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 pub type HostClient<
     const ADDR: usize,
     const DATA: usize,
@@ -752,7 +752,7 @@ pub type HostClient<
 /// The same for a peripheral client that is a unit: the requests and
 /// the write beats it reads, and the answers and read beats it
 /// drives.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 pub type PerClient<
     const ADDR: usize,
     const DATA: usize,
@@ -772,7 +772,7 @@ pub type PerClient<
 /// each port for the side and the field, `bus_req_valid`,
 /// `bus_r_data`, as [`LitePort`](super::axi_lite::LitePort) does for
 /// AXI-Lite (issue 483).
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 #[derive(PortsDerive)]
 pub struct PerPort<
     const ADDR: usize,
@@ -801,7 +801,7 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize>
 /// A link whose clients are units: the ports of the two trackers, and
 /// the channel ends a hardware client holds on each side. [`axi`] is
 /// this with the two ends wrapped in [`Host`] and [`Per`].
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 pub struct UnitLink<
     const ADDR: usize,
     const DATA: usize,
@@ -874,7 +874,7 @@ pub fn axi_units<
 /// the two units between them. A design joins [`AxiHost`] and
 /// [`AxiPer`] on those ports, or a unit of its own with the same
 /// ports, which is the seam a design uses to supply its own tracker.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 pub struct Link<
     const ADDR: usize,
     const DATA: usize,
@@ -943,7 +943,7 @@ pub fn axi<
 /// [`axi_units`] hands a peripheral that is hardware. It is what a test
 /// drives a peripheral written in the lowered subset with, from client
 /// code rather than from another unit.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 pub struct HostLink<
     const ADDR: usize,
     const DATA: usize,
@@ -1200,7 +1200,7 @@ impl<const D: usize, const I: usize> Inbox<D, I> {
 /// A burst in flight: the identifier the tracker gave it, and the
 /// answer to come. Several may be in flight at once and they may be
 /// awaited in any order, which is what out of order means here.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 pub struct Pending<const DATA: usize, const ID: usize> {
     id: U<ID>,
     inbox: Rc<Inbox<DATA, ID>>,
@@ -1237,7 +1237,7 @@ impl<const D: usize, const I: usize> Pending<D, I> {
 /// strobe width, `ID` the identifier width, and `IDS` how many identifiers
 /// there are. See [the module's own documentation](self) for what
 /// each means and why none of them is computed.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 pub struct Host<
     const ADDR: usize,
     const DATA: usize,
@@ -1440,7 +1440,7 @@ impl<const D: usize, const I: usize> Port<D, I> {
 /// A write, accepted whole: its address phase and every beat of its
 /// data. It answers itself, and it may be answered from a process
 /// other than the one that accepted it.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 pub struct WriteXact<
     const ADDR: usize,
     const DATA: usize,
@@ -1455,7 +1455,7 @@ pub struct WriteXact<
 
 /// A read, accepted: its address phase. It answers itself with the
 /// words it asked for, and it may be answered from another process.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 pub struct ReadXact<
     const ADDR: usize,
     const DATA: usize,
@@ -1626,7 +1626,7 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize>
 /// `ADDR`, `DATA`, `STRB` and `ID` are the link's widths; see [the
 /// module's own documentation](self). A peripheral end has no `IDS`, because it
 /// allocates no identifiers: it answers with the one it was given.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 pub struct Per<
     const ADDR: usize,
     const DATA: usize,
@@ -1690,7 +1690,7 @@ impl<const A: usize, const D: usize, const S: usize, const I: usize>
 /// Transactions a client has accepted and not answered, by
 /// identifier: what a client keeps when the process that accepts is
 /// not the process that answers.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi)]
 pub struct Open<
     const ADDR: usize,
     const DATA: usize,
@@ -1780,7 +1780,7 @@ pub async fn serve<
 }
 // end{serve}
 
-// After the structs, so the macros #[named_type_params] writes for them
+// After the structs, so the macros #[named_type_params(path = crate::bus::axi)] writes for them
 // are in scope in these modules, as a macro_rules! is only after it is
 // defined; `#[macro_use]` takes `sim`'s on to the rest of the crate.
 #[macro_use]

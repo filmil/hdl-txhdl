@@ -20,13 +20,9 @@ use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, BurstKind, Link, Rd, Resp, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
-use txhdl_parts::bus::Map;
 use txhdl_parts::eth::EthRxLines;
 use txhdl_parts::eth::EthTxLines;
 use txhdl_parts::eth::{regs, ungray16, EthByte, EthLite, EthRx, EthTx};
-use txhdl_parts::AxiHost;
-use txhdl_parts::LiteBridge;
-use txhdl_parts::LitePort;
 
 /// The link: thirty-two-bit addresses and words, four lanes,
 /// two-bit identifiers, four of them.

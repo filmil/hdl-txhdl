@@ -27,7 +27,6 @@ use txhdl_parts::bus::axi_lite::{
     axi_lite, LiteAr, LiteAw, LiteB, LiteHost, LiteHostPort, LitePort, LiteR,
     LiteW,
 };
-use txhdl_parts::{LiteHost, LitePort};
 
 // begin{unit}
 /// Each channel of a link, from the side it came in on to the other.

@@ -10,7 +10,6 @@
 //! optimised away as it would be for a node on an edge.
 use txhdl_parts::bus::noc::node::Node;
 use txhdl_parts::bus::noc::switch::Switch;
-use txhdl_parts::{Node, Switch};
 
 fn main() {
     let which = std::env::args().nth(1).unwrap_or_else(|| "node".into());

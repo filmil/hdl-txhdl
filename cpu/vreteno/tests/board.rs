@@ -25,8 +25,7 @@ use txhdl_parts::remote::eth::{FRAME_LEN, KIND_ANSWER, KIND_ASK};
 use txhdl_parts::scanout::LinePair;
 use txhdl_parts::sd::SdCard;
 use txhdl_parts::spi::FlashDevice;
-use txhdl_parts::{Addr, R, W};
-use txhdl_parts::{LinePair, LiteW};
+use txhdl_parts::LinePair;
 use vreteno32::board::{
     Board, BoardIn, BoardMap, BoardOut, Bscan, Ddr3Pins, JtagAnswers, SlotMap,
     SysIn, SysOut, REMOTE_DEV,

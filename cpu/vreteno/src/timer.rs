@@ -296,7 +296,6 @@ mod tests {
     use txhdl::comp::{chan, signal, DefaultClock, Running, Unit};
     use txhdl::types::{Bit, U};
     use txhdl_parts::bus::axi::{PerPort, PerReq, W};
-    use txhdl_parts::PerReq;
 
     /// Write `data` at `off` in the timer's window, then read `off`:
     /// what the read answered, and `msip` after both.

@@ -31,7 +31,7 @@ use super::{serve, BurstKind, Per, Resp, Xact};
 /// the result out after. The widths are the link's: `ADDR` the address
 /// width, `DATA` the data width, `STRB` the strobe width, which is
 /// `DATA / 8`, and `ID` the identifier width.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi::sim)]
 pub struct Ram<
     const ADDR: usize,
     const DATA: usize,

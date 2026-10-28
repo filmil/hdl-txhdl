@@ -64,7 +64,7 @@ use crate::bus::axi::{Addr, BurstKind, Resp, B, R, W};
 /// write of one beat and a read do not wait. A wrapping burst is not
 /// split, since the wrap is not computed here: it is eaten whole and
 /// answered `SlvErr`, as every long write was before the split.
-#[named_type_params]
+#[named_type_params(path = crate::bus::noc::bridge)]
 #[derive(Trace, Default)]
 pub struct HostBridge<
     const COL: usize,
@@ -422,7 +422,7 @@ impl<
 /// goes home under the original. A request waits when the identifier
 /// whose turn it is has not been answered, which is what bounds how
 /// many bursts a peripheral has in flight.
-#[named_type_params]
+#[named_type_params(path = crate::bus::noc::bridge)]
 #[derive(Trace, Default)]
 pub struct PerBridge<
     const COL: usize,

@@ -33,7 +33,7 @@ use txhdl::{lower, named_type_params, with, Trace};
 /// back to the host, the lowest peripheral first when two answer at
 /// once. Written in the lowered subset, so it is a netlist too.
 // begin{state}
-#[named_type_params(reuse(Map))]
+#[named_type_params(reuse(crate::bus::named::Map), path = crate::bus::router)]
 #[derive(Trace)]
 pub struct Router<
     const PORTS: usize,
@@ -329,7 +329,6 @@ mod tests {
     use crate::bus::axi::{
         axi, AxiHost, AxiPer, Link, Per, Rd, Resp, Wr, Xact,
     };
-    use crate::bus::Map;
     use std::cell::RefCell;
     use std::rc::Rc;
     use txhdl::comp::{join2, Running, Unit};

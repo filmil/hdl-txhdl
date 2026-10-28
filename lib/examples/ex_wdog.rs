@@ -31,14 +31,10 @@ use txhdl::map::AddrMap;
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi, AxiHost, Host, Link, Rd, Reply, Wr};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
-use txhdl_parts::bus::Map;
 use txhdl_parts::wdog::{
     regs, Wdog, CTRL_ENABLE, CTRL_LOCK, CTRL_SCALE_SHIFT, CTRL_WARN,
     CTRL_WINDOW, STATUS_FAILED, STATUS_WARNED,
 };
-use txhdl_parts::LiteBridge;
-use txhdl_parts::LitePort;
-use txhdl_parts::{AxiHost, Host};
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
 /// identifiers, four of them.

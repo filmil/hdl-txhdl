@@ -67,7 +67,7 @@ pub const LiteAr: txhdl::types::Fields = LiteAddr;
 
 /// The write data channel's beat: the word, and which of its bytes
 /// are meant.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi_lite)]
 #[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
 pub struct LiteW<const DATA: usize, const STRB: usize> {
     /// The word written.
@@ -96,7 +96,7 @@ pub struct LiteR<const D: usize> {
 /// The ends a host holds on an AXI-Lite link, in the order of the
 /// channels: the two address channels and the write data it drives,
 /// and the write response and read data it reads.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi_lite)]
 pub type LiteHost<const ADDR: usize, const DATA: usize, const STRB: usize> = (
     Tx<LiteAw<ADDR>>,
     Tx<LiteAr<ADDR>>,
@@ -107,7 +107,7 @@ pub type LiteHost<const ADDR: usize, const DATA: usize, const STRB: usize> = (
 
 /// The ends a peripheral holds on an AXI-Lite link, in the same order:
 /// what it reads, and then what it drives.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi_lite)]
 pub type LitePer<const ADDR: usize, const DATA: usize, const STRB: usize> = (
     Rx<LiteAw<ADDR>>,
     Rx<LiteAr<ADDR>>,
@@ -144,13 +144,13 @@ pub struct LiteBus<Si: Side, const A: usize, const D: usize, const S: usize> {
 /// What a peripheral holds on an AXI-Lite link, as one port rather
 /// than five: [`LiteBus`] on the receiving side, which takes the
 /// addresses and the data and sends the responses.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi_lite)]
 pub type LitePort<const ADDR: usize, const DATA: usize, const STRB: usize> =
     LiteBus<Receiver, ADDR, DATA, STRB>;
 
 /// What a host holds on an AXI-Lite link, as one port: [`LitePort`]'s
 /// five channels by the same names, each end turned round.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi_lite)]
 pub type LiteHostPort<const ADDR: usize, const DATA: usize, const STRB: usize> =
     LiteBus<Driver, ADDR, DATA, STRB>;
 
@@ -163,7 +163,7 @@ impl<const A: usize, const D: usize, const S: usize> From<LitePer<A, D, S>>
 }
 
 /// An AXI-Lite link: the ends of its five channels, by side.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi_lite)]
 pub struct LiteLink<const ADDR: usize, const DATA: usize, const STRB: usize> {
     /// What the host holds: a bridge's `aw`, `ar` and `w` it drives
     /// and `b` and `r` it reads for this peripheral.
@@ -206,7 +206,7 @@ pub fn axi_lite<const A: usize, const D: usize, const S: usize>(
 /// by beat, so a read still gets every beat it asked for. Written in
 /// the lowered subset, so it is a netlist too.
 // begin{state}
-#[named_type_params(reuse(Map))]
+#[named_type_params(reuse(crate::bus::named::Map), path = crate::bus::axi_lite)]
 #[derive(Trace)]
 pub struct LiteBridge<
     const PORTS: usize,

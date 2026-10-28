@@ -22,7 +22,7 @@ use super::pkt::Pkt;
 /// What a node reads: its column and row, held at constants,
 /// then north, south, west, east and the exit, for the request channel
 /// and then the response channel (issue 635).
-#[named_type_params]
+#[named_type_params(path = crate::bus::noc::mesh)]
 pub type Ins<
     const X_BITS: usize,
     const Y_BITS: usize,
@@ -46,7 +46,7 @@ pub type Ins<
 );
 
 /// What a node drives, in the same order.
-#[named_type_params]
+#[named_type_params(path = crate::bus::noc::mesh)]
 pub type Outs<
     const X_BITS: usize,
     const Y_BITS: usize,
@@ -76,7 +76,7 @@ pub type Outs<
 /// `STRB` the strobe width, which is `DATA / 8`, and `ID` the identifier
 /// width. `X_BITS` and `Y_BITS` are the widths of a coordinate, so a lattice is
 /// `1 << X_BITS` by `1 << Y_BITS` nodes at most.
-#[named_type_params]
+#[named_type_params(path = crate::bus::noc::mesh)]
 pub struct Exit<
     const X_BITS: usize,
     const Y_BITS: usize,
@@ -103,7 +103,7 @@ pub struct Exit<
 /// `STRB` the strobe width, which is `DATA / 8`, and `ID` the identifier
 /// width. `X_BITS` and `Y_BITS` are the widths of a coordinate, so a lattice is
 /// `1 << X_BITS` by `1 << Y_BITS` nodes at most.
-#[named_type_params]
+#[named_type_params(path = crate::bus::noc::mesh)]
 pub struct Lattice<
     const X_BITS: usize,
     const Y_BITS: usize,
@@ -274,7 +274,7 @@ pub const fn east(i: usize, w: usize) -> usize {
 /// the network: `ADDR` is the address width, `DATA` the data width,
 /// `STRB` the strobe width, which is `DATA / 8`, and `ID` the identifier
 /// width. `X_BITS` and `Y_BITS` are the widths of a coordinate.
-#[named_type_params]
+#[named_type_params(path = crate::bus::noc::mesh)]
 #[derive(Trace)]
 pub struct Mesh<
     const COLS: usize,

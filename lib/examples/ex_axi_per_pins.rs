@@ -16,7 +16,6 @@ use txhdl::types::U;
 use txhdl_parts::bus::axi::{axi, AxiHost, Link, Rd, Wr};
 use txhdl_parts::bus::axi_per_pins::sim::pins;
 use txhdl_parts::bus::axi_per_pins::AxiPerPins;
-use txhdl_parts::{AxiHost, AxiPerPins};
 
 /// The pins' widths: the controller's.
 type Pins = AxiPerPins![ADDR = 30, DATA = 32, STRB = 4, ID = 5];

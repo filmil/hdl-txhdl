@@ -8,7 +8,6 @@ use txhdl_parts::bus::axi::{
     Answer, Ar, Aw, AxiPer, PerPort, PerReq, Resp, B, R, W,
 };
 use txhdl_parts::bus::axi_pins::{AxiHostPins, AxiPins, AxiPinsIn, AxiPinsOut};
-use txhdl_parts::{AxiPer, AxiPins};
 
 /// The identifier word, at offset 0: `TxHDL` in ASCII, and a version.
 pub const IDENT: u64 = 0x5478_4844_4c00_0001;

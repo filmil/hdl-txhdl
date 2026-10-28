@@ -58,7 +58,7 @@ pub struct WbMaster<const AW: usize> {
 /// widths; `WB_ADDR` is the width of the Wishbone word address. Given by
 /// name, `AxiWb![ADDR = 32, ID = 2, WB_ADDR = 28]`; the impls write them
 /// `A`, `I` and `AW`.
-#[named_type_params]
+#[named_type_params(path = crate::bus::wb)]
 #[derive(Trace, Default)]
 pub struct AxiWb<const ADDR: usize, const ID: usize, const WB_ADDR: usize> {
     /// Where the request is: 0 waiting for one, 1 a write waiting for

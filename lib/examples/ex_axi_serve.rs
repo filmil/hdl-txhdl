@@ -31,7 +31,6 @@ use txhdl::{Transaction, Value};
 use txhdl_parts::bus::axi::{
     axi, serve, AxiHost, AxiPer, Link, Open, Per, Rd, Xact,
 };
-use txhdl_parts::{AxiHost, AxiPer, Open, Per};
 
 type HostUnit = AxiHost![ADDR = 16, DATA = 32, STRB = 4, ID = 2, IDS = 4];
 type PerUnit = AxiPer![ADDR = 16, DATA = 32, STRB = 4, ID = 2];

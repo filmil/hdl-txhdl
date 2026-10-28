@@ -25,7 +25,6 @@ use txhdl_parts::bus::axi::{
 };
 use txhdl_parts::dma::LineFetch;
 use txhdl_parts::LineFetch;
-use txhdl_parts::{AxiHost, AxiPer, PerPort};
 
 const ADDR: usize = 32;
 const IDB: usize = 2;
