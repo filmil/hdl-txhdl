@@ -29,7 +29,7 @@ use super::switch::Switch;
 /// `STRB` the strobe width, which is `DATA / 8`, and `ID` the identifier
 /// width. `X_BITS` and `Y_BITS` are the widths of a coordinate, so a lattice is
 /// `1 << X_BITS` by `1 << Y_BITS` nodes at most.
-#[named_type_params]
+#[named_type_params(path = crate::bus::noc::node)]
 #[derive(Trace, Default)]
 pub struct Node<
     const X_BITS: usize,

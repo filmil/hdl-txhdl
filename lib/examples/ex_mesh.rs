@@ -15,7 +15,6 @@ use txhdl::comp::{chan, DefaultClock, Running, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
 use txhdl_parts::bus::noc::mesh::Mesh;
 use txhdl_parts::bus::noc::pkt::{Chan, Pkt};
-use txhdl_parts::{Mesh, Pkt};
 
 /// Three nodes wide and two high; a column fits in two bits and a row
 /// in one. The link's widths are small, since only the routing is

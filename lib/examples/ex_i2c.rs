@@ -19,7 +19,6 @@ use txhdl_parts::bus::axi_lite::{axi_lite, LiteAw, LiteHost, LitePort, LiteW};
 use txhdl_parts::i2c::sim::I2cDev;
 use txhdl_parts::i2c::I2cLines;
 use txhdl_parts::i2c::{cmd, reg, I2c};
-use txhdl_parts::{LiteHost, LitePort};
 
 type Host = LiteHost![ADDR = 32, DATA = 32, STRB = 4];
 

@@ -38,7 +38,6 @@ mod tests {
         axi, Ar, Aw, AxiHost, AxiPer, BurstKind, Link, Rd, Resp, Wr, B, R, W,
     };
     use crate::bus::router::Router;
-    use crate::bus::Map;
     use std::cell::RefCell;
     use std::rc::Rc;
     use txhdl::comp::{chan, join2, join_all, DefaultClock, Running, Unit};

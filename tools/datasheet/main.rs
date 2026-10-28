@@ -36,7 +36,6 @@ use txhdl_parts::bus::noc::mesh::Mesh;
 use txhdl_parts::bus::noc::node::Node;
 use txhdl_parts::bus::noc::switch::Switch;
 use txhdl_parts::bus::wb::AxiWb;
-use txhdl_parts::bus::Map;
 use txhdl_parts::cdc::ChanCdc;
 use txhdl_parts::cdc::{ReadClock, WriteClock};
 use txhdl_parts::cfgflash::CfgFlash;
@@ -70,16 +69,9 @@ use txhdl_parts::tracer::Tracer;
 use txhdl_parts::trng::{Entropy, Trng};
 use txhdl_parts::udprx::UdpRx;
 use txhdl_parts::wdog::Wdog;
-use txhdl_parts::Arbiter2;
-use txhdl_parts::AxiWb;
 use txhdl_parts::{
-    AxiHost, AxiPer, AxiPerPins, AxiPins, HostBridge, Mesh, Node, PerBridge,
-    Switch, R,
-};
-use txhdl_parts::{
-    ChanCdc, DtmBridge, ExMon, Fifo, FlashWin, Hdmi, I2cInit, LineBuf,
-    LineFetch, LinePair, LineStore, LiteBridge, LiteSplit, ScanFetch,
-    ScanVideo, SetTable, Syscon,
+    ChanCdc, DtmBridge, Fifo, FlashWin, Hdmi, I2cInit, LineBuf, LineFetch,
+    LinePair, LineStore, ScanFetch, ScanVideo, SetTable, Syscon,
 };
 use vreteno32::board::{Board, BoardRouter};
 use vreteno32::core::Vreteno;

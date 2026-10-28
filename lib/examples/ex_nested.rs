@@ -30,7 +30,6 @@ use txhdl_parts::bus::axi::Resp;
 use txhdl_parts::bus::axi_lite::{
     axi_lite, LiteAw, LiteB, LiteHost, LitePort, LiteR, LiteW,
 };
-use txhdl_parts::{LiteHost, LitePort};
 
 // begin{unit}
 /// One word, written and read from either of two links, which it

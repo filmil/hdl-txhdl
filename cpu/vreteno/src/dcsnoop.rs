@@ -229,7 +229,6 @@ mod tests {
     use txhdl::comp::{chan, signal, DefaultClock, Running, Unit};
     use txhdl::types::{Bit, U};
     use txhdl_parts::bus::axi::{Addr, Resp, B, W};
-    use txhdl_parts::{Addr, W};
 
     /// With a second hart on port 7 (issue 1408), ports 0, 7 and 3 each
     /// write one word of a line of their own: hart 0 is told of the

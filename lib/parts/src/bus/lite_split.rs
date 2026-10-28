@@ -22,7 +22,7 @@ use txhdl::{lower, named_type_params, with, Trace};
 // begin{state}
 /// An AXI-Lite slot split in two by address bit `BIT`. `ADDR`, `DATA`
 /// and `STRB` are the address, data and strobe widths.
-#[named_type_params]
+#[named_type_params(path = crate::bus::lite_split)]
 #[derive(Trace, Default)]
 pub struct LiteSplit<
     const ADDR: usize,

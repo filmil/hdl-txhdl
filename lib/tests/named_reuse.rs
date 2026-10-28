@@ -180,3 +180,31 @@ mod linked {
         let _ends = (host, lane.data, lane.ack);
     }
 }
+
+/// A reused marker given by its path (#1915): with `path` on the struct
+/// as well, the macro writes the struct and the marker from the crate's
+/// root, so a module that imports the struct alone, and not the marker,
+/// can name both. The struct's own module still imports the marker's
+/// role, which the definition names.
+mod levels {
+    txhdl::named_markers!(pub Level);
+}
+
+mod gauge {
+    use crate::levels::IsLevel;
+
+    #[txhdl::named_type_params(reuse(crate::levels::Level), path = crate::gauge)]
+    pub struct Gauge<Level: Copy> {
+        pub level: Level,
+    }
+}
+
+mod reader {
+    use crate::gauge::Gauge;
+
+    #[test]
+    fn a_marker_reused_by_path_needs_no_import_at_the_use() {
+        let g: Gauge![Level = u8] = Gauge { level: 9 };
+        assert_eq!(g.level, 9);
+    }
+}

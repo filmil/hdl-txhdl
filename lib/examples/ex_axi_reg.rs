@@ -14,7 +14,6 @@ use txhdl::{lower, with, Trace};
 use txhdl_parts::bus::axi::{
     axi_to_unit, Answer, AxiHost, AxiPer, HostLink, PerPort, Rd, Resp, Wr, R,
 };
-use txhdl_parts::{AxiHost, AxiPer, PerPort};
 
 // begin{register}
 /// One word, readable and writable over AXI.

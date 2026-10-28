@@ -36,7 +36,6 @@ use txhdl_parts::cdc::ChanCdc;
 use txhdl_parts::cdc::{ReadClock, WriteClock};
 use txhdl_parts::dma::LineFetch;
 use txhdl_parts::scanout::{LinePair, ScanFetch};
-use txhdl_parts::{AxiHost, AxiPer, PerPort};
 use txhdl_parts::{ChanCdc, LineFetch, LinePair, ScanFetch};
 
 const ADDR: usize = 32;

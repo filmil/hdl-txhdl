@@ -17,8 +17,6 @@ use txhdl_parts::bus::axi::{
 use txhdl_parts::bus::wb::sim::WbMem;
 use txhdl_parts::bus::wb::AxiWb;
 use txhdl_parts::bus::wb::WbMaster;
-use txhdl_parts::AxiWb;
-use txhdl_parts::{AxiHost, AxiPer};
 
 /// The word address: twenty-eight bits.
 type Bridge = AxiWb![ADDR = 32, ID = 2, WB_ADDR = 28];

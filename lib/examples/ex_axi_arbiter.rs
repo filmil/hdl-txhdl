@@ -38,8 +38,6 @@ use txhdl_parts::bus::arbiter::Arbiter2;
 use txhdl_parts::bus::axi::{
     axi, serve, AxiHost, AxiPer, Per, Rd, Resp, Wr, Xact,
 };
-use txhdl_parts::Arbiter2;
-use txhdl_parts::{AxiHost, AxiPer, Per};
 
 /// A host's link: sixteen-bit addresses, thirty-two-bit words, four
 /// lanes, two-bit identifiers, four of them.

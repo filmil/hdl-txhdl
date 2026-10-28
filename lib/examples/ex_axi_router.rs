@@ -25,9 +25,6 @@ use txhdl_parts::bus::axi::{
     axi, serve, AxiHost, AxiPer, Link, Per, Rd, Resp, Wr, Xact,
 };
 use txhdl_parts::bus::router::Router;
-use txhdl_parts::bus::Map;
-use txhdl_parts::Router;
-use txhdl_parts::{AxiHost, AxiPer, Per};
 
 /// The link of this example: sixteen-bit addresses, thirty-two-bit
 /// words, four lanes, three-bit identifiers, eight of them. Five

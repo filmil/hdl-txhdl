@@ -27,13 +27,10 @@ use txhdl_parts::bus::axi::{
     Wr,
 };
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
-use txhdl_parts::bus::Map;
 use txhdl_parts::cfgflash::CfgFlash;
 use txhdl_parts::flashwin::FlashWin;
 use txhdl_parts::spi::{regs, FlashDevice, Spi, SpiLines};
-use txhdl_parts::LitePort;
-use txhdl_parts::{AxiHost, AxiPer, Host, PerPort};
-use txhdl_parts::{FlashWin, LiteBridge};
+use txhdl_parts::FlashWin;
 
 /// The master's link: its host, and the bridge with the master at
 /// `0x1000`.

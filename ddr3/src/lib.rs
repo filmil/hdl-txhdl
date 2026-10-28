@@ -35,7 +35,6 @@ use txhdl_parts::bus::axi_per_pins::sim::{PinRam, PinRamIn, PinRamOut};
 use txhdl_parts::bus::axi_per_pins::{
     AxiPerDriven, AxiPerPins, AxiPerPinsIn, AxiPerPinsOut,
 };
-use txhdl_parts::AxiPerPins;
 
 /// The memory's words as an address: a gigabyte of them is two to the
 /// twenty-eighth.
@@ -708,8 +707,6 @@ mod tests {
     use txhdl_parts::bus::axi::{
         axi, Ar, Aw, AxiHost, Link, Rd, Resp, Wr, B, R, W,
     };
-    use txhdl_parts::{Ar, Aw};
-    use txhdl_parts::{AxiHost, R, W};
 
     /// Words written across the memory and read back, the first ones
     /// issued while the controller is still calibrating, and a burst

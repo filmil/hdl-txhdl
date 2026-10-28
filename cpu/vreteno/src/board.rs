@@ -55,7 +55,6 @@ use txhdl_parts::bus::axi_lite::{
 use txhdl_parts::bus::axi_pins::{AxiHostPins, AxiPins, AxiPinsIn, AxiPinsOut};
 use txhdl_parts::bus::exmon::ExMon;
 use txhdl_parts::bus::router::Router;
-use txhdl_parts::bus::Map;
 use txhdl_parts::cdc::ChanCdc;
 use txhdl_parts::cdc::{ReadClock, WriteClock};
 use txhdl_parts::cfgflash::CfgFlash;
@@ -75,11 +74,6 @@ use txhdl_parts::scanout::ScanFetch;
 use txhdl_parts::sd::{Sd, SdLines};
 use txhdl_parts::spi::{Spi, SpiLines};
 use txhdl_parts::trng::Entropy;
-use txhdl_parts::Arbiter2;
-use txhdl_parts::{Arbiter, ExMon, LiteBridge, Router};
-use txhdl_parts::{
-    AxiHost, AxiHostPins, AxiPer, AxiPerReq, AxiPerRsp, AxiPins,
-};
 use txhdl_parts::{
     ChanCdc, DtmBridge, FlashWin, LineFetch, LineStore, ScanFetch,
 };

@@ -45,7 +45,7 @@ use txhdl::{lower, named_type_params, with, Trace};
 /// identifiers are `PER_ID` bits, at most five, the host's own `ID` of
 /// them below the port's, on a link of 32-bit addresses and words, for
 /// the addresses `a` with `a & MASK == BASE`.
-#[named_type_params]
+#[named_type_params(path = crate::bus::exmon)]
 #[derive(Trace, Default)]
 pub struct ExMon<
     const PER_ID: usize,

@@ -21,8 +21,6 @@ use txhdl_parts::bus::axi_lite::{LiteAr, LiteAw, LiteB, LiteR, LiteW};
 use txhdl_parts::bus::axi_pins::AxiHostPins;
 use txhdl_parts::dtm::Tck;
 use txhdl_parts::eth::EthByte;
-use txhdl_parts::LiteW;
-use txhdl_parts::{Addr, R, W};
 use vreteno32::board::{
     Board, BoardIn, BoardOut, Bscan, Ddr3Pins, JtagAnswers, SysIn, SysOut,
 };

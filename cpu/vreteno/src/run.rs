@@ -21,11 +21,6 @@ use txhdl::types::{Bit, U};
 use txhdl_parts::bus::axi::{axi_units, AxiHost, AxiPer, PerPort};
 use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::bus::router::Router;
-use txhdl_parts::bus::Map;
-use txhdl_parts::LiteBridge;
-use txhdl_parts::LitePort;
-use txhdl_parts::Router;
-use txhdl_parts::{AxiHost, AxiPer};
 
 /// The link, as the demonstration has it: thirty-two bit addresses
 /// and words, four lanes, two-bit identifiers.

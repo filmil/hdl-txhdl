@@ -85,7 +85,6 @@ mod tests {
     use txhdl::types::{Bit, U};
     use txhdl_parts::bus::axi::Resp;
     use txhdl_parts::bus::axi_lite::{LiteB, LitePort, LiteR};
-    use txhdl_parts::LitePort;
 
     /// A control ask, as the driver sends one.
     fn control(tag: u8, write: bool, addr: u32, data: u32) -> Vec<u8> {

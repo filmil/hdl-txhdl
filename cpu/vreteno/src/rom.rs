@@ -142,7 +142,6 @@ mod tests {
     use txhdl_parts::bus::axi::{
         axi_units, host_end, AxiHost, AxiPer, Host, Rd,
     };
-    use txhdl_parts::{AxiHost, AxiPer, Host};
 
     /// A read burst of sixteen beats, which is how the scanout's fetch
     /// asks for a line, gets sixteen words in order with the last one

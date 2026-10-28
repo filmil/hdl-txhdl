@@ -36,6 +36,14 @@ and \code{Bus} and \code{Beat} each take them with
 \code{\#[named\_type\_params(reuse(..))]}, their own bounds stated
 for themselves (\#1914).
 
+A struct's macro is made by another macro, and Rust lets no path reach
+such a macro inside its own crate, so it is used where the struct's
+module is in scope.
+\code{\#[named\_type\_params(path = crate::port)]} lifts that: the
+macro is re-exported beside the struct, so \code{crate::port::Gate![..]}
+names it from anywhere, and the struct and its markers are written from
+the crate's root, so nothing else is imported (\#1915).
+
 The runtime's \code{Signal} is written this way, so a wire of eight
 bits is \code{Signal<Data<U<8>>>}, and one in a named clock domain
 \code{Signal<Data<U<8>>, Domain<C>>}.

@@ -32,7 +32,6 @@ use txhdl_parts::remote::host::{
     HostBridge, HostLink, LiteMaster, KIND_HOST_ANSWER, KIND_HOST_ASK,
 };
 use txhdl_parts::remote::{Answer, Ask};
-use txhdl_parts::LitePort;
 
 /// This design's device number on the wire.
 const DEVICE: usize = 5;

@@ -41,7 +41,7 @@ use txhdl::{lower, named_type_params, select, with, Ports, Trace};
 /// holding a peripheral's pins among its ports passes them on whole.
 ///
 /// [`AxiHostPins`]: super::axi_pins::AxiHostPins
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi_per_pins)]
 #[derive(Ports)]
 pub struct AxiPerDriven<
     const DATA: usize,
@@ -74,7 +74,7 @@ pub struct AxiPerDriven<
 
 /// What the peripheral drives, and the link's address phases and write
 /// beats: the unit's inputs.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi_per_pins)]
 pub struct AxiPerPinsIn<
     const ADDR: usize,
     const DATA: usize,
@@ -97,7 +97,7 @@ pub struct AxiPerPinsIn<
 
 /// The answers to the link, and what the peripheral is driven with:
 /// the unit's outputs.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi_per_pins)]
 pub struct AxiPerPinsOut<
     const ADDR: usize,
     const DATA: usize,
@@ -184,7 +184,7 @@ pub struct AxiPerPinsOut<
 /// design that was reset and passes none of them on, and offers the
 /// peripheral nothing new. Nothing it offers waits on a `ready`, as AXI4
 /// asks of a host, and an offer is never withdrawn.
-#[named_type_params]
+#[named_type_params(path = crate::bus::axi_per_pins)]
 #[derive(Trace, Default)]
 pub struct AxiPerPins<
     const ADDR: usize,
@@ -438,7 +438,7 @@ pub mod sim {
     /// does not use. Every burst is taken as incrementing words, so
     /// `AxSIZE` and `AxBURST` are not among them, and nor are `AxLOCK`,
     /// `AxCACHE`, `AxPROT` and `AxQOS`.
-    #[named_type_params]
+    #[named_type_params(path = crate::bus::axi_per_pins::sim)]
     pub struct PinRamIn<
         const ADDR: usize,
         const DATA: usize,
@@ -476,7 +476,7 @@ pub mod sim {
     }
 
     /// The pins a memory drives: its readies and its answers.
-    #[named_type_params]
+    #[named_type_params(path = crate::bus::axi_per_pins::sim)]
     pub struct PinRamOut<const DATA: usize, const ID: usize> {
         /// `AWREADY`.
         pub awready: Out<Bit>,
@@ -503,7 +503,7 @@ pub mod sim {
     }
 
     /// The peripheral's ends of the pins, and its memory.
-    #[named_type_params]
+    #[named_type_params(path = crate::bus::axi_per_pins::sim)]
     pub struct PinRam<
         const ADDR: usize,
         const DATA: usize,

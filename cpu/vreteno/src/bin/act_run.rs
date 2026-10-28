@@ -45,9 +45,6 @@ use txhdl_parts::bus::axi::{
     axi_units, per_end, Ar, Aw, AxiHost, AxiPer, Per, Xact, B, W,
 };
 use txhdl_parts::bus::exmon::ExMon;
-use txhdl_parts::ExMon;
-use txhdl_parts::{Ar, Aw};
-use txhdl_parts::{AxiHost, AxiPer, Per, W};
 use vreteno32::core::Writeback;
 use vreteno32::hart::{Hart, HartIn, HartOut};
 use vreteno32::Hart;

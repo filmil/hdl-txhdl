@@ -19,7 +19,6 @@ use txhdl_parts::bus::axi_lite::{axi_lite, LiteAw, LiteHost, LitePort, LiteW};
 use txhdl_parts::plic::{
     priority, Plic3, CLAIM, ENABLE, PENDING, S_CLAIM, S_ENABLE, THRESHOLD,
 };
-use txhdl_parts::{LiteHost, LitePort};
 
 /// Three sources; the second asks on an edge.
 type Plic = Plic3<0b100>;

@@ -21,7 +21,6 @@ use txhdl::types::U;
 use txhdl_parts::bus::axi::{
     axi, serve, AxiHost, AxiPer, Link, Rd, Resp, Wr, Xact,
 };
-use txhdl_parts::{AxiHost, AxiPer};
 
 /// The link of this example: sixteen-bit addresses, thirty-two-bit
 /// words, four lanes, two-bit identifiers, four of them. `AxiHost`
