@@ -457,8 +457,11 @@ A marker \code{reuse(..)} names by its path,
 \code{reuse(crate::bus::named::Map)}, is written by that path, so a
 use imports nothing else.
 The attribute makes one form or the other, never both, since two
-macros of one name in one module are ambiguous (E0659); the bus modules
-of \code{txhdl\_parts} use \code{path}.
+macros of one name in one module are ambiguous (E0659). Every named
+type in \code{txhdl\_parts}, the Vreteno crate and Razboj uses
+\code{path} (\#2005), so another crate imports a macro from the type's
+module, \code{use txhdl\_parts::cdc::ChanCdc;}, which brings the type
+too, and not from the crate's root.
 A private struct's macro is not exported, and a lifetime is given by
 name too, \code{'a = 'static}, so the macro can stand in a type alias.
 
