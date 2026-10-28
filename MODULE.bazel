@@ -219,7 +219,7 @@ bazel_dep(name = "rules_nvc", version = "4.7.0")
 # the same traces, so both emitters are checked.
 bazel_dep(name = "rules_verilator", version = "1.1.2")
 bazel_dep(name = "rules_verilog", version = "1.4.3")
-bazel_dep(name = "rules_cc", version = "0.2.22")
+bazel_dep(name = "rules_cc", version = "0.2.27")
 
 # The C and C++ toolchain, fetched rather than taken from the host (issue
 # 782): a pinned LLVM release, and a pinned Debian bullseye sysroot for
@@ -464,7 +464,7 @@ filegroup(name = "all", srcs = glob(["tree/**"]))
 bazel_dep(name = "rules_python", version = "2.3.4")
 bazel_dep(name = "rules_foreign_cc", version = "0.16.0")
 bazel_dep(name = "rules_dtc", version = "0.0.5")
-bazel_dep(name = "dtc", version = "1.7.2.bcr.1")
+bazel_dep(name = "dtc", version = "1.7.2.bcr.2")
 
 # `flex` is pinned rather than resolved. The default resolution takes
 # `2.6.4.bcr.2`, on which building `dtc` fails with `config.h:208:
