@@ -9,9 +9,9 @@
 //!        cannot be referred to by absolute paths
 //! ```
 //!
-//! So the use-site macro calls itself by its bare name, and
-//! `#[named_type_params(path = ..)]` puts the path on the struct and the
-//! markers only.
+//! So `#[named_type_params(path = ..)]` makes the macro under a hidden
+//! name and re-exports it beside the struct, which is a path Rust does
+//! let reach it; the macro calls itself through that re-export (#1915).
 use txhdl::named_type_params;
 
 #[named_type_params]

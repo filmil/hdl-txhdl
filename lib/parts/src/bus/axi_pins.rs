@@ -273,7 +273,7 @@ pub mod sim {
     use txhdl::types::{Bit, U};
 
     /// The host's ends of the pins: what it drives and what it reads.
-    #[named_type_params(path = crate::bus::axi_pins)]
+    #[named_type_params(path = crate::bus::axi_pins::sim)]
     pub struct PinHost<
         const ADDR: usize,
         const DATA: usize,
@@ -303,7 +303,7 @@ pub mod sim {
 
     /// What a burst came back with: its identifier, its response, and
     /// a read's words.
-    #[named_type_params(path = crate::bus::axi_pins)]
+    #[named_type_params(path = crate::bus::axi_pins::sim)]
     pub struct Answer<const DATA: usize, const ID: usize> {
         /// The identifier the answer carried.
         pub id: U<ID>,
@@ -431,7 +431,7 @@ pub mod sim {
 
     /// The unit's ends of what the host drives: the inputs of a
     /// device on the pins, named as its ports are.
-    #[named_type_params(path = crate::bus::axi_pins)]
+    #[named_type_params(path = crate::bus::axi_pins::sim)]
     pub struct HostPins<
         const ADDR: usize,
         const DATA: usize,
@@ -490,7 +490,7 @@ pub mod sim {
 
     /// The device's ends of what the host reads: the outputs of a
     /// device on the pins, named as its ports are.
-    #[named_type_params(path = crate::bus::axi_pins)]
+    #[named_type_params(path = crate::bus::axi_pins::sim)]
     pub struct DevicePins<const DATA: usize, const ID: usize> {
         /// `AWREADY`.
         pub awready: Out<Bit>,

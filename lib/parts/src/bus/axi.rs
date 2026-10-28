@@ -1780,9 +1780,9 @@ pub async fn serve<
 }
 // end{serve}
 
-// After the structs, so the macros #[named_type_params(path = crate::bus::axi)] writes for them
-// are in scope in these modules, as a macro_rules! is only after it is
-// defined; `#[macro_use]` takes `sim`'s on to the rest of the crate.
+// The macros #[named_type_params] writes for the structs above are
+// re-exported beside them (`path = crate::bus::axi`), so they are
+// reached by path from anywhere, `sim`'s too (#1915).
 #[macro_use]
 pub mod sim;
 

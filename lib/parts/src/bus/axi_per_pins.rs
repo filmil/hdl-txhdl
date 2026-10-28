@@ -438,7 +438,7 @@ pub mod sim {
     /// does not use. Every burst is taken as incrementing words, so
     /// `AxSIZE` and `AxBURST` are not among them, and nor are `AxLOCK`,
     /// `AxCACHE`, `AxPROT` and `AxQOS`.
-    #[named_type_params(path = crate::bus::axi_per_pins)]
+    #[named_type_params(path = crate::bus::axi_per_pins::sim)]
     pub struct PinRamIn<
         const ADDR: usize,
         const DATA: usize,
@@ -476,7 +476,7 @@ pub mod sim {
     }
 
     /// The pins a memory drives: its readies and its answers.
-    #[named_type_params(path = crate::bus::axi_per_pins)]
+    #[named_type_params(path = crate::bus::axi_per_pins::sim)]
     pub struct PinRamOut<const DATA: usize, const ID: usize> {
         /// `AWREADY`.
         pub awready: Out<Bit>,
@@ -503,7 +503,7 @@ pub mod sim {
     }
 
     /// The peripheral's ends of the pins, and its memory.
-    #[named_type_params(path = crate::bus::axi_per_pins)]
+    #[named_type_params(path = crate::bus::axi_per_pins::sim)]
     pub struct PinRam<
         const ADDR: usize,
         const DATA: usize,

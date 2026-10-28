@@ -424,7 +424,7 @@ fn marker(
 /// the module the struct is in (#1915). The second is returned as the
 /// prefix the macro writes before the struct's name and the names of the
 /// markers it makes, `$crate::m::`, or empty without it. A reused marker
-/// keeps its bare name: it lives where `named_markers!` declared it.
+/// is written by the path `reuse(..)` gave it, or bare if given bare.
 #[allow(clippy::type_complexity)]
 fn args(
     attr: TokenStream,
@@ -458,9 +458,10 @@ fn args(
 
 /// `crate::a::b` as the prefix `$crate::a::b::`: a path from the
 /// crate's root, which reaches the struct from any module and, through
-/// `$crate`, from any crate. A macro's own name gets no prefix: Rust
-/// lets no path reach a macro another macro made, from inside its own
-/// crate (`experiments/rust_embedding/probe_named_path.rs`).
+/// `$crate`, from any crate. The macro reaches itself by it too, through
+/// the re-export beside the struct: Rust lets no other path reach a macro
+/// another macro made, from inside its own crate
+/// (`experiments/rust_embedding/probe_named_path.rs`).
 fn module_prefix(
     span: Span,
     path: &[TokenTree],
@@ -526,6 +527,15 @@ fn marker_path(part: &[TokenTree]) -> Option<String> {
             return None;
         }
     }
+    // A bare name, `crate::..` or `::krate::..`: anything else is
+    // relative to the module, which a use elsewhere is not in.
+    let leading = !out.is_empty();
+    if leading && segs.first().is_some_and(|f| f == "crate") {
+        return None;
+    }
+    if !leading && segs.len() > 1 && segs[0] != "crate" {
+        return None;
+    }
     segs.pop();
     for (j, seg) in segs.iter().enumerate() {
         if j == 0 && seg == "crate" && out.is_empty() {
@@ -580,7 +590,8 @@ fn reused(
                         return Err(err(
                             part.first().map_or(g.span(), |t| t.span()),
                             "`reuse(..)` names markers, once each, by name \
-                             or by path: `reuse(Data, crate::named::Domain)`",
+                             or by a path from a crate's root: \
+                             `reuse(Data, crate::named::Domain)`",
                         ))
                     }
                 }
@@ -753,7 +764,13 @@ fn use_macro(
     // is reached by that re-export alone, from its own crate, and calls
     // itself through it (`probe_named_path`). Without, under the
     // struct's name, calling itself by that name.
-    let hidden = format!("__{name}_named");
+    // The hidden name has the module's path in it, so two structs of
+    // one name in two modules export two macros of different names.
+    let segs: Vec<&str> = prefix
+        .split("::")
+        .filter(|x| !x.is_empty() && *x != "$crate")
+        .collect();
+    let hidden = format!("__named_{}_{name}", segs.join("_"));
     let (mac, call) = if prefix.is_empty() {
         (name.to_string(), name.to_string())
     } else {
@@ -897,9 +914,13 @@ fn use_macro(
     if prefix.is_empty() {
         format!("{doc}{export}macro_rules! {mac} {{\n{rules}\n}}\n")
     } else {
+        // A `path` that is not the struct's module fails here, at the
+        // struct, rather than at every use.
+        let here = prefix.replacen("$crate", "crate", 1);
         format!(
             "#[doc(hidden)]\n{export}macro_rules! {mac} {{\n{rules}\n}}\n\
-             {doc}{vis} use {mac} as {name};\n"
+             {doc}{vis} use {mac} as {name};\n\
+             const _: () = {{ #[allow(unused_imports)] use {here}{name} as _; }};\n"
         )
     }
 }

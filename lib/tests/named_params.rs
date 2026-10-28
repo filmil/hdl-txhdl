@@ -286,3 +286,15 @@ mod near {
         assert_eq!(w.lanes, [4, 5]);
     }
 }
+
+/// An alias with `path` (#1915): its macro is reached by path too.
+mod rows {
+    #[txhdl::named_type_params(path = crate::rows)]
+    pub type Row<const COUNT: usize, const WIDTH: usize> = [[u8; WIDTH]; COUNT];
+}
+
+#[test]
+fn an_alias_macro_is_reached_by_its_module_path() {
+    let r: crate::rows::Row![WIDTH = 2, COUNT = 3] = [[0; 2]; 3];
+    assert_eq!((r.len(), r[0].len()), (3, 2));
+}

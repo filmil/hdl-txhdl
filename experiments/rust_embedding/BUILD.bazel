@@ -113,6 +113,7 @@ rust_binary(
         "probe_named_alias_type",      # the macro's own message (#1946)
         "probe_named_alias_reuse",     # the macro's own message (#1946)
         "probe_named_path",            # a macro-made macro by path in its own crate (#1915)
+        "probe_named_path_wrong",      # a path that is not the struct's module (#1915)
         "probe_axi_send",              # the macro's own message (#1871)
         "probe_axi_rx",                # the macro's own message (#1871)
         "probe_axi_name",              # the macro's own message (#1871)
