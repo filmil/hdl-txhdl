@@ -255,3 +255,34 @@ mod elsewhere {
         assert_eq!(<Grid![ROWS = 2]>::cells(), 14);
     }
 }
+
+/// The struct's module given by `path` (#1915): the macro is
+/// re-exported beside the struct, so it is reached by the module's path
+/// or by importing the struct, which brings the macro with it, from any
+/// module and without `#[macro_use]`. It writes the struct and its
+/// markers from the crate's root, so a use imports nothing else.
+mod bus {
+    #[txhdl::named_type_params(path = crate::bus)]
+    pub struct Wires<Word, const LANES: usize> {
+        pub lanes: [Word; LANES],
+    }
+}
+
+mod far {
+    #[test]
+    fn the_macro_is_reached_by_its_module_path() {
+        let w: crate::bus::Wires![Word = u16, LANES = 3] =
+            crate::bus::Wires { lanes: [1, 2, 3] };
+        assert_eq!(w.lanes.iter().map(|&x| x as u32).sum::<u32>(), 6);
+    }
+}
+
+mod near {
+    use crate::bus::Wires;
+
+    #[test]
+    fn importing_the_struct_brings_its_macro() {
+        let w: Wires![LANES = 2, Word = u8] = Wires { lanes: [4, 5] };
+        assert_eq!(w.lanes, [4, 5]);
+    }
+}

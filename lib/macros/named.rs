@@ -29,6 +29,17 @@
 //! nothing: it writes the alias's macro only, so `Aw![ADDR = 32, ID = 2]`
 //! names an alias's parameters as a struct's macro does (#1946).
 //!
+//! `path = crate::m`, the module the struct or alias is in, makes the
+//! use-site macro reachable from anywhere (#1915). Rust lets no path
+//! reach a macro another macro made, from inside its own crate
+//! (`experiments/rust_embedding/probe_named_path.rs`), so the macro is
+//! made under a hidden name, `__Name_named`, and re-exported beside the
+//! struct as `Name`. It is then `crate::m::Name![..]`, or `Name![..]`
+//! after `use crate::m::Name;`, which brings the struct too, in its own
+//! crate and in others. It writes the struct and the markers it makes as
+//! `$crate::m::..`, and a marker `reuse(..)` names by path by that path,
+//! so a use imports nothing else.
+//!
 //! It is written on the tokens, as every macro of this crate is.
 use proc_macro::{
     Delimiter, Group, Ident, Punct, Spacing, Span, TokenStream, TokenTree,
@@ -57,8 +68,8 @@ pub(crate) fn named_type_params(
     attr: TokenStream,
     item: TokenStream,
 ) -> TokenStream {
-    let reused = match reused(attr) {
-        Ok(r) => r,
+    let (reused, prefix) = match args(attr) {
+        Ok(a) => a,
         Err(e) => return e,
     };
     let toks: Vec<TokenTree> = item.into_iter().collect();
@@ -75,7 +86,7 @@ pub(crate) fn named_type_params(
         );
     };
     if is_ident(&toks[kw], "type") {
-        return alias(&reused, &toks, kw);
+        return alias(&reused, &prefix, &toks, kw);
     }
     if !is_ident(&toks[kw], "struct") {
         return err(
@@ -165,7 +176,7 @@ pub(crate) fn named_type_params(
     let sealed = format!("__named_{}", snake(&name.to_string()));
     let mut out = String::new();
     // A name `reuse(..)` lists that is no type parameter of the struct.
-    for (r, span) in &reused {
+    for (r, span, _) in &reused {
         if !names.contains(r) {
             return err(
                 *span,
@@ -173,7 +184,7 @@ pub(crate) fn named_type_params(
             );
         }
     }
-    let reuses = |n: &str| reused.iter().any(|(r, _)| r == n);
+    let reuses = |n: &str| reused.iter().any(|(r, _, _)| r == n);
     // The seal: a role is implemented by its marker alone. A struct
     // that makes no marker of its own needs none.
     if types.iter().any(|t| !reuses(&t.name.to_string())) {
@@ -268,7 +279,17 @@ pub(crate) fn named_type_params(
             }
         }
     }
-    out.push_str(&use_macro(&name.to_string(), &params, !vis.is_empty()));
+    let reused_paths: Vec<(String, String)> = reused
+        .iter()
+        .map(|(n, _, p)| (n.clone(), p.clone()))
+        .collect();
+    out.push_str(&use_macro(
+        &name.to_string(),
+        &params,
+        &vis_s,
+        &prefix,
+        &reused_paths,
+    ));
     let before: TokenStream = toks[..=kw + 1].iter().cloned().collect();
     let rest = match rewrite(&toks[close + 1..], &names, Place::Top) {
         Ok(r) => with_preds(r, &preds),
@@ -289,18 +310,23 @@ pub(crate) fn named_type_params(
 /// struct's does. An alias makes no markers, so it names const
 /// parameters only; a type parameter is refused, and so is `reuse(..)`.
 fn alias(
-    reused: &[(String, Span)],
+    reused: &[(String, Span, String)],
+    prefix: &str,
     toks: &[TokenTree],
     kw: usize,
 ) -> TokenStream {
-    if let Some((_, span)) = reused.first() {
+    if let Some((_, span, _)) = reused.first() {
         return err(
             *span,
             "`reuse(..)` names markers, which a type alias does not take",
         );
     }
     let head = &toks[..kw];
-    let public = head.iter().any(|t| is_ident(t, "pub"));
+    let alias_vis: Vec<TokenTree> =
+        match head.iter().position(|t| is_ident(t, "pub")) {
+            Some(p) => head[p..].to_vec(),
+            None => Vec::new(),
+        };
     let Some(TokenTree::Ident(name)) = toks.get(kw + 1) else {
         return err(toks[kw].span(), "a type alias needs a name");
     };
@@ -347,9 +373,10 @@ fn alias(
              parameters only: an alias has no markers to name a type by",
         );
     }
-    let mut ts: TokenStream = use_macro(&name.to_string(), &params, public)
-        .parse()
-        .expect("the macro parses");
+    let mut ts: TokenStream =
+        use_macro(&name.to_string(), &params, &text(&alias_vis), prefix, &[])
+            .parse()
+            .expect("the macro parses");
     ts.extend(toks.iter().cloned());
     ts
 }
@@ -392,10 +419,135 @@ fn marker(
     )
 }
 
-/// The names `reuse(A, B)` lists, each with where it is named; none
-/// for no arguments (#1914).
+/// The attribute's arguments, in any order, each at most once:
+/// `reuse(A, B)`, the markers reused (#1914), and `path = crate::m`,
+/// the module the struct is in (#1915). The second is returned as the
+/// prefix the macro writes before the struct's name and the names of the
+/// markers it makes, `$crate::m::`, or empty without it. A reused marker
+/// keeps its bare name: it lives where `named_markers!` declared it.
 #[allow(clippy::type_complexity)]
-fn reused(attr: TokenStream) -> Result<Vec<(String, Span)>, TokenStream> {
+fn args(
+    attr: TokenStream,
+) -> Result<(Vec<(String, Span, String)>, String), TokenStream> {
+    let ts: Vec<TokenTree> = attr.into_iter().collect();
+    let mut reuse: Option<Vec<(String, Span, String)>> = None;
+    let mut prefix: Option<String> = None;
+    let usage = "`#[named_type_params]` takes nothing, `reuse(A, B)`: the \
+                 markers it reuses rather than makes, `path = crate::m`: \
+                 the module it is in, or both, comma-separated";
+    for part in ts.split(|t| is_punct(t, ',')) {
+        match part {
+            [] => {}
+            [TokenTree::Ident(r), TokenTree::Group(_)]
+                if *r.to_string() == *"reuse" && reuse.is_none() =>
+            {
+                reuse = Some(reused(part.iter().cloned().collect())?);
+            }
+            [TokenTree::Ident(p), TokenTree::Punct(eq), path @ ..]
+                if *p.to_string() == *"path"
+                    && eq.as_char() == '='
+                    && prefix.is_none() =>
+            {
+                prefix = Some(module_prefix(p.span(), path)?);
+            }
+            [t, ..] => return Err(err(t.span(), usage)),
+        }
+    }
+    Ok((reuse.unwrap_or_default(), prefix.unwrap_or_default()))
+}
+
+/// `crate::a::b` as the prefix `$crate::a::b::`: a path from the
+/// crate's root, which reaches the struct from any module and, through
+/// `$crate`, from any crate. A macro's own name gets no prefix: Rust
+/// lets no path reach a macro another macro made, from inside its own
+/// crate (`experiments/rust_embedding/probe_named_path.rs`).
+fn module_prefix(
+    span: Span,
+    path: &[TokenTree],
+) -> Result<String, TokenStream> {
+    let bad = || {
+        err(
+            span,
+            "`path = ..` is the module the struct is in, from the crate's \
+             root: `path = crate::bus::axi`",
+        )
+    };
+    let Some(first) = path.first() else {
+        return Err(bad());
+    };
+    if !is_ident(first, "crate") {
+        return Err(bad());
+    }
+    let mut out = String::from("$crate");
+    let mut rest = path[1..].iter();
+    loop {
+        match (rest.next(), rest.next(), rest.next()) {
+            (None, _, _) => break,
+            (
+                Some(TokenTree::Punct(a)),
+                Some(TokenTree::Punct(b)),
+                Some(TokenTree::Ident(n)),
+            ) if a.as_char() == ':' && b.as_char() == ':' => {
+                out.push_str("::");
+                out.push_str(&n.to_string());
+            }
+            _ => return Err(bad()),
+        }
+    }
+    out.push_str("::");
+    Ok(out)
+}
+
+/// The prefix a reused marker is written with, from its path in
+/// `reuse(..)`: none for a bare name, `$crate::a::` for `crate::a::M`,
+/// `::k::a::` for `::k::a::M`; `None` if the tokens are no such path.
+fn marker_path(part: &[TokenTree]) -> Option<String> {
+    let colons =
+        |a: &TokenTree, b: &TokenTree| is_punct(a, ':') && is_punct(b, ':');
+    let mut out = String::new();
+    let mut k = 0;
+    if part.len() >= 2 && colons(&part[0], &part[1]) {
+        out.push_str("::");
+        k = 2;
+    }
+    let mut segs: Vec<String> = Vec::new();
+    loop {
+        match part.get(k) {
+            Some(TokenTree::Ident(i)) => segs.push(i.to_string()),
+            _ => return None,
+        }
+        k += 1;
+        if k == part.len() {
+            break;
+        }
+        if k + 1 < part.len() && colons(&part[k], &part[k + 1]) {
+            k += 2;
+        } else {
+            return None;
+        }
+    }
+    segs.pop();
+    for (j, seg) in segs.iter().enumerate() {
+        if j == 0 && seg == "crate" && out.is_empty() {
+            out.push_str("$crate");
+        } else {
+            out.push_str(seg);
+        }
+        out.push_str("::");
+    }
+    Some(out)
+}
+
+/// The markers `reuse(A, B)` lists, each with where it is named and the
+/// prefix the use-site macro writes before it; none for no arguments
+/// (#1914). A marker given by a path, `reuse(crate::bus::named::Map)` or
+/// `reuse(::txhdl::comp::named::Data)`, is written by that path, with
+/// `crate` as `$crate`, so a use needs no import of it (#1915); one given
+/// by its bare name is written bare, and a use imports it.
+#[allow(clippy::type_complexity)]
+fn reused(
+    attr: TokenStream,
+) -> Result<Vec<(String, Span, String)>, TokenStream> {
     let ts: Vec<TokenTree> = attr.into_iter().collect();
     match ts.as_slice() {
         [] => Ok(Vec::new()),
@@ -403,29 +555,32 @@ fn reused(attr: TokenStream) -> Result<Vec<(String, Span)>, TokenStream> {
             if *r.to_string() == *"reuse"
                 && g.delimiter() == Delimiter::Parenthesis =>
         {
-            let mut out: Vec<(String, Span)> = Vec::new();
+            let mut out: Vec<(String, Span, String)> = Vec::new();
             let inner: Vec<TokenTree> = g.stream().into_iter().collect();
             let parts: Vec<&[TokenTree]> =
                 inner.split(|t| is_punct(t, ',')).collect();
             let last = parts.len() - 1;
             for (k, part) in parts.iter().enumerate() {
                 match *part {
-                    [TokenTree::Ident(n)] => {
-                        if out.iter().any(|(m, _)| *m == n.to_string()) {
+                    [.., TokenTree::Ident(n)]
+                        if marker_path(part).is_some() =>
+                    {
+                        if out.iter().any(|(m, _, _)| *m == n.to_string()) {
                             return Err(err(
                                 n.span(),
                                 &format!("`reuse(..)` names `{n}` twice"),
                             ));
                         }
-                        out.push((n.to_string(), n.span()))
+                        let prefix = marker_path(part).unwrap_or_default();
+                        out.push((n.to_string(), n.span(), prefix))
                     }
                     // A trailing comma, and nothing else, is allowed.
                     [] if k == last && k > 0 => {}
                     _ => {
                         return Err(err(
                             part.first().map_or(g.span(), |t| t.span()),
-                            "`reuse(..)` names markers, once each: \
-                             `reuse(Data, Domain)`",
+                            "`reuse(..)` names markers, once each, by name \
+                             or by path: `reuse(Data, crate::named::Domain)`",
                         ))
                     }
                 }
@@ -579,7 +734,31 @@ pub(crate) fn named_markers(input: TokenStream) -> TokenStream {
 /// the struct and the markers by their bare names, so a use needs them
 /// in scope: Rust lets no path reach a macro another macro made, from
 /// inside its own crate.
-fn use_macro(name: &str, params: &[Param], public: bool) -> String {
+fn use_macro(
+    name: &str,
+    params: &[Param],
+    vis: &str,
+    prefix: &str,
+    reused: &[(String, String)],
+) -> String {
+    let public = vis.contains("pub");
+    // The prefix of a marker: the struct's `path` for one it makes, and
+    // for one it reuses the path `reuse(..)` gave it.
+    let marker = |n: &str| match reused.iter().find(|(r, _)| r == n) {
+        Some((_, p)) => p.clone(),
+        None => prefix.to_string(),
+    };
+    // With `path`, the macro is made under a hidden name and re-exported
+    // beside the struct under the struct's: a macro another macro made
+    // is reached by that re-export alone, from its own crate, and calls
+    // itself through it (`probe_named_path`). Without, under the
+    // struct's name, calling itself by that name.
+    let hidden = format!("__{name}_named");
+    let (mac, call) = if prefix.is_empty() {
+        (name.to_string(), name.to_string())
+    } else {
+        (hidden, format!("{prefix}{name}"))
+    };
     #[derive(PartialEq)]
     enum Kind {
         Type,
@@ -638,7 +817,9 @@ fn use_macro(name: &str, params: &[Param], public: bool) -> String {
     // One argument at a time, into its slot, which must be empty.
     for (j, s) in slots.iter().enumerate() {
         let (frag, given) = match s.kind {
-            Kind::Type => ("ty", format!("[{}<$v>]", s.name)),
+            Kind::Type => {
+                ("ty", format!("[{}{}<$v>]", marker(&s.name), s.name))
+            }
             Kind::Const => ("expr", "[{ $v }]".to_string()),
             Kind::Lifetime => ("lifetime", "[$v]".to_string()),
         };
@@ -651,7 +832,7 @@ fn use_macro(name: &str, params: &[Param], public: bool) -> String {
                 .collect();
             rules.push(format!(
                 "(@s {} ; {} = $v:{frag} $(, $($r:tt)*)?) => {{ \
-                 {name}!(@s {} ; $($($r)*)?) }};",
+                 {call}!(@s {} ; $($($r)*)?) }};",
                 lhs.join(" "),
                 s.name,
                 rhs.join(" ")
@@ -662,7 +843,7 @@ fn use_macro(name: &str, params: &[Param], public: bool) -> String {
     // at a time, and then the struct is written out.
     for (j, s) in slots.iter().enumerate() {
         let fallback = if s.kind == Kind::Type {
-            format!("[{}<$($d)*>]", s.name)
+            format!("[{}{}<$($d)*>]", marker(&s.name), s.name)
         } else {
             "[$($d)*]".to_string()
         };
@@ -679,7 +860,7 @@ fn use_macro(name: &str, params: &[Param], public: bool) -> String {
             .map(|i| if i == j { fallback.clone() } else { pass(i) })
             .collect();
         rules.push(format!(
-            "(@s {} ;) => {{ {name}!(@s {} ;) }};",
+            "(@s {} ;) => {{ {call}!(@s {} ;) }};",
             lhs.join(" "),
             rhs.join(" ")
         ));
@@ -687,7 +868,7 @@ fn use_macro(name: &str, params: &[Param], public: bool) -> String {
     let full: Vec<String> = (0..k).map(|j| format!("[$($s{j}:tt)+]")).collect();
     let args: Vec<String> = (0..k).map(|j| format!("$($s{j})+")).collect();
     rules.push(format!(
-        "(@s {} ;) => {{ {name}<{}> }};",
+        "(@s {} ;) => {{ {prefix}{name}<{}> }};",
         full.join(" "),
         args.join(", ")
     ));
@@ -704,16 +885,23 @@ fn use_macro(name: &str, params: &[Param], public: bool) -> String {
         })
         .collect();
     rules.push(format!(
-        "($($a:tt)*) => {{ {name}!(@s {} ; $($a)*) }};",
+        "($($a:tt)*) => {{ {call}!(@s {} ; $($a)*) }};",
         start.join(" ")
     ));
     let export = if public { "#[macro_export]\n" } else { "" };
-    format!(
+    let doc = format!(
         "#[doc = \"`{name}![P = v, ..]`: [`{name}`] with every parameter \
-         given by name, in any order (#1899).\"]\n\
-         {export}macro_rules! {name} {{\n{}\n}}\n",
-        rules.join("\n")
-    )
+         given by name, in any order (#1899).\"]\n"
+    );
+    let rules = rules.join("\n");
+    if prefix.is_empty() {
+        format!("{doc}{export}macro_rules! {mac} {{\n{rules}\n}}\n")
+    } else {
+        format!(
+            "#[doc(hidden)]\n{export}macro_rules! {mac} {{\n{rules}\n}}\n\
+             {doc}{vis} use {mac} as {name};\n"
+        )
+    }
 }
 
 /// The generic parameters between `<` and `>`, split at the top-level
