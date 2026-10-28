@@ -102,7 +102,7 @@ const SHIFT: usize = 6;
 /// a design puts it in whatever it writes into. `COUNT_AT` is the byte
 /// address the display list's count is read from, and `LIST_AT` the
 /// address of its first instruction.
-#[txhdl::named_type_params]
+#[txhdl::named_type_params(path = crate::raster)]
 #[derive(Trace, Default)]
 pub struct Raster<
     const ADDR: usize,

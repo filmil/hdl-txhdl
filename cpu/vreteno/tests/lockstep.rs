@@ -30,7 +30,6 @@ use vreteno32::rom::Rom;
 use vreteno32::term::Terminal;
 use vreteno32::timer::Timer;
 use vreteno32::uart::Uart;
-use vreteno32::{Dmem, Hart};
 
 /// The link the core sits on, as the demonstration has it.
 const IW: usize = 2;

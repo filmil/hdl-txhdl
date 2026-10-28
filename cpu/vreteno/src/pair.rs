@@ -140,9 +140,9 @@ impl Unit for Inject {
 #[derive(Trace, Default)]
 pub struct Pair<const IW: usize> {
     /// The core whose work leaves the pair.
-    pub one: Hart<IW>,
+    pub one: Hart![ID = IW],
     /// The core that only checks.
-    pub two: Hart<IW>,
+    pub two: Hart![ID = IW],
     /// The read answers, to both cores.
     pub tee_rdata: Tee<R![DATA = 32, ID = IW]>,
     /// The write completions, to both.

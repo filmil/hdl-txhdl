@@ -22,7 +22,6 @@ use txhdl_parts::bus::axi::{
     axi_units, Answer, AxiHost, AxiPer, PerPort, Resp, R,
 };
 use txhdl_parts::dma::LineStore;
-use txhdl_parts::LineStore;
 
 const ADDR: usize = 32;
 const IDB: usize = 2;

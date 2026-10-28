@@ -14,7 +14,6 @@ use razboj::model::{self, Textures};
 use razboj::op::{assemble, Op, TexMode};
 use razboj::raster::Raster;
 use razboj::sim::{self, Work};
-use razboj::Raster;
 use razboj_tile::tex::{
     encode, level_base, side, texel_offset, Combine, Desc, BLEND, COMBINE,
     FN_ADD, FN_INTERPOLATE, FN_SUBTRACT, LINEAR, LINEAR_MIPMAP_LINEAR,

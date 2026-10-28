@@ -5,11 +5,9 @@
 //! every cycle. The table is the pointers and the full bit per cycle;
 //! the netlist is checked against this run.
 use txhdl::comp::trace::{stop, Wave};
-use txhdl::comp::Data;
 use txhdl::comp::{chan, now, DefaultClock, Running, Unit};
 use txhdl::types::U;
 use txhdl_parts::fifo::Fifo;
-use txhdl_parts::Fifo;
 
 /// Four words of eight bits.
 type Queue4 = Fifo![Data = U<8>, PTRS = 2, DEPTH = 4];

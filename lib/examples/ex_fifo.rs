@@ -10,12 +10,9 @@
 //! for its own event, and the channel's own handshake is the
 //! backpressure: the producer waits until the channel is ready, the
 //! consumer for a word.
-use txhdl::comp::Data;
 use txhdl::comp::{chan, join2, now, until, Clock, Reg, Running, Rx, Tx, Unit};
 use txhdl::types::U;
 use txhdl_parts::cdc::ChanCdc;
-use txhdl_parts::cdc::{ReadClock, WriteClock};
-use txhdl_parts::ChanCdc;
 
 pub struct ClkW;
 impl Clock for ClkW {

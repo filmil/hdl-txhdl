@@ -18,8 +18,6 @@ use pcie::bar::{BarRegs, PcieBar};
 use razboj::doorbell::Doorbell;
 use razboj::fb::Fb;
 use razboj::raster::Raster;
-use razboj::{Fb, Raster};
-use txhdl::comp::{Data, Domain};
 use txhdl::regmap::RegMap;
 use txhdl::types::U;
 use txhdl_parts::buffer::Buffer;
@@ -37,7 +35,6 @@ use txhdl_parts::bus::noc::node::Node;
 use txhdl_parts::bus::noc::switch::Switch;
 use txhdl_parts::bus::wb::AxiWb;
 use txhdl_parts::cdc::ChanCdc;
-use txhdl_parts::cdc::{ReadClock, WriteClock};
 use txhdl_parts::cfgflash::CfgFlash;
 use txhdl_parts::dma::{LineBuf, LineFetch, LineStore, NoBeats, NoReads};
 use txhdl_parts::dtm::{Dtm, DtmBridge};
@@ -69,10 +66,6 @@ use txhdl_parts::tracer::Tracer;
 use txhdl_parts::trng::{Entropy, Trng};
 use txhdl_parts::udprx::UdpRx;
 use txhdl_parts::wdog::Wdog;
-use txhdl_parts::{
-    ChanCdc, DtmBridge, Fifo, FlashWin, Hdmi, I2cInit, LineBuf, LineFetch,
-    LinePair, LineStore, ScanFetch, ScanVideo, SetTable, Syscon,
-};
 use vreteno32::board::{Board, BoardRouter};
 use vreteno32::core::Vreteno;
 use vreteno32::dcsnoop::DcSnoop;
@@ -83,7 +76,6 @@ use vreteno32::pair::{Inject, Pair, Watch};
 use vreteno32::rom::Rom;
 use vreteno32::timer::Timer;
 use vreteno32::uart::Uart;
-use vreteno32::{Dmem, Hart, Vreteno};
 
 /// The map of the bridge the sheet is written for: Vreteno's serial
 /// port, a nibble of the address space at 0x3000.

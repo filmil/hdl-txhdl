@@ -47,7 +47,6 @@ use txhdl_parts::bus::axi::{
 use txhdl_parts::bus::exmon::ExMon;
 use vreteno32::core::Writeback;
 use vreteno32::hart::{Hart, HartIn, HartOut};
-use vreteno32::Hart;
 
 /// The link, as the board has it.
 const IW: usize = 2;

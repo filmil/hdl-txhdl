@@ -11,7 +11,6 @@
 //! two thirds, a grey ramp under them, and a white border.
 use txhdl_parts::hdmi::{vga, Hdmi, I2cInit, FB_WORDS};
 use txhdl_parts::scanout::ScanVideo;
-use txhdl_parts::{Hdmi, I2cInit, ScanVideo};
 
 /// The framebuffer is 160 by 120, a framebuffer pixel 4 by 4.
 type Video = Hdmi![

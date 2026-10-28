@@ -41,7 +41,7 @@ use crate::bus::axi::{Answer, PerPort, Resp, R};
 /// The window. `DIV` sets the clock: a half of a bit takes `DIV + 1`
 /// cycles, so the flash is clocked at the system's rate over
 /// `2 * (DIV + 1)`. `ID` is the width of the AXI identifier.
-#[txhdl::named_type_params]
+#[txhdl::named_type_params(path = crate::flashwin)]
 #[derive(Trace, Default)]
 pub struct FlashWin<const DIV: usize, const ID: usize> {
     /// A read is on the wires.

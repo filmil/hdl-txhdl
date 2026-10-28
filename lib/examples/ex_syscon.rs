@@ -33,7 +33,6 @@ use txhdl_parts::bus::axi_lite::{axi_lite, LiteBridge, LitePort};
 use txhdl_parts::syscon::{
     regs, Syscon, CAUSE_BUTTON, CAUSE_POWER, CAUSE_SOFTWARE,
 };
-use txhdl_parts::Syscon;
 
 /// The link: thirty-two-bit addresses and words, four lanes, two-bit
 /// identifiers, four of them.

@@ -14,7 +14,6 @@ use razboj::op::stencil::{INCR, KEEP};
 use razboj::op::{assemble, DepthMode, Op, StencilMode, EQUAL, LESS};
 use razboj::raster::Raster;
 use razboj::sim::{self, Work};
-use razboj::Raster;
 
 /// One tile across, and forty rows of it.
 const LOGW: usize = 6;

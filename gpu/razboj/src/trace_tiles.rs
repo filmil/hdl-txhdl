@@ -10,7 +10,6 @@ use razboj::model;
 use razboj::op::{assemble, Op};
 use razboj::raster::Raster;
 use razboj::sim::{self, Work};
-use razboj::Raster;
 
 /// Two tiles across and one down: the scene is as small as shows a tile
 /// at an origin past nought, since nvc runs the whole testbench within

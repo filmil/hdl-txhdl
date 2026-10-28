@@ -21,7 +21,10 @@ use txhdl::{lower, with, Trace};
 /// `DEPTH` how many words it holds, which must be `1 << PTRS`. `D` is stated
 /// rather than computed because an expression in a const parameter's
 /// position needs nightly Rust.
-#[txhdl::named_type_params(reuse(Data))]
+#[txhdl::named_type_params(
+    reuse(::txhdl::comp::named::Data),
+    path = crate::fifo
+)]
 #[derive(Trace, Default)]
 pub struct Fifo<
     Data: Transaction + Value,
@@ -75,7 +78,7 @@ impl<T: Transaction + Value, const AW: usize, const D: usize> Unit
 mod tests {
     use super::Fifo;
     use std::collections::VecDeque;
-    use txhdl::comp::{chan, Data, DefaultClock, Running, Unit};
+    use txhdl::comp::{chan, DefaultClock, Running, Unit};
     use txhdl::types::U;
 
     #[test]

@@ -20,7 +20,6 @@ use vreteno32::pair::{Pair, PairIn, PairOut};
 use vreteno32::program::random;
 use vreteno32::timer::Timer;
 use vreteno32::uart::Uart;
-use vreteno32::Dmem;
 
 const IW: usize = 2;
 const NIDS: usize = 4;

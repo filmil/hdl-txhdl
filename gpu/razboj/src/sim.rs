@@ -268,7 +268,15 @@ fn works_at<
 
     let mut host = AxiHost::<A, 32, 4, IDB, IDS>::default();
     let mut per = AxiPer::<A, 32, 4, IDB>::default();
-    let mut raster = Raster::<A, IDB, LOGW, H, 0, DL, CTRL>::default();
+    let mut raster = <Raster![
+        ADDR = A,
+        ID = IDB,
+        LOG_WIDTH = LOGW,
+        HEIGHT = H,
+        FB_AT = 0,
+        LIST_AT = DL,
+        COUNT_AT = CTRL,
+    ]>::default();
     let mut fb = Fb::<A, IDB, N> {
         px: Mem::with(&image),
         ..Default::default()
@@ -362,17 +370,33 @@ fn works_at<
     if NL && lists.len() > 1 {
         // A name of its own, since the one-list run's netlist is
         // `raster` and the two are checked side by side.
-        let r = Raster::<A, IDB, LOGW, H, 0, DL, CTRL>::lowered("raster_lists");
+        let r = <Raster![
+            ADDR = A,
+            ID = IDB,
+            LOG_WIDTH = LOGW,
+            HEIGHT = H,
+            FB_AT = 0,
+            LIST_AT = DL,
+            COUNT_AT = CTRL,
+        ]>::lowered("raster_lists");
         txhdl::netlist::write_netlists_from_env(&[&r]);
     } else if NL {
-        let r = Raster::<A, IDB, LOGW, H, 0, DL, CTRL>::lowered("raster");
+        let r = <Raster![
+            ADDR = A,
+            ID = IDB,
+            LOG_WIDTH = LOGW,
+            HEIGHT = H,
+            FB_AT = 0,
+            LIST_AT = DL,
+            COUNT_AT = CTRL,
+        ]>::lowered("raster");
         // The memory starts with the display list in it, which the
         // lowering cannot see: `Mem::with` gave it at run time. The
         // netlist is told, or the fetch would read zeroes and the
         // simulated module would not follow the run it is checked
         // against. Only as far as the last word that says anything,
         // since the rest is the zero the array already starts at.
-        let mut f = Fb::<A, IDB, N>::lowered("fb");
+        let mut f = <Fb![ADDR = A, ID = IDB, WORDS = N]>::lowered("fb");
         // The link's four channels are traced under the names the run
         // gives them, which the waveform names too; the netlist calls
         // them the bundle's.

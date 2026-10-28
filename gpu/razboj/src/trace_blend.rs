@@ -17,7 +17,6 @@ use razboj::op::{ALWAYS, EQUAL, GREATER};
 use razboj::op::{ONE_MINUS_SRC_ALPHA, SRC_ALPHA, XOR};
 use razboj::raster::Raster;
 use razboj::sim::{self, Work};
-use razboj::Raster;
 
 /// One tile across, and forty rows of it.
 const LOGW: usize = 6;

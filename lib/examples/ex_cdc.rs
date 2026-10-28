@@ -24,12 +24,9 @@
 //! protocol; the second flop is an argument about silicon, and no
 //! simulation of either language says anything about it.
 use txhdl::comp::trace::{stop, Wave};
-use txhdl::comp::Data;
 use txhdl::comp::{chan, join2, now, until, Clock, Reg, Running, Rx, Tx, Unit};
 use txhdl::types::U;
 use txhdl_parts::cdc::ChanCdc;
-use txhdl_parts::cdc::{ReadClock, WriteClock};
-use txhdl_parts::ChanCdc;
 
 /// The writing clock: an edge every four ticks.
 pub struct ClkW;

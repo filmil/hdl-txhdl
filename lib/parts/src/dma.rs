@@ -35,7 +35,7 @@ use crate::bus::axi::{BurstKind, Done, Grant, Issue, R, W};
 /// `BEATS` how many beats a burst asks for, which is the most the bus
 /// will carry in one go. `COUNT` is the width of the word count, which
 /// says how long a run is.
-#[txhdl::named_type_params]
+#[txhdl::named_type_params(path = crate::dma)]
 #[derive(Trace, Default)]
 pub struct LineFetch<
     const ADDR: usize,
@@ -196,7 +196,10 @@ impl<const A: usize, const I: usize, const BEATS: usize, const WC: usize> Unit
 /// video timing rather than to a buffer. A line that is not filled in
 /// time shows the previous line's pixel at that column, which is a
 /// visible artefact rather than a hang.
-#[txhdl::named_type_params(reuse(Domain))]
+#[txhdl::named_type_params(
+    reuse(::txhdl::comp::named::Domain),
+    path = crate::dma
+)]
 #[derive(Trace)]
 pub struct LineBuf<const LEN: usize, const COL: usize, Domain: Clock> {
     /// The line. One word a pixel, which is what the framebuffer
@@ -287,7 +290,7 @@ impl<const LEN: usize, const AW: usize, C: Clock>
 /// the first one's beats are out would take them. That is the other
 /// reason for one burst at a time here, beyond the one the fetcher
 /// gives: it is not an optimisation being declined, it is a rule.
-#[txhdl::named_type_params]
+#[txhdl::named_type_params(path = crate::dma)]
 #[derive(Trace, Default)]
 pub struct LineStore<
     const ADDR: usize,
