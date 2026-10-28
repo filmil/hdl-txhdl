@@ -40,6 +40,14 @@ build --@rules_vivado//:vivado_mode=hermetic
 build --java_runtime_version=remotejdk_21
 build --tool_java_runtime_version=remotejdk_21
 
+# Python targets get only the __init__.py files they list (issue 1996).
+# rules_python warned on every build that it made them up for
+# @bazel_tools//tools/jdk:proguard_allowlister, and will stop doing so;
+# the one Python program of the tree's own, //third_party/sby, imports
+# nothing that needs them. A flag, not the module extension's setting,
+# because that covers the root module's targets only.
+build --incompatible_default_to_explicit_init_py
+
 # What CI runs with, `bazel build --config=ci`, so that its log holds what a
 # failure needs rather than every action's replayed chatter (#537). A cached
 # run replays each action's stderr from the disk cache, and CI uploads its
