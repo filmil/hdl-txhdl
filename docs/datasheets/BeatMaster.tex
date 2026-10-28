@@ -41,7 +41,9 @@ waiting to go.
 performed. A no-op is never taken as a repeat, so it cannot bring back
 a kept error at the start of a run.
 \item A no-op is answered without the port: it sets the kept tag, a
-zero beat and no error.
+zero beat and no error. An ask that then reuses the no-op's tag is a
+repeat, and is answered with that zero beat; a program changes its tag
+after the no-op, as the module's documentation says.
 \item A write sends one address phase, identifier 0, length 0, size 16
 bytes, incrementing, and one beat marked last; a read sends the address
 phase on \code{ar}.

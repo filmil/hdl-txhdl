@@ -17,9 +17,11 @@ for one such beat off the wire and passes it on \code{ask} as a
 leaves as a frame. \code{BeatMaster} performs the ask on the port.
 
 The frames have their own EtherType, \code{0x88b6}, the other one IEEE
-leaves for local use, so \code{EthShare} can split them from
-\code{HostLink}'s \code{0x88b5} frames by the type alone, and each unit
-sees only its own.
+leaves for local use, so \code{EthShare} can tell them from
+\code{HostLink}'s \code{0x88b5} frames by the type alone.
+\code{StreamLink} checks the type itself as well, and ignores a frame
+of any other: in \code{rocket\_link}, \code{EthShare} sends it every
+frame whose type is not \code{0x88b5}.
 
 \code{StreamBridge} is \code{StreamLink} and \code{BeatMaster} as one
 unit, frames on one side and the AXI4 port on the other, joined inside
@@ -46,23 +48,26 @@ use 5, as \code{ex\_stream} and \code{//firesim/ax7a200b} do. \\
 \subsection*{The frame}
 
 44 bytes, before the padding the sender's MAC adds to reach sixty.
-The answer has the same layout.
+The answer has the same layout, with the differences the table names.
 
 \begin{center}\footnotesize
 \begin{tabular}{@{}llp{0.52\textwidth}@{}}
 \toprule
 Bytes & Field & What \\
 \midrule
-0 to 14 & header & Ethernet's; type \code{0x88b6}. \\
+0 to 13 & header & Ethernet's; type \code{0x88b6}. An answer goes to the
+broadcast address from \code{02:00:00:00:00:DEV}. \\
 14 & kind & \code{0x03} asks, \code{0x83} answers. \\
 15 & device & \code{DEV}. \\
 16 & tag & The ask's, which the answer repeats. \\
 17 & flags & On an ask, bit 0 a write and bit 1 a no-op; on an answer,
-1 if the transfer failed. \\
-18 to 26 & address & 64 bits, most significant byte first. \\
-26 to 42 & beat & In memory order: byte 26 is lane 0. On an answer, what
+\code{0x01} if the transfer failed and 0 if not. \\
+18 to 25 & address & 64 bits, most significant byte first; zero on an
+answer. \\
+26 to 41 & beat & In memory order: byte 26 is lane 0. On an answer, what
 a read read. \\
-42 to 44 & strobe & A bit per lane, most significant byte first. \\
+42 to 43 & strobe & A bit per lane, most significant byte first; zero on
+an answer. \\
 \bottomrule
 \end{tabular}
 \end{center}
