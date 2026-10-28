@@ -1,0 +1,78 @@
+% SPDX-License-Identifier: Apache-2.0
+% covers: BeatMaster
+\datasheet{BeatMaster}{An AXI4 host that performs one beat at a time as a burst of one, and answers each, repeating the last answer to an ask that repeats its tag.}
+
+\dsfacts{\code{lib/parts/src/remote/stream.rs}}{\code{txhdl\_parts::remote::stream::BeatMaster}}%
+{\code{//docs:examples}}
+
+\subsection*{Function}
+
+\code{BeatMaster} takes a \code{BeatAsk} from \code{StreamLink}, a
+program's read or write of one 16-byte beat, performs it on an AXI4
+port of 128-bit data, 64-bit addresses and 4-bit identifiers as a burst
+of one beat, and sends the \code{BeatAnswer} back. It is how FireSim's
+host driver reaches its CPU-managed streams over Ethernet (issue 1984).
+
+A stream read takes data out of a queue and a stream write puts it in,
+so neither may be performed twice. As with \code{LiteMaster}, an ask
+that repeats the tag of the last transfer is answered from what was
+kept of it, the beat included, and not performed again.
+
+A program starts with a tag it cannot know the board has not kept from
+an earlier run, and no stream transfer is harmless to repeat or to skip.
+So its first ask is a no-op: \code{BeatMaster} answers it without
+touching the port and keeps its tag as the last one, and every tag the
+program uses after it differs from the one kept.
+
+\subsection*{Parameters}
+
+None. The port is AXI4 of 64-bit addresses, 128-bit data, a 16-bit
+strobe and 4-bit identifiers.
+
+\dstables{BeatMaster}
+
+\subsection*{Behaviour}
+
+\begin{itemize}
+\item An ask is taken when nothing is on the port and no answer is
+waiting to go.
+\item An ask whose tag is the last transfer's is answered again from
+\code{last\_tag}, \code{last\_data} and \code{last\_err}, and not
+performed. A no-op is never taken as a repeat, so it cannot bring back
+a kept error at the start of a run.
+\item A no-op is answered without the port: it sets the kept tag, a
+zero beat and no error.
+\item A write sends one address phase, identifier 0, length 0, size 16
+bytes, incrementing, and one beat marked last; a read sends the address
+phase on \code{ar}.
+\item The response is taken only once the request has gone whole. A
+response other than \code{Okay} becomes an answer with its error bit
+set; a write answers a zero beat.
+\end{itemize}
+
+\subsection*{Verification}
+
+\begin{itemize}
+\item The tests in \code{lib/parts/src/remote/stream.rs}, in
+\code{//lib/parts:parts\_test}:
+\code{a\_write\_reaches\_the\_port\_whole}, one beat of 16 bytes;
+\code{reads\_take\_the\_queue\_in\_order};
+\code{a\_repeated\_read\_is\_answered\_again\_and\_not\_performed\_again}
+and \code{a\_repeated\_write\_is\_not\_performed\_again};
+\code{a\_noop\_is\_answered\_and\_never\_reaches\_the\_port}; and\newline
+\code{a\_noop\_on\_a\_failed\_transfers\_tag\_does\_not\_bring\_back\_the\_error}.
+\item \code{//lib/examples:ex\_stream}, and the build simulates its
+netlist against that run under nvc and Verilator:\newline
+\code{//docs:streamlink\_sim\_beat\_master\_beat\_master\_tb\_test}\newline
+\code{//docs:streamlink\_vsim\_beat\_master\_test}.
+\end{itemize}
+
+\subsection*{Used by}
+
+\code{StreamBridge}, which joins it to \code{StreamLink}; \code{ex\_stream};
+and \code{//firesim/ax7a200b} through \code{StreamBridge<5>}.
+
+\subsection*{Limits}
+
+One beat at a time, a burst of one. A repeat is known by its tag alone,
+so each new ask must change its tag. Only the last answer is kept.

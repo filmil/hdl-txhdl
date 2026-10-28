@@ -58,7 +58,7 @@ use txhdl_parts::pwm::Pwm;
 use txhdl_parts::redundant::{Check, Tee};
 use txhdl_parts::remote::eth::RemoteLink;
 use txhdl_parts::remote::host::{HostLink, LiteMaster};
-use txhdl_parts::remote::stream::StreamLink;
+use txhdl_parts::remote::stream::{BeatMaster, StreamLink};
 use txhdl_parts::remote::Remote;
 use txhdl_parts::scanout::{LinePair, ScanCtl, ScanFetch, ScanVideo};
 use txhdl_parts::sd::Sd;
@@ -807,6 +807,11 @@ fn main() {
         "StreamLink",
         "StreamLink<5>",
         StreamLink::<5>::lowered("stream_link"),
+    );
+    sheet(
+        "BeatMaster",
+        "BeatMaster",
+        BeatMaster::lowered("beat_master"),
     );
     sheet("Spi", "Spi", Spi::lowered("spi"));
     sheet("Tracer", "Tracer<8>", Tracer::<8>::lowered("tracer"));
