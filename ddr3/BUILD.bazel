@@ -75,10 +75,13 @@ vivado_ip(
 
 # The same controller with its own AXI4 port in place of the native one
 # (issue 1023, option C): the project file in `mig/` is the native one's
-# with `PortInterface` set to AXI, a 32-bit data port, the link's five
-# identifier bits, and the memory's whole 1 GiB as a 30-bit byte
-# address. This is the controller the design instantiates (issue 1023,
-# step 3); the native one stays for its example design, whose traffic
+# with `PortInterface` set to AXI, a 256-bit data port with narrow
+# bursts, six identifier bits (the top one says which of the wrapper's
+# two sides the burst is from), and the memory's whole 1 GiB as a 30-bit
+# byte address. The wrapper, `hdl/ddr3_axi32.v`, keeps a 32-bit port in
+# front of it, beside a 256-bit read-only one (ef4513b1). This is the
+# controller the design instantiates (issue 1023, step 3); the native
+# one stays for its example design, whose traffic
 # generator and Micron model `//ddr3/sim` reads. Manual:
 #
 #   bazel build //ddr3:ddr3_mig_axi
