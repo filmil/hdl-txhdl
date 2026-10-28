@@ -80,8 +80,9 @@ The count differs from run to run because the target waits in its boot ROM while
 To repeat it, holding the BOARD TOKEN:
 
 1. Program the board with `rocket_eth_prog`, as the comment beside it says.
-2. Build `//firesim/ax7a200b:rocket_eth_driver` and `:hello_riscv`, and copy both to srv with the three Spike libraries the driver needs (`ldd` lists them under `_solib_k8`).
-   A binary given `cap_net_raw` ignores `LD_LIBRARY_PATH`, so link it with `--linkopt=-Wl,-rpath,<the directory on srv>` and keep the libraries there.
+2. Build `//firesim/ax7a200b:rocket_eth_driver` and `:hello_riscv`, copy both to srv, and let the driver open a raw socket: `sudo setcap cap_net_raw+ep rocket_eth_driver`.
+   The driver is one file: it links Spike statically, through `riscv_isa_sim` `0.0.0-chipyard.1.15.0.bcr.1` (#2001).
+   The board runs of #1988 predate that and needed Spike's shared libraries beside a driver linked with an absolute `-rpath`, since a binary given `cap_net_raw` ignores `LD_LIBRARY_PATH`.
 3. Run `./rocket_eth_driver +permissive +iface=fpga-a200t-eth0 +permissive-off hello.riscv`.
    The driver's own plusargs go inside the `+permissive` block; outside it, fesvr takes the first one for the program.
    `+device` defaults to 5, the device number `rocket_netlist.rs` builds in.
