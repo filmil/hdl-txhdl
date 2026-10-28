@@ -293,7 +293,7 @@ A new crate with lowered units adds its `sources` to that test's
 
 Then the showcase's numbers are taken again, since a sweep is the one
 place they are allowed to change.
-Four of them are counts and not opinions, and each has a command
+Five of them are counts and not opinions, and each has a command
 behind it.
 Run them; do not carry a number over from the last edit.
 
@@ -306,6 +306,7 @@ bazel query 'attr(tags, "manual", kind(".*_test", //...))' | wc -l
 bazel query 'kind(".*_test", //...)' | grep -c _vsim    # netlists, each x2
 find lib/parts/src -name '*.rs' | xargs wc -l | tail -1 # a band of lines
 ls lib/examples/ex_*.rs | wc -l                         # the examples
+tools/examples_units.sh            # the units table's examples row (#1997)
 ```
 
 The showcase stays within five pages.
