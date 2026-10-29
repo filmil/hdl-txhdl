@@ -180,6 +180,30 @@ read_costs() {
   ' "$log"
 }
 
+# The night before DIR, of the same kind, among the runs in OUT: the
+# newest results.tsv with at least one row under its header, by when it
+# was written rather than by its name, whose Pacific offset changes with
+# daylight saving. A board run is compared with a board run, a dry run
+# (DRY not empty) with a dry run. A night that stopped before its first
+# check left only the header, and is passed over (#2012). Prints nothing
+# when there is no such night.
+night_before() {
+  local out="$1" dir="$2" dry="$3" f
+  while IFS= read -r f; do
+    [[ "$f" == "$dir/"* ]] && continue
+    if [[ -n "$dry" ]]; then
+      [[ "$f" == *-dry/results.tsv ]] || continue
+    else
+      [[ "$f" == *-dry/results.tsv ]] && continue
+    fi
+    if awk 'NR > 1 && NF { found = 1; exit } END { exit !found }' "$f"; then
+      echo "$f"
+      return 0
+    fi
+  done < <(ls -dt "$out"/*/results.tsv 2>/dev/null)
+  return 0
+}
+
 # results.tsv against the night before's: a row per metric in either,
 # with both values, the change where both are numbers, and `moved`
 # where the status is not the one it was.
