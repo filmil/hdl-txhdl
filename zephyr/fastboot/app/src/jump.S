@@ -34,6 +34,9 @@
  *     a5  where it came from, kept for the sums
  *     a6  its length, kept for the sums
  *     a7  the return address of the two small routines below
+ *
+ * Before the jump `a3` is set back to where the program went, as the
+ * routine left it before the report was added.
  */
 	.section .text.fb_jump, "ax"
 	.globl fb_jump
@@ -88,15 +91,18 @@ fb_jump:
 	 * The sums, each the words added as `fb_sum_words` adds them. The
 	 * words are read with `lr.w`, which goes around the data cache
 	 * (issue 1556), so the destination's sum is what the DDR3 holds
-	 * and not what the cache kept of the stores.
+	 * and not what the cache kept of the stores. The `fence` first
+	 * waits for every store the copy posted, as `boot` does before its
+	 * own sum of the staging area.
 	 */
+	fence
 	li	t2, 0
 	li	t3, 0
 	mv	t4, a5
 	mv	t5, a4
 	mv	t6, a6
 4:
-	blez	t6, 6f
+	beqz	t6, 6f
 	lr.w	t0, (t4)
 	add	t2, t2, t0
 	lr.w	t0, (t5)
@@ -132,7 +138,18 @@ fb_jump:
 	putch	111	/* o */
 	putch	13	/* CR */
 	putch	10	/* LF */
+	/*
+	 * Room in the port's queue is not the bytes on the wire: `go` and
+	 * its line end take about 350 us at 115200 baud, and the program
+	 * may set the port up afresh as it starts. So the routine waits
+	 * about a millisecond, 40000 turns of two instructions, first.
+	 */
+	li	t0, 40000
+13:
+	addi	t0, t0, -1
+	bnez	t0, 13b
 9:
+	mv	a3, a4
 	jr	a4
 
 	/* t1 to the port once it has room; returns through a7. */

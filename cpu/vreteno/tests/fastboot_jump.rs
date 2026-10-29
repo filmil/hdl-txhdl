@@ -31,8 +31,9 @@ fn routine() -> Vec<u32> {
 }
 
 /// Stage `program` at `src`, the routine at `at`, and run the routine
-/// with `a0` = `src`, `a1` = `dst`, `a2` = the length, as `boot` calls
-/// it. Returns the model once it stops.
+/// with `a0` = `src`, `a1` = `dst`, `a2` = the length and `a3` = zero,
+/// as `boot` calls it with no serial port. Returns the model once it
+/// stops.
 fn run(program: &[u32], src: u32, dst: u32, at: u32) -> Model {
     run_to(program, src, dst, at, 0)
 }
@@ -57,7 +58,7 @@ fn run_to(program: &[u32], src: u32, dst: u32, at: u32, tx: u32) -> Model {
     m.x[12] = 4 * program.len() as u32;
     m.x[13] = tx;
     let imem = vec![0u32; (IMEM_BYTES / 4) as usize];
-    for _ in 0..10_000 {
+    for _ in 0..200_000 {
         if m.halted.is_some() {
             break;
         }
@@ -119,6 +120,49 @@ fn the_routine_reports_the_copy_and_the_jump() {
     assert_eq!(
         String::from_utf8_lossy(&m.uart),
         format!("jump {sum:08x} {sum:08x}\r\ngo\r\n")
+    );
+}
+
+/// The two sums are printed source first: a destination one word below
+/// the source makes the copy run over the source's first word, so
+/// afterwards the source holds the program's second word twice and
+/// the destination the program itself, and the two sums differ.
+#[test]
+fn the_sums_are_the_source_then_the_destination() {
+    use vreteno32::isa::UART_BASE;
+
+    let program = [MARK, HALT];
+    let dst_sum = MARK.wrapping_add(HALT);
+    let src_sum = HALT.wrapping_add(HALT);
+    let m = run_to(
+        &program,
+        DATA_BASE + 0x404,
+        DATA_BASE + 0x400,
+        DATA_BASE + 0x800,
+        UART_BASE,
+    );
+    assert!(matches!(m.halted, Some(Halt::Break)), "{:?}", m.halted);
+    assert_eq!(
+        String::from_utf8_lossy(&m.uart),
+        format!("jump {src_sum:08x} {dst_sum:08x}\r\ngo\r\n")
+    );
+}
+
+/// A program of no words still gets its report, two zero sums.
+#[test]
+fn an_empty_program_is_reported_as_two_zero_sums() {
+    use vreteno32::isa::UART_BASE;
+
+    let m = run_to(
+        &[],
+        DATA_BASE + 0x100,
+        DATA_BASE + 0x400,
+        DATA_BASE + 0x800,
+        UART_BASE,
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&m.uart),
+        "jump 00000000 00000000\r\ngo\r\n"
     );
 }
 
