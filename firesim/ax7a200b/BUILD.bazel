@@ -323,3 +323,31 @@ rust_test(
     crate = ":rocket_netlist",
     edition = "2021",
 )
+
+# The programs of the 2026-10-28 board session (#2008): a timed loop
+# and the UART's input echoed. Freestanding C on a start-up of their
+# own, for RV64 at 0x80000000, built as hello.riscv is.
+[
+    genrule(
+        name = p + "_riscv",
+        srcs = [
+            "progs/crt.S",
+            "progs/uart.h",
+            "progs/prog.ld",
+            "progs/" + p + ".c",
+        ],
+        outs = [p + ".riscv"],
+        cmd = "for f in $(execpaths @llvm_toolchain_llvm//:bin); do " +
+              "case $$f in */bin/clang) CC=$$f;; */bin/ld.lld) LD=$$f;; esac; done; " +
+              "F='--target=riscv64-unknown-elf -march=rv64imac_zicsr -mabi=lp64 " +
+              "-mcmodel=medany -O2 -ffreestanding -nostdlib -fno-builtin'; " +
+              "$$CC $$F -c $(location progs/crt.S) -o $(@D)/" + p + "_crt.o && " +
+              "$$CC $$F -c $(location progs/" + p + ".c) -o $(@D)/" + p + ".o && " +
+              "$$LD -T $(location progs/prog.ld) $(@D)/" + p + "_crt.o $(@D)/" + p + ".o -o $@",
+        tools = ["@llvm_toolchain_llvm//:bin"],
+    )
+    for p in [
+        "bench",
+        "echo",
+    ]
+]
