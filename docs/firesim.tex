@@ -250,8 +250,9 @@ end of a reset frame for this device. It reads frames as they arrive,
 so it sees one even while the control master waits on a port that does
 not answer. The top then starts the MIG's power-on reset again, and the
 MIG's calibration holds the clock converter, the simulator and the link
-in reset, as at power-on. The board answers again about 130~ms after
-the frame.
+in reset, as at power-on. The driver sends the frame three times,
+since nothing answers it, and the board answers again about 250~ms
+later.
 
 Vivado~2025.2 places and routes the design on the
 \code{xc7a200tfbg484-2}. It meets timing, with 0.363~ns of setup slack
