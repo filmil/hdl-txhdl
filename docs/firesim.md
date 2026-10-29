@@ -87,6 +87,17 @@ To repeat it, holding the BOARD TOKEN:
    The driver's own plusargs go inside the `+permissive` block; outside it, fesvr takes the first one for the program.
    `+device` defaults to 5, the device number `rocket_netlist.rs` builds in.
 
+FireSim expects a freshly programmed FPGA for each run, so the driver resets the simulator before each one (#2007).
+A run that ends leaves its step unfinished: the driver writes `STEP` once, and after it exits the TSI bridge stops the target until a host serves it.
+`STEP` is a queue that takes a write only once the step before has finished, so without a reset the fourth run on one programming waited for ever on its `STEP` write, and nothing on the control path answered after it.
+The driver's first frame is a reset frame, kind 0x04 on EtherType 0x88b5 with the device number at byte 15, and it gets no answer.
+`ResetTap`, in front of `EthShare` in `rocket_link`, passes every frame on and raises `reset` at the end of one; it reads frames as they go, so it sees a reset while `LiteMaster` is stuck.
+`rocket_eth_top.v` then starts the MIG's power-on reset again, and the MIG's calibration holds the clock converter, `FPGATop` and the link in reset, as at power-on.
+The driver gives its first ask five seconds for an answer while the memory calibrates.
+
+`+eth_log=<file>`, inside the `+permissive` block, logs every register access and stream beat with its time, plus each ask sent again and each ask that got no answer.
+On a board that stops answering, the log's last lines name the access it stopped at.
+
 `rules_firesim` itself is not a dependency yet; it comes in with the first change that uses its rules.
 `firesim_target` has already moved `rules_cc`, `dtc` and five more modules to the newer releases they share.
 

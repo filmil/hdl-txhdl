@@ -42,6 +42,23 @@ inline void encode_ask(uint8_t f[MIN_FRAME], const uint8_t mac[6],
   f[26] = write ? 0xf : 0;
 }
 
+// A reset frame (issue 2007): kind 0x04 on the control type, the
+// device number at byte 15 and nothing after it. rocket_link's
+// ResetTap (rocket_netlist.rs) takes it, and the board resets the
+// simulator and the link. It gets no answer.
+constexpr uint8_t KIND_RESET = 0x04;
+
+inline void encode_reset(uint8_t f[MIN_FRAME], const uint8_t mac[6],
+                         uint8_t device) {
+  memset(f, 0, MIN_FRAME);
+  memset(f, 0xff, 6);
+  memcpy(f + 6, mac, 6);
+  f[12] = ETHERTYPE >> 8;
+  f[13] = ETHERTYPE & 0xff;
+  f[14] = KIND_RESET;
+  f[15] = device;
+}
+
 struct Answer {
   uint8_t device;
   uint8_t tag;

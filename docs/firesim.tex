@@ -64,11 +64,12 @@ and from the ports of the simulator that Golden Gate generates, and the
 target's memory is the board's DDR3. The design itself comes prebuilt:
 a continuous integration job builds FireSim's Rocket design and
 publishes it with each release of a set of Bazel rules, and the board
-build fetches it by checksum and needs no Scala. On October 27 and 28,
+build fetches it by checksum and needs no Scala. From October 27 to 29,
 2026, FireSim's single-core Rocket design loaded programs into DDR3,
-printed over its UART, took UART input, and ran a compute-bound loop at
-45.7~MHz effective on a 50~MHz FPGA clock. The stream path, which
-FireSim's instruction tracer uses, does not yet work on the board.
+printed over its UART, took UART input, wrote an instruction trace over
+the stream path, and ran a compute-bound loop at 42.5~MHz effective on a
+50~MHz FPGA clock. A reset frame gives each run a fresh simulator, as
+FireSim expects.
 \end{abstract}
 
 \section{Why Ethernet}
@@ -176,9 +177,14 @@ a stream read removes data from a queue. So each master keeps the tag
 and the answer of the last request it performed, and answers a repeat
 of that tag from them without touching its port. A host run cannot
 know the tag the board kept from an earlier run, so it starts with a
-request that repeats harmlessly: a read of a status register on the
+request that repeats harmlessly: a read of a plain register on the
 control path, and a no-op on the stream path, which the stream master
 answers without its port and whose tag it keeps.
+
+Before that request, the host sends a third kind of frame: a reset, kind
+0x04 on the control type, with the device number and nothing after it.
+It gets no answer. FireSim expects a freshly programmed FPGA for each
+run, and the reset gives the run a fresh simulator instead.
 
 \section{On the Board}
 \label{sec:f-board}
@@ -193,7 +199,7 @@ gray-coded channel FIFOs.
 \begin{tikzpicture}
 \node[box] (host) at (0, 0) {host program\\\code{simif\_ax7a200b\_eth}};
 \node[box] (mac) at (0, -1.25) {PHY, MAC, clock crossings};
-\node[art] (share) at (0, -2.3) {\code{EthShare}: by EtherType};
+\node[art] (share) at (0, -2.35) {\code{ResetTap}: the reset frame\\\code{EthShare}: by EtherType};
 \node[art] (ctl) at (-1.9, -3.55) {\code{HostLink}\\\code{LiteMaster}};
 \node[art] (str) at (1.9, -3.55) {\code{StreamBridge}};
 \node[box, minimum width=56mm] (top) at (0, -4.9) {\code{FPGATop}: the Rocket target, at 50~MHz};
@@ -213,7 +219,7 @@ TxHDL's, lowered as one unit, \code{rocket\_link}.}
 \label{fig:f-board}
 \end{figure}
 
-The three shaded units are lowered together as one unit,
+The shaded units are lowered together as one unit,
 \code{rocket\_link}, so the channels between them are buffered inside
 it. Joined by wires in the hand-written top instead, each channel's
 valid would depend on its own ready, a combinational loop.
@@ -238,10 +244,20 @@ AXI clock converter crosses from the simulator's 50~MHz to the MIG's
 100~MHz user clock. The simulator, the link and its crossings are held
 in reset until the MIG has calibrated.
 
+The reset frame uses that chain. A unit in front of \code{EthShare},
+\code{ResetTap}, passes every frame on and raises a reset signal at the
+end of a reset frame for this device. It reads frames as they arrive,
+so it sees one even while the control master waits on a port that does
+not answer. The top then starts the MIG's power-on reset again, and the
+MIG's calibration holds the clock converter, the simulator and the link
+in reset, as at power-on. The driver sends the frame three times,
+since nothing answers it, and the board answers again about 250~ms
+later.
+
 Vivado~2025.2 places and routes the design on the
-\code{xc7a200tfbg484-2} in 31~minutes. It meets timing, with 0.096~ns
-of setup slack and 0.036~ns of hold slack, and uses 79\,971 LUTs (60\%),
-38\,687 flip-flops (14\%), 202 block-RAM tiles (55\%) and 16 DSPs. The
+\code{xc7a200tfbg484-2}. It meets timing, with 0.363~ns of setup slack
+and 0.036~ns of hold slack, and uses 79\,949 LUTs (60\%), 38\,723
+flip-flops (14\%), 202 block-RAM tiles (55\%) and 16 DSPs. The
 Nitefury~II's own PCIe build of the same design uses 92\,354 LUTs.
 
 \section{The Host}
@@ -271,7 +287,7 @@ into the DDR3 through FireSim's TSI bridge, Rocket's boot ROM jumped to
 it, and its exit through \code{tohost} ended the run.
 
 \begin{table}[htbp]
-\caption{Board runs, October 27 and 28, 2026.}
+\caption{Board runs, October 27 to 29, 2026.}
 \label{tab:f-runs}
 \centering
 \begin{tabular}{@{}lll@{}}
@@ -281,40 +297,49 @@ Program & What it checks & Result \\
 GCD & registers & \code{[GCD]PASS} \\
 \code{hello.riscv} & DDR3, UART output & passed \\
 \code{echo.riscv} & UART input & passed \\
-\code{bench.riscv} & speed & 45.7~MHz \\
-\code{hello}, TracerV & the stream path & failed \\
+\code{bench.riscv} & speed & 42.5~MHz \\
+\code{hello}, TracerV & the stream path & passed \\
+\code{hello}, 7 in a row & the reset & passed \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \code{bench.riscv} times a loop of 50 million iterations with the
 core's own counters: 350\,000\,004 instructions in 600\,000\,056 cycles.
-The whole run, 687\,634\,397 target cycles, took about 15.03~s of the
+The whole run, 639\,520\,037 target cycles, took about 15.03~s of the
 host's time on a 50.007~MHz FPGA clock: FireSim reports an effective
-target clock of 45.7~MHz, a ratio of 1.09 FPGA cycles per target cycle,
+target clock of 42.5~MHz, a ratio of 1.18 FPGA cycles per target cycle,
 and the driver rounds the time to 15.0~s. That is about 23 million
-target instructions per second. While the target runs on its
+target instructions per second. An earlier version of this paper gave
+45.7~MHz, from a run that followed another on the same simulator and
+counted its 48\,114\,360 cycles too. While the target runs on its
 own, the link costs nearly nothing: the host steps in only while a
 bridge needs it, and this loop needs none.
 
 \code{echo.riscv} echoed a line typed into the driver's standard input,
 through FireSim's UART bridge, and stopped at a~\code{q}.
 
-The stream path did not work on the board. With FireSim's TracerV
-bridge set to write a trace, \code{hello.riscv} still passed, but the
-trace file held only its header. The next run got no answer to its
-first step of the simulation, and the board needed reprogramming. Each
-read that FireSim's stream engine receives takes one 16-byte beat out
-of a 64-byte queue entry, which is how \code{StreamBridge} reads, so the
-frames' shape is not the cause; the cause is still open (issue~2007).
+With FireSim's TracerV bridge set to write a trace, \code{hello.riscv}
+wrote 399 lines: the boot ROM, the wait while the program loads, and
+the program's print loop. The host read them as 1\,596 beats of 16
+bytes, four to each 64-byte entry of the stream's queue.
+
+The first attempt, on October 27, wrote an empty trace, and the run
+after it got no answer at all. The cause was the missing reset
+(issue~2007). Each run writes the simulation's \code{STEP} register
+once, and the step never finishes: once the driver exits, the TSI bridge
+stops the target until a host serves it. \code{STEP} is a queue that
+takes a write only once the step before has finished, so the fourth run
+on one simulator waited for ever on its write, and the control path
+answered nothing after it. With the reset frame, seven runs in a row
+passed with the same cycle count, the traced run among them, and a
+board left in that state by the old driver answered again without
+reprogramming.
 
 \section{What Is Not Done}
 \label{sec:f-not}
 
 \begin{itemize}
-\item The stream path on the board (issue~2007). Until it works, a
-design whose bridges use CPU-managed streams, as TracerV does, cannot
-run.
 \item Linux on the Rocket design: a kernel and a root file system, and
 FireSim's block-device bridge, whose every access is a register
 exchange over the cable.
@@ -323,7 +348,6 @@ published; each board build still runs Vivado.
 \item PCIe. The board stays on its cable for now.
 \end{itemize}
 
-\IEEEtriggeratref{4}
 \begin{thebibliography}{9}
 
 \bibitem{firesim}
