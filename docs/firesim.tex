@@ -289,10 +289,11 @@ GCD & registers & \code{[GCD]PASS} \\
 
 \code{bench.riscv} times a loop of 50 million iterations with the
 core's own counters: 350\,000\,004 instructions in 600\,000\,056 cycles.
-The whole run, 687\,634\,397 target cycles, took 15.0~s of the host's
-time on a 50.007~MHz FPGA clock. That is an effective target clock of
-45.7~MHz, a ratio of 1.09 FPGA cycles per target cycle, or about 23
-million target instructions per second. While the target runs on its
+The whole run, 687\,634\,397 target cycles, took about 15.03~s of the
+host's time on a 50.007~MHz FPGA clock: FireSim reports an effective
+target clock of 45.7~MHz, a ratio of 1.09 FPGA cycles per target cycle,
+and the driver rounds the time to 15.0~s. That is about 23 million
+target instructions per second. While the target runs on its
 own, the link costs nearly nothing: the host steps in only while a
 bridge needs it, and this loop needs none.
 
