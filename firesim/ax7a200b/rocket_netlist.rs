@@ -6,7 +6,7 @@
 //! frames (0x88b5) to `HostLink` and `LiteMaster`, which perform them on FPGATop's
 //! AXI4-Lite control port, and every other frame to `StreamBridge`,
 //! which takes the stream frames (0x88b6) and performs them on the
-//! 128-bit `cpu_managed` port. The three are joined inside one unit, so
+//! 128-bit `cpu_managed` port. They are joined inside one unit, so
 //! the lowering buffers the channels between them; joined by wires in
 //! the top, each channel's valid would depend on its own ready.
 //!
