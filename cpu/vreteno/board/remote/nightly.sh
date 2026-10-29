@@ -326,13 +326,7 @@ fi
 # --- What moved --------------------------------------------------------
 
 if [[ -z "$prev" ]]; then
-  # The newest earlier night of the same kind, by when its results were
-  # written rather than by its name, whose Pacific offset changes with
-  # daylight saving: a board run against a board run, a dry run against
-  # a dry run.
-  prev="$(ls -dt "$out"/*/results.tsv 2>/dev/null | grep -v "^$dir/" |
-    if [[ -n "$dry" ]]; then grep -- '-dry/'; else grep -v -- '-dry/'; fi |
-    head -1 || true)"
+  prev="$(night_before "$out" "$dir" "$dry")"
 fi
 if [[ -n "$prev" && -f "$prev" ]]; then
   diff_results "$prev" "$results" >"$dir/diff.tsv"

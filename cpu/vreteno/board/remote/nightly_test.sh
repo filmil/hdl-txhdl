@@ -73,6 +73,38 @@ printf '00:00:01.000Z rx dma 60 got 1001 of 1000 lost 0 other 0 ticks 1 cycles/f
 # Listening with no load before it is not a time.
 printf '00:00:01.000Z fastboot: listening on port 5554\n' >"$bad"
 [[ "$(read_fastboot "$bad" yes | head -1 | cut -f5)" == fail ]]
+# The night before is the newest other one of the same kind with a row
+# under its header: not this night, not a stopped night with only the
+# header (#2012), not a dry run for a board run, nor the other way.
+nights="$(mktemp -d)"
+trap 'rm -f "$now" "$with_header" "$empty" "$bad"; rm -rf "$nights"' EXIT
+night() { # NAME AGE-IN-MINUTES ROWS...
+  local n="$1" age="$2"
+  shift 2
+  mkdir -p "$nights/$n"
+  { printf 'check\tmetric\tvalue\tunit\tstatus\n'; for r in "$@"; do printf '%s\n' "$r"; done; } \
+    >"$nights/$n/results.tsv"
+  touch -d "@$(( $(date +%s) - age * 60 ))" "$nights/$n/results.tsv"
+}
+night 1027-board 3000 "$(row ping lost 0 frames pass)"
+night 1027-dry 2900 "$(row ping lost - - skipped)"
+night 1028-board 1500
+night 1028-dry 1400
+night 1029-board 0
+[[ "$(night_before "$nights" "$nights/1029-board" "")" == "$nights/1027-board/results.tsv" ]]
+[[ "$(night_before "$nights" "$nights/1029-board" yes)" == "$nights/1027-dry/results.tsv" ]]
+# This night is never its own night before, though it has rows.
+night 1029-board 0 "$(row ping lost 0 frames pass)"
+[[ "$(night_before "$nights" "$nights/1029-board" "")" == "$nights/1027-board/results.tsv" ]]
+# Of two nights with rows, the newer is found.
+night 1028-board 1500 "$(row ping lost 100 frames fail)"
+[[ "$(night_before "$nights" "$nights/1029-board" "")" == "$nights/1028-board/results.tsv" ]]
+# No other night with rows: nothing, and no failure.
+rm -rf "${nights:?}"/*
+night 1028-board 1500
+night 1029-board 0 "$(row ping lost 0 frames pass)"
+[[ -z "$(night_before "$nights" "$nights/1029-board" "")" ]]
+[[ -z "$(night_before "$nights/none" "$nights/none/x" "")" ]]
 # A binary run bare sees none of this script's runfiles variables, so a
 # wrapper finds its own files and not the nightly's (#1898).
 [[ "$(RUNFILES_DIR=/x RUNFILES_MANIFEST_FILE=/y JAVA_RUNFILES=/z bare bash -c \
