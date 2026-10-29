@@ -8,5 +8,10 @@ SECTIONS
   .rodata : { *(.rodata*) *(.srodata*) }
   .tohost : { *(.tohost) }
   .data : { *(.data*) *(.sdata*) }
-  .bss : { *(.bss*) *(.sbss*) *(COMMON) }
+  .bss : ALIGN(8) {
+    __bss_start = .;
+    *(.bss*) *(.sbss*) *(COMMON)
+    . = ALIGN(8);
+    __bss_end = .;
+  }
 }

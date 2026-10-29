@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// A fixed loop, timed by the core's own counters: what one second of
-// the host's time buys in target cycles and instructions.
+// A fixed loop of 50 million iterations, counted by the core's own
+// mcycle and minstret. With the host's wall time, which the driver
+// reports, these give the target's speed.
 #include "uart.h"
 static inline uint64_t cycles(void) { uint64_t v; __asm__ volatile("csrr %0, mcycle" : "=r"(v)); return v; }
 static inline uint64_t instret(void) { uint64_t v; __asm__ volatile("csrr %0, minstret" : "=r"(v)); return v; }

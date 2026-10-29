@@ -7,6 +7,15 @@ _start:
     csrr t0, mhartid
     bnez t0, park
     la sp, stack_top
+    // Zero .bss: DDR3 keeps what an earlier run left in it.
+    la t0, __bss_start
+    la t1, __bss_end
+zero:
+    bgeu t0, t1, zeroed
+    sd zero, 0(t0)
+    addi t0, t0, 8
+    j zero
+zeroed:
     call main
     slli a0, a0, 1
     ori a0, a0, 1
