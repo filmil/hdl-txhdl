@@ -181,12 +181,14 @@ read_costs() {
 }
 
 # The night before DIR, of the same kind, among the runs in OUT: the
-# newest results.tsv with at least one row under its header, by when it
-# was written rather than by its name, whose Pacific offset changes with
-# daylight saving. A board run is compared with a board run, a dry run
-# (DRY not empty) with a dry run. A night that stopped before its first
-# check left only the header, and is passed over (#2012). Prints nothing
-# when there is no such night.
+# newest results.tsv but DIR's with at least one row under its header,
+# by when it was written rather than by its name, whose Pacific offset
+# changes with daylight saving. nightly.sh calls it for the run it is
+# writing, the newest in OUT, so the newest other run is the one before.
+# A board run is compared with a board run, a dry run (DRY not empty)
+# with a dry run. A night that stopped before its first check left only
+# the header, and is passed over (#2012). Prints nothing when there is
+# no such night.
 night_before() {
   local out="$1" dir="$2" dry="$3" f
   while IFS= read -r f; do

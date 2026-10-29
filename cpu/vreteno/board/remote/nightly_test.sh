@@ -73,7 +73,7 @@ printf '00:00:01.000Z rx dma 60 got 1001 of 1000 lost 0 other 0 ticks 1 cycles/f
 # Listening with no load before it is not a time.
 printf '00:00:01.000Z fastboot: listening on port 5554\n' >"$bad"
 [[ "$(read_fastboot "$bad" yes | head -1 | cut -f5)" == fail ]]
-# The night before is the newest earlier one of the same kind with a row
+# The night before is the newest other one of the same kind with a row
 # under its header: not this night, not a stopped night with only the
 # header (#2012), not a dry run for a board run, nor the other way.
 nights="$(mktemp -d)"
@@ -96,7 +96,7 @@ night 1029-board 0
 # This night is never its own night before, though it has rows.
 night 1029-board 0 "$(row ping lost 0 frames pass)"
 [[ "$(night_before "$nights" "$nights/1029-board" "")" == "$nights/1027-board/results.tsv" ]]
-# A stopped night after a full one: the full one is still found.
+# Of two nights with rows, the newer is found.
 night 1028-board 1500 "$(row ping lost 100 frames fail)"
 [[ "$(night_before "$nights" "$nights/1029-board" "")" == "$nights/1028-board/results.tsv" ]]
 # No other night with rows: nothing, and no failure.
