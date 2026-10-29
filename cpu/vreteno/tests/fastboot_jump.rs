@@ -34,6 +34,12 @@ fn routine() -> Vec<u32> {
 /// with `a0` = `src`, `a1` = `dst`, `a2` = the length, as `boot` calls
 /// it. Returns the model once it stops.
 fn run(program: &[u32], src: u32, dst: u32, at: u32) -> Model {
+    run_to(program, src, dst, at, 0)
+}
+
+/// As `run`, with `a3` the serial port's transmit register, which
+/// turns the routine's report on (issue 2011); zero leaves it silent.
+fn run_to(program: &[u32], src: u32, dst: u32, at: u32, tx: u32) -> Model {
     let mut m = Model {
         mem: vec![0; (DATA_BYTES / 4) as usize],
         ..Model::default()
@@ -49,6 +55,7 @@ fn run(program: &[u32], src: u32, dst: u32, at: u32) -> Model {
     m.x[10] = src;
     m.x[11] = dst;
     m.x[12] = 4 * program.len() as u32;
+    m.x[13] = tx;
     let imem = vec![0u32; (IMEM_BYTES / 4) as usize];
     for _ in 0..10_000 {
         if m.halted.is_some() {
@@ -90,6 +97,45 @@ fn a_program_of_one_word_runs() {
     assert_eq!(m.mem[(0x400 / 4) as usize], HALT);
 }
 
+/// With a serial port, the routine says it copied the program, with
+/// the sums of its words where it came from and where it went, and
+/// says `go` just before the jump (issue 2011). On the model the copy
+/// is right, so the two sums are the program's own.
+#[test]
+fn the_routine_reports_the_copy_and_the_jump() {
+    use vreteno32::isa::UART_BASE;
+
+    let program = [MARK, HALT];
+    let sum = program.iter().fold(0u32, |a, w| a.wrapping_add(*w));
+    let m = run_to(
+        &program,
+        DATA_BASE + 0x100,
+        DATA_BASE + 0x400,
+        DATA_BASE + 0x800,
+        UART_BASE,
+    );
+    assert!(matches!(m.halted, Some(Halt::Break)), "{:?}", m.halted);
+    assert_eq!(m.x[5], 0x123, "the program ran after the report");
+    assert_eq!(
+        String::from_utf8_lossy(&m.uart),
+        format!("jump {sum:08x} {sum:08x}\r\ngo\r\n")
+    );
+}
+
+/// Silent without a serial port, as before issue 2011: the copy and
+/// the jump only.
+#[test]
+fn the_routine_is_silent_without_a_port() {
+    let m = run(
+        &[MARK, HALT],
+        DATA_BASE + 0x100,
+        DATA_BASE + 0x400,
+        DATA_BASE + 0x800,
+    );
+    assert!(matches!(m.halted, Some(Halt::Break)), "{:?}", m.halted);
+    assert!(m.uart.is_empty(), "nothing written: {:?}", m.uart);
+}
+
 /// The routine moved elsewhere runs the same, which is what lets it
 /// run from the staging area's last page rather than from the image
 /// it was linked into.
@@ -125,11 +171,12 @@ fn the_core_runs_the_words_copied_not_the_ones_cached() {
         addi(10, 5, 0x400), // a0 = 0x1400, the staged program
         addi(11, 5, 0x100), // a1 = 0x1100, where it goes
         addi(12, 0, 16),    // a2 = its length
-        addi(1, 0, 40),     // ra = the halt below
+        addi(1, 0, 44),     // ra = the halt below
+        addi(13, 0, 0),     // a3 = 0: no serial port, silent
         addi(7, 5, 0x700),  // x7 = 0x1700, the routine
         jalr(0, 7, 0),      // boot
         0x0000_0013,        // nop
-        halt(),             // at 40: where the old words return to
+        halt(),             // at 44: where the old words return to
     ];
     let mut data = vec![0u8; 0x1000];
     let mut put = |at: usize, words: &[u32]| {

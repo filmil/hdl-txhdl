@@ -353,7 +353,7 @@ genrule(
     outs = ["fastboot_jump.bin"],
     cmd = """
         t=$$(mktemp -d)
-        $(location @riscv_none_elf_gcc//:as) -march=rv32imc -o $$t/j.o $<
+        $(location @riscv_none_elf_gcc//:as) -march=rv32imac -o $$t/j.o $<
         $(location @riscv_none_elf_gcc//:objcopy) -O binary -j .text.fb_jump $$t/j.o $@
         rm -rf $$t
     """,

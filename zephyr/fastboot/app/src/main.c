@@ -175,6 +175,13 @@ static void prof_end(void)
 /* Where a program runs: the start of DDR3, where this image runs. */
 #define RUN_BASE DT_REG_ADDR(DT_NODELABEL(ddr))
 
+/*
+ * The console's transmit register, which `fb_jump` writes its report
+ * to once Zephyr is gone (issue 2011): `sifive,uart0`'s txdata, the
+ * port's first word.
+ */
+#define CONSOLE_TX DT_REG_ADDR(DT_NODELABEL(uart0))
+
 /* The last page of the staging area holds the copy routine, so a
  * download stops short of it. */
 #define JUMP_PAGE 4096
@@ -307,10 +314,10 @@ static void boot(uint32_t staged)
 		(void)*(volatile const uint32_t *)(jump + jump_len - 4 * (i + 1));
 	}
 
-	void (*run)(uint32_t, uint32_t, uint32_t) =
-		(void (*)(uint32_t, uint32_t, uint32_t))(uintptr_t)jump;
+	void (*run)(uint32_t, uint32_t, uint32_t, uint32_t) =
+		(void (*)(uint32_t, uint32_t, uint32_t, uint32_t))(uintptr_t)jump;
 
-	run(STAGE_BASE + off, RUN_BASE, (size + 3) & ~3u);
+	run(STAGE_BASE + off, RUN_BASE, (size + 3) & ~3u, CONSOLE_TX);
 }
 
 int main(void)
