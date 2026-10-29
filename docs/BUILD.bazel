@@ -4000,6 +4000,17 @@ latex_document(
 # the example's run and waveform, and the board's hand-written echo
 # design.
 latex_document(
+    name = "firesim",
+    main = "firesim.tex",
+    data = [
+        ":buildstamp",
+        ":vendored_tex",
+        "//lib/parts:sources",
+    ],
+    deps = ["housestyle.tex"],
+)
+
+latex_document(
     name = "eth",
     main = "eth.tex",
     data = [
@@ -4196,6 +4207,7 @@ DOCUMENTS = [
     ":hdmi",
     ":flagship",
     ":pcie",
+    ":firesim",
     ":datasheets",
     ":article",
     ":embedding",
@@ -4248,6 +4260,7 @@ combined_pdf(
         "HDMI in TxHDL",
         "The TxHDL Flagship",
         "PCIe in TxHDL",
+        "FireSim over Ethernet: A Rocket Core on a Low-Cost FPGA Board",
         "TxHDL Datasheets",
         "TxHDL: Unifying a Dataflow and a Transaction HDL",
         "Deleting a Language: Embedding TxHDL in Rust",
