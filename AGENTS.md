@@ -15,7 +15,7 @@ exact prompt appended to every commit message.
 # What this repository holds
 
 TxHDL is a hardware description language embedded in Rust.
-The language is a library, `//lib`, and twenty-four documents describe it,
+The language is a library, `//lib`, and twenty-five documents describe it,
 all under `//docs`:
 
 * `//docs:cover` names every document and says which to read for what.
@@ -144,6 +144,11 @@ all under `//docs`:
   to a bitstream.
   `ex_axi_pins` and `ex_axi_per_pins` are documented there and not in
   `//docs:examples`.
+* `//docs:firesim` is FireSim on the AX7A200B with Ethernet in place of
+  PCIe: the Bazel toolchain and the prebuilt Rocket design, the control
+  and stream frames, `rocket_link` and the board top under
+  `//firesim/ax7a200b`, the host driver, and the board runs with their
+  measured speed. `docs/firesim.md` keeps the steps to repeat them.
 * `//docs:datasheets` is a datasheet per component: every unit under
   `#[lower]` outside the examples, and every family a macro writes.
   The prose of each sheet is in `docs/datasheets/<Key>.tex`; its

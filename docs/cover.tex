@@ -220,6 +220,13 @@ PCIe in TxHDL
     board.
   & \code{//docs:pcie} \\
 \addlinespace
+FireSim over Ethernet: A Rocket Core on a Low-Cost FPGA Board
+  & FireSim without PCIe. Runs FireSim's Rocket design, prebuilt by a
+    Bazel toolchain, on the AX7A200B with raw Ethernet frames for the
+    host link and the board's DDR3 for the target's memory, with the
+    board runs and their measured speed.
+  & \code{//docs:firesim} \\
+\addlinespace
 The TxHDL Flagship
   & The complete system-on-chip demonstration bitstream. Integrates the Vreteno
     RISC-V core, system memory, Ethernet MAC, and HDMI rasterizer within a single
