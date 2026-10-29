@@ -14,16 +14,45 @@
  *     a0  the program's first word in the staging area
  *     a1  where it goes, and where to jump
  *     a2  its length in bytes, rounded up to a word
+ *     a3  the serial port's transmit register, or zero for silence
  *
  * Interrupts are off before this is reached, so nothing runs between
  * the copy and the jump.
+ *
+ * With a serial port, the routine reports on its way (issue 2011):
+ * once the copy is done, `jump` and the sums of the program's words
+ * as the staging area and the destination hold them, then `go` once
+ * the instruction cache is empty, just before the jump. A board that
+ * stops after `fastboot: booting` then says where: no `jump` line,
+ * the copy; two sums that differ, a word that landed wrong; `go` and
+ * nothing after it, the program itself or its fetch. Zephyr's console
+ * is gone by then, so the bytes go to the register directly, each
+ * once the port says it has room (bit 31 of a read, as `sifive,uart0`
+ * has it).
+ *
+ *     a4  where the program went, kept for the jump
+ *     a5  where it came from, kept for the sums
+ *     a6  its length, kept for the sums
+ *     a7  the return address of the two small routines below
+ *
+ * Before the jump `a3` is set back to where the program went, as the
+ * routine left it before the report was added.
  */
 	.section .text.fb_jump, "ax"
 	.globl fb_jump
 	.globl fb_jump_end
 	.p2align 2
+
+/* One byte to the port, from t1. */
+	.macro	putch c
+	li	t1, \c
+	jal	a7, 7f
+	.endm
+
 fb_jump:
-	mv	a3, a1
+	mv	a4, a1
+	mv	a5, a0
+	mv	a6, a2
 	beqz	a2, 2f
 1:
 	lw	t0, 0(a0)
@@ -50,13 +79,52 @@ fb_jump:
 	 */
 	li	t1, 4
 3:
-	beq	a1, a3, 2f
+	beq	a1, a4, 2f
 	beqz	t1, 2f
 	addi	a1, a1, -4
 	lw	t0, 0(a1)
 	addi	t1, t1, -1
 	j	3b
 2:
+	beqz	a3, 5f
+	/*
+	 * The sums, each the words added as `fb_sum_words` adds them. The
+	 * words are read with `lr.w`, which goes around the data cache
+	 * (issue 1556), so the destination's sum is what the DDR3 holds
+	 * and not what the cache kept of the stores. The `fence` first
+	 * waits for every store the copy posted, as `boot` does before its
+	 * own sum of the staging area.
+	 */
+	fence
+	li	t2, 0
+	li	t3, 0
+	mv	t4, a5
+	mv	t5, a4
+	mv	t6, a6
+4:
+	beqz	t6, 6f
+	lr.w	t0, (t4)
+	add	t2, t2, t0
+	lr.w	t0, (t5)
+	add	t3, t3, t0
+	addi	t4, t4, 4
+	addi	t5, t5, 4
+	addi	t6, t6, -4
+	j	4b
+6:
+	putch	106	/* j */
+	putch	117	/* u */
+	putch	109	/* m */
+	putch	112	/* p */
+	putch	32	/* space */
+	mv	t4, t2
+	jal	a7, 8f
+	putch	32	/* space */
+	mv	t4, t3
+	jal	a7, 8f
+	putch	13	/* CR */
+	putch	10	/* LF */
+5:
 	/*
 	 * The core fetches through an instruction cache (issue 1021), which
 	 * may still hold the words this image ran from before the copy
@@ -65,5 +133,52 @@ fb_jump:
 	 * neither assembler that reads this file is given Zifencei.
 	 */
 	.insn	i 0x0f, 1, x0, x0, 0	/* fence.i */
-	jr	a3
+	beqz	a3, 9f
+	putch	103	/* g */
+	putch	111	/* o */
+	putch	13	/* CR */
+	putch	10	/* LF */
+	/*
+	 * Room in the port's queue is not the bytes on the wire: `go` and
+	 * its line end take about 350 us at 115200 baud, and the program
+	 * may set the port up afresh as it starts. So the routine waits
+	 * about a millisecond, 40000 turns of two instructions, first.
+	 */
+	li	t0, 40000
+13:
+	addi	t0, t0, -1
+	bnez	t0, 13b
+9:
+	mv	a3, a4
+	jr	a4
+
+	/* t1 to the port once it has room; returns through a7. */
+7:
+	lw	t0, 0(a3)
+	bltz	t0, 7b
+	sw	t1, 0(a3)
+	jr	a7
+
+	/*
+	 * t4 as eight hexadecimal digits, the highest first; returns
+	 * through a7. The port is written here rather than through 7b,
+	 * whose return address would take a7.
+	 */
+8:
+	li	t5, 8
+10:
+	srli	t1, t4, 28
+	slli	t4, t4, 4
+	li	t0, 10
+	blt	t1, t0, 11f
+	addi	t1, t1, 39	/* 'a' - '0' - 10 */
+11:
+	addi	t1, t1, 48	/* '0' */
+12:
+	lw	t0, 0(a3)
+	bltz	t0, 12b
+	sw	t1, 0(a3)
+	addi	t5, t5, -1
+	bnez	t5, 10b
+	jr	a7
 fb_jump_end:
