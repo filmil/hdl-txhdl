@@ -37,8 +37,10 @@ const CONTROL: usize = 0x88b5;
 const KIND_RESET: u32 = 0x04;
 
 /// Passes every frame on, and raises `reset` for a cycle at the end of
-/// a reset frame for device `DEV`. It reads the frame as it goes, so it
-/// sees a reset frame even while the units behind it are stuck.
+/// a reset frame for device `DEV`. It reads bytes 12 to 15 of each
+/// frame, the type, the kind and the device, as they go by, so it sees
+/// a reset frame even while the units behind it are stuck: `EthShare`'s
+/// users take every byte, and drop an ask they have no room for.
 #[derive(Trace, Default)]
 pub struct ResetTap<const DEV: usize> {
     /// Which byte of the frame going through is next. It stops at 63,
@@ -343,6 +345,65 @@ mod tests {
             }
         }
         (out, high)
+    }
+
+    #[test]
+    fn a_reset_frame_gets_through_a_stuck_control_port() {
+        // The wedge of #2007: the control port takes a write and never
+        // answers it, so LiteMaster stays busy; further asks come, and
+        // then the reset frame.
+        let (host, per) = link::<LitePort![ADDR = 32, DATA = 32, STRB = 4]>();
+        let (in_tx, in_rx) = chan::<EthByte, DefaultClock>();
+        let (out_tx, out_rx) = chan::<EthByte, DefaultClock>();
+        let (aw_tx, _aw_rx) = chan::<Aw<64, 4>, DefaultClock>();
+        let (ar_tx, _ar_rx) = chan::<Ar<64, 4>, DefaultClock>();
+        let (w_tx, _w_rx) = chan::<W<128, 16>, DefaultClock>();
+        let (_b_tx, b_rx) = chan::<B<4>, DefaultClock>();
+        let (_r_tx, r_rx) = chan::<R<128, 4>, DefaultClock>();
+        let (reset_o, reset_i) = signal::<Bit, DefaultClock>();
+        let mut unit = RocketLink::<DEVICE>::default();
+        let port = async move {
+            loop {
+                DefaultClock::rising().await;
+                // Takes the address and the word, and answers nothing.
+                let _ = per.aw.recv();
+                let _ = per.w.recv();
+            }
+        };
+        let mut sim = Running::new(join2(
+            unit.run(
+                (in_rx, b_rx, r_rx),
+                (out_tx, host, aw_tx, ar_tx, w_tx, reset_o),
+            ),
+            port,
+        ));
+        let mut frames: Vec<Vec<u8>> =
+            (1..=8).map(|t| control(t, true, 0x1cc, 0)).collect();
+        frames.push(stream(1, false, 0, 0));
+        frames.push(reset_frame(DEVICE as u8));
+        let bytes: Vec<(u8, bool)> = frames
+            .iter()
+            .flat_map(|f| {
+                f.iter().enumerate().map(|(i, b)| (*b, i == f.len() - 1))
+            })
+            .collect();
+        let (mut i, mut high) = (0, 0);
+        for _ in 0..bytes.len() * 4 {
+            if i < bytes.len() && in_tx.ready().to_bool() {
+                in_tx.send(EthByte {
+                    data: U::from(bytes[i].0),
+                    last: Bit::from(bytes[i].1),
+                });
+                i += 1;
+            }
+            let _ = out_rx.recv();
+            sim.cycle();
+            if reset_i.get().to_bool() {
+                high += 1;
+            }
+        }
+        assert_eq!(i, bytes.len(), "the wire took every byte");
+        assert_eq!(high, 1);
     }
 
     #[test]
