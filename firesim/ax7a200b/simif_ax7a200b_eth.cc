@@ -21,7 +21,7 @@
 // A lost frame is sent again with the same tag, and the board answers
 // a repeat from what it kept rather than performing it twice. Each path
 // keeps its own tag. So the first ask on each is harmless, under a
-// random tag: a read of a status register for the control path, a
+// random tag: a read of a plain register for the control path, a
 // no-op for the streams, sent at the first stream access so a design
 // without streams never asks for one. Whatever the board last kept,
 // every tag after it differs from it.
@@ -31,6 +31,8 @@
 //   +device=<n>          the design's device number (default 5)
 //   +timeout_ms=<n>      how long to wait for an answer (default 20)
 //   +retries=<n>         how many times to send an ask (default 50)
+//   +eth_log=<file>      log every register access and stream beat
+//                        to <file>, one line each (issue 2007)
 //
 // The raw socket needs CAP_NET_RAW: root, or this binary given it with
 // `setcap cap_net_raw+ep`.
@@ -128,6 +130,12 @@ private:
             uint16_t strb, uint8_t out[BEAT_BYTES]);
   // Sends the stream path's first ask, once.
   void start_streams();
+  // Seconds since the driver started, for the log.
+  double since_start() const;
+
+  FILE *log = nullptr;
+  std::chrono::steady_clock::time_point start =
+      std::chrono::steady_clock::now();
 
   int fd = -1;
   int sfd = -1;
@@ -156,6 +164,15 @@ simif_ax7a200b_eth_t::simif_ax7a200b_eth_t(
   device = static_cast<uint8_t>(plusint(args, "device", 5, 0, 255));
   timeout_ms = plusint(args, "timeout_ms", 20, 1, 60000);
   retries = plusint(args, "retries", 50, 1, 1000000);
+  const std::string log_name = plusarg(args, "eth_log", "");
+  if (!log_name.empty()) {
+    log = fopen(log_name.c_str(), "w");
+    if (!log) {
+      die("+eth_log");
+    }
+    // Line by line, so a run that hangs keeps its log up to the hang.
+    setvbuf(log, nullptr, _IOLBF, 0);
+  }
 
   fd = socket(AF_PACKET, SOCK_RAW, htons(ETHERTYPE));
   if (fd < 0) {
@@ -179,9 +196,10 @@ simif_ax7a200b_eth_t::simif_ax7a200b_eth_t(
   // a tag the board kept from an earlier run. So the first ask is a
   // read nothing depends on, under a random tag: if it matches, the
   // board answers it from what it kept, and every ask after it differs
-  // from the board's last, however the count wraps. Address 0 is the
-  // simulation master's INIT_DONE, a status register: reading it does
-  // nothing (FireSim-generated.const.h, SIMULATIONMASTER_struct).
+  // from the board's last, however the count wraps. Address 0 is a
+  // plain register that reading does nothing to: GCD's simulation
+  // master's INIT_DONE, and the Rocket design's block device's
+  // read_latency (FireSim-generated.const.h).
   tag = static_cast<uint8_t>(std::random_device{}());
   (void)transact(false, 0, 0);
   fprintf(stdout,
@@ -201,6 +219,15 @@ simif_ax7a200b_eth_t::~simif_ax7a200b_eth_t() {
   if (sfd >= 0) {
     close(sfd);
   }
+  if (log) {
+    fclose(log);
+  }
+}
+
+double simif_ax7a200b_eth_t::since_start() const {
+  return std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                       start)
+      .count();
 }
 
 int simif_ax7a200b_eth_t::open_socket(uint16_t type) {
@@ -231,6 +258,10 @@ void simif_ax7a200b_eth_t::exchange(int sock, const uint8_t *f,
   for (int attempt = 0; attempt < retries; attempt++) {
     if (attempt) {
       resends++;
+      if (log) {
+        fprintf(log, "%.6f again %s %llx\n", since_start(), what,
+                static_cast<unsigned long long>(addr));
+      }
     }
     if (sendto(sock, f, MIN_FRAME, 0,
                reinterpret_cast<struct sockaddr *>(&to), sizeof(to)) < 0) {
@@ -266,6 +297,10 @@ void simif_ax7a200b_eth_t::exchange(int sock, const uint8_t *f,
       }
     }
   }
+  if (log) {
+    fprintf(log, "%.6f none %s %llx\n", since_start(), what,
+            static_cast<unsigned long long>(addr));
+  }
   fprintf(stderr,
           "simif_ax7a200b_eth: no answer to a %s at 0x%llx after %d tries\n",
           what,
@@ -289,6 +324,12 @@ uint32_t simif_ax7a200b_eth_t::transact(bool write, uint32_t addr,
       },
       write ? "write" : "read",
       addr);
+  if (log) {
+    // Time, C for control, W or R, address, the word written or read,
+    // and the answer's error flag.
+    fprintf(log, "%.6f C %c %08x %08x %d\n", since_start(),
+            write ? 'W' : 'R', addr, write ? data : a.data, a.err ? 1 : 0);
+  }
   if (a.err) {
     fprintf(stderr,
             "simif_ax7a200b_eth: the bus refused a %s at 0x%x\n",
@@ -318,6 +359,18 @@ void simif_ax7a200b_eth_t::beat(uint8_t flags, uint64_t addr,
       },
       what,
       addr);
+  if (log) {
+    // Time, S for stream, N(o-op), W or R, address, the beat written or
+    // read as bytes 15 down to 0, and the answer's error flag.
+    const uint8_t *b = (flags & BEAT_WRITE) ? in : a.beat;
+    fprintf(log, "%.6f S %c %08llx ", since_start(),
+            (flags & BEAT_NOOP) ? 'N' : (flags & BEAT_WRITE) ? 'W' : 'R',
+            static_cast<unsigned long long>(addr));
+    for (int i = static_cast<int>(BEAT_BYTES) - 1; i >= 0; i--) {
+      fprintf(log, "%02x", b[i]);
+    }
+    fprintf(log, " %d\n", a.err ? 1 : 0);
+  }
   if (a.err) {
     fprintf(stderr,
             "simif_ax7a200b_eth: the stream port refused a %s at 0x%llx\n",
