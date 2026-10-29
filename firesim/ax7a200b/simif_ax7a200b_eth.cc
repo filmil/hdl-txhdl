@@ -26,6 +26,14 @@
 // without streams never asks for one. Whatever the board last kept,
 // every tag after it differs from it.
 //
+// Before all of that, the driver sends a reset frame (issue 2007).
+// FireSim expects a fresh simulator for each run: a run that ends leaves
+// its step unfinished, and the fourth run on one simulator would wait
+// for ever on its first STEP write. The Rocket design's board resets
+// the simulator and the link on the frame, and its memory calibrates
+// again, so the first ask waits up to five seconds for an answer. A
+// design without the reset unit ignores the frame.
+//
 // Plusargs:
 //   +iface=<name>        the interface cabled to the board (required)
 //   +device=<n>          the design's device number (default 5)
@@ -54,6 +62,7 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "bridges/cpu_managed_stream.h"
@@ -116,6 +125,8 @@ private:
   size_t cpu_managed_axi4_read(size_t addr, char *data, size_t size) override;
   uint64_t get_beat_bytes() const override { return BEAT_BYTES; }
 
+  // Sends the reset frame, which gets no answer.
+  void send_reset();
   // Opens a raw socket for one EtherType, bound to the interface.
   int open_socket(uint16_t type);
   // Sends the frame `f` on `sock` and resends it until `answered` takes
@@ -200,8 +211,15 @@ simif_ax7a200b_eth_t::simif_ax7a200b_eth_t(
   // plain register that reading does nothing to: GCD's simulation
   // master's INIT_DONE, and the Rocket design's block device's
   // read_latency (FireSim-generated.const.h).
+  //
+  // After a reset the link answers once the memory has calibrated
+  // again: hence the longer wait for the first answer.
+  send_reset();
   tag = static_cast<uint8_t>(std::random_device{}());
+  const int asks = retries;
+  retries = std::max(retries, 5000 / timeout_ms);
   (void)transact(false, 0, 0);
+  retries = asks;
   fprintf(stdout,
           "simif_ax7a200b_eth: device %u on %s, answering\n",
           device,
@@ -228,6 +246,26 @@ double simif_ax7a200b_eth_t::since_start() const {
   return std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                        start)
       .count();
+}
+
+void simif_ax7a200b_eth_t::send_reset() {
+  uint8_t f[MIN_FRAME];
+  encode_reset(f, mac, device);
+  struct sockaddr_ll to = {};
+  to.sll_family = AF_PACKET;
+  to.sll_ifindex = ifindex;
+  to.sll_halen = 6;
+  memset(to.sll_addr, 0xff, 6);
+  if (sendto(fd, f, MIN_FRAME, 0, reinterpret_cast<struct sockaddr *>(&to),
+             sizeof(to)) < 0) {
+    die("send");
+  }
+  if (log) {
+    fprintf(log, "%.6f reset\n", since_start());
+  }
+  // The reset takes the link within microseconds; an ask sent before
+  // it could be answered, and the asks after it lost to the reset.
+  std::this_thread::sleep_for(std::chrono::milliseconds(10));
 }
 
 int simif_ax7a200b_eth_t::open_socket(uint16_t type) {

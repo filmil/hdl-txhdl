@@ -18,6 +18,13 @@
 //
 // The simulator is held in reset until the MIG has calibrated.
 //
+// A reset frame from the driver (issue 2007) starts the MIG's power-on
+// reset again. FireSim expects a fresh simulator for each run, and the
+// MIG's calibration then holds the clock converter, the simulator and
+// the link in reset, as at power-on. The frame comes when no answer is
+// going out: the driver sends it first, and waits for the board to
+// answer again.
+//
 // The clocks: the board's 200 MHz in, through one IBUFDS, to the MIG,
 // unbuffered as //ddr3's controller takes it, and to an MMCM for the
 // PHY's 125 MHz and the simulator's 50 MHz.
@@ -81,9 +88,28 @@ module rocket_eth_top (
   BUFG clk50_bufg (.I(mmcm50), .O(clk50));
 
   // The MIG's reset: a pulse at power-on, counted on the board's clock,
-  // as the Vreteno board makes it.
+  // as the Vreteno board makes it, and again after each reset frame.
+  // The link's `reset` is high for one cycle of the simulator's clock;
+  // held for sixteen, from a register, it crosses to the board's clock
+  // in two flip-flops, and its rising edge starts the count again.
+  wire link_reset;
+  reg [3:0] soft = 4'd0;
+  reg soft_on = 1'b0;
+  always @(posedge clk50) begin
+    soft <= link_reset ? 4'hf : (soft != 4'd0 ? soft - 4'd1 : 4'd0);
+    soft_on <= link_reset | (soft != 4'd0);
+  end
+  (* ASYNC_REG = "TRUE" *) reg [1:0] soft_sync = 2'b00;
+  reg soft_was = 1'b0;
+  always @(posedge clk200) begin
+    soft_sync <= {soft_sync[0], soft_on};
+    soft_was <= soft_sync[1];
+  end
+  wire again = soft_sync[1] & ~soft_was;
   reg [7:0] por = 8'd0;
-  always @(posedge clk200) if (por != 8'hff) por <= por + 1;
+  always @(posedge clk200)
+    if (again) por <= 8'd0;
+    else if (por != 8'hff) por <= por + 1;
   wire mig_sys_rst = (por != 8'hff);
   wire ui_clk, ui_rst, calib;
 
@@ -171,7 +197,8 @@ module rocket_eth_top (
     .ar_data(s_ar), .ar_valid(s_ar_valid), .ar_ready(s_ar_ready),
     .w_data(s_w), .w_valid(s_w_valid), .w_ready(s_w_ready),
     .b_data(s_b), .b_valid(s_b_valid), .b_ready(s_b_ready),
-    .r_data(s_r), .r_valid(s_r_valid), .r_ready(s_r_ready)
+    .r_data(s_r), .r_valid(s_r_valid), .r_ready(s_r_ready),
+    .reset(link_reset)
   );
 
   // The target's memory, on the simulator's side of the clock converter.

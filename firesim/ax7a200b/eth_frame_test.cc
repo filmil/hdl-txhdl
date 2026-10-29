@@ -38,6 +38,13 @@ int main() {
   encode_ask(f, mac, 5, 8, false, 0x40, 0);
   expect(f[17] == 0 && f[26] == 0, "a read: no write flag, no strobe");
 
+  // A reset frame, at the offsets rocket_netlist.rs's tests send.
+  encode_reset(f, mac, 5);
+  expect(f[0] == 0xff && f[6] == 0x02 && f[11] == 0x10, "reset: addresses");
+  expect(f[12] == 0x88 && f[13] == 0xb5, "reset: type 0x88b5");
+  expect(f[14] == 0x04 && f[15] == 5, "reset: kind 0x04 and device");
+  expect(f[16] == 0 && f[59] == 0, "reset: nothing after the device");
+
   // An answer, as HostBridge's answer_byte writes one.
   uint8_t in[MIN_FRAME] = {};
   in[12] = 0x88;
