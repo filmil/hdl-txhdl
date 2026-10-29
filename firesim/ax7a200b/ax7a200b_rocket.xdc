@@ -15,6 +15,6 @@ set_clock_groups -asynchronous \
 # two flip-flops on the 50 MHz clock; the first of them is the crossing.
 set_false_path -to [get_cells {sim_rst_sync_reg[0]}]
 
-# The reset frame's request, held sixteen cycles of the simulator's
+# The reset frame's request, held seventeen cycles of the simulator's
 # clock, into the board's (issue 2007).
 set_false_path -to [get_cells {soft_sync_reg[0]}]

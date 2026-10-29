@@ -217,7 +217,7 @@ simif_ax7a200b_eth_t::simif_ax7a200b_eth_t(
   send_reset();
   tag = static_cast<uint8_t>(std::random_device{}());
   const int asks = retries;
-  retries = std::max(retries, 5000 / timeout_ms);
+  retries = std::max(retries, (5000 + timeout_ms - 1) / timeout_ms);
   (void)transact(false, 0, 0);
   retries = asks;
   fprintf(stdout,
@@ -251,14 +251,19 @@ double simif_ax7a200b_eth_t::since_start() const {
 void simif_ax7a200b_eth_t::send_reset() {
   uint8_t f[MIN_FRAME];
   encode_reset(f, mac, device);
+  // Three times, since nothing answers it: one lost frame would leave
+  // the run on the simulator the last run left. The three arrive within
+  // microseconds, and a second reset while the first holds is harmless.
   struct sockaddr_ll to = {};
   to.sll_family = AF_PACKET;
   to.sll_ifindex = ifindex;
   to.sll_halen = 6;
   memset(to.sll_addr, 0xff, 6);
-  if (sendto(fd, f, MIN_FRAME, 0, reinterpret_cast<struct sockaddr *>(&to),
-             sizeof(to)) < 0) {
-    die("send");
+  for (int i = 0; i < 3; i++) {
+    if (sendto(fd, f, MIN_FRAME, 0,
+               reinterpret_cast<struct sockaddr *>(&to), sizeof(to)) < 0) {
+      die("send");
+    }
   }
   if (log) {
     fprintf(log, "%.6f reset\n", since_start());

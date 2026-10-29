@@ -90,8 +90,8 @@ module rocket_eth_top (
   // The MIG's reset: a pulse at power-on, counted on the board's clock,
   // as the Vreteno board makes it, and again after each reset frame.
   // The link's `reset` is high for one cycle of the simulator's clock;
-  // held for sixteen, from a register, it crosses to the board's clock
-  // in two flip-flops, and its rising edge starts the count again.
+  // held for seventeen, from a register, it crosses to the board's
+  // clock in two flip-flops, and its rising edge starts the count again.
   wire link_reset;
   reg [3:0] soft = 4'd0;
   reg soft_on = 1'b0;
