@@ -98,6 +98,31 @@ The driver gives its first ask five seconds for an answer while the memory calib
 `+eth_log=<file>`, inside the `+permissive` block, logs every register access and stream beat with its time, plus each ask sent again and each ask that got no answer.
 On a board that stops answering, the log's last lines name the access it stopped at.
 
+Linux boots on the Rocket design (#2015).
+`//firesim/ax7a200b/linux:rocket_linux` is one ELF: OpenSBI 1.6, with Linux 6.18.55 inside it and a BusyBox initramfs inside that.
+`//linux`'s scripts build it, as they build Vreteno's Linux, with the same hermetic LLVM, for RV64.
+The kernel is `tinyconfig` with `rocket.config` over it, for what the device tree in the design's boot ROM describes: one RV64 hart with Sv39, the CLINT, the PLIC, a SiFive serial port at 0x10020000 and 1 GiB of DRAM.
+`/init` shows the machine and powers off, and OpenSBI passes the power-off to the driver through `tohost`.
+To repeat it, with the board programmed and the driver set up as above:
+
+```sh
+bazel build //firesim/ax7a200b/linux:rocket_linux
+./rocket_eth_driver +permissive +iface=fpga-a200t-eth0 +permissive-off rocket_linux.elf
+```
+
+It passes when the console shows `txhdl: userspace is up on Rocket`, the driver prints `*** PASSED ***` and exits 0.
+On 2026-10-30 the whole run took 4 min 36 s and 288,686,162 target cycles: 4 min 22 s to load the ELF's 3.45 MB, and 13 s from OpenSBI's banner to the power-off.
+The load is slow because FireSim writes the memory four bytes per register write, and each write is one round trip on the cable, about 0.3 ms.
+
+Two things had to match FireSim:
+
+* The console runs at 3686400 baud, the speed the serial port's divisor resets to on the 1 GHz bus, which FireSim's UART bridge decodes.
+  At Linux's default of 115200, every byte after the console's handover arrived as a NUL.
+* OpenSBI links itself position independent, and FireSim's front end loads such an ELF 0x80000000 higher.
+  The DRAM's alias still took the load, but the front end polled `tohost` at 0x1_00042a90.
+  That run took 18 min and 36.0 billion target cycles, and ended about two minutes after the kernel's power-off.
+  `build.sh payload` marks the ELF an executable, since its segments are at their run addresses already.
+
 `rules_firesim` itself is not a dependency yet; it comes in with the first change that uses its rules.
 `firesim_target` has already moved `rules_cc`, `dtc` and five more modules to the newer releases they share.
 
@@ -111,7 +136,7 @@ A run on hardware needs more than a platform.
 FireSim's host driver reaches the FPGA over PCIe, through XDMA's `/dev/xdma`, so the board must sit in a PCIe slot of a host that runs the driver.
 Today it does not: it hangs off a host over JTAG and a serial line only, and TxHDL's own PCIe endpoint has not run in a host yet, as `//docs:pcie` says.
 So the first platform for the board uses its Ethernet port instead (#1931), at a cost in speed: a register access takes tens of microseconds over a frame and its answer, against about one over PCIe.
-Milestone 1 was FireSim's GCD example, whose bridges are registers only; milestone 2, a Rocket core with its DRAM on `//ddr3` and FireSim's streams carried over frames, passed as well.
+Milestone 1 was FireSim's GCD example, whose bridges are registers only; milestone 2, a Rocket core with its DRAM on `//ddr3` and FireSim's streams over frames, passed as well, and that core boots Linux.
 
 ## What it is not
 
