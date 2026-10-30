@@ -87,6 +87,13 @@ To repeat it, holding the BOARD TOKEN:
    The driver's own plusargs go inside the `+permissive` block; outside it, fesvr takes the first one for the program.
    `+device` defaults to 5, the device number `rocket_netlist.rs` builds in.
 
+### Without Vivado
+
+The release [`firesim-ax7a200b-rocket-v1`](https://git.hdlfactory.com/HDL/txhdl/releases/tag/firesim-ax7a200b-rocket-v1) holds `rocket_eth_pnr`'s bitstream, `rocket_eth_driver`, `hello.riscv`, `bench.riscv` and `echo.riscv`, built from `main` at 6365564b, with Vivado's timing and utilization reports and a `SHA256SUMS` (#2016).
+Its README says how to run them: program the bitstream with any tool that writes a 7-series `.bit`, such as AMD's Vivado Lab Edition, give the driver `cap_net_raw`, and run it as in step 3 above.
+It was checked on the board on 2026-10-30: `hello` and `bench` passed twice each on one programming, `bench` at 639,520,037 target cycles.
+A later release is cut by hand the same way: build the five targets from one commit of `main`, check them on the board, and attach them with their reports and checksums.
+
 FireSim expects a freshly programmed FPGA for each run, so the driver resets the simulator before each one (#2007).
 A run that ends leaves its step unfinished: the driver writes `STEP` once, and after it exits the TSI bridge stops the target until a host serves it.
 `STEP` is a queue that takes a write only once the step before has finished, so without a reset the fourth run on one programming waited for ever on its `STEP` write, and nothing on the control path answered after it.

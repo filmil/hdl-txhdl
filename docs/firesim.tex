@@ -343,8 +343,10 @@ reprogramming.
 \item Linux on the Rocket design: a kernel and a root file system, and
 FireSim's block-device bridge, whose every access is a register
 exchange over the cable.
-\item The bitstream as a prebuilt. Only Golden Gate's outputs are
-published; each board build still runs Vivado.
+\item A bitstream built and released by continuous integration. The
+release \texttt{firesim-ax7a200b-rocket-v1} holds the bitstream, the
+driver and the programs, cut by hand from one commit
+(\texttt{docs/firesim.md}).
 \item PCIe. The board stays on its cable for now.
 \end{itemize}
 
