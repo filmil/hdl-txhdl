@@ -87,13 +87,6 @@ To repeat it, holding the BOARD TOKEN:
    The driver's own plusargs go inside the `+permissive` block; outside it, fesvr takes the first one for the program.
    `+device` defaults to 5, the device number `rocket_netlist.rs` builds in.
 
-### Without Vivado
-
-The release [`firesim-ax7a200b-rocket-v1`](https://git.hdlfactory.com/HDL/txhdl/releases/tag/firesim-ax7a200b-rocket-v1) holds `rocket_eth_pnr`'s bitstream, `rocket_eth_driver`, `hello.riscv`, `bench.riscv` and `echo.riscv`, built from `main` at 6365564b, with Vivado's timing and utilization reports and a `SHA256SUMS` (#2016).
-Its README says how to run them: program the bitstream with any tool that writes a 7-series `.bit`, such as AMD's Vivado Lab Edition, give the driver `cap_net_raw`, and run it as in step 3 above.
-It was checked on the board on 2026-10-30: `hello` and `bench` passed twice each on one programming, `bench` at 639,520,037 target cycles.
-A later release is cut by hand the same way: build the five targets from one commit of `main`, check them on the board, and attach them with their reports and checksums.
-
 FireSim expects a freshly programmed FPGA for each run, so the driver resets the simulator before each one (#2007).
 A run that ends leaves its step unfinished: the driver writes `STEP` once, and after it exits the TSI bridge stops the target until a host serves it.
 `STEP` is a queue that takes a write only once the step before has finished, so without a reset the fourth run on one programming waited for ever on its `STEP` write, and nothing on the control path answered after it.
@@ -104,6 +97,20 @@ The driver gives its first ask five seconds for an answer while the memory calib
 
 `+eth_log=<file>`, inside the `+permissive` block, logs every register access and stream beat with its time, plus each ask sent again and each ask that got no answer.
 On a board that stops answering, the log's last lines name the access it stopped at.
+
+### Without Vivado
+
+The release [`firesim-ax7a200b-rocket-v1`](https://git.hdlfactory.com/HDL/txhdl/releases/tag/firesim-ax7a200b-rocket-v1) holds, from `main` at 6365564b (#2016):
+
+* `rocket_eth_ax7a200b.bit`, the bitstream of `:rocket_eth_pnr`, with that target's timing and utilization reports;
+* `rocket_eth_driver`, the driver of `:rocket_eth_driver` for x86-64 Linux, which needs only glibc's own shared libraries;
+* `hello.riscv`, `bench.riscv` and `echo.riscv`, from `:hello_riscv`, `:bench_riscv` and `:echo_riscv`;
+* `SHA256SUMS`, and a `README.md` that is also the release's text.
+
+The README says how to run them: program the bitstream with any tool that writes a 7-series `.bit`, such as AMD's Vivado Lab Edition, give the driver `cap_net_raw`, and run it as in step 3 above.
+It was checked on the board on 2026-10-30: `hello` and `bench` passed twice each on one programming, `bench` at 639,520,037 target cycles.
+`echo` was not run on this build; it passed on the bitstream of 2026-10-28.
+A later release is cut by hand the same way: build the five targets above from one commit of `main` with `bazel build`, check them on the board, and attach them with the two reports, `rocket_eth_pnr.timing_summary.pnr.rpt` and `rocket_eth_pnr.utilization.pnr.rpt`, and the checksums.
 
 `rules_firesim` itself is not a dependency yet; it comes in with the first change that uses its rules.
 `firesim_target` has already moved `rules_cc`, `dtc` and five more modules to the newer releases they share.
