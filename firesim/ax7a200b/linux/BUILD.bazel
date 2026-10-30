@@ -1,0 +1,99 @@
+# SPDX-License-Identifier: Apache-2.0
+# Linux on FireSim's Rocket core over the Ethernet host link (issue
+# 2015): the mainline kernel with a BusyBox initramfs inside it, and
+# OpenSBI around both, as one ELF the driver loads into the DDR3. Built
+# by //linux's scripts with the same hermetic LLVM and sources, for
+# RV64. Manual, since a kernel is minutes of work:
+#
+#   bazel build //firesim/ax7a200b/linux:rocket_linux
+load("//linux:defs.bzl", "LINUX_ENV", "LINUX_TOOLS")
+
+package(default_visibility = ["//visibility:public"])
+
+# musl, compiler-rt's builtins and the kernel's headers, for rv64imac
+# at the soft-float ABI lp64.
+genrule(
+    name = "rv64_sysroot",
+    srcs = [
+        "@compiler_rt//:src",
+        "@linux//:src",
+        "@musl//:src",
+    ],
+    outs = ["rv64_sysroot.tar"],
+    cmd = LINUX_ENV + " RV_XLEN=64 $(execpath //linux:userspace.sh) sysroot " +
+          "$(execpath @compiler_rt//:src) $(execpath @musl//:src) " +
+          "$(execpath @linux//:src) $@",
+    tags = ["manual"],
+    tools = LINUX_TOOLS,
+)
+
+# BusyBox, configured as Vreteno's is.
+genrule(
+    name = "busybox",
+    srcs = [
+        ":rv64_sysroot",
+        "@busybox//:src",
+        "//linux:busybox.config",
+    ],
+    outs = [
+        "bin/busybox",
+        "busybox.full.config",
+    ],
+    cmd = LINUX_ENV + " RV_XLEN=64 $(execpath //linux:userspace.sh) busybox " +
+          "$(execpath :rv64_sysroot) $(execpath @busybox//:src) " +
+          "$(execpath //linux:busybox.config) $(execpath bin/busybox) " +
+          "$(execpath busybox.full.config)",
+    tags = ["manual"],
+    tools = LINUX_TOOLS,
+)
+
+genrule(
+    name = "initramfs",
+    srcs = [
+        "bin/busybox",
+        "init",
+        "@linux//:src",
+    ],
+    outs = ["initramfs.cpio"],
+    cmd = LINUX_ENV + " $(execpath //linux:userspace.sh) initramfs " +
+          "$(execpath bin/busybox) $(execpath init) $(execpath @linux//:src) " +
+          "- $@",
+    tags = ["manual"],
+    tools = LINUX_TOOLS,
+)
+
+# The kernel, tinyconfig with rocket.config over it and the initramfs
+# inside.
+genrule(
+    name = "kernel",
+    srcs = [
+        "@linux//:src",
+        "initramfs.cpio",
+        "rocket.config",
+    ],
+    outs = [
+        "Image",
+        "kernel.config",
+        "System.map",
+    ],
+    cmd = LINUX_ENV + " INITRAMFS=$(execpath initramfs.cpio) " +
+          "$(execpath //linux:build.sh) kernel $(execpath @linux//:src) " +
+          "$(execpath rocket.config) $(execpath Image) " +
+          "$(execpath kernel.config) $(execpath System.map) -",
+    tags = ["manual"],
+    tools = LINUX_TOOLS,
+)
+
+# OpenSBI with the kernel as its payload: what the driver loads.
+genrule(
+    name = "rocket_linux",
+    srcs = [
+        "@opensbi//:src",
+        "Image",
+    ],
+    outs = ["rocket_linux.elf"],
+    cmd = LINUX_ENV + " $(execpath //linux:build.sh) payload " +
+          "$(execpath @opensbi//:src) $(execpath Image) $@",
+    tags = ["manual"],
+    tools = LINUX_TOOLS,
+)
