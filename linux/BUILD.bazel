@@ -15,32 +15,19 @@ load("@rules_rust//rust:defs.bzl", "rust_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//tools:rust_checks.bzl", "rust_checked")
 load("//tools/bootimg:defs.bzl", "boot_image")
+load(":defs.bzl", "LINUX_ENV", "LINUX_TOOLS")
 
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
     "build.sh",
+    "busybox.config",
     "userspace.sh",
 ])
 
-_TOOLS = [
-    "build.sh",
-    "userspace.sh",
-    "@kbuild_tree//:all",
-    "@llvm_toolchain_llvm//:bin",
-    "@llvm_toolchain_llvm//:lib",
-    "@llvm_toolchain_llvm//:include",
-    "@sysroot_bullseye//tree:sysroot",
-    "@python_3_12_host//:python",
-]
+_TOOLS = LINUX_TOOLS
 
-# The trees' files; build.sh finds where each begins from them.
-_ENV = " ".join([
-    "KBUILD_FILES='$(execpaths @kbuild_tree//:all)'",
-    "LLVM_FILES='$(execpaths @llvm_toolchain_llvm//:bin)'",
-    "SYSROOT=$(execpath @sysroot_bullseye//tree:sysroot)",
-    "PYTHON3=$(execpath @python_3_12_host//:python)",
-])
+_ENV = LINUX_ENV
 
 genrule(
     name = "kernel",

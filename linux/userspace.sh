@@ -7,7 +7,7 @@
 #
 #   userspace.sh sysroot   <compiler-rt src> <musl src> <linux src> <sysroot.tar out>
 #   userspace.sh busybox   <sysroot.tar> <busybox src> <fragment> <busybox out> <config out>
-#   userspace.sh initramfs <busybox> <init> <linux src> <initramfs.cpio out>
+#   userspace.sh initramfs <busybox> <init> <linux src> <smpcount or -> <initramfs.cpio out>
 #
 # The tools come from the environment the rule sets, as for build.sh:
 # KBUILD_FILES, the Debian packages that give make, bzip2 and the rest;
@@ -60,8 +60,20 @@ jobs=$(nproc)
 
 # The core's target: 32 bits, the multiply, atomic and compressed
 # extensions, and no floating point unit, so floating point is done in
-# software and passed in integer registers.
-target="--target=riscv32-unknown-linux-musl -march=rv32imac -mabi=ilp32"
+# software and passed in integer registers. RV_XLEN=64 gives the same
+# for 64 bits, for FireSim's Rocket core (issue 2015): its floating
+# point unit goes unused, so one userspace build serves both widths.
+xlen=${RV_XLEN:-32}
+case $xlen in
+32) abi=ilp32 ;;
+64) abi=lp64 ;;
+*)
+  echo "userspace.sh: RV_XLEN is 32 or 64, not $xlen" >&2
+  exit 2
+  ;;
+esac
+triple=riscv$xlen-unknown-linux-musl
+target="--target=$triple -march=rv${xlen}imac -mabi=$abi"
 # The sandbox's own directory, which differs from one build to the next,
 # is cut out of every path a compile records, such as a `__FILE__` in an
 # assertion's message, so the objects are the same bytes each build.
@@ -85,7 +97,7 @@ cross_cc() {
 # for this ABI, soft-float, which the driver's default lacks (issue
 # 1439). Not for a static program, into which lld would write the
 # loader's name all the same.
-dyn_ld="-Wl,--dynamic-linker=/lib/ld-musl-riscv32-sf.so.1"
+dyn_ld="-Wl,--dynamic-linker=/lib/ld-musl-riscv$xlen-sf.so.1"
 
 # The sysroot tar holds the sysroot and the resource directory's library
 # half; the resource directory's headers are linked back in after.
@@ -103,13 +115,13 @@ sysroot)
   rm -rf "$work" && mkdir -p "$work/sysroot" "$work/rd" "$work/musl"
   sys=$work/sysroot
   rd=$work/rd
-  rtdir=$rd/lib/riscv32-unknown-linux-musl
+  rtdir=$rd/lib/$triple
   mkdir -p "$rtdir"
   ln -sfn "$clang_include" "$rd/include"
 
   # musl, configured out of its tree: its headers first, which the
   # builtins include, and its library after them, which wants them.
-  (cd "$work/musl" && "$musl/configure" --target=riscv32-linux-musl \
+  (cd "$work/musl" && "$musl/configure" --target=riscv$xlen-linux-musl \
     --prefix=/ --syslibdir=/lib \
     CC="clang $target" AR=llvm-ar RANLIB=llvm-ranlib CFLAGS="-O2" \
     LDFLAGS="-fuse-ld=lld" \
@@ -121,9 +133,9 @@ sysroot)
     HOSTCC="$host_cc" HOSTLDFLAGS="-fuse-ld=lld" \
     headers_install INSTALL_HDR_PATH="$sys"
 
-  # compiler-rt's builtins for riscv32: the sources its build lists for
+  # compiler-rt's builtins for the width: the sources its build lists for
   # the target, with the flags it gives them, software int128 included.
-  awk -v want=riscv32_SOURCES -f - "$crt/lib/builtins/CMakeLists.txt" \
+  awk -v want=riscv${xlen}_SOURCES -f - "$crt/lib/builtins/CMakeLists.txt" \
     >"$work/builtins.txt" <<'EOF'
 # The sources a CMake list names, with every ${LIST} in it expanded: the
 # first `set(NAME` that opens a list on a line of its own, an item a
@@ -221,7 +233,7 @@ busybox)
   cp "$out/.config" "$config_out"
   ;;
 initramfs)
-  busybox=$root/$1 init=$root/$2 linux=$root/$3 smpcount=$root/$4 out=$5
+  busybox=$root/$1 init=$root/$2 linux=$root/$3 smpcount=$4 out=$5
   work=$root/.uinit
   rm -rf "$work" && mkdir -p "$work"
   # The kernel's own packer, built for the host: it writes the newc
@@ -244,8 +256,11 @@ dir /root 0700 0 0
 file /bin/busybox $busybox 0755 0 0
 slink /bin/sh busybox 0777 0 0
 file /init $init 0755 0 0
-file /bin/smpcount $smpcount 0755 0 0
 EOF
+  # smpcount is for a machine of two harts; one of one passes "-".
+  if [ "$smpcount" != - ]; then
+    echo "file /bin/smpcount $root/$smpcount 0755 0 0" >>"$work/list"
+  fi
   # Every entry at time nought, so the archive is the same each build.
   "$work/gen_init_cpio" -t 0 "$work/list" >"$out"
   ;;

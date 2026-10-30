@@ -7,6 +7,12 @@
 #
 #   build.sh kernel  <src> <fragment> <image out> <config out> <map out>
 #   build.sh opensbi <src> <fw_jump.bin out> <fw_jump.elf out>
+#   build.sh payload <src> <Image> <fw_payload.elf out>
+#
+# For the kernel, a module source of "-" builds no module, and
+# INITRAMFS, when set, names a cpio the kernel takes in as its own
+# initramfs: FireSim's Rocket core (issue 2015) loads one ELF and
+# nothing beside it.
 #
 # The tools come from the environment the rule sets: KBUILD_FILES, the
 # unpacked Debian packages that give `make`, `flex`, `bison` and `bc`;
@@ -67,7 +73,7 @@ jobs=$(nproc)
 
 case $what in
 kernel)
-  src=$1 frag=$2 image=$3 config=$4 map=$5 mod_c=$6 mod_ko=$7
+  src=$1 frag=$2 image=$3 config=$4 map=$5 mod_c=$6 mod_ko=${7:-}
   out=$root/.kout
   rm -rf "$out" && mkdir -p "$out"
   k() {
@@ -79,6 +85,12 @@ kernel)
   k tinyconfig
   "$root/$src/scripts/kconfig/merge_config.sh" -m -O "$out" \
     "$out/.config" "$root/$frag"
+  if [ -n "${INITRAMFS:-}" ]; then
+    # The path is the sandbox's, so it goes in here and not in the
+    # fragment; the check below reads only the fragment's lines.
+    "$root/$src/scripts/config" --file "$out/.config" \
+      --set-str INITRAMFS_SOURCE "$root/$INITRAMFS"
+  fi
   k olddefconfig
   # Every line of the fragment must have survived the merge: a symbol
   # Kconfig refused, for a dependency the fragment did not meet, is
@@ -106,6 +118,9 @@ kernel)
   # Where the kernel ends in memory, past the Image: its BSS and early
   # page tables, which the boot image (issue 1019) must leave free.
   cp "$out/System.map" "$map"
+  if [ "$mod_c" = - ]; then
+    exit 0
+  fi
   # A module built against this kernel (issue 1441), out of the tree as
   # any module a user adds is: the tree's own modules first, for the
   # symbol versions a module is checked against, then the one module.
@@ -135,8 +150,32 @@ opensbi)
   cp "$out/platform/generic/firmware/fw_jump.bin" "$bin_out"
   cp "$out/platform/generic/firmware/fw_jump.elf" "$elf_out"
   ;;
+payload)
+  # OpenSBI with the kernel inside, for RV64 at the base of the Rocket
+  # core's DRAM (issue 2015): one ELF, which FireSim's front end loads
+  # and starts. OpenSBI takes the device tree the boot ROM passes in
+  # a1, and its tohost lets the kernel's power-off end the run.
+  # OpenSBI links itself position independent, at FW_TEXT_START, and
+  # FireSim's front end loads such an ELF 0x80000000 higher: the DRAM's
+  # alias still took the load, but the front end polled tohost at
+  # 0x1_00042a90, and the run ended about two minutes after the
+  # kernel's power-off.
+  # The segments are at their run addresses already, so the ELF is
+  # marked an executable, e_type 2, and the front end loads it there.
+  src=$1 kernel=$2 elf_out=$3
+  out=$root/.pout
+  rm -rf "$out" && mkdir -p "$out"
+  make -C "$root/$src" O="$out" LLVM=1 PLATFORM=generic \
+    PLATFORM_RISCV_XLEN=64 PLATFORM_RISCV_ISA=rv64imac_zicsr_zifencei \
+    PLATFORM_RISCV_ABI=lp64 FW_TEXT_START=0x80000000 \
+    FW_PAYLOAD=y FW_PAYLOAD_PATH="$root/$kernel" \
+    -j"$jobs"
+  cp "$out/platform/generic/firmware/fw_payload.elf" "$elf_out"
+  chmod u+w "$elf_out"
+  printf '\002\000' | dd of="$elf_out" bs=1 seek=16 conv=notrunc status=none
+  ;;
 *)
-  echo "build.sh: kernel or opensbi, not $what" >&2
+  echo "build.sh: kernel, opensbi or payload, not $what" >&2
   exit 2
   ;;
 esac
