@@ -5,7 +5,9 @@
 # LLVM, and nothing of the system's but the shell's own commands
 # (issue 1008).
 #
-#   build.sh kernel  <src> <fragment> <image out> <config out> <map out>
+#   build.sh kernel  <src> <fragment> <image out> <config out> <map out> \
+#                    <module.c> <module.ko out>
+#   build.sh kernel  <src> <fragment> <image out> <config out> <map out> -
 #   build.sh opensbi <src> <fw_jump.bin out> <fw_jump.elf out>
 #   build.sh payload <src> <Image> <fw_payload.elf out>
 #
@@ -121,6 +123,10 @@ kernel)
   if [ "$mod_c" = - ]; then
     exit 0
   fi
+  [ -n "$mod_ko" ] || {
+    echo "build.sh: a module source needs a .ko to write" >&2
+    exit 2
+  }
   # A module built against this kernel (issue 1441), out of the tree as
   # any module a user adds is: the tree's own modules first, for the
   # symbol versions a module is checked against, then the one module.

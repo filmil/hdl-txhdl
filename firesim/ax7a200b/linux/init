@@ -1,17 +1,21 @@
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
 # The first program on the Rocket core (issue 2015): mount what the
-# commands read, say so on a line a run can wait for, show the machine,
+# commands read, show the machine, say so on a line a run can wait for,
 # and power off, which OpenSBI passes to the host through tohost, so the
 # driver exits with the run's status.
+# Any command that fails stops the script, before the line a run waits
+# for: process 1 exiting panics the kernel, no power-off comes, and the
+# driver never prints PASSED.
+set -e
 /bin/busybox mount -t proc proc /proc
 /bin/busybox mount -t sysfs sysfs /sys
 /bin/busybox mount -t devtmpfs devtmpfs /dev
 /bin/busybox --install -s
-echo "txhdl: userspace is up on Rocket"
 uname -a
 cat /proc/cpuinfo
 head -n 2 /proc/meminfo
 cat /proc/uptime
+echo "txhdl: userspace is up on Rocket"
 echo "txhdl: powering off"
 poweroff -f

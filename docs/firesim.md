@@ -107,6 +107,7 @@ To repeat it, with the board programmed and the driver set up as above:
 
 ```sh
 bazel build //firesim/ax7a200b/linux:rocket_linux
+# copy bazel-bin/firesim/ax7a200b/linux/rocket_linux.elf beside the driver, then:
 ./rocket_eth_driver +permissive +iface=fpga-a200t-eth0 +permissive-off rocket_linux.elf
 ```
 
