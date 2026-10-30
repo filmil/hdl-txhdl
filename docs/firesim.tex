@@ -340,9 +340,11 @@ reprogramming.
 \label{sec:f-not}
 
 \begin{itemize}
-\item Linux on the Rocket design: a kernel and a root file system, and
-FireSim's block-device bridge, whose every access is a register
-exchange over the cable.
+\item A root file system on FireSim's block-device bridge, whose every
+access is a register exchange over the cable. Linux 6.18 boots on the
+Rocket design from an initramfs since October 30, 2026; loading its
+3.45~MB takes 4~min~22~s, four bytes per register write
+(\texttt{docs/firesim.md}).
 \item A bitstream built and released by continuous integration. The
 release \texttt{firesim-ax7a200b-rocket-v1} holds the bitstream, the
 driver and the programs, cut by hand from one commit
