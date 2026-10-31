@@ -16,6 +16,14 @@
 # initramfs: FireSim's Rocket core (issue 2015) loads one ELF and
 # nothing beside it.
 #
+# Two more settings serve the Rocket core's root on FireSim's block
+# device (issue 2020). EXTRA_FRAGMENT names a second fragment, merged
+# over the first, whose lines win where both set a symbol.
+# BUILTIN_DRIVER names one driver's .c file, built into the kernel under
+# drivers/block: the kernel is then built from a copy of the tree of
+# hard links with that file and one line of Makefile added, so the
+# fetched tree itself is never written.
+#
 # The tools come from the environment the rule sets: KBUILD_FILES, the
 # unpacked Debian packages that give `make`, `flex`, `bison` and `bc`;
 # LLVM_FILES, the LLVM release's programs; SYSROOT, the Debian sysroot
@@ -78,15 +86,38 @@ kernel)
   src=$1 frag=$2 image=$3 config=$4 map=$5 mod_c=$6 mod_ko=${7:-}
   out=$root/.kout
   rm -rf "$out" && mkdir -p "$out"
+  tree=$root/$src
+  if [ -n "${BUILTIN_DRIVER:-}" ]; then
+    tree=$root/.ksrc
+    rm -rf "$tree"
+    # Hard links where the tree and this sandbox share a file system,
+    # copies where they do not; either way the fetched files stay as
+    # they are.
+    cp -rlL "$root/$src/." "$tree" 2>/dev/null || {
+      rm -rf "$tree"
+      cp -rL "$root/$src/." "$tree"
+    }
+    drv=$(basename "$BUILTIN_DRIVER" .c)
+    cp "$root/$BUILTIN_DRIVER" "$tree/drivers/block/$drv.c"
+    # The Makefile is replaced, not appended to, since a hard link would
+    # carry the line into the fetched tree.
+    cp --remove-destination "$root/$src/drivers/block/Makefile" \
+      "$tree/drivers/block/Makefile"
+    echo "obj-y += $drv.o" >>"$tree/drivers/block/Makefile"
+  fi
   k() {
-    make -C "$root/$src" O="$out" ARCH=riscv LLVM=1 \
+    make -C "$tree" O="$out" ARCH=riscv LLVM=1 \
       HOSTCC="$host_cc" HOSTLDFLAGS="-fuse-ld=lld" "$@"
   }
   # The smallest kernel there is, then this machine over it (issue
   # 1074): cutting the rv32 defconfig down stayed at 25 MiB.
   k tinyconfig
+  frags=("$root/$frag")
+  if [ -n "${EXTRA_FRAGMENT:-}" ]; then
+    frags+=("$root/$EXTRA_FRAGMENT")
+  fi
   "$root/$src/scripts/kconfig/merge_config.sh" -m -O "$out" \
-    "$out/.config" "$root/$frag"
+    "$out/.config" "${frags[@]}"
   if [ -n "${INITRAMFS:-}" ]; then
     # The path is the sandbox's, so it goes in here and not in the
     # fragment; the check below reads only the fragment's lines.
@@ -97,22 +128,33 @@ kernel)
   # Every line of the fragment must have survived the merge: a symbol
   # Kconfig refused, for a dependency the fragment did not meet, is
   # silently dropped otherwise. Every such line is named, then the
-  # build stops, so one run shows them all.
+  # build stops, so one run shows them all. A line of the first fragment
+  # whose symbol the extra one sets is the extra one's to check.
+  overridden=" "
+  if [ -n "${EXTRA_FRAGMENT:-}" ]; then
+    overridden+=$(sed -n 's/^\(CONFIG_[A-Za-z0-9_]*\)=.*/\1/p' \
+      "$root/$EXTRA_FRAGMENT" | tr '\n' ' ')
+  fi
   dropped=0
-  while IFS= read -r line; do
-    case $line in "" | "#"*) continue ;; esac
-    if [[ $line == *"=n" ]]; then
-      sym=${line%=n}
-      if grep -q "^$sym=" "$out/.config"; then
-        echo "the fragment asks for $line and the config has" \
-          "$(grep "^$sym=" "$out/.config")" >&2
+  for f in "${frags[@]}"; do
+    while IFS= read -r line; do
+      case $line in "" | "#"*) continue ;; esac
+      if [ "$f" = "$root/$frag" ] && [[ $overridden == *" ${line%%=*} "* ]]; then
+        continue
+      fi
+      if [[ $line == *"=n" ]]; then
+        sym=${line%=n}
+        if grep -q "^$sym=" "$out/.config"; then
+          echo "the fragment asks for $line and the config has" \
+            "$(grep "^$sym=" "$out/.config")" >&2
+          dropped=1
+        fi
+      elif ! grep -qx "$line" "$out/.config"; then
+        echo "the fragment asks for $line and the config does not have it" >&2
         dropped=1
       fi
-    elif ! grep -qx "$line" "$out/.config"; then
-      echo "the fragment asks for $line and the config does not have it" >&2
-      dropped=1
-    fi
-  done < "$root/$frag"
+    done < "$f"
+  done
   [ "$dropped" -eq 0 ] || exit 1
   k -j"$jobs" Image
   cp "$out/arch/riscv/boot/Image" "$image"
