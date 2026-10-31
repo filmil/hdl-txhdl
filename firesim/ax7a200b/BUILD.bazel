@@ -233,16 +233,28 @@ cc_library(
 )
 
 # The frame the host speaks, laid out as HostBridge reads it, and its
-# test, byte for byte.
+# test, byte for byte; and the register writes in flight over it
+# (issue 2019), tested against a model of the board that loses frames.
 cc_library(
     name = "eth_frame",
-    hdrs = ["eth_frame.h"],
+    hdrs = [
+        "eth_frame.h",
+        "eth_window.h",
+    ],
 )
 
 cc_test(
     name = "eth_frame_test",
     size = "small",
     srcs = ["eth_frame_test.cc"],
+    deps = [":eth_frame"],
+)
+
+cc_test(
+    name = "eth_window_test",
+    size = "small",
+    srcs = ["eth_window_test.cc"],
+    copts = ["-std=c++20"],
     deps = [":eth_frame"],
 )
 
