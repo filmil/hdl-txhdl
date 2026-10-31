@@ -168,8 +168,9 @@ bazel build //firesim/ax7a200b/linux:rocket_blk_linux //firesim/ax7a200b/linux:b
 ```
 
 It passes when the console shows `txhdl: the root is on the block device`, after a line `/init` read from `/etc/txhdl-root` on the image, and the driver prints `*** PASSED ***`.
-On 2026-10-31, with #2019's write window at 8, the run took 132 s and 244,581,332 target cycles, against 45.8 s for the initramfs boot with the same driver.
-The kernel it loads is smaller, 2.7 MB with no initramfs inside, so the difference is the block device: every block access is a register exchange over the cable, and the driver resent 4,653,320 asks against about 9,600 for the initramfs boot.
+On 2026-10-31, with #2019's write window at 8 and answers that name their ask, the run took 111.7 s and 244,581,332 target cycles, against 45.6 s for the initramfs boot on the same bitstream and driver.
+The kernel it loads is smaller, 2.7 MB with no initramfs inside, so the 66 s are the block device: every block access is a register exchange over the cable.
+An earlier run, on a bitstream whose answers did not name their ask, took 132 s, since a late answer read as a loss and the driver resent 4,653,320 asks; with the ask named it resent 6,720.
 
 ### Without Vivado
 

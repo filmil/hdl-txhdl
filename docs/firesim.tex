@@ -356,8 +356,8 @@ reprogramming.
 \item A fast root file system. Linux 6.18 boots on the Rocket design
 from an initramfs since October 30, 2026, and since October 31 with its
 root on FireSim's block-device bridge; but every block access is a
-register exchange over the cable, and that boot took 132~s against
-45.8~s from an initramfs (\texttt{docs/firesim.md}).
+register exchange over the cable, and that boot took 111.7~s against
+45.6~s from an initramfs (\texttt{docs/firesim.md}).
 With eight writes in flight (issue~2019), loading the initramfs's
 3.45~MB takes about 33~s, against 4~min~22~s with one, four bytes per
 register write.
