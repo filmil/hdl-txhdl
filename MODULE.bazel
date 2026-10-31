@@ -665,8 +665,8 @@ http_archive(
     urls = ["https://busybox.net/downloads/busybox-1.37.0.tar.bz2"],
 )
 
-# FireSim's Linux driver for its block device, iceblk.c, built as a
-# module against the kernel above (issue 2020). The commit is the newest,
+# FireSim's Linux driver for its block device, iceblk.c, built into the
+# kernel above by linux/build.sh (issue 2020). The commit is the newest,
 # which follows the block layer's interface to kernel 6.16.
 http_archive(
     name = "iceblk_driver",

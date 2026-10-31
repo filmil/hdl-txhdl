@@ -98,11 +98,16 @@ kernel)
       cp -rL "$root/$src/." "$tree"
     }
     drv=$(basename "$BUILTIN_DRIVER" .c)
-    cp "$root/$BUILTIN_DRIVER" "$tree/drivers/block/$drv.c"
-    # The Makefile is replaced, not appended to, since a hard link would
-    # carry the line into the fetched tree.
+    # Each file written into the copy replaces its link rather than
+    # writing through it, which would change the fetched tree: the
+    # driver, in case the tree has a file of its name, and the Makefile,
+    # which then takes one line more. The copy keeps the fetched file's
+    # mode, which may be read-only.
+    cp --remove-destination "$root/$BUILTIN_DRIVER" \
+      "$tree/drivers/block/$drv.c"
     cp --remove-destination "$root/$src/drivers/block/Makefile" \
       "$tree/drivers/block/Makefile"
+    chmod u+w "$tree/drivers/block/Makefile"
     echo "obj-y += $drv.o" >>"$tree/drivers/block/Makefile"
   fi
   k() {
@@ -116,7 +121,7 @@ kernel)
   if [ -n "${EXTRA_FRAGMENT:-}" ]; then
     frags+=("$root/$EXTRA_FRAGMENT")
   fi
-  "$root/$src/scripts/kconfig/merge_config.sh" -m -O "$out" \
+  "$tree/scripts/kconfig/merge_config.sh" -m -O "$out" \
     "$out/.config" "${frags[@]}"
   if [ -n "${INITRAMFS:-}" ]; then
     # The path is the sandbox's, so it goes in here and not in the
@@ -149,7 +154,7 @@ kernel)
             "$(grep "^$sym=" "$out/.config")" >&2
           dropped=1
         fi
-      elif ! grep -qx "$line" "$out/.config"; then
+      elif ! grep -Fqx "$line" "$out/.config"; then
         echo "the fragment asks for $line and the config does not have it" >&2
         dropped=1
       fi

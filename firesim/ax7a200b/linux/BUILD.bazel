@@ -67,8 +67,10 @@ genrule(
         "rm -rf $$r && mkdir -p $$r/bin $$r/dev $$r/etc $$r/proc $$r/sys",
         "cp $(execpath bin/busybox) $$r/bin/busybox",
         "cp $(execpath blk_init) $$r/init",
-        "chmod 0755 $$r/bin/busybox $$r/init",
         "echo 'txhdl: this line was read from the block device' > $$r/etc/txhdl-root",
+        # Every mode set here rather than left to the umask.
+        "chmod 0755 $$r $$r/bin $$r/dev $$r/etc $$r/proc $$r/sys $$r/bin/busybox $$r/init",
+        "chmod 0644 $$r/etc/txhdl-root",
         # genext2fs takes each file's modification time from the file
         # and only its own from SOURCE_DATE_EPOCH, so the files go to
         # the epoch first.
