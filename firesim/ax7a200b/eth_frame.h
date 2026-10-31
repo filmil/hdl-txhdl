@@ -64,6 +64,9 @@ struct Answer {
   uint8_t tag;
   bool err;
   uint32_t data;
+  // The tag of the ask this answers, byte 18 (issue 2019). A bridge
+  // from before 2019 leaves it at zero.
+  uint8_t asked;
 };
 
 // Reads an answer to a program from a frame; false for anything else:
@@ -78,6 +81,7 @@ inline bool decode_answer(const uint8_t *in, size_t n, Answer *a) {
   a->err = (in[17] & 1) != 0;
   a->data = (uint32_t(in[22]) << 24) | (uint32_t(in[23]) << 16) |
             (uint32_t(in[24]) << 8) | uint32_t(in[25]);
+  a->asked = in[18];
   return true;
 }
 

@@ -4,13 +4,16 @@
 //
 // LiteMaster (lib/parts/src/remote/host.rs) performs an ask only when
 // its tag follows the last one it performed, and answers any other ask
-// from the last answer it kept. So the host can send many writes before
-// it waits:
+// from the last answer it kept. Each answer carries two tags: the last
+// ask performed, and the ask it answers. So the host can send many
+// writes before it waits:
 //
-// - an answer says that every ask up to its tag is done;
-// - an answer that names the last tag again, while later asks are out,
-//   says that one of them was lost, and the window is sent again from
-//   the first ask not yet answered;
+// - an answer says that every ask up to its first tag is done;
+// - an answer to an ask ahead of the one after the last says that one
+//   was lost, and the window is sent again from the first ask not yet
+//   answered, once until something more is done;
+// - an answer to an ask behind it is a stale copy that was sent again,
+//   and says nothing more;
 // - if nothing comes back in time, the window is sent again as well.
 //
 // The answer to a write carries the number of failed transactions so
@@ -18,11 +21,18 @@
 // in a later one. A read's answer carries its word instead, so a read
 // waits for every write before it to be answered, and goes alone.
 //
+// A bridge from before issue 2019 performs every ask that does not
+// repeat the last tag, so asks sent again out of order would be
+// performed out of order; it does not name the ask an answer answers.
+// The first answer says which kind of bridge it is, and against the old
+// kind every write waits for its answer, as before.
+//
 // The window keeps no socket: the caller gives it a function that
 // sends a frame and one that waits for an answer, so a test can stand a
 // model of the board behind it.
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <deque>
@@ -43,51 +53,65 @@ public:
   // Stops the run, saying why. It does not return.
   using Fail = std::function<void(const std::string &why)>;
 
+  // `window` is kept from 1 to 128: an answer's tag must name one ask of
+  // those in flight, and a stale one must not look like one of them.
   AskWindow(const uint8_t mac[6], uint8_t device, int window, int timeout_ms,
             int retries, Send send, Receive receive, Fail fail)
-      : device_(device), window_(window), timeout_ms_(timeout_ms),
-        retries_(retries), send_(std::move(send)),
-        receive_(std::move(receive)), fail_(std::move(fail)) {
+      : device_(device), window_(std::clamp(window, 1, 128)),
+        timeout_ms_(std::max(timeout_ms, 1)), retries_(std::max(retries, 1)),
+        send_(std::move(send)), receive_(std::move(receive)),
+        fail_(std::move(fail)) {
     for (int i = 0; i < 6; i++) {
       mac_[i] = mac[i];
     }
   }
 
-  // The first ask, a read of `addr` under `tag`, waiting up to
-  // `first_timeout_ms` in all. The board answers it, or answers from
-  // what it kept under its last tag; either way the count of tags goes
-  // on from the tag of the answer. Returns that answer.
+  // The first ask, a read of `addr` under `tag`, which must not be zero.
+  // It is sent again every timeout for at least `first_timeout_ms`, and
+  // at least the retries. The board answers it, or answers from what it
+  // kept; either way the count of tags goes on from the answer's first
+  // tag. An answer that names `tag` neither as its own nor as the ask it
+  // answers is from before this run, and is passed over. Returns the
+  // answer.
   Answer start(uint8_t tag, uint32_t addr, int first_timeout_ms) {
     uint8_t f[MIN_FRAME];
     encode_ask(f, mac_, device_, tag, false, addr, 0);
     const int tries =
-        (first_timeout_ms + timeout_ms_ - 1) / timeout_ms_;
+        std::max(retries_, (first_timeout_ms + timeout_ms_ - 1) / timeout_ms_);
     Answer a;
     for (int i = 0; i < tries; i++) {
       if (i) {
-        resends++;
+        first_tries++;
       }
       send_(f);
-      if (receive_(timeout_ms_, &a)) {
+      while (receive_(timeout_ms_, &a)) {
+        if (a.tag != tag && a.asked != tag) {
+          continue;
+        }
         // Far enough from zero that the count never goes below it.
         done_ = (uint64_t(1) << 32) | a.tag;
         next_ = done_ + 1;
+        echo_ = a.asked == tag;
+        if (a.tag == tag && a.err) {
+          fail_("the bus refused the first read at " + hex(addr));
+        }
         return a;
       }
     }
-    fail_("no answer to the first read at " + hex(addr));
+    fail_("no answer to the first read at " + hex(addr) + " after " +
+          std::to_string(tries) + " tries");
     return a;
   }
 
   // Sends a write and returns before its answer, once the window has
   // room for it.
   void write(uint32_t addr, uint32_t data) {
-    const size_t room = fails_known_ ? size_t(window_) : 1;
+    const size_t room = (echo_ && fails_known_) ? size_t(window_) : 1;
     while (out_.size() >= room) {
       pump();
     }
     send_ask(true, addr, data);
-    if (!fails_known_) {
+    if (room == 1) {
       flush();
     }
   }
@@ -107,8 +131,14 @@ public:
     }
   }
 
-  // How many asks were sent again.
+  // Whether the board names the ask an answer answers, and so takes
+  // writes in flight.
+  bool echoes() const { return echo_; }
+
+  // How many asks were sent again, and how many times the first ask was
+  // sent again while the board's memory calibrated.
   uint64_t resends = 0;
+  uint64_t first_tries = 0;
 
 private:
   struct Out {
@@ -137,10 +167,18 @@ private:
   }
 
   void again() {
+    sent_again_at_ = done_;
     for (const Out &o : out_) {
       resends++;
       send_frame(o);
     }
+  }
+
+  // The ask counted from the last one done whose tag is `tag`: from
+  // done_ to done_ + 255. The window is at most 128, so an ask in flight
+  // maps below next_, and a stale tag up to 127 behind maps above it.
+  uint64_t seq_of(uint8_t tag) const {
+    return done_ + uint8_t(tag - uint8_t(done_));
   }
 
   // Waits for one answer, or sends the window again when none comes.
@@ -154,44 +192,41 @@ private:
               " tries");
       }
       again();
-      sent_again_at_ = done_;
       return;
     }
-    // The answer's tag is that of an ask from the last one done to the
-    // last one sent; the window is shorter than the 256 tags, so only
-    // one of them has it.
-    const uint64_t s = done_ + uint8_t(a.tag - uint8_t(done_));
+    const uint64_t s = seq_of(a.tag);
     if (s >= next_) {
       return; // a late answer from before the count started
     }
-    if (s == done_) {
-      // The board's last is still the last done: an ask after it was
-      // lost. Send the window again, once until something is done.
-      if (sent_again_at_ != done_) {
-        sent_again_at_ = done_;
+    if (s > done_) {
+      const Out o = out_[s - done_ - 1];
+      while (!out_.empty() && out_.front().seq <= s) {
+        out_.pop_front();
+      }
+      done_ = s;
+      tries_ = 0;
+      if (o.write) {
+        if (!fails_known_) {
+          fails_ = a.data - (a.err ? 1 : 0);
+          fails_known_ = true;
+        }
+        if (a.data != fails_) {
+          fail_("the bus refused a write at or before " + hex(o.addr));
+        }
+      } else {
+        if (a.err) {
+          fail_("the bus refused a read at " + hex(o.addr));
+        }
+        read_data_ = a.data;
+      }
+    }
+    // The ask this answers, if the board says: one ahead of the one
+    // after the last means that one was lost.
+    if (echo_ && !out_.empty()) {
+      const uint64_t q = seq_of(a.asked);
+      if (q > done_ + 1 && q < next_ && sent_again_at_ != done_) {
         again();
       }
-      return;
-    }
-    const Out o = out_[s - done_ - 1];
-    while (!out_.empty() && out_.front().seq <= s) {
-      out_.pop_front();
-    }
-    done_ = s;
-    tries_ = 0;
-    if (o.write) {
-      if (!fails_known_) {
-        fails_ = a.data - (a.err ? 1 : 0);
-        fails_known_ = true;
-      }
-      if (a.data != fails_) {
-        fail_("the bus refused a write at or before " + hex(o.addr));
-      }
-    } else {
-      if (a.err) {
-        fail_("the bus refused a read at " + hex(o.addr));
-      }
-      read_data_ = a.data;
     }
   }
 
@@ -215,6 +250,8 @@ private:
   uint64_t sent_again_at_ = ~uint64_t(0);
   // Timeouts in a row with nothing done.
   int tries_ = 0;
+  // Whether the board names the ask an answer answers.
+  bool echo_ = false;
   // The board's count of failed transactions, once a write's answer
   // has said it; until then each write waits for its answer.
   bool fails_known_ = false;

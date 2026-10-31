@@ -28,13 +28,15 @@
 // eth_window.h sends them again from the first one lost (issue 2019).
 // A read waits for the writes before it. The first ask is a read of a
 // plain register, under a random tag, and the tags go on from the tag
-// its answer carries, whatever the board performed last.
+// its answer carries, whatever the board performed last. A bridge from
+// before 2019 does not name the ask it answers, and then each write
+// waits for its answer, as before.
 //
 // The stream path waits for each beat's answer. Its first ask is a
 // no-op under a random tag, sent at the first stream access so a design
 // without streams never asks for one. Whatever the board last kept,
 // every tag after it differs from it. The control path's writes in
-// flight are answered before any beat goes.
+// flight are answered before each beat goes.
 //
 // Before all of that, the driver sends a reset frame (issue 2007).
 // FireSim expects a fresh simulator for each run: a run that ends leaves
@@ -51,8 +53,9 @@
 //   +retries=<n>         how many times to send an ask (default 50)
 //   +window=<n>          register writes in flight, 1 to 128 (default 8)
 //   +eth_log=<file>      log every register frame sent, every read's
-//                        word and every stream beat to <file>, one line
-//                        each (issue 2007)
+//                        word, every stream beat, and a stop on the
+//                        register path to <file>, one line each
+//                        (issue 2007)
 //
 // The raw socket needs CAP_NET_RAW: root, or this binary given it with
 // `setcap cap_net_raw+ep`.
@@ -261,11 +264,21 @@ simif_ax7a200b_eth_t::simif_ax7a200b_eth_t(
         fprintf(stderr, "simif_ax7a200b_eth: %s\n", why.c_str());
         exit(1);
       });
-  const uint8_t first = static_cast<uint8_t>(std::random_device{}());
+  // Not zero: a bridge from before issue 2019 leaves the answer's byte
+  // 18 at zero, and a nonzero tag there says this one names its ask.
+  uint8_t first = 0;
+  while (first == 0) {
+    first = static_cast<uint8_t>(std::random_device{}());
+  }
   const Answer a = asks->start(first, 0, std::max(5000, timeout_ms));
   if (log) {
-    fprintf(log, "%.6f first tag %u answered as %u\n", since_start(), first,
-            a.tag);
+    fprintf(log, "%.6f first tag %u answered as %u, word %08x\n",
+            since_start(), first, a.tag, a.data);
+  }
+  if (!asks->echoes()) {
+    fprintf(stdout,
+            "simif_ax7a200b_eth: the board's bridge is from before issue "
+            "2019, so each write waits for its answer\n");
   }
   fprintf(stdout,
           "simif_ax7a200b_eth: device %u on %s, answering\n",
@@ -277,6 +290,12 @@ simif_ax7a200b_eth_t::~simif_ax7a200b_eth_t() {
   if (asks) {
     asks->flush();
     resends += asks->resends;
+    if (asks->first_tries) {
+      fprintf(stdout,
+              "simif_ax7a200b_eth: the first ask went %lu times more while "
+              "the memory calibrated\n",
+              static_cast<unsigned long>(asks->first_tries));
+    }
   }
   if (resends) {
     fprintf(stdout, "simif_ax7a200b_eth: %lu asks sent again\n",
@@ -439,6 +458,8 @@ bool simif_ax7a200b_eth_t::receive_answer(int ms, Answer *a) {
 void simif_ax7a200b_eth_t::beat(uint8_t flags, uint64_t addr,
                                 const uint8_t in[BEAT_BYTES], uint16_t strb,
                                 uint8_t out[BEAT_BYTES]) {
+  // A beat goes after every register write before it.
+  asks->flush();
   stag = static_cast<uint8_t>(stag + 1);
   uint8_t f[MIN_FRAME];
   encode_beat(f, mac, device, stag, flags, addr, in, strb);
@@ -508,8 +529,6 @@ static void check_aligned(size_t addr) {
 // The first stream access starts the stream path's tags with a no-op,
 // as the constructor starts the control path's with a read.
 void simif_ax7a200b_eth_t::start_streams() {
-  // A beat goes after every register write before it.
-  asks->flush();
   if (streams_ready) {
     return;
   }
