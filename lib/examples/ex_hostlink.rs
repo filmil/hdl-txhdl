@@ -16,6 +16,13 @@
 //! from what the master kept and never reaches the bus, which the
 //! memory's count of transactions shows.
 //!
+//! Before the refused write, the program sends a write whose tag skips
+//! one, as when the ask before it was lost (issue 2019). The master
+//! performs only the ask whose tag follows the last, so this one is
+//! answered from what it kept, under the last tag, and never reaches the
+//! bus either. The refused write's answer carries the count of failed
+//! transactions, one, in place of a word.
+//!
 //! Both units are lowered, and the build simulates their netlists
 //! against this run under nvc and Verilator.
 use std::cell::RefCell;
@@ -113,12 +120,13 @@ fn main() {
         memory,
     ));
 
-    // The program: four asks, one at a time, each waiting for its
-    // answer, as FireSim's driver waits for a register.
+    // The program: five asks, one at a time, each waiting for its
+    // answer.
     let asks = [
         ("write 0xc0ffee at 0x40", ask_frame(1, true, 0x40, 0xc0ffee)),
         ("read 0x40", ask_frame(2, false, 0x40, 0)),
         ("read 0x40 again, same tag", ask_frame(2, false, 0x40, 0)),
+        ("write at 0x44, tag 4", ask_frame(4, true, 0x44, 1)),
         ("write at 0x2000", ask_frame(3, true, 0x2000, 7)),
     ];
     let mut said = Vec::new();
