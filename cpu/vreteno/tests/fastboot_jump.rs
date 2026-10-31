@@ -99,9 +99,9 @@ fn a_program_of_one_word_runs() {
 }
 
 /// With a serial port, the routine says it copied the program, with
-/// the sums of its words where it came from and where it went, and
-/// says `go` just before the jump (issue 2011). On the model the copy
-/// is right, so the two sums are the program's own.
+/// the sum of its words where they went, and says `go` just before the
+/// jump (issue 2011). On the model the copy is right, so the sum is the
+/// program's own.
 #[test]
 fn the_routine_reports_the_copy_and_the_jump() {
     use vreteno32::isa::UART_BASE;
@@ -119,21 +119,21 @@ fn the_routine_reports_the_copy_and_the_jump() {
     assert_eq!(m.x[5], 0x123, "the program ran after the report");
     assert_eq!(
         String::from_utf8_lossy(&m.uart),
-        format!("jump {sum:08x} {sum:08x}\r\ngo\r\n")
+        format!("jump {sum:08x}\r\ngo\r\n")
     );
 }
 
-/// The two sums are printed source first: a destination one word below
-/// the source makes the copy run over the source's first word, so
-/// afterwards the source holds the program's second word twice and
-/// the destination the program itself, and the two sums differ.
+/// The sum is the destination's, not the source's: a destination one
+/// word below the source makes the copy run over the source's first
+/// word, so afterwards the source holds the program's second word
+/// twice and the destination the program itself, and only the
+/// destination's sum is the program's.
 #[test]
-fn the_sums_are_the_source_then_the_destination() {
+fn the_sum_is_the_destinations() {
     use vreteno32::isa::UART_BASE;
 
     let program = [MARK, HALT];
     let dst_sum = MARK.wrapping_add(HALT);
-    let src_sum = HALT.wrapping_add(HALT);
     let m = run_to(
         &program,
         DATA_BASE + 0x404,
@@ -144,13 +144,13 @@ fn the_sums_are_the_source_then_the_destination() {
     assert!(matches!(m.halted, Some(Halt::Break)), "{:?}", m.halted);
     assert_eq!(
         String::from_utf8_lossy(&m.uart),
-        format!("jump {src_sum:08x} {dst_sum:08x}\r\ngo\r\n")
+        format!("jump {dst_sum:08x}\r\ngo\r\n")
     );
 }
 
-/// A program of no words still gets its report, two zero sums.
+/// A program of no words still gets its report, a zero sum.
 #[test]
-fn an_empty_program_is_reported_as_two_zero_sums() {
+fn an_empty_program_is_reported_as_a_zero_sum() {
     use vreteno32::isa::UART_BASE;
 
     let m = run_to(
@@ -160,10 +160,7 @@ fn an_empty_program_is_reported_as_two_zero_sums() {
         DATA_BASE + 0x800,
         UART_BASE,
     );
-    assert_eq!(
-        String::from_utf8_lossy(&m.uart),
-        "jump 00000000 00000000\r\ngo\r\n"
-    );
+    assert_eq!(String::from_utf8_lossy(&m.uart), "jump 00000000\r\ngo\r\n");
 }
 
 /// Silent without a serial port, as before issue 2011: the copy and

@@ -20,19 +20,20 @@
  * the copy and the jump.
  *
  * With a serial port, the routine reports on its way (issue 2011):
- * once the copy is done, `jump` and the sums of the program's words
- * as the staging area and the destination hold them, then `go` once
- * the instruction cache is empty, just before the jump. A board that
+ * once the copy is done, `jump` and the sum of the program's words as
+ * the destination holds them, then `go` once the instruction cache is
+ * empty, just before the jump. `boot` prints the same sum over the
+ * staging area on its `booting` line, outside the time from that line
+ * to the program's first, which the nightly measures. A board that
  * stops after `fastboot: booting` then says where: no `jump` line,
- * the copy; two sums that differ, a word that landed wrong; `go` and
- * nothing after it, the program itself or its fetch. Zephyr's console
+ * the copy; a sum that differs from `booting`'s, a word that landed
+ * wrong; `go` and nothing after it, the program itself or its fetch. Zephyr's console
  * is gone by then, so the bytes go to the register directly, each
  * once the port says it has room (bit 31 of a read, as `sifive,uart0`
  * has it).
  *
  *     a4  where the program went, kept for the jump
- *     a5  where it came from, kept for the sums
- *     a6  its length, kept for the sums
+ *     a6  its length, kept for the sum
  *     a7  the return address of the two small routines below
  *
  * Before the jump `a3` is set back to where the program went, as the
@@ -51,7 +52,6 @@
 
 fb_jump:
 	mv	a4, a1
-	mv	a5, a0
 	mv	a6, a2
 	beqz	a2, 2f
 1:
@@ -88,26 +88,23 @@ fb_jump:
 2:
 	beqz	a3, 5f
 	/*
-	 * The sums, each the words added as `fb_sum_words` adds them. The
-	 * words are read with `lr.w`, which goes around the data cache
+	 * The sum, the words added as `fb_sum_words` adds them. They are
+	 * read with `lr.w`, which goes around the data cache
 	 * (issue 1556), so the destination's sum is what the DDR3 holds
 	 * and not what the cache kept of the stores. The `fence` first
 	 * waits for every store the copy posted, as `boot` does before its
-	 * own sum of the staging area.
+	 * own sum of the staging area. One pass of `lr.w` over Linux is
+	 * about 0.5 s (issue 2011), so the staging area is summed by
+	 * `boot`, before its `booting` line, and not here.
 	 */
 	fence
-	li	t2, 0
 	li	t3, 0
-	mv	t4, a5
 	mv	t5, a4
 	mv	t6, a6
 4:
 	beqz	t6, 6f
-	lr.w	t0, (t4)
-	add	t2, t2, t0
 	lr.w	t0, (t5)
 	add	t3, t3, t0
-	addi	t4, t4, 4
 	addi	t5, t5, 4
 	addi	t6, t6, -4
 	j	4b
@@ -116,9 +113,6 @@ fb_jump:
 	putch	117	/* u */
 	putch	109	/* m */
 	putch	112	/* p */
-	putch	32	/* space */
-	mv	t4, t2
-	jal	a7, 8f
 	putch	32	/* space */
 	mv	t4, t3
 	jal	a7, 8f
