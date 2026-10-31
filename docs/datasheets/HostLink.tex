@@ -11,7 +11,7 @@
 There the board's transactions go out to a program that answers them;
 here a program on another machine sends an \code{Ask} in a frame, and
 \code{HostLink} takes it off the wire and passes it on \code{ask}.
-The \code{Answer} that comes back on \code{back} leaves as a frame.
+The \code{HostAnswer} that comes back on \code{back} leaves as a frame.
 \code{LiteMaster} performs the ask on the design's AXI-Lite bus.
 What FireSim's host driver does over PCIe, reading and writing the
 simulator's control registers, it can do over this instead (issue
@@ -60,10 +60,14 @@ not know where the program is. \\
 12 to 14 & type & \code{0x88b5}. \\
 14 & kind & \code{0x02} asks, \code{0x82} answers. \\
 15 & device & \code{DEV}. \\
-16 & tag & The ask's, which the answer repeats. \\
+16 & tag & The ask's on an ask. On an answer, the tag of the last
+transaction performed, which is the ask's own when it was performed. \\
 17 & flags & Bit 0 is a write on an ask, an error on an answer. \\
-18 to 22 & address & Most significant byte first. \\
-22 to 26 & word & The word written, or the word answered. \\
+18 to 22 & address & Most significant byte first, on an ask. On an
+answer, byte 18 is the tag of the ask it answers, and 19 to 21 are
+zero. \\
+22 to 26 & word & The word written; on an answer, the word a read read,
+or for a write the count of failed transactions. \\
 26 & strobe & Which lanes a write means. \\
 \bottomrule
 \end{tabular}
@@ -100,7 +104,7 @@ spelled from registers by \code{at} rather than kept in a buffer.
 \subsection*{Verification}
 
 \begin{itemize}
-\item Eleven tests in \code{lib/parts/src/remote/host.rs}, in
+\item Sixteen tests in \code{lib/parts/src/remote/host.rs}, in
 \code{//lib/parts:parts\_test}, run \code{HostLink<5>} and
 \code{LiteMaster} with a memory on the bus. Among them:
 \code{frames\_that\_are\_not\_this\_devices\_asks\_are\_ignored} sends
