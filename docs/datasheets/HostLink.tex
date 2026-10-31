@@ -66,8 +66,9 @@ transaction performed, which is the ask's own when it was performed. \\
 18 to 22 & address & Most significant byte first, on an ask. On an
 answer, byte 18 is the tag of the ask it answers, and 19 to 21 are
 zero. \\
-22 to 26 & word & The word written; on an answer, the word a read read,
-or for a write the count of failed transactions. \\
+22 to 26 & word & The word written; on an answer, that of the last
+transaction performed: the word a read read, or for a write the count
+of failed transactions. \\
 26 & strobe & Which lanes a write means. \\
 \bottomrule
 \end{tabular}

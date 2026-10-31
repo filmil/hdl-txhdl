@@ -13,20 +13,16 @@ sends a \code{HostAnswer} back. It is what lets a program on another
 machine read and write this design's registers over Ethernet (issue
 1931).
 
-A frame can be lost, so the program sends an ask again when its answer
-does not come. \code{LiteMaster} keeps the tag and the answer of the
-last transaction it performed, and an ask with that tag again is
-answered from them rather than performed twice: a write repeated on a
-register with a side effect would do the effect twice.
-
 The tags count up by one, and \code{LiteMaster} performs only the ask
 whose tag follows the last one it performed, or the first ask it is
-given (issue 2019). Any other ask is answered from what it kept, so its
-answer names the last transaction performed. A program can therefore
-send many asks without waiting for each answer: an answer says that
-every ask up to its tag is done, and an answer that names an earlier
-tag than the program sent says an ask was lost and where to start
-again.
+given (issue 2019). It keeps the tag and the answer of the last
+transaction it performed, and answers any other ask from them. So a
+frame lost and sent again is not performed twice, as a write repeated
+on a register with a side effect would do the effect twice; and a
+program can send many asks without waiting for each answer. An answer
+says that every ask up to its tag is done, and an answer that names an
+earlier tag than the program sent says an ask was lost and where to
+start again.
 
 \subsection*{Parameters}
 
@@ -43,10 +39,13 @@ Field & What \\
 \code{tag} & The tag of the last transaction performed: the ask's own
 tag when the ask was performed. \\
 \code{asked} & The tag of the ask this answers. The two differ when the
-ask came out of turn: one ahead of the last says an ask was lost, and
-one behind is a stale copy the program sent again. \\
-\code{data} & The word a read read. For a write, the number of
-transactions that have failed since the design started, wrapping. \\
+ask came out of turn: an asked tag past the one that was due says an
+ask before it was lost, and one behind the last is a stale copy the
+program sent again. A repeat of the last tag is answered with the two
+equal. \\
+\code{data} & Of the last transaction performed: the word a read read,
+or for a write the number of transactions that have failed since the
+design started, wrapping. \\
 \code{err} & One if the last transaction performed failed. \\
 \bottomrule
 \end{tabular}
@@ -112,4 +111,5 @@ another, starting from the tag after the one the first answer names,
 and an ask under any other tag is answered with the last answer and not
 performed, whatever its address. Only the last answer is kept, so the
 answer to an ask that was performed before the last one is lost; a
-write's failure still shows in the count the next write answers.
+failure, of a read or a write, still shows in the count the next
+performed write answers.
