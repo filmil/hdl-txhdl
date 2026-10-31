@@ -54,19 +54,19 @@ frame; \code{RemoteLink}'s layout.
 \toprule
 Bytes & Field & What \\
 \midrule
-0 to 6 & destination & Broadcast on an answer, since the design does
+0 to 5 & destination & Broadcast on an answer, since the design does
 not know where the program is. \\
-6 to 12 & source & \code{02:00:00:00:00:\textit{dev}} on an answer. \\
-12 to 14 & type & \code{0x88b5}. \\
+6 to 11 & source & \code{02:00:00:00:00:\textit{dev}} on an answer. \\
+12 to 13 & type & \code{0x88b5}. \\
 14 & kind & \code{0x02} asks, \code{0x82} answers. \\
 15 & device & \code{DEV}. \\
 16 & tag & The ask's on an ask. On an answer, the tag of the last
 transaction performed, which is the ask's own when it was performed. \\
 17 & flags & Bit 0 is a write on an ask, an error on an answer. \\
-18 to 22 & address & Most significant byte first, on an ask. On an
+18 to 21 & address & Most significant byte first, on an ask. On an
 answer, byte 18 is the tag of the ask it answers, and 19 to 21 are
 zero. \\
-22 to 26 & word & The word written; on an answer, that of the last
+22 to 25 & word & The word written; on an answer, that of the last
 transaction performed: the word a read read, or for a write the count
 of failed transactions. \\
 26 & strobe & Which lanes a write means. \\
