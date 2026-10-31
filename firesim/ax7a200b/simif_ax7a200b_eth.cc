@@ -7,7 +7,7 @@
 // and, for designs that have them, CPU-managed streams on a 128-bit
 // AXI4 port. The published platforms carry those over PCIe. This one
 // carries them over raw Ethernet frames, one ask per frame and one
-// answer back:
+// answer back for each:
 //
 // - the registers to the board's HostLink and LiteMaster
 //   (lib/parts/src/remote/host.rs, issue 1931), in RemoteLink's frame:
@@ -20,11 +20,23 @@
 //
 // A lost frame is sent again with the same tag, and the board answers
 // a repeat from what it kept rather than performing it twice. Each path
-// keeps its own tag. So the first ask on each is harmless, under a
-// random tag: a read of a plain register for the control path, a
-// no-op for the streams, sent at the first stream access so a design
+// keeps its own tag.
+//
+// On the control path, the board performs an ask only when its tag
+// follows the last one it performed, so register writes need not wait
+// for their answers: up to +window of them are in flight, and
+// eth_window.h sends them again from the first one lost (issue 2019).
+// A read waits for the writes before it. The first ask is a read of a
+// plain register, under a random tag, and the tags go on from the tag
+// its answer carries, whatever the board performed last. A bridge from
+// before 2019 does not name the ask it answers, and then each write
+// waits for its answer, as before.
+//
+// The stream path waits for each beat's answer. Its first ask is a
+// no-op under a random tag, sent at the first stream access so a design
 // without streams never asks for one. Whatever the board last kept,
-// every tag after it differs from it.
+// every tag after it differs from it. The control path's writes in
+// flight are answered before each beat goes.
 //
 // Before all of that, the driver sends a reset frame (issue 2007).
 // FireSim expects a fresh simulator for each run: a run that ends leaves
@@ -39,8 +51,11 @@
 //   +device=<n>          the design's device number (default 5)
 //   +timeout_ms=<n>      how long to wait for an answer (default 20)
 //   +retries=<n>         how many times to send an ask (default 50)
-//   +eth_log=<file>      log every register access and stream beat
-//                        to <file>, one line each (issue 2007)
+//   +window=<n>          register writes in flight, 1 to 128 (default 8)
+//   +eth_log=<file>      log every register frame sent, every read's
+//                        word, every stream beat, and a stop on the
+//                        register path to <file>, one line each
+//                        (issue 2007)
 //
 // The raw socket needs CAP_NET_RAW: root, or this binary given it with
 // `setcap cap_net_raw+ep`.
@@ -68,6 +83,7 @@
 #include "bridges/cpu_managed_stream.h"
 #include "core/simif.h"
 #include "eth_frame.h"
+#include "eth_window.h"
 
 namespace {
 
@@ -134,8 +150,8 @@ private:
   template <typename Answered>
   void exchange(int sock, const uint8_t *f, Answered answered,
                 const char *what, uint64_t addr);
-  // One control transaction. Returns the word the answer carries.
-  uint32_t transact(bool write, uint32_t addr, uint32_t data);
+  // Waits up to `ms` for an answer to a register ask from this device.
+  bool receive_answer(int ms, Answer *a);
   // One beat on the stream port. Returns the beat a read read in `out`.
   void beat(uint8_t flags, uint64_t addr, const uint8_t in[BEAT_BYTES],
             uint16_t strb, uint8_t out[BEAT_BYTES]);
@@ -157,8 +173,9 @@ private:
   uint8_t device = 5;
   int timeout_ms = 20;
   int retries = 50;
-  uint8_t tag = 0;
+  int window = 8;
   uint64_t resends = 0;
+  std::unique_ptr<AskWindow> asks;
 };
 
 simif_ax7a200b_eth_t::simif_ax7a200b_eth_t(
@@ -175,6 +192,7 @@ simif_ax7a200b_eth_t::simif_ax7a200b_eth_t(
   device = static_cast<uint8_t>(plusint(args, "device", 5, 0, 255));
   timeout_ms = plusint(args, "timeout_ms", 20, 1, 60000);
   retries = plusint(args, "retries", 50, 1, 1000000);
+  window = plusint(args, "window", 8, 1, 128);
   const std::string log_name = plusarg(args, "eth_log", "");
   if (!log_name.empty()) {
     log = fopen(log_name.c_str(), "w");
@@ -201,25 +219,67 @@ simif_ax7a200b_eth_t::simif_ax7a200b_eth_t(
   close(fd);
   fd = open_socket(ETHERTYPE);
   sfd = open_socket(ETHERTYPE_STREAM);
-  // The board answers an ask that repeats the tag of the last one it
-  // performed from what it kept, without performing it. Each ask here
-  // takes the tag after the one before, so only the first could match
-  // a tag the board kept from an earlier run. So the first ask is a
-  // read nothing depends on, under a random tag: if it matches, the
-  // board answers it from what it kept, and every ask after it differs
-  // from the board's last, however the count wraps. Address 0 is a
-  // plain register that reading does nothing to: GCD's simulation
-  // master's INIT_DONE, and the Rocket design's block device's
-  // read_latency (FireSim-generated.const.h).
+  // The first ask is a read nothing depends on, under a random tag. The
+  // board performs it if it has performed nothing since its reset, or
+  // if the tag happens to follow its last; otherwise it answers from
+  // what it kept. Either way the answer's tag is the board's last, and
+  // the asks after it count on from there. Address 0 is a plain
+  // register that reading does nothing to: GCD's simulation master's
+  // INIT_DONE, and the Rocket design's block device's read_latency
+  // (FireSim-generated.const.h).
   //
   // After a reset the link answers once the memory has calibrated
   // again: hence the longer wait for the first answer.
   send_reset();
-  tag = static_cast<uint8_t>(std::random_device{}());
-  const int asks = retries;
-  retries = std::max(retries, (5000 + timeout_ms - 1) / timeout_ms);
-  (void)transact(false, 0, 0);
-  retries = asks;
+  struct sockaddr_ll to = {};
+  to.sll_family = AF_PACKET;
+  to.sll_ifindex = ifindex;
+  to.sll_halen = 6;
+  memset(to.sll_addr, 0xff, 6);
+  asks = std::make_unique<AskWindow>(
+      mac, device, window, timeout_ms, retries,
+      [this, to](const uint8_t *f) {
+        if (sendto(fd, f, MIN_FRAME, 0,
+                   reinterpret_cast<const struct sockaddr *>(&to),
+                   sizeof(to)) < 0) {
+          die("send");
+        }
+        if (log) {
+          // Time, C for control, W or R, address, word, and tag.
+          const uint32_t addr = (uint32_t(f[18]) << 24) |
+                                (uint32_t(f[19]) << 16) |
+                                (uint32_t(f[20]) << 8) | f[21];
+          const uint32_t data = (uint32_t(f[22]) << 24) |
+                                (uint32_t(f[23]) << 16) |
+                                (uint32_t(f[24]) << 8) | f[25];
+          fprintf(log, "%.6f C %c %08x %08x %u\n", since_start(),
+                  f[17] ? 'W' : 'R', addr, data, f[16]);
+        }
+      },
+      [this](int ms, Answer *a) { return receive_answer(ms, a); },
+      [this](const std::string &why) {
+        if (log) {
+          fprintf(log, "%.6f stop %s\n", since_start(), why.c_str());
+        }
+        fprintf(stderr, "simif_ax7a200b_eth: %s\n", why.c_str());
+        exit(1);
+      });
+  // Not zero: a bridge from before issue 2019 leaves the answer's byte
+  // 18 at zero, and a nonzero tag there says this one names its ask.
+  uint8_t first = 0;
+  while (first == 0) {
+    first = static_cast<uint8_t>(std::random_device{}());
+  }
+  const Answer a = asks->start(first, 0, std::max(5000, timeout_ms));
+  if (log) {
+    fprintf(log, "%.6f first tag %u answered as %u, word %08x\n",
+            since_start(), first, a.tag, a.data);
+  }
+  if (!asks->echoes()) {
+    fprintf(stdout,
+            "simif_ax7a200b_eth: the board's bridge is from before issue "
+            "2019, so each write waits for its answer\n");
+  }
   fprintf(stdout,
           "simif_ax7a200b_eth: device %u on %s, answering\n",
           device,
@@ -227,6 +287,16 @@ simif_ax7a200b_eth_t::simif_ax7a200b_eth_t(
 }
 
 simif_ax7a200b_eth_t::~simif_ax7a200b_eth_t() {
+  if (asks) {
+    asks->flush();
+    resends += asks->resends;
+    if (asks->first_tries) {
+      fprintf(stdout,
+              "simif_ax7a200b_eth: the first ask went %lu times more while "
+              "the memory calibrated\n",
+              static_cast<unsigned long>(asks->first_tries));
+    }
+  }
   if (resends) {
     fprintf(stdout, "simif_ax7a200b_eth: %lu asks sent again\n",
             static_cast<unsigned long>(resends));
@@ -352,40 +422,44 @@ void simif_ax7a200b_eth_t::exchange(int sock, const uint8_t *f,
   exit(1);
 }
 
-uint32_t simif_ax7a200b_eth_t::transact(bool write, uint32_t addr,
-                                        uint32_t data) {
-  tag = static_cast<uint8_t>(tag + 1);
-  uint8_t f[MIN_FRAME];
-  encode_ask(f, mac, device, tag, write, addr, data);
-  Answer a;
-  exchange(
-      fd,
-      f,
-      [&](const uint8_t *in, size_t n) {
-        // Not an answer, another device's, or a late one: wait on.
-        return decode_answer(in, n, &a) && a.device == device && a.tag == tag;
-      },
-      write ? "write" : "read",
-      addr);
-  if (log) {
-    // Time, C for control, W or R, address, the word written or read,
-    // and the answer's error flag.
-    fprintf(log, "%.6f C %c %08x %08x %d\n", since_start(),
-            write ? 'W' : 'R', addr, write ? data : a.data, a.err ? 1 : 0);
+bool simif_ax7a200b_eth_t::receive_answer(int ms, Answer *a) {
+  const auto until =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+  for (;;) {
+    const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          until - std::chrono::steady_clock::now())
+                          .count();
+    if (left <= 0) {
+      return false;
+    }
+    struct pollfd p = {fd, POLLIN, 0};
+    const int r = poll(&p, 1, static_cast<int>(left));
+    if (r < 0 && errno != EINTR) {
+      die("poll");
+    }
+    if (r <= 0) {
+      continue; // interrupted, or the wait ran out: checked above
+    }
+    uint8_t in[1600];
+    struct sockaddr_ll from = {};
+    socklen_t fl = sizeof(from);
+    const ssize_t n = recvfrom(fd, in, sizeof(in), 0,
+                               reinterpret_cast<struct sockaddr *>(&from), &fl);
+    if (n < 0 || from.sll_pkttype == PACKET_OUTGOING) {
+      continue;
+    }
+    // Not an answer, or another device's: wait on.
+    if (decode_answer(in, static_cast<size_t>(n), a) && a->device == device) {
+      return true;
+    }
   }
-  if (a.err) {
-    fprintf(stderr,
-            "simif_ax7a200b_eth: the bus refused a %s at 0x%x\n",
-            write ? "write" : "read",
-            addr);
-    exit(1);
-  }
-  return a.data;
 }
 
 void simif_ax7a200b_eth_t::beat(uint8_t flags, uint64_t addr,
                                 const uint8_t in[BEAT_BYTES], uint16_t strb,
                                 uint8_t out[BEAT_BYTES]) {
+  // A beat goes after every register write before it.
+  asks->flush();
   stag = static_cast<uint8_t>(stag + 1);
   uint8_t f[MIN_FRAME];
   encode_beat(f, mac, device, stag, flags, addr, in, strb);
@@ -427,11 +501,16 @@ void simif_ax7a200b_eth_t::beat(uint8_t flags, uint64_t addr,
 }
 
 void simif_ax7a200b_eth_t::write(size_t addr, uint32_t data) {
-  (void)transact(true, static_cast<uint32_t>(addr), data);
+  asks->write(static_cast<uint32_t>(addr), data);
 }
 
 uint32_t simif_ax7a200b_eth_t::read(size_t addr) {
-  return transact(false, static_cast<uint32_t>(addr), 0);
+  const uint32_t word = asks->read(static_cast<uint32_t>(addr));
+  if (log) {
+    // Time, R for a read's answer, address and word.
+    fprintf(log, "%.6f R %08zx %08x\n", since_start(), addr, word);
+  }
+  return word;
 }
 
 // A beat goes to lane 0 of the port, so a transfer must start on a

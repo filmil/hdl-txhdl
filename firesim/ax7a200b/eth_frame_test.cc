@@ -53,6 +53,7 @@ int main() {
   in[15] = 5;
   in[16] = 8;
   in[17] = 0;
+  in[18] = 9;
   in[22] = 0xde;
   in[23] = 0xad;
   in[24] = 0xbe;
@@ -61,6 +62,7 @@ int main() {
   expect(decode_answer(in, sizeof(in), &a), "an answer is read");
   expect(a.device == 5 && a.tag == 8 && !a.err && a.data == 0xdeadbeef,
          "its device, tag, flag and word");
+  expect(a.asked == 9, "the ask it answers, byte 18");
   in[17] = 1;
   expect(decode_answer(in, sizeof(in), &a) && a.err, "the error flag");
   in[14] = 0x02;

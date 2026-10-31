@@ -181,6 +181,17 @@ request that repeats harmlessly: a read of a plain register on the
 control path, and a no-op on the stream path, which the stream master
 answers without its port and whose tag it keeps.
 
+The control master performs a request only when its tag follows the
+last one it performed, and answers any other from the last answer
+(issue~2019). So the host keeps eight register writes in flight: an
+answer says every request up to its tag is done. Each answer also
+names the request it answers, so an answer to a request ahead of the
+next says that one was lost and where to send again, and an answer to
+one behind it is a late copy, passed over. A
+write's answer carries the count of failed requests so far, so a
+failure is seen even when its own answer is lost. The host takes the
+tag to count from out of the answer to its first read.
+
 Before that request, the host sends a third kind of frame: a reset, kind
 0x04 on the control type, with the device number and nothing after it.
 It gets no answer. FireSim expects a freshly programmed FPGA for each
@@ -269,7 +280,9 @@ header from the prebuilt archive. Only the platform file is TxHDL's.
 It implements \code{simif\_t}'s register read and write and FireSim's
 \code{CPUManagedStreamIO} on two raw sockets, one per EtherType. It
 sends each request to every port of the interface cabled to the board,
-waits up to 20~ms for the answer, and sends it again up to 50 times.
+waits up to 20~ms for an answer, and sends again up to 50 times. Up to
+eight register writes go before it waits, as Section~\ref{sec:f-frames}
+says; a read and a stream beat each wait for their answer.
 
 A raw socket needs the \code{cap\_net\_raw} capability. A binary given
 a file capability runs in Linux's secure mode, in which the loader
@@ -345,6 +358,9 @@ from an initramfs since October 30, 2026, and since October 31 with its
 root on FireSim's block-device bridge; but every block access is a
 register exchange over the cable, and that boot took 132~s against
 45.8~s from an initramfs (\texttt{docs/firesim.md}).
+With eight writes in flight (issue~2019), loading the initramfs's
+3.45~MB takes about 33~s, against 4~min~22~s with one, four bytes per
+register write.
 \item A bitstream built and released by continuous integration. The
 release \texttt{firesim-ax7a200b-rocket-v1} holds the bitstream, the
 driver and the programs, cut by hand from one commit

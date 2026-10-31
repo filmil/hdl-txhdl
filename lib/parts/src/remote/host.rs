@@ -6,7 +6,7 @@
 //! transactions out to a program that answers them. [`HostLink`] and
 //! [`LiteMaster`] carry a program's transactions in: the program sends
 //! an [`Ask`](super::Ask) in a frame, [`LiteMaster`] performs it as an
-//! AXI-Lite host on the design's bus, and the [`Answer`](super::Answer)
+//! AXI-Lite host on the design's bus, and the [`HostAnswer`]
 //! goes back in a frame. What FireSim's host driver does over PCIe,
 //! reading and writing the simulator's control registers, it can do
 //! over this instead (issue 1931).
@@ -22,12 +22,35 @@
 //! of the last transaction it performed, and an ask with that tag again
 //! is answered from them rather than performed twice: a write repeated
 //! on a register with a side effect would do the effect twice.
+//!
+//! The tags count up by one, and [`LiteMaster`] performs only the ask
+//! whose tag follows the last one it performed (issue 2019). Any other
+//! ask is answered from what it kept, so its answer names the last
+//! transaction performed. A program can therefore send many asks
+//! without waiting for each answer: an answer says that every ask up to
+//! its tag is done, and an answer that names an earlier tag than the
+//! program sent says an ask was lost and where to start again. A
+//! program learns where the count stands from the answer to its first
+//! ask.
+//!
+//! Each answer also names the ask it answers, at byte 18 of its frame
+//! ([`HostAnswer::asked`]). An answer whose two tags differ answered an
+//! ask out of turn: one ahead of the last says an ask was lost, and one
+//! behind is a stale copy the program sent again, which says nothing
+//! was lost. A bridge from before issue 2019 leaves byte 18 at zero.
+//!
+//! The answer to a write that was performed carries the number of
+//! transactions that have failed since the design started, in place of
+//! a word, and an answer from what was kept repeats the last one's. A
+//! program that does not hear a write's own answer still sees its
+//! failure in the next answer to a write.
 use txhdl::comp::{chan, join2, mux, Clock, DefaultClock, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
+use txhdl::{Transaction as TransactionDerive, Value as ValueDerive};
 
 use super::eth::{ETHERTYPE, FRAME_LEN};
-use super::{Answer, Ask};
+use super::Ask;
 use crate::bus::axi::Resp;
 use crate::bus::axi_lite::{LiteAw, LiteHostPort, LiteW};
 use crate::eth::EthByte;
@@ -40,10 +63,26 @@ pub const KIND_HOST_ANSWER: u32 = 0x82;
 // The type's two bytes, as the frame carries them.
 const _: () = assert!(ETHERTYPE == 0x88b5);
 
+/// What [`LiteMaster`] answers to one [`Ask`](super::Ask): the last
+/// transaction it performed, and the ask that this answers.
+#[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
+pub struct HostAnswer {
+    /// The tag of the last transaction performed, which is the ask's own
+    /// tag when the ask was performed.
+    pub tag: U<8>,
+    /// The tag of the ask this answers.
+    pub asked: U<8>,
+    /// The word a read read; for a write, the count of failures after
+    /// it.
+    pub data: U<32>,
+    /// One if the last transaction performed failed.
+    pub err: Bit,
+}
+
 // begin{masterstate}
 /// An AXI-Lite host that performs one [`Ask`](super::Ask) at a time
-/// and answers each, repeating the last answer to an ask that repeats
-/// its tag.
+/// and answers each. It performs an ask only when its tag follows the
+/// last one performed, and answers any other ask from the last answer.
 #[derive(Trace, Default)]
 pub struct LiteMaster {
     /// Whether a transaction is on the bus.
@@ -69,10 +108,14 @@ pub struct LiteMaster {
     pub have_last: Reg<Bit>,
     /// The tag of the last transaction performed.
     pub last_tag: Reg<U<8>>,
-    /// The word it read; zero for a write.
+    /// The word it read; for a write, the count of failures after it.
     pub last_data: Reg<U<32>>,
     /// Whether it failed.
     pub last_err: Reg<Bit>,
+    /// How many transactions have failed, wrapping.
+    pub fails: Reg<U<32>>,
+    /// The tag of the ask being answered.
+    pub asked: Reg<U<8>>,
 }
 // end{masterstate}
 
@@ -82,7 +125,7 @@ impl Unit for LiteMaster {
     async fn run(
         &mut self,
         bus: LiteHostPort<32, 32, 4>,
-        (ask, back): (Rx<Ask>, Tx<Answer>),
+        (ask, back): (Rx<Ask>, Tx<HostAnswer>),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -92,14 +135,15 @@ impl Unit for LiteMaster {
             let data_sent = self.data_sent.get();
             let answering = self.answering.get();
             // An ask is taken when nothing is on the bus and nothing is
-            // waiting to be answered. One that repeats the last tag is
-            // answered again; any other is performed.
+            // waiting to be answered. One whose tag follows the last
+            // performed is performed, and so is the first one; any
+            // other, a repeat among them, is answered from the last.
             let head = ask.head();
             let take = !busy & !answering & ask.peek().is_some();
             let _ = ask.recv_if(take);
-            let repeat =
-                self.have_last.get() & (head.tag == self.last_tag.get());
-            let start = take & !repeat;
+            let next =
+                !self.have_last.get() | (head.tag == self.last_tag.get() + 1);
+            let start = take & next;
             // The address and, for a write, the word, each sent once,
             // each when its channel has room.
             let send_aw = busy & writing & !addr_sent & bus.aw.ready();
@@ -121,19 +165,22 @@ impl Unit for LiteMaster {
                 Bit::from(bh.resp != Resp::Okay),
                 Bit::from(rh.resp != Resp::Okay),
             );
-            let word = mux(got_b, U::<32>::from(0u32), rh.data);
+            let fails = self.fails.get() + failed.zext::<32>();
+            let word = mux(got_b, fails, rh.data);
             let say = answering & back.ready();
             with!(self <= {
                 start ? { busy: Bit::One, writing: head.write,
                           addr_sent: Bit::Zero, data_sent: Bit::Zero,
                           tag: head.tag, addr: head.addr,
                           data: head.data, strb: head.strb },
-                take & repeat ? answering: Bit::One,
+                take ? asked: head.tag,
+                take & !next ? answering: Bit::One,
                 send_aw | send_ar ? addr_sent: Bit::One,
                 send_w ? data_sent: Bit::One,
                 done ? { busy: Bit::Zero, answering: Bit::One,
                          have_last: Bit::One, last_tag: self.tag.get(),
-                         last_data: word, last_err: failed },
+                         last_data: word, last_err: failed,
+                         fails: fails },
                 say ? answering: Bit::Zero,
             });
             if send_aw.to_bool() {
@@ -155,8 +202,9 @@ impl Unit for LiteMaster {
                 });
             }
             if say.to_bool() {
-                back.send(Answer {
+                back.send(HostAnswer {
                     tag: self.last_tag.get(),
+                    asked: self.asked.get(),
                     data: self.last_data.get(),
                     err: self.last_err.get(),
                 });
@@ -199,6 +247,8 @@ pub struct HostLink<const DEV: usize> {
     pub at: Reg<U<6>>,
     /// The answer being sent.
     pub out_tag: Reg<U<8>>,
+    /// The tag of the ask it answers.
+    pub out_asked: Reg<U<8>>,
     /// Its word.
     pub out_data: Reg<U<32>>,
     /// Whether it says the transaction failed.
@@ -208,7 +258,14 @@ pub struct HostLink<const DEV: usize> {
 
 /// The byte at `at` of the frame that carries an answer to a program.
 #[lower]
-fn answer_byte(at: U<6>, dev: U<8>, tag: U<8>, data: U<32>, err: Bit) -> U<8> {
+fn answer_byte(
+    at: U<6>,
+    dev: U<8>,
+    tag: U<8>,
+    asked: U<8>,
+    data: U<32>,
+    err: Bit,
+) -> U<8> {
     let ff = U::<8>::from(0xffu8);
     let zero = U::<8>::from(0u8);
     select!(at.raw() => {
@@ -224,6 +281,7 @@ fn answer_byte(at: U<6>, dev: U<8>, tag: U<8>, data: U<32>, err: Bit) -> U<8> {
         15 => dev,
         16 => tag,
         17 => err.zext::<8>(),
+        18 => asked,
         22 => data.slice::<24, 8>(),
         23 => data.slice::<16, 8>(),
         24 => data.slice::<8, 8>(),
@@ -237,7 +295,7 @@ fn answer_byte(at: U<6>, dev: U<8>, tag: U<8>, data: U<32>, err: Bit) -> U<8> {
 impl<const DEV: usize> Unit for HostLink<DEV> {
     async fn run(
         &mut self,
-        (rx, back): (Rx<EthByte>, Rx<Answer>),
+        (rx, back): (Rx<EthByte>, Rx<HostAnswer>),
         (ask, tx): (Tx<Ask>, Tx<EthByte>),
     ) {
         loop {
@@ -276,6 +334,7 @@ impl<const DEV: usize> Unit for HostLink<DEV> {
                 at,
                 dev,
                 self.out_tag.get(),
+                self.out_asked.get(),
                 self.out_data.get(),
                 self.out_err.get(),
             );
@@ -314,7 +373,8 @@ impl<const DEV: usize> Unit for HostLink<DEV> {
                     self.in_data.get().slice::<8, 24>().concat::<_, 32>(value),
                 took & (got == 26) ? in_strb: value.slice::<0, 4>(),
                 take ? { sending: Bit::One, at: 0, out_tag: ah.tag,
-                         out_data: ah.data, out_err: ah.err },
+                         out_asked: ah.asked, out_data: ah.data,
+                         out_err: ah.err },
                 put & !last ? at: at + 1,
                 put & last ? { sending: Bit::Zero, at: 0 },
             });
@@ -363,7 +423,7 @@ impl<const DEV: usize> Unit for HostBridge<DEV> {
         (tx, bus): (Tx<EthByte>, LiteHostPort<32, 32, 4>),
     ) {
         let (ask_tx, ask_rx) = chan::<Ask, DefaultClock>();
-        let (ans_tx, ans_rx) = chan::<Answer, DefaultClock>();
+        let (ans_tx, ans_rx) = chan::<HostAnswer, DefaultClock>();
         join2(
             self.link.run((rx, ans_rx), (ask_tx, tx)),
             self.master.run(bus, (ask_rx, ans_tx)),
@@ -421,19 +481,21 @@ mod tests {
     /// The memory answers `SlvErr` at and above 0x1000. Returns the
     /// answers and how many writes the memory saw.
     fn serve(frames: &[Vec<u8>]) -> (Vec<(u8, u8, u32, bool)>, usize) {
-        let (answers, writes, _) = serve_with(frames, 0);
+        let (answers, writes, _, _) = serve_with(frames, 0);
         (answers, writes)
     }
 
     /// As `serve`, with a memory that takes `delay` cycles to answer,
-    /// and the strobe of every write it saw.
+    /// the strobe of every write it saw, and the tag each answer says it
+    /// answers, byte 18.
     fn serve_with(
         frames: &[Vec<u8>],
         delay: u32,
-    ) -> (Vec<(u8, u8, u32, bool)>, usize, Vec<u8>) {
+    ) -> (Vec<(u8, u8, u32, bool)>, usize, Vec<u8>, Vec<u8>) {
         let (host, per) = link::<LitePort![ADDR = 32, DATA = 32, STRB = 4]>();
         let (ask_tx, ask_rx) = chan::<Ask, DefaultClock>();
-        let (ans_tx, ans_rx) = chan::<Answer, DefaultClock>();
+        let (ans_tx, ans_rx) = chan::<HostAnswer, DefaultClock>();
+        let mut asked = Vec::new();
         let (in_tx, in_rx) = chan::<EthByte, DefaultClock>();
         let (out_tx, out_rx) = chan::<EthByte, DefaultClock>();
         let mut wire = HostLink::<5>::default();
@@ -504,6 +566,7 @@ mod tests {
                     if b.last.to_bool() {
                         if let Some(a) = answer_of(&cur) {
                             answers.push(a);
+                            asked.push(cur[18]);
                         }
                         cur.clear();
                     }
@@ -516,7 +579,80 @@ mod tests {
         }
         let n = *writes.borrow();
         let st = strobes.borrow().clone();
-        (answers, n, st)
+        (answers, n, st, asked)
+    }
+
+    /// The frames sent one after another, `gap` idle cycles apart as a
+    /// wire's preamble and inter-frame gap keep them, without waiting
+    /// for answers; then the answers that came back. Returns them and
+    /// how many writes the memory saw.
+    fn serve_back_to_back(
+        frames: &[Vec<u8>],
+        gap: usize,
+    ) -> (Vec<(u8, u8, u32, bool)>, usize) {
+        let (host, per) = link::<LitePort![ADDR = 32, DATA = 32, STRB = 4]>();
+        let (in_tx, in_rx) = chan::<EthByte, DefaultClock>();
+        let (out_tx, out_rx) = chan::<EthByte, DefaultClock>();
+        let mut bridge = HostBridge::<5>::default();
+        let writes = Rc::new(RefCell::new(0usize));
+        let wcount = writes.clone();
+        let memory = async move {
+            let mut words: HashMap<u32, u32> = HashMap::new();
+            loop {
+                DefaultClock::rising().await;
+                if per.aw.peek().is_some() && per.w.peek().is_some() {
+                    let a = per.aw.recv().unwrap().addr.raw() as u32;
+                    words.insert(a, per.w.recv().unwrap().data.raw() as u32);
+                    *wcount.borrow_mut() += 1;
+                    per.b.send(LiteB { resp: Resp::Okay });
+                }
+                if let Some(ar) = per.ar.recv() {
+                    let a = ar.addr.raw() as u32;
+                    per.r.send(LiteR {
+                        data: U::from(*words.get(&a).unwrap_or(&0)),
+                        resp: Resp::Okay,
+                    });
+                }
+            }
+        };
+        let mut sim =
+            Running::new(join2(bridge.run(in_rx, (out_tx, host)), memory));
+        let mut bytes: Vec<(u8, bool)> = Vec::new();
+        for f in frames {
+            for (i, b) in f.iter().enumerate() {
+                bytes.push((*b, i == f.len() - 1));
+            }
+        }
+        let mut answers = Vec::new();
+        let mut cur: Vec<u8> = Vec::new();
+        let (mut i, mut idle) = (0, 0);
+        for _ in 0..(bytes.len() + gap * frames.len() + 2000) {
+            if idle > 0 {
+                idle -= 1;
+            } else if i < bytes.len() && in_tx.ready().to_bool() {
+                let (b, last) = bytes[i];
+                in_tx.send(EthByte {
+                    data: U::from(b),
+                    last: Bit::from(last),
+                });
+                i += 1;
+                if last {
+                    idle = gap;
+                }
+            }
+            if let Some(b) = out_rx.recv() {
+                cur.push(b.data.raw() as u8);
+                if b.last.to_bool() {
+                    if let Some(a) = answer_of(&cur) {
+                        answers.push(a);
+                    }
+                    cur.clear();
+                }
+            }
+            sim.cycle();
+        }
+        let n = *writes.borrow();
+        (answers, n)
     }
 
     #[test]
@@ -549,7 +685,95 @@ mod tests {
             ask_frame(5, 3, true, 0x2000, 1),
             ask_frame(5, 4, false, 0x2000, 0),
         ]);
-        assert_eq!(got, vec![(5, 3, 0, true), (5, 4, 0, true)]);
+        // The write's answer counts the failure; the read's is its own.
+        assert_eq!(got, vec![(5, 3, 1, true), (5, 4, 0, true)]);
+    }
+
+    #[test]
+    fn a_write_answer_counts_the_failures_so_far() {
+        let (got, writes) = serve(&[
+            ask_frame(5, 1, true, 0x2000, 1),
+            ask_frame(5, 2, true, 0x3000, 1),
+            ask_frame(5, 3, true, 0x40, 1),
+        ]);
+        assert_eq!(
+            got,
+            vec![(5, 1, 1, true), (5, 2, 2, true), (5, 3, 2, false)],
+            "a program that missed two answers still sees two failures"
+        );
+        assert_eq!(writes, 3);
+    }
+
+    #[test]
+    fn an_ask_out_of_turn_is_answered_from_the_last() {
+        // Tag 3 does not follow tag 1: the ask with tag 2 was lost. The
+        // answer names tag 1, the last performed, and nothing reaches
+        // the bus until tag 2 comes.
+        let (got, writes) = serve(&[
+            ask_frame(5, 1, true, 0x40, 0x11),
+            ask_frame(5, 3, true, 0x44, 0x33),
+            ask_frame(5, 2, true, 0x48, 0x22),
+            ask_frame(5, 3, true, 0x44, 0x33),
+            ask_frame(5, 4, false, 0x44, 0),
+        ]);
+        assert_eq!(
+            got,
+            vec![
+                (5, 1, 0, false),
+                (5, 1, 0, false),
+                (5, 2, 0, false),
+                (5, 3, 0, false),
+                (5, 4, 0x33, false),
+            ]
+        );
+        assert_eq!(writes, 3);
+    }
+
+    #[test]
+    fn an_answer_names_the_ask_it_answers() {
+        // An ask performed, one ahead of its turn, and a stale copy of
+        // the first: the answer's tag is the last performed each time,
+        // and byte 18 names the ask.
+        let (got, _, _, asked) = serve_with(
+            &[
+                ask_frame(5, 1, true, 0x40, 1),
+                ask_frame(5, 3, true, 0x44, 3),
+                ask_frame(5, 1, true, 0x40, 1),
+            ],
+            0,
+        );
+        let tags: Vec<u8> = got.iter().map(|a| a.1).collect();
+        assert_eq!(tags, vec![1, 1, 1]);
+        assert_eq!(asked, vec![1, 3, 1]);
+    }
+
+    #[test]
+    fn the_tag_after_255_is_0() {
+        let (got, writes) = serve(&[
+            ask_frame(5, 255, true, 0x40, 7),
+            ask_frame(5, 0, false, 0x40, 0),
+        ]);
+        assert_eq!(got, vec![(5, 255, 0, false), (5, 0, 7, false)]);
+        assert_eq!(writes, 1);
+    }
+
+    #[test]
+    fn asks_sent_without_waiting_are_performed_in_order() {
+        // A program that sends sixteen writes and a read back to back,
+        // with the frame gap a wire keeps, and waits only at the end.
+        let mut frames: Vec<Vec<u8>> = (0..16u8)
+            .map(|i| ask_frame(5, 10 + i, true, 0x100 + 4 * i as u32, i as u32))
+            .collect();
+        frames.push(ask_frame(5, 26, false, 0x13c, 0));
+        let (got, writes) = serve_back_to_back(&frames, 20);
+        // Every ask is answered or covered by a later answer, so the
+        // last answer names the read, with its word.
+        assert_eq!(got.last(), Some(&(5, 26, 15, false)));
+        assert_eq!(writes, 16);
+        // At the wire's frame gap nothing is dropped: each ask has its
+        // own answer, in order.
+        let tags: Vec<u8> = got.iter().map(|a| a.1).collect();
+        assert_eq!(tags, (10..27).collect::<Vec<u8>>());
     }
 
     #[test]
@@ -571,7 +795,7 @@ mod tests {
     fn a_partial_write_keeps_its_strobe() {
         let mut f = ask_frame(5, 1, true, 0x40, 0xabcd);
         f[26] = 0x3;
-        let (got, writes, strobes) = serve_with(&[f], 0);
+        let (got, writes, strobes, _) = serve_with(&[f], 0);
         assert_eq!(got, vec![(5, 1, 0, false)]);
         assert_eq!((writes, strobes), (1, vec![0x3]), "the strobe reaches w");
     }
@@ -621,7 +845,7 @@ mod tests {
 
     #[test]
     fn a_slow_bus_is_waited_for() {
-        let (got, writes, _) = serve_with(
+        let (got, writes, _, _) = serve_with(
             &[
                 ask_frame(5, 1, true, 0x40, 0x77),
                 ask_frame(5, 2, false, 0x40, 0),

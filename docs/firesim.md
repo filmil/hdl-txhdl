@@ -95,7 +95,7 @@ The driver's first frame is a reset frame, kind 0x04 on EtherType 0x88b5 with th
 `rocket_eth_top.v` then starts the MIG's power-on reset again, and the MIG's calibration holds the clock converter, `FPGATop` and the link in reset, as at power-on.
 The driver gives its first ask five seconds for an answer while the memory calibrates.
 
-`+eth_log=<file>`, inside the `+permissive` block, logs every register access and stream beat with its time, plus each ask sent again and each ask that got no answer.
+`+eth_log=<file>`, inside the `+permissive` block, logs with its time every register frame sent, so an ask sent again shows twice, every read's word, every stream beat, and why the driver stopped, if it did.
 On a board that stops answering, the log's last lines name the access it stopped at.
 
 Linux boots on the Rocket design (#2015).
@@ -113,7 +113,30 @@ bazel build //firesim/ax7a200b/linux:rocket_linux
 
 It passes when the console shows `txhdl: userspace is up on Rocket`, the driver prints `*** PASSED ***` and exits 0.
 On 2026-10-30 the whole run took 4 min 36 s and 288,686,162 target cycles: 4 min 22 s to load the ELF's 3.45 MB, and 13 s from OpenSBI's banner to the power-off.
-The load is slow because FireSim writes the memory four bytes per register write, and each write is one round trip on the cable, about 0.3 ms.
+The load was slow because FireSim writes the memory four bytes per register write, and each write waited for its answer, one round trip on the cable of about 0.3 ms.
+
+Since #2019 the driver keeps up to eight register writes in flight, and the same boot takes 46.0 s, twice in a row on 2026-10-31.
+The boot itself is unchanged, 288,686,162 target cycles and about 13 s, so the load takes about 33 s, against 4 min 22 s before.
+This works because `LiteMaster` on the board now performs an ask only when its tag follows the last one it performed, and answers any other ask from the last answer it kept:
+
+* an answer says that every ask up to its tag is done;
+* each answer also names, in byte 18, the ask it answers;
+* an answer to an ask ahead of the one after the last says that one was lost, and the driver sends the window again from the first ask not yet answered, once until more is done;
+* an answer to an ask behind it is a late copy of one already answered, and the driver passes over it;
+* a write's answer carries the count of failed transactions so far, so a refused write whose own answer was lost still stops the run;
+* a read waits for every write before it, and goes alone.
+
+`eth_window.h` holds the driver's side, and `eth_window_test` runs it against a model of the board that loses one frame in ten each way.
+`+window=<n>` sets the number of writes in flight, from 1 to 128.
+On 2026-10-31 the whole boot took 45.6 s at 8, 38.5 s at 12, 42.7 s at 16, 71.0 s at 32 and 102 s at 64.
+Above eight frames start to be lost, and at 32 the driver sent 5.5 million asks again for about 860,000 writes.
+Naming the ask in the answer stops late copies from sending the window again, but not those losses, so the default stays eight.
+#2026 is to find where the frames are lost.
+A driver from #2019 on a bitstream whose answers name no ask says so and sends one write at a time, since the older board would perform asks sent again out of order.
+`hello` and `bench` pass at the same target cycles, `bench` in 13.9 s against 15.0 s, and the driver of release `firesim-ax7a200b-rocket-v1` still passes on the new bitstream.
+The driver takes the board's tag from the answer to its first ask, so it also works on a bitstream that was not reset since an earlier run, as GCD's is.
+On such a bitstream the board does not perform the first read: it answers from what it kept, so the word the driver logs for it is the last answer of the earlier run.
+A driver from before #2019 on such a bitstream counts on from a random tag, which the board now answers from its last answer, and so stops with `no answer`.
 
 Two things had to match FireSim:
 

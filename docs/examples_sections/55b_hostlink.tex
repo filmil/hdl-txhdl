@@ -26,12 +26,33 @@ keeps the tag and the answer of the last transaction it performed,
 and an ask that repeats that tag is answered from them, without
 reaching the bus.
 
-The run sends four asks, one at a time, each waiting for its answer
-as the driver waits for a register. It writes a word and reads it
-back. It asks the same read again under the same tag, as the program
-does when an answer is lost, and the count of transactions the memory
-saw does not move. Then it writes where the memory refuses, and the
-refusal comes back as an error in the answer.
+The tags count up by one, and \code{LiteMaster} performs only the ask
+whose tag follows the last one it performed. It answers any other ask
+from what it kept, so the answer names the last transaction performed.
+So a program need not wait for each answer before it sends the next
+ask. An answer says that every ask up to its tag is done, and an
+answer that names an earlier tag than the program sent says that an
+ask was lost and where to start again. Each answer also names, at
+byte 18 of its frame, the ask it answers, so the program can tell an
+ask that came ahead of its turn, which says one was lost, from a stale
+copy it sent again, which does not. FireSim's driver sends a load of
+the target's memory that way, many writes before it waits. A write
+whose own answer was lost could hide a failure, so the answer to a
+write that was performed carries the number of transactions that have
+failed so far, in place of a word. An answer from what was kept repeats
+the last one, so the next answer to a write the program hears shows
+the failure.
+
+The run sends five asks, one at a time, each waiting for its answer.
+It writes a word and reads it back. It asks the same read again under
+the same tag, as the program does when an answer is lost, and the
+count of transactions the memory saw does not move. It sends a write
+whose tag skips one, as when the ask before it was lost, and the
+answer names the read, the last ask performed, while the bus sees
+nothing. Then it sends the skipped tag, as the program does when it
+sends again from the lost ask, so the master performs it: a write
+where the memory refuses, and the refusal
+comes back as an error in the answer, with a count of one failure.
 
 Both units are lowered, and the build simulates both netlists against
 this run under \code{nvc} and Verilator.
