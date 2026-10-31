@@ -32,11 +32,16 @@ from what it kept, so the answer names the last transaction performed.
 So a program need not wait for each answer before it sends the next
 ask. An answer says that every ask up to its tag is done, and an
 answer that names an earlier tag than the program sent says that an
-ask was lost and where to start again. FireSim's driver sends a load
-of the target's memory that way, many writes before it waits. A write
+ask was lost and where to start again. Each answer also names, at
+byte 18 of its frame, the ask it answers, so the program can tell an
+ask that came ahead of its turn, which says one was lost, from a stale
+copy it sent again, which does not. FireSim's driver sends a load of
+the target's memory that way, many writes before it waits. A write
 whose own answer was lost could hide a failure, so the answer to a
-write carries the number of transactions that have failed so far, in
-place of a word, and the next answer the program hears shows it.
+write that was performed carries the number of transactions that have
+failed so far, in place of a word. An answer from what was kept repeats
+the last one, so the next answer to a write the program hears shows
+the failure.
 
 The run sends five asks, one at a time, each waiting for its answer.
 It writes a word and reads it back. It asks the same read again under
