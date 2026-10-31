@@ -1,0 +1,26 @@
+#!/bin/busybox sh
+# SPDX-License-Identifier: Apache-2.0
+# The first program on the Rocket core when its root is the ext2 image on
+# FireSim's block device (issue 2020): the kernel mounted that image as
+# /, read-only, and started this file from it. Show where the root is,
+# run a program read from it, say so on a line a run can wait for, and
+# power off, which OpenSBI passes to the host, so the driver exits with
+# the run's status.
+# The root is read-only, so BusyBox's applets are not installed as links;
+# each command is BusyBox itself, named on its line.
+# Any command that fails stops the script, before the line a run waits
+# for: process 1 exiting panics the kernel, no power-off comes, and the
+# driver never prints PASSED.
+set -e
+bb=/bin/busybox
+$bb mount -t proc proc /proc
+$bb mount -t sysfs sysfs /sys
+$bb mount -t devtmpfs devtmpfs /dev
+$bb uname -a
+$bb grep ' / ' /proc/mounts
+$bb cat /sys/block/iceblk/size
+$bb cat /etc/txhdl-root
+$bb cat /proc/uptime
+echo "txhdl: the root is on the block device"
+echo "txhdl: powering off"
+$bb poweroff -f
