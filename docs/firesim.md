@@ -124,6 +124,30 @@ Two things had to match FireSim:
   That run took 18 min and 36.0 billion target cycles, and ended about two minutes after the kernel's power-off.
   `build.sh payload` marks the ELF an executable, since its segments are at their run addresses already.
 
+Linux also boots with its root file system on FireSim's block-device bridge (#2020).
+The prebuilt design already has the device: Chipyard's `BlockDeviceController` in the SoC, `BlockDevBridgeModule` among the bridges, and `blkdev-controller@10015000`, compatible `ucb-bar,blkdev`, in the boot ROM's device tree.
+The driver already serves it too, since FireChip's bridge drivers include `blockdev_t`, which reads and writes the file `+blkdev0=` names.
+So the change is the target's software only:
+
+* `//firesim/ax7a200b/linux:blk_kernel` is the kernel with `rocket_blk.config` over `rocket.config`, FireSim's `iceblk.c` (`@iceblk_driver`, from `firesim/iceblk-driver`) built in, and no initramfs.
+  `build.sh` builds that driver into `drivers/block` from a tree of hard links, so the fetched kernel tree is never written.
+  Its command line mounts `/dev/iceblk` read-only as an ext2 root and runs `/init` from it.
+* `//firesim/ax7a200b/linux:blk_root` is that root, a 4 MiB ext2 image of BusyBox and `blk_init`, written by `genext2fs` (`//third_party/genext2fs`) with every owner root and every time stamp at the epoch, so it is the same bytes from the same inputs.
+* `//firesim/ax7a200b/linux:rocket_blk_linux` is OpenSBI around that kernel, the ELF the driver loads.
+
+To repeat it, with the board programmed and the driver set up as above:
+
+```sh
+bazel build //firesim/ax7a200b/linux:rocket_blk_linux //firesim/ax7a200b/linux:blk_root
+# copy rocket_blk_linux.elf and blk_root.ext2 beside the driver; the driver
+# opens the image for writing, so make the copy writable, then:
+./rocket_eth_driver +permissive +iface=fpga-a200t-eth0 +blkdev0=blk_root.ext2 +permissive-off rocket_blk_linux.elf
+```
+
+It passes when the console shows `txhdl: the root is on the block device`, after a line `/init` read from `/etc/txhdl-root` on the image, and the driver prints `*** PASSED ***`.
+On 2026-10-31, with #2019's write window at 8, the run took 132 s and 244,581,332 target cycles, against 45.8 s for the initramfs boot with the same driver.
+The kernel it loads is smaller, 2.7 MB with no initramfs inside, so the difference is the block device: every block access is a register exchange over the cable, and the driver resent 4,653,320 asks against about 9,600 for the initramfs boot.
+
 ### Without Vivado
 
 The release [`firesim-ax7a200b-rocket-v1`](https://git.hdlfactory.com/HDL/txhdl/releases/tag/firesim-ax7a200b-rocket-v1) holds, from `main` at 6365564b (#2016):
