@@ -21,9 +21,9 @@ use txhdl_parts::bus::axi::{Ar, Aw, B, R, W};
 use txhdl_parts::bus::axi_lite::LiteHostPort;
 use txhdl_parts::eth::EthByte;
 use txhdl_parts::ethshare::EthShare;
-use txhdl_parts::remote::host::{HostLink, LiteMaster};
+use txhdl_parts::remote::host::{HostAnswer, HostLink, LiteMaster};
 use txhdl_parts::remote::stream::StreamBridge;
-use txhdl_parts::remote::{Answer, Ask};
+use txhdl_parts::remote::Ask;
 
 /// The design's device number on the wire; the driver's `+device=`.
 const DEVICE: usize = 5;
@@ -129,7 +129,7 @@ impl<const DEV: usize> Unit for RocketLink<DEV> {
         let (s_in_tx, s_in_rx) = chan::<EthByte, DefaultClock>();
         let (s_out_tx, s_out_rx) = chan::<EthByte, DefaultClock>();
         let (ask_tx, ask_rx) = chan::<Ask, DefaultClock>();
-        let (ans_tx, ans_rx) = chan::<Answer, DefaultClock>();
+        let (ans_tx, ans_rx) = chan::<HostAnswer, DefaultClock>();
         join2(
             join2(
                 join2(

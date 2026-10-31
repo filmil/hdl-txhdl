@@ -6,7 +6,7 @@
 //! transactions out to a program that answers them. [`HostLink`] and
 //! [`LiteMaster`] carry a program's transactions in: the program sends
 //! an [`Ask`](super::Ask) in a frame, [`LiteMaster`] performs it as an
-//! AXI-Lite host on the design's bus, and the [`Answer`](super::Answer)
+//! AXI-Lite host on the design's bus, and the [`HostAnswer`]
 //! goes back in a frame. What FireSim's host driver does over PCIe,
 //! reading and writing the simulator's control registers, it can do
 //! over this instead (issue 1931).
@@ -33,16 +33,24 @@
 //! program learns where the count stands from the answer to its first
 //! ask.
 //!
-//! An answer to a write carries the number of transactions that have
-//! failed since the design started, in place of a word. A program that
-//! does not hear a write's own answer still sees its failure in the
-//! next one.
+//! Each answer also names the ask it answers, at byte 18 of its frame
+//! ([`HostAnswer::asked`]). An answer whose two tags differ answered an
+//! ask out of turn: one ahead of the last says an ask was lost, and one
+//! behind is a stale copy the program sent again, which says nothing
+//! was lost. A bridge from before issue 2019 leaves byte 18 at zero.
+//!
+//! The answer to a write that was performed carries the number of
+//! transactions that have failed since the design started, in place of
+//! a word, and an answer from what was kept repeats the last one's. A
+//! program that does not hear a write's own answer still sees its
+//! failure in the next answer to a write.
 use txhdl::comp::{chan, join2, mux, Clock, DefaultClock, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, select, with, Trace};
+use txhdl::{Transaction as TransactionDerive, Value as ValueDerive};
 
 use super::eth::{ETHERTYPE, FRAME_LEN};
-use super::{Answer, Ask};
+use super::Ask;
 use crate::bus::axi::Resp;
 use crate::bus::axi_lite::{LiteAw, LiteHostPort, LiteW};
 use crate::eth::EthByte;
@@ -54,6 +62,22 @@ pub const KIND_HOST_ANSWER: u32 = 0x82;
 
 // The type's two bytes, as the frame carries them.
 const _: () = assert!(ETHERTYPE == 0x88b5);
+
+/// What [`LiteMaster`] answers to one [`Ask`](super::Ask): the last
+/// transaction it performed, and the ask that this answers.
+#[derive(TransactionDerive, ValueDerive, Clone, Copy, Default, Debug)]
+pub struct HostAnswer {
+    /// The tag of the last transaction performed, which is the ask's own
+    /// tag when the ask was performed.
+    pub tag: U<8>,
+    /// The tag of the ask this answers.
+    pub asked: U<8>,
+    /// The word a read read; for a write, the count of failures after
+    /// it.
+    pub data: U<32>,
+    /// One if the last transaction performed failed.
+    pub err: Bit,
+}
 
 // begin{masterstate}
 /// An AXI-Lite host that performs one [`Ask`](super::Ask) at a time
@@ -90,6 +114,8 @@ pub struct LiteMaster {
     pub last_err: Reg<Bit>,
     /// How many transactions have failed, wrapping.
     pub fails: Reg<U<32>>,
+    /// The tag of the ask being answered.
+    pub asked: Reg<U<8>>,
 }
 // end{masterstate}
 
@@ -99,7 +125,7 @@ impl Unit for LiteMaster {
     async fn run(
         &mut self,
         bus: LiteHostPort<32, 32, 4>,
-        (ask, back): (Rx<Ask>, Tx<Answer>),
+        (ask, back): (Rx<Ask>, Tx<HostAnswer>),
     ) {
         loop {
             DefaultClock::rising().await;
@@ -147,6 +173,7 @@ impl Unit for LiteMaster {
                           addr_sent: Bit::Zero, data_sent: Bit::Zero,
                           tag: head.tag, addr: head.addr,
                           data: head.data, strb: head.strb },
+                take ? asked: head.tag,
                 take & !next ? answering: Bit::One,
                 send_aw | send_ar ? addr_sent: Bit::One,
                 send_w ? data_sent: Bit::One,
@@ -175,8 +202,9 @@ impl Unit for LiteMaster {
                 });
             }
             if say.to_bool() {
-                back.send(Answer {
+                back.send(HostAnswer {
                     tag: self.last_tag.get(),
+                    asked: self.asked.get(),
                     data: self.last_data.get(),
                     err: self.last_err.get(),
                 });
@@ -219,6 +247,8 @@ pub struct HostLink<const DEV: usize> {
     pub at: Reg<U<6>>,
     /// The answer being sent.
     pub out_tag: Reg<U<8>>,
+    /// The tag of the ask it answers.
+    pub out_asked: Reg<U<8>>,
     /// Its word.
     pub out_data: Reg<U<32>>,
     /// Whether it says the transaction failed.
@@ -228,7 +258,14 @@ pub struct HostLink<const DEV: usize> {
 
 /// The byte at `at` of the frame that carries an answer to a program.
 #[lower]
-fn answer_byte(at: U<6>, dev: U<8>, tag: U<8>, data: U<32>, err: Bit) -> U<8> {
+fn answer_byte(
+    at: U<6>,
+    dev: U<8>,
+    tag: U<8>,
+    asked: U<8>,
+    data: U<32>,
+    err: Bit,
+) -> U<8> {
     let ff = U::<8>::from(0xffu8);
     let zero = U::<8>::from(0u8);
     select!(at.raw() => {
@@ -244,6 +281,7 @@ fn answer_byte(at: U<6>, dev: U<8>, tag: U<8>, data: U<32>, err: Bit) -> U<8> {
         15 => dev,
         16 => tag,
         17 => err.zext::<8>(),
+        18 => asked,
         22 => data.slice::<24, 8>(),
         23 => data.slice::<16, 8>(),
         24 => data.slice::<8, 8>(),
@@ -257,7 +295,7 @@ fn answer_byte(at: U<6>, dev: U<8>, tag: U<8>, data: U<32>, err: Bit) -> U<8> {
 impl<const DEV: usize> Unit for HostLink<DEV> {
     async fn run(
         &mut self,
-        (rx, back): (Rx<EthByte>, Rx<Answer>),
+        (rx, back): (Rx<EthByte>, Rx<HostAnswer>),
         (ask, tx): (Tx<Ask>, Tx<EthByte>),
     ) {
         loop {
@@ -296,6 +334,7 @@ impl<const DEV: usize> Unit for HostLink<DEV> {
                 at,
                 dev,
                 self.out_tag.get(),
+                self.out_asked.get(),
                 self.out_data.get(),
                 self.out_err.get(),
             );
@@ -334,7 +373,8 @@ impl<const DEV: usize> Unit for HostLink<DEV> {
                     self.in_data.get().slice::<8, 24>().concat::<_, 32>(value),
                 took & (got == 26) ? in_strb: value.slice::<0, 4>(),
                 take ? { sending: Bit::One, at: 0, out_tag: ah.tag,
-                         out_data: ah.data, out_err: ah.err },
+                         out_asked: ah.asked, out_data: ah.data,
+                         out_err: ah.err },
                 put & !last ? at: at + 1,
                 put & last ? { sending: Bit::Zero, at: 0 },
             });
@@ -383,7 +423,7 @@ impl<const DEV: usize> Unit for HostBridge<DEV> {
         (tx, bus): (Tx<EthByte>, LiteHostPort<32, 32, 4>),
     ) {
         let (ask_tx, ask_rx) = chan::<Ask, DefaultClock>();
-        let (ans_tx, ans_rx) = chan::<Answer, DefaultClock>();
+        let (ans_tx, ans_rx) = chan::<HostAnswer, DefaultClock>();
         join2(
             self.link.run((rx, ans_rx), (ask_tx, tx)),
             self.master.run(bus, (ask_rx, ans_tx)),
@@ -441,19 +481,21 @@ mod tests {
     /// The memory answers `SlvErr` at and above 0x1000. Returns the
     /// answers and how many writes the memory saw.
     fn serve(frames: &[Vec<u8>]) -> (Vec<(u8, u8, u32, bool)>, usize) {
-        let (answers, writes, _) = serve_with(frames, 0);
+        let (answers, writes, _, _) = serve_with(frames, 0);
         (answers, writes)
     }
 
     /// As `serve`, with a memory that takes `delay` cycles to answer,
-    /// and the strobe of every write it saw.
+    /// the strobe of every write it saw, and the tag each answer says it
+    /// answers, byte 18.
     fn serve_with(
         frames: &[Vec<u8>],
         delay: u32,
-    ) -> (Vec<(u8, u8, u32, bool)>, usize, Vec<u8>) {
+    ) -> (Vec<(u8, u8, u32, bool)>, usize, Vec<u8>, Vec<u8>) {
         let (host, per) = link::<LitePort![ADDR = 32, DATA = 32, STRB = 4]>();
         let (ask_tx, ask_rx) = chan::<Ask, DefaultClock>();
-        let (ans_tx, ans_rx) = chan::<Answer, DefaultClock>();
+        let (ans_tx, ans_rx) = chan::<HostAnswer, DefaultClock>();
+        let mut asked = Vec::new();
         let (in_tx, in_rx) = chan::<EthByte, DefaultClock>();
         let (out_tx, out_rx) = chan::<EthByte, DefaultClock>();
         let mut wire = HostLink::<5>::default();
@@ -524,6 +566,7 @@ mod tests {
                     if b.last.to_bool() {
                         if let Some(a) = answer_of(&cur) {
                             answers.push(a);
+                            asked.push(cur[18]);
                         }
                         cur.clear();
                     }
@@ -536,7 +579,7 @@ mod tests {
         }
         let n = *writes.borrow();
         let st = strobes.borrow().clone();
-        (answers, n, st)
+        (answers, n, st, asked)
     }
 
     /// The frames sent one after another, `gap` idle cycles apart as a
@@ -687,6 +730,24 @@ mod tests {
     }
 
     #[test]
+    fn an_answer_names_the_ask_it_answers() {
+        // An ask performed, one ahead of its turn, and a stale copy of
+        // the first: the answer's tag is the last performed each time,
+        // and byte 18 names the ask.
+        let (got, _, _, asked) = serve_with(
+            &[
+                ask_frame(5, 1, true, 0x40, 1),
+                ask_frame(5, 3, true, 0x44, 3),
+                ask_frame(5, 1, true, 0x40, 1),
+            ],
+            0,
+        );
+        let tags: Vec<u8> = got.iter().map(|a| a.1).collect();
+        assert_eq!(tags, vec![1, 1, 1]);
+        assert_eq!(asked, vec![1, 3, 1]);
+    }
+
+    #[test]
     fn the_tag_after_255_is_0() {
         let (got, writes) = serve(&[
             ask_frame(5, 255, true, 0x40, 7),
@@ -734,7 +795,7 @@ mod tests {
     fn a_partial_write_keeps_its_strobe() {
         let mut f = ask_frame(5, 1, true, 0x40, 0xabcd);
         f[26] = 0x3;
-        let (got, writes, strobes) = serve_with(&[f], 0);
+        let (got, writes, strobes, _) = serve_with(&[f], 0);
         assert_eq!(got, vec![(5, 1, 0, false)]);
         assert_eq!((writes, strobes), (1, vec![0x3]), "the strobe reaches w");
     }
@@ -784,7 +845,7 @@ mod tests {
 
     #[test]
     fn a_slow_bus_is_waited_for() {
-        let (got, writes, _) = serve_with(
+        let (got, writes, _, _) = serve_with(
             &[
                 ask_frame(5, 1, true, 0x40, 0x77),
                 ask_frame(5, 2, false, 0x40, 0),
