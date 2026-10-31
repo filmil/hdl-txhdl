@@ -665,6 +665,17 @@ http_archive(
     urls = ["https://busybox.net/downloads/busybox-1.37.0.tar.bz2"],
 )
 
+# FireSim's Linux driver for its block device, iceblk.c, built as a
+# module against the kernel above (issue 2020). The commit is the newest,
+# which follows the block layer's interface to kernel 6.16.
+http_archive(
+    name = "iceblk_driver",
+    build_file = "//third_party/linux:source.BUILD.bazel",
+    sha256 = "2273947e2b6afa57ee8be6f6b9a5b23ae957d11e5ed406fdc291ac14871b907f",
+    strip_prefix = "iceblk-driver-89227faf4a92c4ba3f528905fca1222750d21b56",
+    urls = ["https://github.com/firesim/iceblk-driver/archive/89227faf4a92c4ba3f528905fca1222750d21b56.tar.gz"],
+)
+
 # genext2fs, which writes the Rocket design's ext2 root file system from
 # a directory (issue 2020); third_party/genext2fs builds it.
 http_archive(
