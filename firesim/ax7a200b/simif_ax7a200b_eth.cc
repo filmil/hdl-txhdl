@@ -301,6 +301,33 @@ simif_ax7a200b_eth_t::~simif_ax7a200b_eth_t() {
     fprintf(stdout, "simif_ax7a200b_eth: %lu asks sent again\n",
             static_cast<unsigned long>(resends));
   }
+  // What each socket received and dropped for want of room in its
+  // receive buffer, so a run with asks sent again shows whether the
+  // answers were lost here rather than on the wire or the board (issue
+  // 2026). Reading the counts also clears them.
+  const struct {
+    int sock;
+    const char *what;
+  } socks[] = {{fd, "control"}, {sfd, "stream"}};
+  for (const auto &k : socks) {
+    // The kernel's struct tpacket_stats, from <linux/if_packet.h>, which
+    // clashes with <netpacket/packet.h>.
+    struct {
+      unsigned int tp_packets;
+      unsigned int tp_drops;
+    } st = {};
+    socklen_t len = sizeof(st);
+    int buf = 0;
+    socklen_t blen = sizeof(buf);
+    if (k.sock >= 0 &&
+        getsockopt(k.sock, SOL_PACKET, PACKET_STATISTICS, &st, &len) == 0 &&
+        getsockopt(k.sock, SOL_SOCKET, SO_RCVBUF, &buf, &blen) == 0) {
+      fprintf(stdout,
+              "simif_ax7a200b_eth: %s socket received %u frames, dropped %u "
+              "(receive buffer %d bytes)\n",
+              k.what, st.tp_packets, st.tp_drops, buf);
+    }
+  }
   if (fd >= 0) {
     close(fd);
   }
