@@ -665,6 +665,16 @@ http_archive(
     urls = ["https://busybox.net/downloads/busybox-1.37.0.tar.bz2"],
 )
 
+# genext2fs, which writes the Rocket design's ext2 root file system from
+# a directory (issue 2020); third_party/genext2fs builds it.
+http_archive(
+    name = "genext2fs",
+    build_file = "//third_party/genext2fs:genext2fs.BUILD.bazel",
+    sha256 = "e3503a5bae3fd4b5b2c2d4f49b5b7f8d08e7accb20ab28c0f9647389b2c8a079",
+    strip_prefix = "genext2fs-1.6.3",
+    urls = ["https://github.com/bestouff/genext2fs/archive/refs/tags/v1.6.3.tar.gz"],
+)
+
 # Dropbear, the ssh server of Linux's userspace on the board (issue
 # 1439), built against musl's shared library. The checksum is the one
 # its author publishes in SHA256SUM.asc.
