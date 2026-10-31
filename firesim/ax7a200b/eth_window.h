@@ -210,7 +210,9 @@ private:
           fails_ = a.data - (a.err ? 1 : 0);
           fails_known_ = true;
         }
-        if (a.data != fails_) {
+        // The old bridge answers a write with 0 and says a refusal only
+        // in its error bit; it answers each write before the next goes.
+        if (a.err || a.data != fails_) {
           fail_("the bus refused a write at or before " + hex(o.addr));
         }
       } else {

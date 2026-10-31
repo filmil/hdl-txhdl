@@ -273,6 +273,17 @@ int main() {
            "a refused write is seen in a later answer");
   }
   {
+    // On the old bridge, whose write answers carry no count, a refused
+    // write after the first still stops the run.
+    Board b;
+    b.old_bridge = true;
+    AskWindow w = window_on(b, 32);
+    w.start(1, 0, 10);
+    w.write(0x10, 1);
+    expect(stops([&] { w.write(0x200000, 1); }),
+           "old bridge: a refused write after the first");
+  }
+  {
     // A refused first write stops the run.
     Board b;
     AskWindow w = window_on(b, 32);
