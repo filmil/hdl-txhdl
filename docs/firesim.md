@@ -135,6 +135,7 @@ Naming the ask in the answer stops late copies from sending the window again, bu
 A driver from #2019 on a bitstream whose answers name no ask says so and sends one write at a time, since the older board would perform asks sent again out of order.
 `hello` and `bench` pass at the same target cycles, `bench` in 13.9 s against 15.0 s, and the driver of release `firesim-ax7a200b-rocket-v1` still passes on the new bitstream.
 The driver takes the board's tag from the answer to its first ask, so it also works on a bitstream that was not reset since an earlier run, as GCD's is.
+On such a bitstream the board does not perform the first read: it answers from what it kept, so the word the driver logs for it is the last answer of the earlier run.
 A driver from before #2019 on such a bitstream counts on from a random tag, which the board now answers from its last answer, and so stops with `no answer`.
 
 Two things had to match FireSim:

@@ -49,7 +49,9 @@ the same tag, as the program does when an answer is lost, and the
 count of transactions the memory saw does not move. It sends a write
 whose tag skips one, as when the ask before it was lost, and the
 answer names the read, the last ask performed, while the bus sees
-nothing. Then it writes where the memory refuses, and the refusal
+nothing. Then it sends the skipped tag, as the program does when it
+sends again from the lost ask, so the master performs it: a write
+where the memory refuses, and the refusal
 comes back as an error in the answer, with a count of one failure.
 
 Both units are lowered, and the build simulates both netlists against
