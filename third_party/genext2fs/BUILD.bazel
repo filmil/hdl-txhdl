@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+# genext2fs, which writes an ext2 image from a directory without
+# mounting anything (issue 2020). Built from its release source by
+# genext2fs.BUILD.bazel, as @genext2fs//:genext2fs.
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+exports_files(["genext2fs.BUILD.bazel"])
+
+# The image is the same bytes whenever its files were written, and ext2.
+sh_test(
+    name = "genext2fs_test",
+    size = "small",
+    srcs = ["genext2fs_test.sh"],
+    args = ["$(rootpath @genext2fs)"],
+    data = ["@genext2fs"],
+)

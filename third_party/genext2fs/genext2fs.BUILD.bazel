@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: Apache-2.0
+# genext2fs 1.6.3 as one binary for the host (issue 2020). Its configure
+# script writes config.h; here it is written once, for glibc on Linux,
+# the only host this build runs on, and without libarchive, since the
+# image is made from a directory and not a tarball.
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+genrule(
+    name = "config_h",
+    outs = ["config.h"],
+    cmd = "\n".join([
+        "cat > $@ <<'EOF'",
+        "#define VERSION \"1.6.3\"",
+        "#define STDC_HEADERS 1",
+        "#define HAVE_DIRENT_H 1",
+        "#define HAVE_FCNTL_H 1",
+        "#define HAVE_GETLINE 1",
+        "#define HAVE_GETOPT_H 1",
+        "#define HAVE_GETOPT_LONG 1",
+        "#define HAVE_INTTYPES_H 1",
+        "#define HAVE_LIBGEN_H 1",
+        "#define HAVE_LIMITS_H 1",
+        "#define HAVE_MEMORY_H 1",
+        "#define HAVE_STDDEF_H 1",
+        "#define HAVE_STDINT_H 1",
+        "#define HAVE_STDLIB_H 1",
+        "#define HAVE_STRING_H 1",
+        "#define HAVE_STRINGS_H 1",
+        "#define HAVE_STRTOF 1",
+        "#define HAVE_STRUCT_STAT_ST_RDEV 1",
+        "#define HAVE_SYS_STAT_H 1",
+        "#define HAVE_SYS_TYPES_H 1",
+        "#define HAVE_UNISTD_H 1",
+        "#define MAJOR_IN_SYSMACROS 1",
+        "EOF",
+    ]),
+)
+
+cc_library(
+    name = "config",
+    hdrs = [":config_h"],
+    includes = ["."],
+)
+
+cc_binary(
+    name = "genext2fs",
+    srcs = [
+        "cache.h",
+        "genext2fs.c",
+        "list.h",
+    ],
+    copts = ["-w"],
+    visibility = ["//visibility:public"],
+    deps = [":config"],
+)

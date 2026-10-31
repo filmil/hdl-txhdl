@@ -47,6 +47,41 @@ genrule(
     tools = LINUX_TOOLS,
 )
 
+# The root file system on FireSim's block device (issue 2020): BusyBox,
+# the init that runs from it, a file to read back, and the directories
+# the init mounts over, as an ext2 image the driver serves with
+# +blkdev0=. genext2fs writes it from a directory, with every owner root
+# and every time stamp at the epoch, so the same inputs give the same
+# bytes whenever they were written. 4 MiB in 1 KiB blocks; only the blocks the kernel reads cross
+# the cable.
+genrule(
+    name = "blk_root",
+    srcs = [
+        "bin/busybox",
+        "blk_init",
+    ],
+    outs = ["blk_root.ext2"],
+    cmd = "\n".join([
+        "set -euo pipefail",
+        "r=$(@D)/blk_root.d",
+        "rm -rf $$r && mkdir -p $$r/bin $$r/dev $$r/etc $$r/proc $$r/sys",
+        "cp $(execpath bin/busybox) $$r/bin/busybox",
+        "cp $(execpath blk_init) $$r/init",
+        "echo 'txhdl: this line was read from the block device' > $$r/etc/txhdl-root",
+        # Every mode set here rather than left to the umask.
+        "chmod 0755 $$r $$r/bin $$r/dev $$r/etc $$r/proc $$r/sys $$r/bin/busybox $$r/init",
+        "chmod 0644 $$r/etc/txhdl-root",
+        # genext2fs takes each file's modification time from the file
+        # and only its own from SOURCE_DATE_EPOCH, so the files go to
+        # the epoch first.
+        "find $$r -exec touch -h -d @0 {} +",
+        "SOURCE_DATE_EPOCH=0 $(execpath @genext2fs) -B 1024 -b 4096 -N 64 -q -d $$r $@",
+        "rm -rf $$r",
+    ]),
+    tags = ["manual"],
+    tools = ["@genext2fs"],
+)
+
 genrule(
     name = "initramfs",
     srcs = [
@@ -94,6 +129,46 @@ genrule(
     outs = ["rocket_linux.elf"],
     cmd = LINUX_ENV + " $(execpath //linux:build.sh) payload " +
           "$(execpath @opensbi//:src) $(execpath Image) $@",
+    tags = ["manual"],
+    tools = LINUX_TOOLS,
+)
+
+# The kernel whose root is on FireSim's block device (issue 2020):
+# rocket.config with rocket_blk.config over it, FireSim's iceblk driver
+# built in, and no initramfs, so the driver loads the kernel alone and
+# serves blk_root.ext2 with +blkdev0=.
+genrule(
+    name = "blk_kernel",
+    srcs = [
+        "@iceblk_driver//:src",
+        "@linux//:src",
+        "rocket.config",
+        "rocket_blk.config",
+    ],
+    outs = [
+        "blk/Image",
+        "blk/kernel.config",
+        "blk/System.map",
+    ],
+    cmd = LINUX_ENV + " EXTRA_FRAGMENT=$(execpath rocket_blk.config) " +
+          "BUILTIN_DRIVER=$(execpath @iceblk_driver//:src)/iceblk.c " +
+          "$(execpath //linux:build.sh) kernel $(execpath @linux//:src) " +
+          "$(execpath rocket.config) $(execpath blk/Image) " +
+          "$(execpath blk/kernel.config) $(execpath blk/System.map) -",
+    tags = ["manual"],
+    tools = LINUX_TOOLS,
+)
+
+# OpenSBI with that kernel as its payload.
+genrule(
+    name = "rocket_blk_linux",
+    srcs = [
+        "@opensbi//:src",
+        "blk/Image",
+    ],
+    outs = ["rocket_blk_linux.elf"],
+    cmd = LINUX_ENV + " $(execpath //linux:build.sh) payload " +
+          "$(execpath @opensbi//:src) $(execpath blk/Image) $@",
     tags = ["manual"],
     tools = LINUX_TOOLS,
 )
