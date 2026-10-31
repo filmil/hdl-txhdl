@@ -302,9 +302,9 @@ static void boot(uint32_t staged)
 	 * `fb_jump` sums them where they land, so that the two lines can
 	 * be compared (issue 2011). Done before the line, outside the time
 	 * from it to the program's first. */
-	uint32_t run_words = (size + 3) & ~3u;
+	uint32_t run_bytes = (size + 3) & ~3u;
 	uint32_t program_sum = fb_sum_words(
-		(const volatile uint32_t *)(STAGE_BASE + off), run_words,
+		(const volatile uint32_t *)(STAGE_BASE + off), run_bytes,
 		ddr3_load);
 
 	printk("fastboot: booting %u bytes at 0x%08x, sum %08x\n", size,
