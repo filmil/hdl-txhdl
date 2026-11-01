@@ -51,7 +51,7 @@
 //   +device=<n>          the design's device number (default 5)
 //   +timeout_ms=<n>      how long to wait for an answer (default 20)
 //   +retries=<n>         how many times to send an ask (default 50)
-//   +window=<n>          register writes in flight, 1 to 128 (default 8)
+//   +window=<n>          register writes in flight, 1 to 128 (default 32)
 //   +eth_log=<file>      log every register frame sent, every read's
 //                        word, every stream beat, and a stop on the
 //                        register path to <file>, one line each
@@ -173,7 +173,7 @@ private:
   uint8_t device = 5;
   int timeout_ms = 20;
   int retries = 50;
-  int window = 8;
+  int window = 32;
   uint64_t resends = 0;
   std::unique_ptr<AskWindow> asks;
 };
@@ -192,7 +192,7 @@ simif_ax7a200b_eth_t::simif_ax7a200b_eth_t(
   device = static_cast<uint8_t>(plusint(args, "device", 5, 0, 255));
   timeout_ms = plusint(args, "timeout_ms", 20, 1, 60000);
   retries = plusint(args, "retries", 50, 1, 1000000);
-  window = plusint(args, "window", 8, 1, 128);
+  window = plusint(args, "window", 32, 1, 128);
   const std::string log_name = plusarg(args, "eth_log", "");
   if (!log_name.empty()) {
     log = fopen(log_name.c_str(), "w");
