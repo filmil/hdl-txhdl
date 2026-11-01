@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -209,5 +210,57 @@ func TestASenderCutOffSaysWhere(t *testing.T) {
 	}
 	if strings.Contains(errs.String(), "[load]") {
 		t.Fatalf("a [load] line on stderr, apart from the console:\n%s", errs.String())
+	}
+}
+
+// With `stamp`, every line the sender prints starts with the board
+// server's UTC time, the form the nightly reads, so the nightly times
+// the board and not the network to it (HDL/txhdl#2046). The stamp is
+// taken at a line's first byte, and the cut-off line is stamped too.
+func TestStampedLinesStartWithTheServersTime(t *testing.T) {
+	m, _, name := ptyNamed(t)
+	img := filepath.Join(t.TempDir(), "image.bin")
+	if err := os.WriteFile(img, image(2000), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	slowLoader(m, 2001, 2*time.Millisecond)
+	cmd := exec.Command(os.Args[0])
+	cmd.Env = append(os.Environ(),
+		"LOAD_AS_SENDER="+strings.Join([]string{name, "115200", "0x40000000", img, "1", "stamp"}, " "))
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2500 * time.Millisecond)
+	cmd.Process.Signal(syscall.SIGTERM)
+	cmd.Wait()
+	stamped := regexp.MustCompile(`^\d\d:\d\d:\d\d\.\d\d\dZ `)
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("too few lines:\n%s", out.String())
+	}
+	for _, l := range lines {
+		if !stamped.MatchString(l) {
+			t.Fatalf("a line without the server's stamp: %q\n%s", l, out.String())
+		}
+	}
+	if !strings.Contains(out.String(), "Z [load] 2000 words to") {
+		t.Fatalf("no stamped transfer line:\n%s", out.String())
+	}
+}
+
+// A stamper stamps each line once, at its first byte, however the
+// line's bytes are split across writes.
+func TestAStamperStampsEachLineOnce(t *testing.T) {
+	var b bytes.Buffer
+	at := time.Date(2026, 11, 1, 12, 9, 20, 848_000_000, time.UTC)
+	s := &stamper{w: &b, clock: func() time.Time { return at }}
+	for _, p := range []string{"ab", "c\nd", "e\n", "\n"} {
+		s.Write([]byte(p))
+	}
+	want := "12:09:20.848Z abc\n12:09:20.848Z de\n12:09:20.848Z \n"
+	if b.String() != want {
+		t.Fatalf("got %q, want %q", b.String(), want)
 	}
 }

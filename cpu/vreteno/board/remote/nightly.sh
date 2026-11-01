@@ -195,12 +195,15 @@ if [[ -z "$dry" ]]; then
       exit 1
     fi
   }
+  # The loader stamps its lines on the board server as it reads them
+  # (--stamp), so a stall between there and here does not count as the
+  # board's time (#2046). `stamp` here is for the model's runs.
   # A program through the serial loader, its console for `seconds`.
   serial_run() {
     local image="$1" log="$2" seconds="$3"
     free_port
-    "$load" --server="$server" --reset --image="$image" \
-      --seconds="$seconds" </dev/null 2>&1 | stamp >"$log" || true
+    "$load" --server="$server" --reset --stamp --image="$image" \
+      --seconds="$seconds" </dev/null >"$log" 2>&1 || true
     release
   }
   # The fastboot app through the serial loader, `getvar product` asked
@@ -213,8 +216,8 @@ if [[ -z "$dry" ]]; then
     ssh -n -o BatchMode=yes "$server" \
       "mkdir -p $fbdir/nightly && rm -f $fbdir/nightly/image.bin"
     scp -q -o BatchMode=yes "$image" "$server:$fbdir/nightly/image.bin"
-    ( "$load" --server="$server" --reset --image="$(img //zephyr:fastboot)" \
-        --seconds=$((seconds + 600)) </dev/null 2>&1 | stamp >"$log" ) &
+    ( "$load" --server="$server" --reset --stamp --image="$(img //zephyr:fastboot)" \
+        --seconds=$((seconds + 600)) </dev/null >"$log" 2>&1 ) &
     reader=$!
     for _ in $(seq 1 150); do
       grep -q 'listening on port' "$log" 2>/dev/null && break
@@ -280,8 +283,8 @@ if [[ -z "$dry" ]]; then
   # programmed again before ethperf.
   program
   free_port
-  ( "$load" --server="$server" --reset --image="$(img //cpu/vreteno/rust:ethperf_ram_bin)" \
-      --seconds=300 </dev/null 2>&1 | stamp >"$dir/ethperf.log" ) &
+  ( "$load" --server="$server" --reset --stamp --image="$(img //cpu/vreteno/rust:ethperf_ram_bin)" \
+      --seconds=300 </dev/null >"$dir/ethperf.log" 2>&1 ) &
   reader=$!
   # A burst from the board server at each `rx waiting N`, by the tester
   # issue 1038 wrote for it; the board waits 40 s for the first frame.
