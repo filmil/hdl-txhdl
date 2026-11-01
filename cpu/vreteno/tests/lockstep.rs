@@ -1739,15 +1739,16 @@ fn user_and_supervisor_modes_trap_where_they_are_sent() {
     a.wide(csrrw(0, CSR_STVEC, 31));
     a.wide(addi(5, 0, 0x104)); // ecall from U and an illegal instruction
     a.wide(csrrw(0, CSR_MEDELEG, 5));
-    // instret for both; cycle for the supervisor but not the user, so
-    // the user's read of it is refused by scounteren alone (#2057).
+    // instret for both; cycle in mcounteren but not scounteren, and
+    // time the other way round, so the user's read of each is refused
+    // by one of the two alone (#2057).
     a.wide(csrrwi(0, CSR_MCOUNTEREN, 5));
     // mstatush: a write is ignored and a read is zero (issue 1076).
     a.wide(addi(12, 0, -1));
     a.wide(csrrc(0, CSR_MSTATUSH, 12));
     a.wide(csrrw(13, CSR_MSTATUSH, 12));
     a.wide(csrrs(14, CSR_MSTATUSH, 0));
-    a.wide(csrrwi(0, CSR_SCOUNTEREN, 4));
+    a.wide(csrrwi(0, CSR_SCOUNTEREN, 6));
     a.wide(lui(5, 1));
     a.wide(addi(5, 5, -0x800)); // x5 = 0x800, MPP = supervisor
     a.wide(csrrw(0, CSR_MSTATUS, 5));
@@ -1768,7 +1769,8 @@ fn user_and_supervisor_modes_trap_where_they_are_sent() {
     // Into x0: a counter's value is the pipeline's and not the
     // model's to know, so only that the read is legal is checked.
     a.wide(csrrs(0, CSR_INSTRET, 0));
-    a.wide(csrrs(11, CSR_CYCLE, 0)); // not enabled
+    a.wide(csrrs(11, CSR_CYCLE, 0)); // not enabled by scounteren
+    a.wide(csrrs(10, CSR_TIME, 0)); // not enabled by mcounteren
     a.wide(wfi()); // illegal in user mode
     a.wide(sret()); // and so is this
     a.wide(ecall());
@@ -1795,12 +1797,13 @@ fn user_and_supervisor_modes_trap_where_they_are_sent() {
     a.wide(halt());
     let m = lockstep(&a.words(), &[], "modes", None, None, None);
     assert_eq!(m.halted, Some(Halt::Break));
-    assert_eq!(m.x[8], 5, "mstatus, cycle, wfi, sret and the ecall");
+    assert_eq!(m.x[8], 6, "mstatus, cycle, time, wfi, sret and the ecall");
     assert_eq!(m.x[22], 8, "the last the supervisor saw: ecall from U");
     assert_eq!(m.x[21], 9, "machine mode saw the supervisor's ecall");
     assert_eq!(m.x[25] >> 11 & 3, 1, "MPP says supervisor");
     assert_eq!(m.x[7], 0, "the illegal read wrote nothing");
     assert_eq!(m.x[11], 0, "nor the disabled counter");
+    assert_eq!(m.x[10], 0, "nor the other");
     assert_eq!(m.prv, 3, "ending in machine mode");
     assert_eq!([m.x[13], m.x[14]], [0, 0], "mstatush holds nothing");
 }
@@ -1809,7 +1812,8 @@ fn user_and_supervisor_modes_trap_where_they_are_sent() {
 /// a program can see it: `mepc` keeps no bit 0; an MPP of 2, a mode the
 /// core does not have, is written as user mode; `sret` clears MPRV even
 /// from machine mode; and the supervisor's `sie` writes only the enables
-/// `mideleg` gives it, so all ones there leave `mie` at 0x222.
+/// `mideleg` gives it, so all ones there over the machine timer's enable
+/// leave `mie` at 0x2a2.
 #[test]
 fn csr_writes_keep_only_what_the_specification_allows() {
     use vreteno32::isa::*;
@@ -1826,6 +1830,8 @@ fn csr_writes_keep_only_what_the_specification_allows() {
     a.wide(csrrs(11, CSR_MSTATUS, 0));
     a.wide(addi(5, 0, 0x222));
     a.wide(csrrw(0, CSR_MIDELEG, 5));
+    a.wide(addi(5, 0, 0x80));
+    a.wide(csrrw(0, CSR_MIE, 5)); // the machine timer's enable
     a.wide(lui(5, 0x20));
     a.wide(addi(5, 5, 0x100)); // MPRV and SPP = supervisor
     a.wide(csrrw(0, CSR_MSTATUS, 5));
@@ -1851,7 +1857,7 @@ fn csr_writes_keep_only_what_the_specification_allows() {
     assert_eq!(m.x[11] >> 11 & 3, 0, "an MPP of 2 is user mode");
     assert_eq!(m.x[14], 9, "the supervisor's ecall");
     assert_eq!(m.x[12] >> 17 & 1, 0, "sret cleared MPRV");
-    assert_eq!(m.x[13], 0x222, "sie wrote only what mideleg gives");
+    assert_eq!(m.x[13], 0x2a2, "sie wrote only what mideleg gives");
 }
 
 /// A delegated interrupt is taken in user mode whatever `SIE` says
