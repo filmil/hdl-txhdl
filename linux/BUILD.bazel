@@ -64,6 +64,24 @@ genrule(
     tools = _TOOLS,
 )
 
+# OpenSBI's ELF names no directory of the sandbox it was built in, so
+# two builds in two sandboxes give the same bytes (issue 2023). Manual,
+# as the OpenSBI build is:
+#
+#   bazel test //linux:opensbi_paths_test
+# The FireSim payload, OpenSBI with the kernel inside, runs the same
+# check from //firesim/ax7a200b/linux.
+exports_files(["no_build_paths_test.sh"])
+
+sh_test(
+    name = "opensbi_paths_test",
+    size = "small",
+    srcs = ["no_build_paths_test.sh"],
+    args = ["$(rootpath fw_jump.elf)"],
+    data = ["fw_jump.elf"],
+    tags = ["manual"],
+)
+
 # The userspace (issue 1018): BusyBox on musl, static, for rv32imac at the
 # soft-float ABI, and an initramfs that holds it, built with the same
 # LLVM by userspace.sh. Manual, as the kernel is:
