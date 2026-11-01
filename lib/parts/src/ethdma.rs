@@ -493,9 +493,11 @@ mod tests {
     }
 
     /// A frame offered while the store engine is still busy with the
-    /// one before waits for it (#2049): `store` stays low and `count`
-    /// keeps its old value, here none, until `hold` falls, since the
-    /// register block reads both when the engine goes idle.
+    /// one before waits for it (#2049): frame A, three bytes, goes
+    /// through; then B, six bytes, is offered with `hold` high, and
+    /// `store` stays low and `count` keeps A's length until `hold`
+    /// falls, since the register block reads both when the engine goes
+    /// idle. Then B goes through whole.
     #[test]
     fn frame_in_waits_for_the_store_before() {
         let (in_tx, in_rx) = chan::<EthByte, DefaultClock>();
@@ -507,35 +509,52 @@ mod tests {
         let (store_out, store) = signal::<Bit, DefaultClock>();
         let (which_out, _which) = signal::<U<1>, DefaultClock>();
         let (drops_out, _drops) = signal::<U<32>, DefaultClock>();
-        // Each cycle, counted from the frame's offer: `store`, and
-        // `count`.
-        let seen: Rc<RefCell<Vec<(bool, u16)>>> = Rc::default();
+        // Each cycle: `store`, `count`, and whether a byte waits.
+        let seen: Rc<RefCell<Vec<(bool, u16, bool)>>> = Rc::default();
         let log = seen.clone();
+        let got: Rc<RefCell<Vec<u32>>> = Rc::default();
+        let words = got.clone();
         let client = async move {
-            hold_out.set(Bit::One);
-            len_out.set(U::from(6u16));
-            let mut bytes = (0..6u8).peekable();
-            for t in 0..60u32 {
+            let a = [0x01u8, 0x02, 0x03];
+            let b = [0x10u8, 0x11, 0x12, 0x13, 0x14, 0x15];
+            let mut queue: Vec<EthByte> = Vec::new();
+            len_out.set(U::from(3u16));
+            for (i, &x) in a.iter().enumerate() {
+                queue.push(EthByte {
+                    data: U::from(x),
+                    last: Bit::from_bool(i + 1 == a.len()),
+                });
+            }
+            for t in 0..120u32 {
                 DefaultClock::rising().await;
-                if t == 20 {
-                    hold_out.set(Bit::Zero);
-                }
-                if in_tx.ready().to_bool() {
-                    if let Some(b) = bytes.next() {
-                        in_tx.send(EthByte {
-                            data: U::from(b),
-                            last: Bit::from_bool(bytes.peek().is_none()),
+                if t == 30 {
+                    hold_out.set(Bit::One);
+                    len_out.set(U::from(6u16));
+                    for (i, &x) in b.iter().enumerate() {
+                        queue.push(EthByte {
+                            data: U::from(x),
+                            last: Bit::from_bool(i + 1 == b.len()),
                         });
                     }
                 }
-                let at = (store.get().to_bool(), count.get().raw() as u16);
+                if t == 60 {
+                    hold_out.set(Bit::Zero);
+                }
+                let waiting = !in_tx.ready().to_bool();
+                if !waiting && !queue.is_empty() {
+                    in_tx.send(queue.remove(0));
+                }
+                let at =
+                    (store.get().to_bool(), count.get().raw() as u16, waiting);
                 log.borrow_mut().push(at);
             }
         };
         let sink = async move {
             loop {
                 DefaultClock::rising().await;
-                let _ = words_rx.recv();
+                if let Some(w) = words_rx.recv() {
+                    words.borrow_mut().push(w.raw() as u32);
+                }
             }
         };
         let mut unit = FrameIn::default();
@@ -546,16 +565,17 @@ mod tests {
             ),
             join2(client, sink),
         ));
-        for _ in 0..100 {
+        for _ in 0..200 {
             sim.cycle();
         }
         let seen = seen.borrow();
+        let under = &seen[32..=60];
         assert!(
-            seen[..=20].iter().all(|&(s, c)| !s && c == 0),
-            "nothing started under hold: {:?}",
-            &seen[..=20]
+            under.iter().all(|&(s, c, _)| !s && c == 3),
+            "B started under hold, or count moved: {under:?}"
         );
-        let first = seen.iter().position(|&(s, _)| s).expect("starts");
-        assert_eq!(seen[first].1, 6, "the new frame's length, once started");
+        assert!(under.iter().any(|&(_, _, w)| w), "a byte of B waits");
+        assert!(seen[61..].iter().any(|&(s, c, _)| s && c == 6), "B goes");
+        assert_eq!(*got.borrow(), vec![0x0003_0201, 0x1312_1110, 0x1514]);
     }
 }
