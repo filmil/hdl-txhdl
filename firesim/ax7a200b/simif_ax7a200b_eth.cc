@@ -51,7 +51,7 @@
 //   +device=<n>          the design's device number (default 5)
 //   +timeout_ms=<n>      how long to wait for an answer (default 20)
 //   +retries=<n>         how many times to send an ask (default 50)
-//   +window=<n>          register writes in flight, 1 to 128 (default 8)
+//   +window=<n>          register writes in flight, 1 to 128 (default 32)
 //   +eth_log=<file>      log every register frame sent, every read's
 //                        word, every stream beat, and a stop on the
 //                        register path to <file>, one line each
@@ -173,7 +173,7 @@ private:
   uint8_t device = 5;
   int timeout_ms = 20;
   int retries = 50;
-  int window = 8;
+  int window = 32;
   uint64_t resends = 0;
   std::unique_ptr<AskWindow> asks;
 };
@@ -192,7 +192,7 @@ simif_ax7a200b_eth_t::simif_ax7a200b_eth_t(
   device = static_cast<uint8_t>(plusint(args, "device", 5, 0, 255));
   timeout_ms = plusint(args, "timeout_ms", 20, 1, 60000);
   retries = plusint(args, "retries", 50, 1, 1000000);
-  window = plusint(args, "window", 8, 1, 128);
+  window = plusint(args, "window", 32, 1, 128);
   const std::string log_name = plusarg(args, "eth_log", "");
   if (!log_name.empty()) {
     log = fopen(log_name.c_str(), "w");
@@ -300,6 +300,34 @@ simif_ax7a200b_eth_t::~simif_ax7a200b_eth_t() {
   if (resends) {
     fprintf(stdout, "simif_ax7a200b_eth: %lu asks sent again\n",
             static_cast<unsigned long>(resends));
+  }
+  // What each socket received and dropped for want of room in its
+  // receive buffer, so a run with asks sent again shows whether the
+  // answers were lost here rather than on the wire or the board (issue
+  // 2026). Reading the counts also clears them.
+  const struct {
+    int sock;
+    const char *what;
+  } socks[] = {{fd, "control"}, {sfd, "stream"}};
+  for (const auto &k : socks) {
+    // The kernel's struct tpacket_stats, from <linux/if_packet.h>, which
+    // clashes with <netpacket/packet.h>.
+    struct {
+      unsigned int tp_packets;
+      unsigned int tp_drops;
+    } st = {};
+    socklen_t len = sizeof(st);
+    int buf = 0;
+    socklen_t blen = sizeof(buf);
+    if (k.sock >= 0 &&
+        getsockopt(k.sock, SOL_PACKET, PACKET_STATISTICS, &st, &len) == 0 &&
+        getsockopt(k.sock, SOL_SOCKET, SO_RCVBUF, &buf, &blen) == 0) {
+      // The kernel counts the dropped frames among those it saw.
+      fprintf(stdout,
+              "simif_ax7a200b_eth: %s socket saw %u frames and dropped %u "
+              "of them (receive buffer %d bytes)\n",
+              k.what, st.tp_packets, st.tp_drops, buf);
+    }
   }
   if (fd >= 0) {
     close(fd);

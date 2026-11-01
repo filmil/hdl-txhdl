@@ -151,7 +151,12 @@ module rocket_eth_top (
     .rxd(rxd), .rx_dv(rx_dv), .rx_er(rx_er),
     .rx_data(rx_data), .rx_valid(rx_valid), .rx_ready(rx_ready)
   );
-  chan_cdc #(.W(9), .AW(4)) rx_cross (
+  // Deep enough for 32 frames: the host's USB adapter sends a window's
+  // asks back to back at the wire's rate, twice the rate the link takes
+  // bytes at 50 MHz, and the MAC holds only two frames, so a shallow
+  // crossing lost all but the first few of every window sent again
+  // (issue 2026).
+  chan_cdc #(.W(9), .AW(11)) rx_cross (
     .wr_rst(rx_rst), .rd_rst(sim_rst),
     .wr_clk(rx_clk), .wr_data(rx_data), .wr_valid(rx_valid),
     .wr_ready(rx_ready),

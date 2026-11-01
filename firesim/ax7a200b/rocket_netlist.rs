@@ -14,13 +14,16 @@
 //! for a reset frame (issue 2007): kind 0x04 on the control EtherType.
 //! FireSim expects a fresh simulator for each run, and the board top
 //! uses the tap's `reset` to reset the simulator and this link.
-use txhdl::comp::{chan, join2, Clock, DefaultClock, Out, Reg, Rx, Tx, Unit};
+use txhdl::comp::{
+    chan, join2, Clock, Data, DefaultClock, Out, Reg, Rx, Tx, Unit,
+};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 use txhdl_parts::bus::axi::{Ar, Aw, B, R, W};
 use txhdl_parts::bus::axi_lite::LiteHostPort;
 use txhdl_parts::eth::EthByte;
 use txhdl_parts::ethshare::EthShare;
+use txhdl_parts::fifo::Fifo;
 use txhdl_parts::remote::host::{HostAnswer, HostLink, LiteMaster};
 use txhdl_parts::remote::stream::StreamBridge;
 use txhdl_parts::remote::Ask;
@@ -102,6 +105,12 @@ pub struct RocketLink<const DEV: usize> {
     pub share: EthShare<CONTROL>,
     /// The control frames.
     pub link: HostLink<DEV>,
+    /// The asks waiting for the master. `HostLink` drops an ask it has
+    /// no room for, and the master holds each one until the bus answers,
+    /// which a register on FPGATop's control port can take microseconds
+    /// to do, while the next asks of a window arrive one every 1.3 us.
+    /// So the room is the driver's largest window, 128 (issue 2026).
+    pub asks: Fifo<Data<Ask>, 7, 128>,
     /// The control port. HostLink and LiteMaster rather than HostBridge,
     /// since a bundle port is passed to a child only as a bare argument.
     pub master: LiteMaster,
@@ -129,6 +138,7 @@ impl<const DEV: usize> Unit for RocketLink<DEV> {
         let (s_in_tx, s_in_rx) = chan::<EthByte, DefaultClock>();
         let (s_out_tx, s_out_rx) = chan::<EthByte, DefaultClock>();
         let (ask_tx, ask_rx) = chan::<Ask, DefaultClock>();
+        let (q_tx, q_rx) = chan::<Ask, DefaultClock>();
         let (ans_tx, ans_rx) = chan::<HostAnswer, DefaultClock>();
         join2(
             join2(
@@ -142,8 +152,11 @@ impl<const DEV: usize> Unit for RocketLink<DEV> {
                 self.stream.run((s_in_rx, b, r), (s_out_tx, aw, ar, w)),
             ),
             join2(
-                self.link.run((c_in_rx, ans_rx), (ask_tx, c_out_tx)),
-                self.master.run(bus, (ask_rx, ans_tx)),
+                join2(
+                    self.link.run((c_in_rx, ans_rx), (ask_tx, c_out_tx)),
+                    self.asks.run(ask_rx, q_tx),
+                ),
+                self.master.run(bus, (q_rx, ans_tx)),
             ),
         )
         .await;
@@ -300,6 +313,99 @@ mod tests {
             ]
         );
         assert!(!reset_i.get().to_bool());
+    }
+
+    /// Sends `n` control writes back to back, as a window of `n` goes
+    /// out, to a register file that answers each write `stall` cycles
+    /// after taking it, as a slow register on FPGATop's control port
+    /// does. Returns the writes that reached the bus, address and word,
+    /// in order, and the tags of the answers, in order.
+    fn burst(n: u8, stall: usize) -> (Vec<(u32, u32)>, Vec<u8>) {
+        let (host, per) = link::<LitePort![ADDR = 32, DATA = 32, STRB = 4]>();
+        let (in_tx, in_rx) = chan::<EthByte, DefaultClock>();
+        let (out_tx, out_rx) = chan::<EthByte, DefaultClock>();
+        let (aw_tx, _aw_rx) = chan::<Aw<64, 4>, DefaultClock>();
+        let (ar_tx, _ar_rx) = chan::<Ar<64, 4>, DefaultClock>();
+        let (w_tx, _w_rx) = chan::<W<128, 16>, DefaultClock>();
+        let (_b_tx, b_rx) = chan::<B<4>, DefaultClock>();
+        let (_r_tx, r_rx) = chan::<R<128, 4>, DefaultClock>();
+        let (reset_o, _reset_i) = signal::<Bit, DefaultClock>();
+        let mut unit = RocketLink::<DEVICE>::default();
+        let writes = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let seen = writes.clone();
+        let ports = async move {
+            let mut wait = 0usize;
+            loop {
+                DefaultClock::rising().await;
+                if wait > 0 {
+                    wait -= 1;
+                    if wait == 0 {
+                        per.b.send(LiteB { resp: Resp::Okay });
+                    }
+                } else if per.aw.peek().is_some() && per.w.peek().is_some() {
+                    let a = per.aw.recv().unwrap().addr.raw() as u32;
+                    let d = per.w.recv().unwrap().data.raw() as u32;
+                    seen.borrow_mut().push((a, d));
+                    wait = stall;
+                }
+            }
+        };
+        let mut sim = Running::new(join2(
+            unit.run(
+                (in_rx, b_rx, r_rx),
+                (out_tx, host, aw_tx, ar_tx, w_tx, reset_o),
+            ),
+            ports,
+        ));
+        // The frames back to back, one byte a cycle, as the clock
+        // crossing gives them when the wire brings them faster.
+        let bytes: Vec<(u8, bool)> = (1..=n)
+            .flat_map(|t| {
+                let f = control(t, true, 0x100 + 4 * t as u32, t as u32);
+                let k = f.len();
+                f.into_iter().enumerate().map(move |(i, b)| (b, i == k - 1))
+            })
+            .collect();
+        let (mut i, mut cur, mut tags) = (0, Vec::new(), Vec::new());
+        for _ in 0..(n as usize) * (stall + 200) + 2000 {
+            if i < bytes.len() && in_tx.ready().to_bool() {
+                in_tx.send(EthByte {
+                    data: U::from(bytes[i].0),
+                    last: Bit::from(bytes[i].1),
+                });
+                i += 1;
+            }
+            if let Some(b) = out_rx.recv() {
+                cur.push(b.data.raw() as u8);
+                if b.last.to_bool() {
+                    tags.push(answer(&cur).1);
+                    cur.clear();
+                }
+            }
+            sim.cycle();
+        }
+        let w = writes.borrow().clone();
+        (w, tags)
+    }
+
+    #[test]
+    fn a_window_of_writes_waits_while_the_bus_is_slow() {
+        // Each write holds the bus while the next frames keep arriving:
+        // none may be dropped, every write reaches the bus once and in
+        // order, and each is answered in turn (#2026). At 7,700 cycles a
+        // write, the whole window of 128 has arrived, 60 cycles a frame,
+        // before the first write is answered, so the queue is full.
+        for (n, stall) in [(64u8, 400usize), (128, 7700)] {
+            let (writes, tags) = burst(n, stall);
+            let want: Vec<(u32, u32)> =
+                (1..=n as u32).map(|t| (0x100 + 4 * t, t)).collect();
+            assert_eq!(writes, want, "writes, window {n}");
+            assert_eq!(
+                tags,
+                (1..=n).collect::<Vec<u8>>(),
+                "answers, window {n}"
+            );
+        }
     }
 
     /// A reset frame for `dev`, padded as the MAC pads it.
