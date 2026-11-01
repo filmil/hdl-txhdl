@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -209,5 +210,74 @@ func TestASenderCutOffSaysWhere(t *testing.T) {
 	}
 	if strings.Contains(errs.String(), "[load]") {
 		t.Fatalf("a [load] line on stderr, apart from the console:\n%s", errs.String())
+	}
+}
+
+// With `stamp`, every line the sender prints starts with the board
+// server's UTC time, the form the nightly reads, so the nightly times
+// the board and not the network to it (HDL/txhdl#2046). The stamp is
+// taken at a line's first byte, and the cut-off line is stamped too.
+func TestStampedLinesStartWithTheServersTime(t *testing.T) {
+	m, _, name := ptyNamed(t)
+	img := filepath.Join(t.TempDir(), "image.bin")
+	if err := os.WriteFile(img, image(2000), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	slowLoader(m, 2001, 2*time.Millisecond)
+	cmd := exec.Command(os.Args[0])
+	cmd.Env = append(os.Environ(),
+		"LOAD_AS_SENDER="+strings.Join([]string{name, "115200", "0x40000000", img, "1", "stamp"}, " "))
+	var out, errs bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errs
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2500 * time.Millisecond)
+	cmd.Process.Signal(syscall.SIGTERM)
+	cmd.Wait()
+	if errs.Len() != 0 {
+		t.Fatalf("stderr is not empty, so not all of it is stamped:\n%s", errs.String())
+	}
+	// A stamp and something after it: an empty stamped line is a line
+	// the console made up.
+	stamped := regexp.MustCompile(`^\d\d:\d\d:\d\d\.\d\d\dZ \S`)
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("too few lines:\n%s", out.String())
+	}
+	for _, l := range lines {
+		if !stamped.MatchString(l) {
+			t.Fatalf("a line without the server's stamp: %q\n%s", l, out.String())
+		}
+	}
+	for _, want := range []string{"Z [load] 2000 words to", "Z [load] terminated: cut off at word "} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("no stamped %q:\n%s", want, out.String())
+		}
+	}
+}
+
+// A console stamps each line once, with the time of its first byte,
+// however the line's bytes are split across writes; the clock moves on
+// a millisecond at each write, so a stamp taken later would show. A
+// `[load]` line said partway through a line of the board's starts on a
+// line of its own, and ending a line at the start of one adds nothing.
+func TestAConsoleStampsEachLineAtItsFirstByte(t *testing.T) {
+	var b bytes.Buffer
+	at := time.Date(2026, 11, 1, 12, 9, 20, 848_000_000, time.UTC)
+	c := &console{w: &b, stamp: true, clock: func() time.Time { return at }}
+	for _, p := range []string{"ab", "c\nd", "e\n", "f"} {
+		c.Write([]byte(p))
+		at = at.Add(time.Millisecond)
+	}
+	say(c, "[load] cut off\n")
+	c.endLine()
+	want := "12:09:20.848Z abc\n" +
+		"12:09:20.849Z de\n" +
+		"12:09:20.851Z f\n" +
+		"12:09:20.852Z [load] cut off\n"
+	if b.String() != want {
+		t.Fatalf("got %q, want %q", b.String(), want)
 	}
 }

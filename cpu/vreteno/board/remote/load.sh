@@ -12,12 +12,17 @@
 # transfer that does stop says at which word, and this fails with it.
 #
 #   load [--server=HOST] [--port=/dev/ttyUSB0] [--baud=115200]
-#        [--address=0x40000000] [--seconds=30] [--reset] --image=PATH
+#        [--address=0x40000000] [--seconds=30] [--reset] [--stamp] --image=PATH
 #
 # With --reset the sender first holds the serial line low for 30 ms, a
 # zero byte at 300 baud, which the board's top turns into a reset of
 # the core, so the loader is back whatever program had the core, and no
 # reprogram is needed.
+#
+# With --stamp every line starts with the board server's UTC time,
+# taken as the line's first byte is read there, in the form the nightly
+# reads, `15:04:05.000Z `. Stamped here, after ssh and the network, a
+# stall on the way would read as one in the board (HDL/txhdl#2046).
 set -euo pipefail
 
 # --- begin runfiles.bash initialization v3 ---
@@ -38,6 +43,7 @@ address=0x40000000
 seconds=30
 image=""
 reset=""
+stamp=""
 for a in "$@"; do
   case "$a" in
     --server=*) server="${a#*=}" ;;
@@ -47,6 +53,7 @@ for a in "$@"; do
     --seconds=*) seconds="${a#*=}" ;;
     --image=*) image="${a#*=}" ;;
     --reset) reset="reset" ;;
+    --stamp) stamp="stamp" ;;
     *) echo "unknown argument: $a" >&2; exit 2 ;;
   esac
 done
@@ -71,7 +78,7 @@ words=$(( ($(stat -c %s "$image") + 3) / 4 ))
 limit=$((seconds + 20 + 2 * words))
 status=0
 ssh -o BatchMode=yes "$server" \
-  "timeout --signal=TERM --kill-after=5 $limit $dir/load '$port' '$baud' '$address' $dir/image.bin '$seconds' $reset" \
+  "timeout --signal=TERM --kill-after=5 $limit $dir/load '$port' '$baud' '$address' $dir/image.bin '$seconds' $reset $stamp" \
   || status=$?
 if (( status != 0 )); then
   echo "load: the sender stopped with status $status" >&2

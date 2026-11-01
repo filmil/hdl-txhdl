@@ -4,7 +4,12 @@
 // memory and then watches the serial port, so that changing the
 // software on this machine is a second rather than a place and route.
 //
-//	load PORT BAUD ADDRESS IMAGE SECONDS [reset]
+//	load PORT BAUD ADDRESS IMAGE SECONDS [reset] [stamp]
+//
+// With `stamp`, every line this prints starts with this machine's UTC
+// time, `15:04:05.000Z `, taken when the line's first byte is read. A
+// caller on another machine, behind ssh and a network, then times the
+// board rather than the path to it (HDL/txhdl#2046).
 //
 // With `reset`, the line is held low first, which the board's top
 // turns into a reset of the core, so that a program that has taken the
@@ -36,6 +41,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -105,13 +111,86 @@ func raw(fd int, baud int) error {
 	return ioctl(fd, tcflsh, unsafe.Pointer(uintptr(2)))
 }
 
+// out is where every line this prints goes, the console and the
+// `[load]` lines alike: stdout, with each line stamped under `stamp`.
+var out = &console{w: os.Stdout, clock: time.Now}
+
+// console writes the board's bytes and this program's lines to one
+// stream. It knows whether it is partway through a line, so a `[load]`
+// line can start on a line of its own (endLine), and with stamp set it
+// puts this machine's UTC time before each line, read at the line's
+// first byte. The console relay and the signal handler share it, so it
+// holds a lock.
+type console struct {
+	mu    sync.Mutex
+	w     io.Writer
+	mid   bool
+	stamp bool
+	clock func() time.Time
+}
+
+func (c *console) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, b := range p {
+		if !c.mid && c.stamp {
+			stamp := c.clock().UTC().Format("15:04:05.000") + "Z "
+			if _, err := io.WriteString(c.w, stamp); err != nil {
+				return 0, err
+			}
+		}
+		if _, err := c.w.Write([]byte{b}); err != nil {
+			return 0, err
+		}
+		c.mid = b != '\n'
+	}
+	return len(p), nil
+}
+
+// endLine ends a line the console is partway through, and does nothing
+// at the start of one, so no empty line is stamped.
+func (c *console) endLine() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.mid {
+		c.w.Write([]byte{'\n'})
+		c.mid = false
+	}
+}
+
+// say writes one `[load]` line to w, on a line of its own when w is a
+// console that is partway through one of the board's.
+func say(w io.Writer, format string, a ...any) {
+	if c, ok := w.(*console); ok {
+		c.endLine()
+	}
+	fmt.Fprintf(w, format, a...)
+}
+
 func main() {
-	if len(os.Args) != 6 && len(os.Args) != 7 {
+	if len(os.Args) < 6 || len(os.Args) > 8 {
 		fmt.Fprintln(os.Stderr,
-			"usage: load PORT BAUD ADDRESS IMAGE SECONDS [reset]")
+			"usage: load PORT BAUD ADDRESS IMAGE SECONDS [reset] [stamp]")
 		os.Exit(2)
 	}
-	reset := len(os.Args) == 7 && os.Args[6] == "reset"
+	reset := false
+	seen := map[string]bool{}
+	for _, a := range os.Args[6:] {
+		if seen[a] {
+			fmt.Fprintln(os.Stderr, "load: option given twice:", a)
+			os.Exit(2)
+		}
+		seen[a] = true
+		switch a {
+		case "reset":
+			reset = true
+		case "stamp":
+			out.stamp = true
+		default:
+			fmt.Fprintln(os.Stderr, "load: unknown option", a)
+			os.Exit(2)
+		}
+	}
 	port, baudText, addrText, image, secondsText :=
 		os.Args[1], os.Args[2], os.Args[3], os.Args[4], os.Args[5]
 	baud := atoi(baudText)
@@ -144,7 +223,7 @@ func main() {
 	if reset {
 		// The slow zero, then the rate back, then a moment for the
 		// core to come out of reset and the loader to start listening.
-		fmt.Fprintf(os.Stdout, "[load] holding %s low to reset the core\n", port)
+		say(out, "[load] holding %s low to reset the core\n", port)
 		check(raw(fd, slowBaud))
 		write(fd, []byte{0})
 		time.Sleep(100 * time.Millisecond)
@@ -155,11 +234,11 @@ func main() {
 			<-said
 		}
 	} else {
-		fmt.Fprintf(os.Stdout, "[load] listening on %s\n", port)
+		say(out, "[load] listening on %s\n", port)
 		if waitFor(said, "boot", time.Now().Add(2*time.Second)) {
-			fmt.Fprintln(os.Stdout, "[load] the loader is waiting")
+			say(out, "[load] the loader is waiting\n")
 		} else {
-			fmt.Fprintln(os.Stdout, "[load] no greeting; sending anyway")
+			say(out, "[load] no greeting; sending anyway\n")
 		}
 	}
 
@@ -174,9 +253,9 @@ func main() {
 	go func() {
 		s := <-stop
 		if done.Load() {
-			fmt.Fprintf(os.Stdout, "\n[load] %v after the transfer\n", s)
+			say(out, "[load] %v after the transfer\n", s)
 		} else {
-			fmt.Fprintf(os.Stdout, "\n[load] %v: cut off at word %d of %d\n", s, sent.Load(), words)
+			say(out, "[load] %v: cut off at word %d of %d\n", s, sent.Load(), words)
 		}
 		os.Exit(1)
 	}()
@@ -187,8 +266,8 @@ func main() {
 	// once the caller merges them, whenever it was written; on 2026-11-01
 	// `words sent` split phyregs' first register line (HDL/txhdl#2045).
 	// On one stream the order is the order written.
-	if err := transfer(fd, said, blob, addr, &sent, os.Stdout); err != nil {
-		fmt.Fprintf(os.Stdout, "[load] %v\n", err)
+	if err := transfer(fd, said, blob, addr, &sent, out); err != nil {
+		say(out, "[load] %v\n", err)
 		os.Exit(1)
 	}
 	done.Store(true)
@@ -200,11 +279,11 @@ func main() {
 	for time.Now().Before(deadline) {
 		select {
 		case b := <-said:
-			os.Stdout.Write([]byte{b})
+			out.Write([]byte{b})
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
-	fmt.Fprintln(os.Stdout)
+	out.endLine()
 }
 
 // listen hands on every byte the port says, as it arrives.
@@ -232,7 +311,7 @@ func listen(fd int) chan byte {
 // than by any total, so a long image is never cut short while it moves.
 func transfer(fd int, said chan byte, blob []byte, addr uint32, sent *atomic.Int64, log io.Writer) error {
 	words := len(blob) / 4
-	fmt.Fprintf(log, "[load] %d words to %#08x\n", words, addr)
+	say(log, "[load] %d words to %#08x\n", words, addr)
 	header := make([]byte, 0, 12)
 	header = binary.LittleEndian.AppendUint32(header, 0x444c5854)
 	header = binary.LittleEndian.AppendUint32(header, addr)
@@ -249,7 +328,7 @@ func transfer(fd int, said chan byte, blob []byte, addr uint32, sent *atomic.Int
 		}
 		sent.Store(int64(i))
 		if i > 0 && i%progressEvery == 0 {
-			fmt.Fprintf(log, "[load] %d of %d words, %.0f s\n", i, words, time.Since(start).Seconds())
+			say(log, "[load] %d of %d words, %.0f s\n", i, words, time.Since(start).Seconds())
 		}
 		word := binary.LittleEndian.Uint32(blob[i*4 : i*4+4])
 		sum += word
@@ -260,7 +339,7 @@ func transfer(fd int, said chan byte, blob []byte, addr uint32, sent *atomic.Int
 	}
 	sent.Store(int64(words))
 	write(fd, binary.LittleEndian.AppendUint32(nil, sum))
-	fmt.Fprintf(log, "[load] %d words sent in %.0f s\n", words, time.Since(start).Seconds())
+	say(log, "[load] %d words sent in %.0f s\n", words, time.Since(start).Seconds())
 	return nil
 }
 
@@ -270,7 +349,7 @@ func waitFor(said chan byte, text string, deadline time.Time) bool {
 	for time.Now().Before(deadline) {
 		select {
 		case b := <-said:
-			os.Stdout.Write([]byte{b})
+			out.Write([]byte{b})
 			seen = append(seen, b)
 			if len(seen) > 64 {
 				seen = seen[1:]
@@ -293,7 +372,7 @@ func waitByte(said chan byte, want byte, deadline time.Time) bool {
 			if b == want {
 				return true
 			}
-			os.Stdout.Write([]byte{b})
+			out.Write([]byte{b})
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
