@@ -373,7 +373,7 @@ mod tests {
     use super::*;
     use crate::bus::axi::Resp;
     use crate::bus::axi_lite::{axi_lite, LiteAr, LiteAw, LiteHost, LiteW};
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
     use txhdl::comp::{join2, signal, Running};
 
@@ -595,8 +595,8 @@ mod tests {
     }
 
     /// What the receive side of `EthSlots` does with frame A queued and
-    /// frame B arriving, the driver's acknowledgement of A starting at
-    /// cycle 6 and B's store ending at cycle `d`. Per cycle after B's
+    /// frame B arriving, B's store ending at cycle `d` and, if `ack`, the
+    /// driver's acknowledgement of A starting at cycle 6. Per cycle after B's
     /// store began: `rx_full` and the count queued; and at the end the
     /// count, and the slot and length at the front.
     struct Rx {
@@ -626,7 +626,7 @@ mod tests {
             (slots.queued, slots.q0_slot, slots.q0_len);
         // Set when B's store begins; the driver and the record start
         // from it.
-        let at: Rc<RefCell<Option<u32>>> = Rc::default();
+        let at: Rc<Cell<bool>> = Rc::default();
         let at_w = at.clone();
         let frames = async move {
             // A lands in slot 0, 10 bytes.
@@ -644,7 +644,7 @@ mod tests {
             rx_which_o.set(U::from(1u8));
             rx_len_o.set(U::from(20u16));
             rx_busy_o.set(Bit::One);
-            *at_w.borrow_mut() = Some(0);
+            at_w.set(true);
             for _ in 0..d {
                 DefaultClock::rising().await;
             }
@@ -652,7 +652,7 @@ mod tests {
         };
         let at_r = at.clone();
         let driver = async move {
-            while at_r.borrow().is_none() {
+            while !at_r.get() {
                 DefaultClock::rising().await;
             }
             for _ in 0..6 {
@@ -689,7 +689,7 @@ mod tests {
         };
         for _ in 0..80 {
             sim.cycle();
-            if at.borrow().is_some() {
+            if at.get() {
                 r.full.push(rx_full.get().to_bool());
                 r.queued.push(queued.get().raw() as u32);
             }
@@ -724,5 +724,7 @@ mod tests {
         // lands, the one before it is counted.
         let two = r.queued.iter().position(|&q| q == 2).expect("two");
         assert!(r.full[two - 1], "not full as B lands: {:?}", r.full);
+        assert!(!r.full[0], "full with only A queued: {:?}", r.full);
+        assert!(r.full[two..].iter().all(|&f| f), "and full once two are");
     }
 }
