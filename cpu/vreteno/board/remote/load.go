@@ -144,7 +144,7 @@ func main() {
 	if reset {
 		// The slow zero, then the rate back, then a moment for the
 		// core to come out of reset and the loader to start listening.
-		fmt.Fprintf(os.Stderr, "[load] holding %s low to reset the core\n", port)
+		fmt.Fprintf(os.Stdout, "[load] holding %s low to reset the core\n", port)
 		check(raw(fd, slowBaud))
 		write(fd, []byte{0})
 		time.Sleep(100 * time.Millisecond)
@@ -155,11 +155,11 @@ func main() {
 			<-said
 		}
 	} else {
-		fmt.Fprintf(os.Stderr, "[load] listening on %s\n", port)
+		fmt.Fprintf(os.Stdout, "[load] listening on %s\n", port)
 		if waitFor(said, "boot", time.Now().Add(2*time.Second)) {
-			fmt.Fprintln(os.Stderr, "[load] the loader is waiting")
+			fmt.Fprintln(os.Stdout, "[load] the loader is waiting")
 		} else {
-			fmt.Fprintln(os.Stderr, "[load] no greeting; sending anyway")
+			fmt.Fprintln(os.Stdout, "[load] no greeting; sending anyway")
 		}
 	}
 
@@ -174,14 +174,21 @@ func main() {
 	go func() {
 		s := <-stop
 		if done.Load() {
-			fmt.Fprintf(os.Stderr, "\n[load] %v after the transfer\n", s)
+			fmt.Fprintf(os.Stdout, "\n[load] %v after the transfer\n", s)
 		} else {
-			fmt.Fprintf(os.Stderr, "\n[load] %v: cut off at word %d of %d\n", s, sent.Load(), words)
+			fmt.Fprintf(os.Stdout, "\n[load] %v: cut off at word %d of %d\n", s, sent.Load(), words)
 		}
 		os.Exit(1)
 	}()
-	if err := transfer(fd, said, blob, addr, &sent, os.Stderr); err != nil {
-		fmt.Fprintf(os.Stderr, "[load] %v\n", err)
+	// Every `[load]` line goes to stdout, where the console goes, and
+	// stderr keeps only the usage and a failure before the port is open.
+	// This runs behind ssh, which carries the two streams apart, so a
+	// line written to stderr could land in the middle of a console line
+	// once the caller merges them, whenever it was written; on 2026-11-01
+	// `words sent` split phyregs' first register line (HDL/txhdl#2045).
+	// On one stream the order is the order written.
+	if err := transfer(fd, said, blob, addr, &sent, os.Stdout); err != nil {
+		fmt.Fprintf(os.Stdout, "[load] %v\n", err)
 		os.Exit(1)
 	}
 	done.Store(true)
@@ -197,7 +204,7 @@ func main() {
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
-	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stdout)
 }
 
 // listen hands on every byte the port says, as it arrives.
