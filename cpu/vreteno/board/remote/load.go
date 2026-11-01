@@ -180,7 +180,14 @@ func main() {
 		}
 		os.Exit(1)
 	}()
-	if err := transfer(fd, said, blob, addr, &sent, os.Stderr); err != nil {
+	// The transfer's own lines go to stdout, where the console goes,
+	// not to stderr. This runs behind ssh, which carries the two streams
+	// apart, so a line written to stderr before the program's first
+	// output could still land in the middle of it once the caller merges
+	// them; on 2026-11-01 `words sent` split phyregs' first register
+	// line (HDL/txhdl#2045). On one stream the order is the order
+	// written.
+	if err := transfer(fd, said, blob, addr, &sent, os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "[load] %v\n", err)
 		os.Exit(1)
 	}
