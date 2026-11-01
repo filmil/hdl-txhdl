@@ -372,3 +372,219 @@ impl Unit<Rx<EthByte>, (Tx<EthByte>, Out<U<16>>)> for FrameLen {
     }
 }
 // end{len}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use txhdl::comp::{chan, join2, signal, Running};
+
+    /// The word count `FrameOut` asks a fetch engine for, for a frame
+    /// of `bytes`.
+    fn nwords_for(bytes: u16) -> u16 {
+        let (_in_tx, in_rx) = chan::<U<32>, DefaultClock>();
+        let (out_tx, _out_rx) = chan::<EthByte, DefaultClock>();
+        let (bytes_out, bytes_in) = signal::<U<16>, DefaultClock>();
+        let (_go_out, go) = signal::<Bit, DefaultClock>();
+        let (running_out, _running) = signal::<Bit, DefaultClock>();
+        let (nwords_out, nwords) = signal::<U<16>, DefaultClock>();
+        let got: Rc<RefCell<u16>> = Rc::default();
+        let log = got.clone();
+        let client = async move {
+            bytes_out.set(U::from(bytes));
+            for _ in 0..4 {
+                DefaultClock::rising().await;
+            }
+            *log.borrow_mut() = nwords.get().raw() as u16;
+        };
+        let mut unit = FrameOut::default();
+        let mut sim = Running::new(join2(
+            unit.run((in_rx, bytes_in, go), (out_tx, running_out, nwords_out)),
+            client,
+        ));
+        for _ in 0..10 {
+            sim.cycle();
+        }
+        let n = *got.borrow();
+        n
+    }
+
+    /// A frame of any length is fetched whole: one word for every four
+    /// bytes and one more for any left over (#2049). A word short
+    /// leaves `FrameOut` waiting for a word that never comes.
+    #[test]
+    fn frame_out_asks_for_every_word_of_the_frame() {
+        for n in (0..=9u16).chain(1514..=1522) {
+            assert_eq!(nwords_for(n), n.div_ceil(4), "for {n} bytes");
+        }
+    }
+
+    /// What `FrameIn` hands the store engine for a frame of `bytes`,
+    /// offered whole, with `hold` low throughout.
+    fn words_for(bytes: &[u8]) -> Vec<u32> {
+        let (in_tx, in_rx) = chan::<EthByte, DefaultClock>();
+        let (words_tx, words_rx) = chan::<U<32>, DefaultClock>();
+        let (len_out, len) = signal::<U<16>, DefaultClock>();
+        let (_hold_out, hold) = signal::<Bit, DefaultClock>();
+        let (_no_slot_out, no_slot) = signal::<Bit, DefaultClock>();
+        let (count_out, _count) = signal::<U<16>, DefaultClock>();
+        let (store_out, _store) = signal::<Bit, DefaultClock>();
+        let (which_out, _which) = signal::<U<1>, DefaultClock>();
+        let (drops_out, _drops) = signal::<U<32>, DefaultClock>();
+        let got: Rc<RefCell<Vec<u32>>> = Rc::default();
+        let log = got.clone();
+        let frame = bytes.to_vec();
+        let client = async move {
+            len_out.set(U::from(frame.len() as u16));
+            for (i, &b) in frame.iter().enumerate() {
+                DefaultClock::rising().await;
+                while !in_tx.ready().to_bool() {
+                    DefaultClock::rising().await;
+                }
+                in_tx.send(EthByte {
+                    data: U::from(b),
+                    last: Bit::from(i + 1 == frame.len()),
+                });
+            }
+        };
+        let sink = async move {
+            loop {
+                DefaultClock::rising().await;
+                if let Some(w) = words_rx.recv() {
+                    log.borrow_mut().push(w.raw() as u32);
+                }
+            }
+        };
+        let mut unit = FrameIn::default();
+        let mut sim = Running::new(join2(
+            unit.run(
+                (in_rx, len, hold, no_slot),
+                (words_tx, count_out, store_out, which_out, drops_out),
+            ),
+            join2(client, sink),
+        ));
+        for _ in 0..200 {
+            sim.cycle();
+        }
+        let w = got.borrow().clone();
+        w
+    }
+
+    /// Each tail, of one, two or three bytes, lands in the low lanes of
+    /// its word with nothing above it, where the store engine's strobe
+    /// expects it (#2049), whether it is a frame's only word or follows
+    /// a whole one. A frame of 1514 bytes, a full one, ends in a tail of
+    /// two.
+    #[test]
+    fn frame_in_puts_every_tail_in_the_low_lanes() {
+        for n in 1..=8usize {
+            let bytes: Vec<u8> = (0..n).map(|i| 0x11 * (i as u8 + 1)).collect();
+            let want: Vec<u32> = bytes
+                .chunks(4)
+                .map(|c| {
+                    c.iter()
+                        .enumerate()
+                        .fold(0u32, |w, (i, &b)| w | (b as u32) << (8 * i))
+                })
+                .collect();
+            assert_eq!(words_for(&bytes), want, "a frame of {n} bytes");
+        }
+    }
+
+    /// A frame offered while the store engine is still busy with the
+    /// one before waits for it (#2049): frame A, three bytes, goes
+    /// through; then B, six bytes, is offered with `hold` high, and
+    /// `store` stays low and `count` keeps A's length until `hold`
+    /// falls, since the register block reads both when the engine goes
+    /// idle. Then B goes through whole.
+    #[test]
+    fn frame_in_waits_for_the_store_before() {
+        let (in_tx, in_rx) = chan::<EthByte, DefaultClock>();
+        let (words_tx, words_rx) = chan::<U<32>, DefaultClock>();
+        let (len_out, len) = signal::<U<16>, DefaultClock>();
+        let (hold_out, hold) = signal::<Bit, DefaultClock>();
+        let (_no_slot_out, no_slot) = signal::<Bit, DefaultClock>();
+        let (count_out, count) = signal::<U<16>, DefaultClock>();
+        let (store_out, store) = signal::<Bit, DefaultClock>();
+        let (which_out, _which) = signal::<U<1>, DefaultClock>();
+        let (drops_out, _drops) = signal::<U<32>, DefaultClock>();
+        // Each cycle: `store`, `count`, whether a byte waits, and the
+        // words handed on so far.
+        let seen: Rc<RefCell<Vec<(bool, u16, bool, usize)>>> = Rc::default();
+        let log = seen.clone();
+        let got: Rc<RefCell<Vec<u32>>> = Rc::default();
+        let words = got.clone();
+        let so_far = got.clone();
+        let client = async move {
+            let a = [0x01u8, 0x02, 0x03];
+            let b = [0x10u8, 0x11, 0x12, 0x13, 0x14, 0x15];
+            let mut queue: Vec<EthByte> = Vec::new();
+            len_out.set(U::from(3u16));
+            for (i, &x) in a.iter().enumerate() {
+                queue.push(EthByte {
+                    data: U::from(x),
+                    last: Bit::from_bool(i + 1 == a.len()),
+                });
+            }
+            for t in 0..120u32 {
+                DefaultClock::rising().await;
+                if t == 30 {
+                    hold_out.set(Bit::One);
+                    len_out.set(U::from(6u16));
+                    for (i, &x) in b.iter().enumerate() {
+                        queue.push(EthByte {
+                            data: U::from(x),
+                            last: Bit::from_bool(i + 1 == b.len()),
+                        });
+                    }
+                }
+                if t == 60 {
+                    hold_out.set(Bit::Zero);
+                }
+                let waiting = !in_tx.ready().to_bool();
+                if !waiting && !queue.is_empty() {
+                    in_tx.send(queue.remove(0));
+                }
+                let at = (
+                    store.get().to_bool(),
+                    count.get().raw() as u16,
+                    !in_tx.ready().to_bool(),
+                    so_far.borrow().len(),
+                );
+                log.borrow_mut().push(at);
+            }
+        };
+        let sink = async move {
+            loop {
+                DefaultClock::rising().await;
+                if let Some(w) = words_rx.recv() {
+                    words.borrow_mut().push(w.raw() as u32);
+                }
+            }
+        };
+        let mut unit = FrameIn::default();
+        let mut sim = Running::new(join2(
+            unit.run(
+                (in_rx, len, hold, no_slot),
+                (words_tx, count_out, store_out, which_out, drops_out),
+            ),
+            join2(client, sink),
+        ));
+        for _ in 0..200 {
+            sim.cycle();
+        }
+        let seen = seen.borrow();
+        // From the cycle after B is offered until hold falls: nothing
+        // started, count still A's, and only A's word handed on; and
+        // once the channel's room is used, B's bytes left waiting.
+        let under = &seen[31..=60];
+        assert!(
+            under.iter().all(|&(s, c, _, n)| !s && c == 3 && n == 1),
+            "B taken under hold: {under:?}"
+        );
+        assert!(seen[32..=60].iter().all(|&(_, _, w, _)| w), "B waits");
+        assert!(seen[61..].iter().any(|&(s, c, _, _)| s && c == 6), "B goes");
+        assert_eq!(*got.borrow(), vec![0x0003_0201, 0x1312_1110, 0x1514]);
+    }
+}
