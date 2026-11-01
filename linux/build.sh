@@ -183,7 +183,13 @@ kernel)
   [ "$dropped" -eq 0 ] || exit 1
   k -j"$jobs" Image
   cp "$out/arch/riscv/boot/Image" "$image"
-  cp "$out/.config" "$config"
+  # The config the build used names the initramfs by the sandbox's own
+  # path, which the kernel needs; the copy kept as an output names it
+  # from the build root, so it is the same bytes wherever it was built
+  # (issue 2036).
+  while IFS= read -r line; do
+    printf '%s\n' "${line//"$root"\//}"
+  done <"$out/.config" >"$config"
   # Where the kernel ends in memory, past the Image: its BSS and early
   # page tables, which the boot image (issue 1019) must leave free.
   cp "$out/System.map" "$map"
