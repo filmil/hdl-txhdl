@@ -318,9 +318,9 @@ mod tests {
     /// Sends `n` control writes back to back, as a window of `n` goes
     /// out, to a register file that answers each write `stall` cycles
     /// after taking it, as a slow register on FPGATop's control port
-    /// does. Returns how many writes reached the bus and the tag of the
-    /// last answer.
-    fn burst(n: u8, stall: usize) -> (usize, u8) {
+    /// does. Returns the writes that reached the bus, address and word,
+    /// in order, and the tags of the answers, in order.
+    fn burst(n: u8, stall: usize) -> (Vec<(u32, u32)>, Vec<u8>) {
         let (host, per) = link::<LitePort![ADDR = 32, DATA = 32, STRB = 4]>();
         let (in_tx, in_rx) = chan::<EthByte, DefaultClock>();
         let (out_tx, out_rx) = chan::<EthByte, DefaultClock>();
@@ -331,7 +331,7 @@ mod tests {
         let (_r_tx, r_rx) = chan::<R<128, 4>, DefaultClock>();
         let (reset_o, _reset_i) = signal::<Bit, DefaultClock>();
         let mut unit = RocketLink::<DEVICE>::default();
-        let writes = std::rc::Rc::new(std::cell::Cell::new(0usize));
+        let writes = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         let seen = writes.clone();
         let ports = async move {
             let mut wait = 0usize;
@@ -343,9 +343,9 @@ mod tests {
                         per.b.send(LiteB { resp: Resp::Okay });
                     }
                 } else if per.aw.peek().is_some() && per.w.peek().is_some() {
-                    let _ = per.aw.recv();
-                    let _ = per.w.recv();
-                    seen.set(seen.get() + 1);
+                    let a = per.aw.recv().unwrap().addr.raw() as u32;
+                    let d = per.w.recv().unwrap().data.raw() as u32;
+                    seen.borrow_mut().push((a, d));
                     wait = stall;
                 }
             }
@@ -366,7 +366,7 @@ mod tests {
                 f.into_iter().enumerate().map(move |(i, b)| (b, i == k - 1))
             })
             .collect();
-        let (mut i, mut cur, mut last) = (0, Vec::new(), 0u8);
+        let (mut i, mut cur, mut tags) = (0, Vec::new(), Vec::new());
         for _ in 0..(n as usize) * (stall + 200) + 2000 {
             if i < bytes.len() && in_tx.ready().to_bool() {
                 in_tx.send(EthByte {
@@ -378,21 +378,34 @@ mod tests {
             if let Some(b) = out_rx.recv() {
                 cur.push(b.data.raw() as u8);
                 if b.last.to_bool() {
-                    last = answer(&cur).1;
+                    tags.push(answer(&cur).1);
                     cur.clear();
                 }
             }
             sim.cycle();
         }
-        (writes.get(), last)
+        let w = writes.borrow().clone();
+        (w, tags)
     }
 
     #[test]
     fn a_window_of_writes_waits_while_the_bus_is_slow() {
-        // Each write holds the bus for 400 cycles, 8 us at 50 MHz, while
-        // the next frames keep arriving: none may be dropped (#2026).
-        assert_eq!(burst(64, 400), (64, 64));
-        assert_eq!(burst(128, 400), (128, 128));
+        // Each write holds the bus while the next frames keep arriving:
+        // none may be dropped, every write reaches the bus once and in
+        // order, and each is answered in turn (#2026). At 7,700 cycles a
+        // write, the whole window of 128 has arrived, 60 cycles a frame,
+        // before the first write is answered, so the queue is full.
+        for (n, stall) in [(64u8, 400usize), (128, 7700)] {
+            let (writes, tags) = burst(n, stall);
+            let want: Vec<(u32, u32)> =
+                (1..=n as u32).map(|t| (0x100 + 4 * t, t)).collect();
+            assert_eq!(writes, want, "writes, window {n}");
+            assert_eq!(
+                tags,
+                (1..=n).collect::<Vec<u8>>(),
+                "answers, window {n}"
+            );
+        }
     }
 
     /// A reset frame for `dev`, padded as the MAC pads it.
