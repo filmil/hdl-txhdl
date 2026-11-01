@@ -238,13 +238,17 @@ impl<const KEY: usize> Unit for Wdog<KEY> {
                 enabled ? pre: mux(tick, U::<16>::from(0u16), pre + 1),
                 refresh | warning | failing | (writable & we.bit(0))
                     ? pre: U::<16>::from(0u16),
-                status: (status | warning.zext::<2>()
-                    | (failing.zext::<2>() << 1))
+                // The clear comes first and the events after it, so a
+                // warning or a failure in the cycle of a clear stays
+                // (#2040).
+                status: (status
                     & mux(
                         we.bit(4),
                         !written.slice::<0, 2>(),
                         U::<2>::from(3u8),
-                    ),
+                    ))
+                    | warning.zext::<2>()
+                    | (failing.zext::<2>() << 1),
                 failing ? hold: U::<4>::from(8u8),
                 holding & !failing ? hold: hold - 1,
             });
