@@ -167,7 +167,10 @@ func TestALoaderThatStopsIsNamed(t *testing.T) {
 // A sender stopped from outside partway, as the timeout round it stops
 // it, says at which word and fails, where it used to end with nothing
 // printed after its first line and leave a half-loaded image looking
-// like a quiet program.
+// like a quiet program. It says so on stdout, where the console goes,
+// and nothing of the loader's is left on stderr: behind ssh the two
+// streams travel apart, and a `[load]` line on stderr can land in the
+// middle of a console line (HDL/txhdl#2045).
 func TestASenderCutOffSaysWhere(t *testing.T) {
 	m, _, name := ptyNamed(t)
 	img := filepath.Join(t.TempDir(), "image.bin")
@@ -178,7 +181,8 @@ func TestASenderCutOffSaysWhere(t *testing.T) {
 	cmd := exec.Command(os.Args[0])
 	cmd.Env = append(os.Environ(),
 		"LOAD_AS_SENDER="+strings.Join([]string{name, "115200", "0x40000000", img, "1"}, " "))
-	var errs bytes.Buffer
+	var out, errs bytes.Buffer
+	cmd.Stdout = &out
 	cmd.Stderr = &errs
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -192,10 +196,18 @@ func TestASenderCutOffSaysWhere(t *testing.T) {
 		code = e.ExitCode()
 	}
 	if code != 1 {
-		t.Fatalf("exit %v (%d), want 1\n%s", err, code, errs.String())
+		t.Fatalf("exit %v (%d), want 1\n%s%s", err, code, out.String(), errs.String())
 	}
-	said := errs.String()
+	said := out.String()
 	if !strings.Contains(said, "terminated: cut off at word ") || !strings.Contains(said, " of 2000") {
-		t.Fatalf("no word named where it was cut off:\n%s", said)
+		t.Fatalf("no word named where it was cut off on stdout:\n%s", said)
+	}
+	for _, want := range []string{"[load] listening on", "[load] 2000 words to"} {
+		if !strings.Contains(said, want) {
+			t.Fatalf("no %q on stdout:\n%s", want, said)
+		}
+	}
+	if strings.Contains(errs.String(), "[load]") {
+		t.Fatalf("a [load] line on stderr, apart from the console:\n%s", errs.String())
 	}
 }
