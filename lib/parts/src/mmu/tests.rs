@@ -445,6 +445,93 @@ fn an_address_past_thirty_two_bits_or_nowhere_is_an_access_fault() {
     });
 }
 
+/// What an entry past thirty-two bits gives besides the two cases
+/// above (#2053): an entry that is not valid, or writable but not
+/// readable, is a page fault whatever its address, as a Linux swap
+/// entry is; a leaf past thirty-two bits is checked as the access it
+/// is, so a fetch from a readable leaf is a page fault and from an
+/// executable one an access fault; and a fetch under a `satp` past
+/// thirty-two bits is an access fault with no walk, as a load is.
+#[test]
+fn every_entry_past_thirty_two_bits_is_checked_first() {
+    run(|rig| async move {
+        rig.set_mode(smode());
+        let va = 0x0040_5000;
+        let cases: &[(u32, Port, Fault)] = &[
+            (1 << 30, Port::D, Fault::Page),
+            (1 << 30 | V | W | A | D, Port::D, Fault::Page),
+            (1 << 30 | V | R | A, Port::I, Fault::Page),
+            (1 << 30 | V | X | A, Port::I, Fault::Access),
+        ];
+        for (k, &(entry, port, want)) in cases.iter().enumerate() {
+            rig.put(l1(va), pte::to(L0, V));
+            rig.put(l0(L0, va), entry);
+            rig.flush().await;
+            let got = rig.check(port, va, false).await;
+            assert_eq!(got, Err(want), "case {k}");
+        }
+        let n = rig.reads();
+        rig.set_mode(Mode {
+            satp: 1 << 31 | 1 << 20,
+            ..smode()
+        });
+        assert_eq!(rig.check(Port::I, 0, false).await, Err(Fault::Access));
+        assert_eq!(rig.reads(), n, "no walk");
+    });
+}
+
+/// A megapage whose low page number has only its top bit set is as
+/// misaligned as one with its bottom bit (#2053).
+#[test]
+fn a_megapage_misaligned_in_any_bit_faults() {
+    run(|rig| async move {
+        rig.set_mode(smode());
+        for (k, pa) in [0x4000_1000u32, 0x4020_0000, 0x4010_0000]
+            .iter()
+            .enumerate()
+        {
+            let va = 0x0080_0000 + ((k as u32) << 22);
+            rig.put(l1(va), pte::to(*pa, RWXAD));
+            assert_eq!(
+                rig.check(Port::D, va, false).await,
+                Err(Fault::Page),
+                "low page number of {pa:#x}"
+            );
+        }
+    });
+}
+
+/// Pages whose virtual page numbers differ in one bit, each of the
+/// twenty, are told apart by both TLBs (#2053): each is mapped to its
+/// own page, and asked for right after the page it differs from, which
+/// the TLB still holds.
+#[test]
+fn pages_a_bit_apart_are_told_apart() {
+    run(|rig| async move {
+        rig.set_mode(smode());
+        let base = 0x0040_1000u32;
+        let mut k = 0u32;
+        // A table per first-level entry, so pages that share one share
+        // its table.
+        let mut put = |va: u32| {
+            let table = 0x8010_0000 + 0x1000 * (va >> 22);
+            rig.put(l1(va), pte::to(table, V));
+            rig.put(l0(table, va), pte::to(0x4000_0000 + 0x1000 * k, RWXAD));
+            k += 1;
+        };
+        put(base);
+        for b in 0..20 {
+            let other = base ^ (1 << (12 + b));
+            put(other);
+            for port in [Port::D, Port::I] {
+                rig.flush().await;
+                rig.check(port, base, false).await.expect("base");
+                rig.check(port, other, false).await.expect("bit apart");
+            }
+        }
+    });
+}
+
 #[test]
 fn a_fault_is_not_kept_after_its_request() {
     run(|rig| async move {
