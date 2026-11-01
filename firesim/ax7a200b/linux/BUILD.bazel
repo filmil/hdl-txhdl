@@ -122,6 +122,18 @@ genrule(
     tools = LINUX_TOOLS,
 )
 
+# The kernel's config names no directory of the sandbox it was built
+# in: the initramfs's path in it made two builds differ (issue 2036).
+# Manual, as the kernel is.
+sh_test(
+    name = "kernel_config_paths_test",
+    size = "small",
+    srcs = ["//linux:no_build_paths_test.sh"],
+    args = ["$(rootpath kernel.config)"],
+    data = ["kernel.config"],
+    tags = ["manual"],
+)
+
 # OpenSBI with the kernel as its payload: what the driver loads.
 genrule(
     name = "rocket_linux",
