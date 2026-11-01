@@ -136,10 +136,11 @@ The link reads one byte per 50 MHz cycle, half the cable's rate, and the MAC hol
 So a window sent again after a timeout lost all but its first few asks, and each loss set off another.
 On srv the counters showed it: in a window-32 boot on 2026-11-01, before the fix, the adapter sent 4.38 million asks and received 3.12 million answers, and every answer reached the driver.
 The crossing now holds 2048 bytes, 34 asks of 60 bytes.
-On 2026-11-01 the boot took 46.4 s at 8, 24.8 s at 32, 24.4 s at 64 and 24.2 s at 128, with no ask sent again at any of them, and srv's sent and received counts were equal.
+That is enough for a window of 128 because a burst is not a whole window: in steady state the driver sends one ask per answer, and a burst is what the adapter packs into one USB transfer, a few frames at these rates.
+On 2026-11-01 the boot took 46.6 s at 8, 24.8 s at 32, 23.9 s at 64 and 23.5 s at 128, with no ask sent again at any of them, and srv's sent and received counts were equal.
 The default window is 32, and the load takes about 12 s.
 `hello` and `bench` pass at the same cycles.
-A queue of 128 asks in front of `LiteMaster`, which went in with the crossing, made no difference on the board: without it, no ask was sent again and the boot was no slower, 24.8 s at 32 and 23.5 s at 128, so it came out again (#2032).
+A queue of 128 asks in front of `LiteMaster`, which went in with the crossing, made no difference on the board, no ask sent again with it either and the boot no faster, 24.8 s at 32 and 24.2 s at 128, so it came out again (#2032).
 On a bitstream from before #2026, a window above eight is slower; give `+window=8` there.
 A driver from #2019 on a bitstream whose answers name no ask says so and sends one write at a time, since the older board would perform asks sent again out of order.
 `hello` and `bench` pass at the same target cycles, `bench` in 13.9 s against 15.0 s, and the driver of release `firesim-ax7a200b-rocket-v1` still passes on the new bitstream.

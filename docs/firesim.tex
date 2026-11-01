@@ -239,7 +239,8 @@ to \code{HostLink}, whose \code{LiteMaster} performs them on the
 control port, and every other frame to \code{StreamBridge}, which
 drops those that are not stream frames. The host's USB adapter sends
 waiting frames back to back, at twice the rate the link takes bytes,
-so the crossing from the PHY's clock holds 2048~bytes (issue~2026).
+so the crossing from the PHY's clock holds 2048~bytes, a few such
+bursts (issue~2026).
 Listing~\ref{lst:f-bridge} is \code{StreamBridge}: \code{StreamLink}
 reads and writes the frames, and \code{BeatMaster} performs each
 request as an AXI4 burst of one beat. Every unit has a test against a
