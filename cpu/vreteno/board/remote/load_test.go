@@ -227,15 +227,21 @@ func TestStampedLinesStartWithTheServersTime(t *testing.T) {
 	cmd := exec.Command(os.Args[0])
 	cmd.Env = append(os.Environ(),
 		"LOAD_AS_SENDER="+strings.Join([]string{name, "115200", "0x40000000", img, "1", "stamp"}, " "))
-	var out bytes.Buffer
+	var out, errs bytes.Buffer
 	cmd.Stdout = &out
+	cmd.Stderr = &errs
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(2500 * time.Millisecond)
 	cmd.Process.Signal(syscall.SIGTERM)
 	cmd.Wait()
-	stamped := regexp.MustCompile(`^\d\d:\d\d:\d\d\.\d\d\dZ `)
+	if errs.Len() != 0 {
+		t.Fatalf("stderr is not empty, so not all of it is stamped:\n%s", errs.String())
+	}
+	// A stamp and something after it: an empty stamped line is a line
+	// the console made up.
+	stamped := regexp.MustCompile(`^\d\d:\d\d:\d\d\.\d\d\dZ \S`)
 	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
 	if len(lines) < 3 {
 		t.Fatalf("too few lines:\n%s", out.String())
@@ -245,21 +251,32 @@ func TestStampedLinesStartWithTheServersTime(t *testing.T) {
 			t.Fatalf("a line without the server's stamp: %q\n%s", l, out.String())
 		}
 	}
-	if !strings.Contains(out.String(), "Z [load] 2000 words to") {
-		t.Fatalf("no stamped transfer line:\n%s", out.String())
+	for _, want := range []string{"Z [load] 2000 words to", "Z [load] terminated: cut off at word "} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("no stamped %q:\n%s", want, out.String())
+		}
 	}
 }
 
-// A stamper stamps each line once, at its first byte, however the
-// line's bytes are split across writes.
-func TestAStamperStampsEachLineOnce(t *testing.T) {
+// A console stamps each line once, with the time of its first byte,
+// however the line's bytes are split across writes; the clock moves on
+// a millisecond at each write, so a stamp taken later would show. A
+// `[load]` line said partway through a line of the board's starts on a
+// line of its own, and ending a line at the start of one adds nothing.
+func TestAConsoleStampsEachLineAtItsFirstByte(t *testing.T) {
 	var b bytes.Buffer
 	at := time.Date(2026, 11, 1, 12, 9, 20, 848_000_000, time.UTC)
-	s := &stamper{w: &b, clock: func() time.Time { return at }}
-	for _, p := range []string{"ab", "c\nd", "e\n", "\n"} {
-		s.Write([]byte(p))
+	c := &console{w: &b, stamp: true, clock: func() time.Time { return at }}
+	for _, p := range []string{"ab", "c\nd", "e\n", "f"} {
+		c.Write([]byte(p))
+		at = at.Add(time.Millisecond)
 	}
-	want := "12:09:20.848Z abc\n12:09:20.848Z de\n12:09:20.848Z \n"
+	say(c, "[load] cut off\n")
+	c.endLine()
+	want := "12:09:20.848Z abc\n" +
+		"12:09:20.849Z de\n" +
+		"12:09:20.851Z f\n" +
+		"12:09:20.852Z [load] cut off\n"
 	if b.String() != want {
 		t.Fatalf("got %q, want %q", b.String(), want)
 	}
