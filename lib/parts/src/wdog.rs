@@ -495,4 +495,71 @@ mod tests {
         assert_eq!(got[0], scale(2), "scale reads back");
         assert_eq!(got[1], scale(2) | CTRL_LOCK, "locked, it stays 2");
     }
+
+    /// Whether `status` held `bit` in some cycle of the first `window`
+    /// after `ctrl` is written, when `status` is cleared `d` cycles after
+    /// that write; `load` 20 at `scale` 0.
+    fn seen_through_a_clear(ctrl: u32, bit: u32, d: u32, window: u32) -> bool {
+        let link = axi_lite::<32, 32, 4>();
+        let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = link.per.into();
+        let host = link.host;
+        let (rst_req, _) = signal::<Bit, DefaultClock>();
+        let (irq, _) = signal::<Bit, DefaultClock>();
+        let mut dog = Wdog::<KEY>::default();
+        let status = dog.status;
+        let started: Rc<RefCell<bool>> = Rc::default();
+        let go = started.clone();
+        let client = async move {
+            write(&host, regs::load, 20).await;
+            write(&host, regs::feed, KEY as u32).await;
+            write(&host, regs::ctrl, ctrl).await;
+            *go.borrow_mut() = true;
+            for _ in 0..d {
+                DefaultClock::rising().await;
+            }
+            write(&host, regs::status, 3).await;
+        };
+        let seen: Rc<RefCell<bool>> = Rc::default();
+        let log = seen.clone();
+        let watch = async move {
+            let mut t = 0;
+            while t < window {
+                DefaultClock::rising().await;
+                if *started.borrow() {
+                    t += 1;
+                    if status.get().raw() as u32 & bit != 0 {
+                        *log.borrow_mut() = true;
+                    }
+                }
+            }
+        };
+        let mut sim = Running::new(join2(
+            dog.run(bus, (rst_req, irq)),
+            join2(client, watch),
+        ));
+        for _ in 0..(window + 100) {
+            sim.cycle();
+        }
+        let s = *seen.borrow();
+        s
+    }
+
+    /// A clear of `status` in the cycle of a warning or a failure does
+    /// not lose it (#2040): with the clear swept over every cycle around
+    /// the first timeout, at 20, `status` shows the event in some cycle
+    /// before the second, at 40, so a clear never hides one.
+    #[test]
+    fn a_clear_in_the_cycle_of_an_event_keeps_it() {
+        for d in 0..=30 {
+            let warn = CTRL_ENABLE | CTRL_WARN;
+            assert!(
+                seen_through_a_clear(warn, STATUS_WARNED, d, 35),
+                "the warning lost to a clear {d} cycles in"
+            );
+            assert!(
+                seen_through_a_clear(CTRL_ENABLE, STATUS_FAILED, d, 35),
+                "the failure lost to a clear {d} cycles in"
+            );
+        }
+    }
 }
