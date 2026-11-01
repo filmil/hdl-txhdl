@@ -14,16 +14,13 @@
 //! for a reset frame (issue 2007): kind 0x04 on the control EtherType.
 //! FireSim expects a fresh simulator for each run, and the board top
 //! uses the tap's `reset` to reset the simulator and this link.
-use txhdl::comp::{
-    chan, join2, Clock, Data, DefaultClock, Out, Reg, Rx, Tx, Unit,
-};
+use txhdl::comp::{chan, join2, Clock, DefaultClock, Out, Reg, Rx, Tx, Unit};
 use txhdl::types::{Bit, U};
 use txhdl::{lower, with, Trace};
 use txhdl_parts::bus::axi::{Ar, Aw, B, R, W};
 use txhdl_parts::bus::axi_lite::LiteHostPort;
 use txhdl_parts::eth::EthByte;
 use txhdl_parts::ethshare::EthShare;
-use txhdl_parts::fifo::Fifo;
 use txhdl_parts::remote::host::{HostAnswer, HostLink, LiteMaster};
 use txhdl_parts::remote::stream::StreamBridge;
 use txhdl_parts::remote::Ask;
@@ -105,12 +102,6 @@ pub struct RocketLink<const DEV: usize> {
     pub share: EthShare<CONTROL>,
     /// The control frames.
     pub link: HostLink<DEV>,
-    /// The asks waiting for the master. `HostLink` drops an ask it has
-    /// no room for, and the master holds each one until the bus answers,
-    /// which a register on FPGATop's control port can take microseconds
-    /// to do, while the next asks of a window arrive one every 1.3 us.
-    /// So the room is the driver's largest window, 128 (issue 2026).
-    pub asks: Fifo<Data<Ask>, 7, 128>,
     /// The control port. HostLink and LiteMaster rather than HostBridge,
     /// since a bundle port is passed to a child only as a bare argument.
     pub master: LiteMaster,
@@ -138,7 +129,6 @@ impl<const DEV: usize> Unit for RocketLink<DEV> {
         let (s_in_tx, s_in_rx) = chan::<EthByte, DefaultClock>();
         let (s_out_tx, s_out_rx) = chan::<EthByte, DefaultClock>();
         let (ask_tx, ask_rx) = chan::<Ask, DefaultClock>();
-        let (q_tx, q_rx) = chan::<Ask, DefaultClock>();
         let (ans_tx, ans_rx) = chan::<HostAnswer, DefaultClock>();
         join2(
             join2(
@@ -152,11 +142,8 @@ impl<const DEV: usize> Unit for RocketLink<DEV> {
                 self.stream.run((s_in_rx, b, r), (s_out_tx, aw, ar, w)),
             ),
             join2(
-                join2(
-                    self.link.run((c_in_rx, ans_rx), (ask_tx, c_out_tx)),
-                    self.asks.run(ask_rx, q_tx),
-                ),
-                self.master.run(bus, (q_rx, ans_tx)),
+                self.link.run((c_in_rx, ans_rx), (ask_tx, c_out_tx)),
+                self.master.run(bus, (ask_rx, ans_tx)),
             ),
         )
         .await;
@@ -317,9 +304,9 @@ mod tests {
 
     /// Sends `n` control writes back to back, as a window of `n` goes
     /// out, to a register file that answers each write `stall` cycles
-    /// after taking it, as a slow register on FPGATop's control port
-    /// does. Returns the writes that reached the bus, address and word,
-    /// in order, and the tags of the answers, in order.
+    /// after taking it, as a register on FPGATop's control port does.
+    /// Returns the writes that reached the bus, address and word, in
+    /// order, and the tags of the answers, in order.
     fn burst(n: u8, stall: usize) -> (Vec<(u32, u32)>, Vec<u8>) {
         let (host, per) = link::<LitePort![ADDR = 32, DATA = 32, STRB = 4]>();
         let (in_tx, in_rx) = chan::<EthByte, DefaultClock>();
@@ -389,13 +376,13 @@ mod tests {
     }
 
     #[test]
-    fn a_window_of_writes_waits_while_the_bus_is_slow() {
-        // Each write holds the bus while the next frames keep arriving:
-        // none may be dropped, every write reaches the bus once and in
-        // order, and each is answered in turn (#2026). At 7,700 cycles a
-        // write, the whole window of 128 has arrived, 60 cycles a frame,
-        // before the first write is answered, so the queue is full.
-        for (n, stall) in [(64u8, 400usize), (128, 7700)] {
+    fn a_window_of_writes_back_to_back_is_performed_in_order() {
+        // A window's asks reach the link one after another, one byte a
+        // cycle, and a register answers each write in a few cycles: every
+        // write reaches the bus once and in order, and each is answered in
+        // turn. The bursts srv's USB adapter sends are a few frames; 64
+        // covers them with room (#2026, #2032).
+        for (n, stall) in [(8u8, 4usize), (64, 4)] {
             let (writes, tags) = burst(n, stall);
             let want: Vec<(u32, u32)> =
                 (1..=n as u32).map(|t| (0x100 + 4 * t, t)).collect();
