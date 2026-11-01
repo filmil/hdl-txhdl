@@ -128,10 +128,18 @@ This works because `LiteMaster` on the board now performs an ask only when its t
 
 `eth_window.h` holds the driver's side, and `eth_window_test` runs it against a model of the board that loses one frame in ten each way.
 `+window=<n>` sets the number of writes in flight, from 1 to 128.
-On 2026-10-31 the whole boot took 45.6 s at 8, 38.5 s at 12, 42.7 s at 16, 71.0 s at 32 and 102 s at 64.
-Above eight frames start to be lost, and at 32 the driver sent 5.5 million asks again for about 860,000 writes.
-Naming the ask in the answer stops late copies from sending the window again, but not those losses, so the default stays eight.
-#2026 is to find where the frames are lost.
+On 2026-10-31 the whole boot took 45.6 s at 8, 38.5 s at 12, 42.7 s at 16, 71.0 s at 32 and 102 s at 64: above about eight, frames were lost, and at 32 the driver sent 5.5 million asks again for about 860,000 writes.
+
+They were lost on the board's receive side (#2026).
+srv's USB Ethernet adapter, a Realtek RTL8153, packs the frames waiting for it into one USB transfer, so a window's asks reach the cable back to back, whatever the driver's spacing.
+The link reads one byte per 50 MHz cycle, half the cable's rate, and the MAC holds two frames, behind a clock crossing that held 16 bytes.
+So a window sent again after a timeout lost all but its first few asks, and each loss set off another.
+On srv the counters showed it: in a window-32 boot the adapter sent 4.38 million asks and received 3.12 million answers, and every answer reached the driver.
+The crossing now holds 2048 bytes, 34 asks of 60 bytes, and the queue between `HostLink` and `LiteMaster` holds 128, so an ask waits while a slow register on FPGATop's control port answers rather than being dropped.
+On 2026-11-01 the boot took 46.4 s at 8, 24.8 s at 32, 24.4 s at 64 and 24.2 s at 128, with no ask sent again at any of them, and srv's sent and received counts were equal.
+The default window is 32, and the load takes about 12 s.
+`hello` and `bench` pass at the same cycles.
+On a bitstream from before #2026, a window above eight is slower; give `+window=8` there.
 A driver from #2019 on a bitstream whose answers name no ask says so and sends one write at a time, since the older board would perform asks sent again out of order.
 `hello` and `bench` pass at the same target cycles, `bench` in 13.9 s against 15.0 s, and the driver of release `firesim-ax7a200b-rocket-v1` still passes on the new bitstream.
 The driver takes the board's tag from the answer to its first ask, so it also works on a bitstream that was not reset since an earlier run, as GCD's is.
