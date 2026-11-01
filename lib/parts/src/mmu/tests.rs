@@ -480,18 +480,16 @@ fn every_entry_past_thirty_two_bits_is_checked_first() {
     });
 }
 
-/// A megapage whose low page number has only its top bit set is as
-/// misaligned as one with its bottom bit (#2053).
+/// A megapage whose low page number has any one of its ten bits set is
+/// misaligned, the top as much as the bottom (#2053).
 #[test]
 fn a_megapage_misaligned_in_any_bit_faults() {
     run(|rig| async move {
         rig.set_mode(smode());
-        for (k, pa) in [0x4000_1000u32, 0x4020_0000, 0x4010_0000]
-            .iter()
-            .enumerate()
-        {
-            let va = 0x0080_0000 + ((k as u32) << 22);
-            rig.put(l1(va), pte::to(*pa, RWXAD));
+        for b in 0..10u32 {
+            let pa = 0x4000_0000 | 1 << (12 + b);
+            let va = 0x0080_0000 + (b << 22);
+            rig.put(l1(va), pte::to(pa, RWXAD));
             assert_eq!(
                 rig.check(Port::D, va, false).await,
                 Err(Fault::Page),
