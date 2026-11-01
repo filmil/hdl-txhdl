@@ -1,6 +1,6 @@
 % SPDX-License-Identifier: Apache-2.0
 % covers: LiteMaster
-\datasheet{LiteMaster}{An AXI-Lite host that performs one ask at a time and answers each, repeating the last answer to an ask that repeats its tag.}
+\datasheet{LiteMaster}{An AXI-Lite host that performs one ask at a time, only the ask whose tag follows the last one it performed, and answers every other from the last answer it kept.}
 
 \dsfacts{\code{lib/parts/src/remote/host.rs}}{\code{txhdl\_parts::remote::host::LiteMaster}}%
 {\code{//docs:examples}}
@@ -9,20 +9,47 @@
 
 \code{LiteMaster} takes an \code{Ask} from \code{HostLink}, a program's
 read or write, performs it as an AXI-Lite host on the design's bus, and
-sends the \code{Answer} back. It is what lets a program on another
+sends a \code{HostAnswer} back. It is what lets a program on another
 machine read and write this design's registers over Ethernet (issue
 1931).
 
-A frame can be lost, so the program sends an ask again when its answer
-does not come. \code{LiteMaster} keeps the tag and the answer of the
-last transaction it performed, and an ask with that tag again is
-answered from them rather than performed twice: a write repeated on a
-register with a side effect would do the effect twice.
+The tags count up by one, and \code{LiteMaster} performs only the ask
+whose tag follows the last one it performed, or the first ask it is
+given (issue 2019). It keeps the tag and the answer of the last
+transaction it performed, and answers any other ask from them. So a
+frame lost and sent again is not performed twice, as a write repeated
+on a register with a side effect would do the effect twice; and a
+program can send many asks without waiting for each answer. An answer
+says that every ask up to its tag is done, and an answer that names an
+earlier tag than the program sent says an ask was lost and where to
+start again.
 
 \subsection*{Parameters}
 
 None. The bus is AXI-Lite of 32-bit addresses and words, a
 \code{LiteHostPort<32, 32, 4>}.
+
+\subsection*{The answer}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lp{0.68\textwidth}@{}}
+\toprule
+Field & What \\
+\midrule
+\code{tag} & The tag of the last transaction performed: the ask's own
+tag when the ask was performed. \\
+\code{asked} & The tag of the ask this answers. The two differ when the
+ask came out of turn: an asked tag past the one that was due says an
+ask before it was lost, and one behind the last is a stale copy the
+program sent again. A repeat of the last tag is answered with the two
+equal. \\
+\code{data} & Of the last transaction performed: the word a read read,
+or for a write the number of transactions that have failed since the
+design started, wrapping. \\
+\code{err} & One if the last transaction performed failed. \\
+\bottomrule
+\end{tabular}
+\end{center}
 
 \dstables{LiteMaster}
 
@@ -31,18 +58,21 @@ None. The bus is AXI-Lite of 32-bit addresses and words, a
 \begin{itemize}
 \item An ask is taken when nothing is on the bus and no answer is
 waiting to go.
-\item An ask whose tag is the last transaction's is answered again from
-\code{last\_tag}, \code{last\_data} and \code{last\_err}, and not
-performed. \code{have\_last} says whether those hold an answer, so the
-first ask is performed whatever its tag, though the kept tag starts at
-zero.
+\item An ask is performed when its tag is one more than
+\code{last\_tag}, counting past 255 to 0, or when \code{have\_last} says
+nothing has been performed yet, so the first ask is performed whatever
+its tag. Every other ask, a repeat of the last tag among them, is
+answered from \code{last\_tag}, \code{last\_data} and \code{last\_err},
+and not performed.
+\item Every ask taken sets \code{asked}, so its answer names it.
 \item A write sends its address on \code{aw} and its word and strobe on
 \code{w}, each once and each when its channel has room; a read sends its
 address on \code{ar}. The protection bits are zero.
 \item The response is taken only once the request has gone whole, so a
 bus that answers early cannot end a write whose word is still waiting.
 \item A response other than \code{Okay} becomes an answer with its error
-bit set. A write answers the word zero.
+bit set, and adds one to \code{fails}. A write answers the new count of
+failures in place of a word.
 \item The answer goes on \code{back} when it has room, and the next ask
 is taken after it.
 \end{itemize}
@@ -52,12 +82,14 @@ is taken after it.
 \begin{itemize}
 \item The tests in \code{lib/parts/src/remote/host.rs}, in
 \code{//lib/parts:parts\_test}, run it with \code{HostLink<5>} and a
-memory on the bus:
-\code{a\_program\_writes\_and\_reads\_the\_bus};
+memory on the bus. Among them:
 \code{a\_repeated\_ask\_is\_answered\_again\_and\_not\_performed\_again},
 whose memory counts one write;
-\code{an\_error\_on\_the\_bus\_comes\_back\_as\_an\_error};
-\code{a\_partial\_write\_keeps\_its\_strobe};
+\code{an\_ask\_out\_of\_turn\_is\_answered\_from\_the\_last};
+\code{asks\_sent\_without\_waiting\_are\_performed\_in\_order};
+\code{the\_tag\_after\_255\_is\_0};
+\code{an\_answer\_names\_the\_ask\_it\_answers};
+\code{a\_write\_answer\_counts\_the\_failures\_so\_far};
 \code{tag\_zero\_first\_is\_performed\_not\_taken\_for\_a\_repeat}; and
 \code{a\_slow\_bus\_is\_waited\_for}, with a memory 50 cycles slow.
 \item \code{//lib/examples:ex\_hostlink}, and the build simulates its
@@ -73,9 +105,11 @@ and \code{//firesim/ax7a200b} through \code{HostBridge<5>}.
 
 \subsection*{Limits}
 
-One transaction at a time, and one 32-bit word per transaction. A
-repeat is known by its tag alone, so a program must give each new ask a
-tag other than the last one's: a new ask under the last tag is answered
-with the last answer and not performed, whatever its address. Only the
-last answer is kept, so an ask repeated after a newer one has been
-performed is performed again.
+One transaction at a time, and one 32-bit word per transaction. The
+order is by tag alone: a program must number its asks one after
+another, starting from the tag after the one the first answer names,
+and an ask under any other tag is answered with the last answer and not
+performed, whatever its address. Only the last answer is kept, so the
+answer to an ask that was performed before the last one is lost; a
+failure, of a read or a write, still shows in the count the next
+performed write answers.
