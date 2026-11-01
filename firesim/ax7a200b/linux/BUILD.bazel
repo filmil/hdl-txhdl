@@ -6,6 +6,7 @@
 # RV64. Manual, since a kernel is minutes of work:
 #
 #   bazel build //firesim/ax7a200b/linux:rocket_linux
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//linux:defs.bzl", "LINUX_ENV", "LINUX_TOOLS")
 
 package(default_visibility = ["//visibility:public"])
@@ -131,6 +132,18 @@ genrule(
           "$(execpath @opensbi//:src) $(execpath Image) $@",
     tags = ["manual"],
     tools = LINUX_TOOLS,
+)
+
+# The payload names no directory of the sandbox it was built in: such
+# paths made two builds in two sandboxes differ (issue 2023). Manual, as
+# the payload is.
+sh_test(
+    name = "rocket_linux_paths_test",
+    size = "small",
+    srcs = ["//linux:no_build_paths_test.sh"],
+    args = ["$(rootpath rocket_linux.elf)"],
+    data = ["rocket_linux.elf"],
+    tags = ["manual"],
 )
 
 # The kernel whose root is on FireSim's block device (issue 2020):

@@ -80,6 +80,26 @@ export KBUILD_BUILD_TIMESTAMP="1970-01-01 00:00:00 UTC"
 export KBUILD_BUILD_USER="txhdl"
 export KBUILD_BUILD_HOST="txhdl"
 jobs=$(nproc)
+# OpenSBI compiles the sources it generates, the .carray.c files, from
+# its output directory under this sandbox, and the ELF kept their
+# absolute paths, so builds in two sandboxes differed (issue 2023).
+# The map writes them relative to here. OpenSBI's Makefile sets CFLAGS
+# with "=", so a CFLAGS given to make would replace its flags; it adds
+# platform-genflags-y to its C and assembler flags, and no platform or
+# firmware here sets that. A variable given to make replaces every
+# assignment to it in the Makefiles, so sbi_make refuses an OpenSBI
+# that does set it, rather than drop its flags without a word.
+sbi_prefix_map="-ffile-prefix-map=$root=."
+sbi_make() {
+  local src=$1
+  shift
+  if grep -R -l -E --include='*.mk' --include='Makefile*' \
+    '^[[:space:]]*platform-genflags-y[[:space:]]*[:+?]?=' "$root/$src" >&2; then
+    echo "build.sh: OpenSBI sets platform-genflags-y; pass the prefix map another way (issue 2023)" >&2
+    exit 2
+  fi
+  make -C "$root/$src" platform-genflags-y="$sbi_prefix_map" "$@"
+}
 
 case $what in
 kernel)
@@ -195,7 +215,7 @@ opensbi)
   # it, and the kernel 4 MiB in, the alignment an RV32 kernel's first
   # megapage needs. No FW_JUMP_FDT_ADDR, so the kernel gets the device
   # tree the shim passed in a1, where the image put it.
-  make -C "$root/$src" O="$out" LLVM=1 PLATFORM=generic \
+  sbi_make "$src" O="$out" LLVM=1 PLATFORM=generic \
     PLATFORM_RISCV_XLEN=32 PLATFORM_RISCV_ISA=rv32ima_zicsr_zifencei \
     PLATFORM_RISCV_ABI=ilp32 FW_TEXT_START=0x40080000 \
     FW_JUMP=y FW_JUMP_ADDR=0x40400000 \
@@ -218,7 +238,7 @@ payload)
   src=$1 kernel=$2 elf_out=$3
   out=$root/.pout
   rm -rf "$out" && mkdir -p "$out"
-  make -C "$root/$src" O="$out" LLVM=1 PLATFORM=generic \
+  sbi_make "$src" O="$out" LLVM=1 PLATFORM=generic \
     PLATFORM_RISCV_XLEN=64 PLATFORM_RISCV_ISA=rv64imac_zicsr_zifencei \
     PLATFORM_RISCV_ABI=lp64 FW_TEXT_START=0x80000000 \
     FW_PAYLOAD=y FW_PAYLOAD_PATH="$root/$kernel" \
