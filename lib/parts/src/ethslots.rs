@@ -373,7 +373,7 @@ mod tests {
     use super::*;
     use crate::bus::axi::Resp;
     use crate::bus::axi_lite::{axi_lite, LiteAr, LiteAw, LiteHost, LiteW};
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
     use txhdl::comp::{join2, signal, Running};
 
@@ -592,5 +592,139 @@ mod tests {
             sim.cycle();
         }
         assert!(*done.borrow(), "the client finished");
+    }
+
+    /// What the receive side of `EthSlots` does with frame A queued and
+    /// frame B arriving, B's store ending at cycle `d` and, if `ack`, the
+    /// driver's acknowledgement of A starting at cycle 6. Per cycle after B's
+    /// store began: `rx_full` and the count queued; and at the end the
+    /// count, and the slot and length at the front.
+    struct Rx {
+        full: Vec<bool>,
+        queued: Vec<u32>,
+        end: (u32, u32, u32),
+    }
+
+    fn arrive(ack: bool, d: u32) -> Rx {
+        let link = axi_lite::<32, 32, 4>();
+        let bus: LitePort![ADDR = 32, DATA = 32, STRB = 4] = link.per.into();
+        let host = link.host;
+        let (_tx_busy_o, tx_busy) = signal::<Bit, DefaultClock>();
+        let (rx_busy_o, rx_busy) = signal::<Bit, DefaultClock>();
+        let (rx_len_o, rx_len) = signal::<U<16>, DefaultClock>();
+        let (rx_which_o, rx_which) = signal::<U<1>, DefaultClock>();
+        let (_rx_drops_o, rx_drops) = signal::<U<32>, DefaultClock>();
+        let (_rx_mac_o, rx_mac) = signal::<U<48>, DefaultClock>();
+        let (tx_base, _) = signal::<U<32>, DefaultClock>();
+        let (tx_bytes, _) = signal::<U<16>, DefaultClock>();
+        let (tx_start, _) = signal::<Bit, DefaultClock>();
+        let (rx_base, _) = signal::<U<32>, DefaultClock>();
+        let (irq, _) = signal::<Bit, DefaultClock>();
+        let (rx_full_o, rx_full) = signal::<Bit, DefaultClock>();
+        let mut slots = EthSlots::<0x4100_0000>::default();
+        let (queued, q0_slot, q0_len) =
+            (slots.queued, slots.q0_slot, slots.q0_len);
+        // Set when B's store begins; the driver and the record start
+        // from it.
+        let at: Rc<Cell<bool>> = Rc::default();
+        let at_w = at.clone();
+        let frames = async move {
+            // A lands in slot 0, 10 bytes.
+            rx_which_o.set(U::from(0u8));
+            rx_len_o.set(U::from(10u16));
+            rx_busy_o.set(Bit::One);
+            for _ in 0..3 {
+                DefaultClock::rising().await;
+            }
+            rx_busy_o.set(Bit::Zero);
+            for _ in 0..5 {
+                DefaultClock::rising().await;
+            }
+            // B lands in slot 1, 20 bytes; its store ends at `d`.
+            rx_which_o.set(U::from(1u8));
+            rx_len_o.set(U::from(20u16));
+            rx_busy_o.set(Bit::One);
+            at_w.set(true);
+            for _ in 0..d {
+                DefaultClock::rising().await;
+            }
+            rx_busy_o.set(Bit::Zero);
+        };
+        let at_r = at.clone();
+        let driver = async move {
+            while !at_r.get() {
+                DefaultClock::rising().await;
+            }
+            for _ in 0..6 {
+                DefaultClock::rising().await;
+            }
+            if ack {
+                write(&host, 4, 1).await;
+            }
+        };
+        let mut sim = Running::new(join2(
+            slots.run(
+                bus,
+                SlotsMac {
+                    tx_busy,
+                    rx_busy,
+                    rx_len,
+                    rx_which,
+                    rx_drops,
+                    rx_mac,
+                    tx_base,
+                    tx_bytes,
+                    tx_start,
+                    rx_base,
+                    irq,
+                    rx_full: rx_full_o,
+                },
+            ),
+            join2(frames, driver),
+        ));
+        let mut r = Rx {
+            full: Vec::new(),
+            queued: Vec::new(),
+            end: (0, 0, 0),
+        };
+        for _ in 0..80 {
+            sim.cycle();
+            if at.get() {
+                r.full.push(rx_full.get().to_bool());
+                r.queued.push(queued.get().raw() as u32);
+            }
+        }
+        r.end = (
+            queued.get().raw() as u32,
+            q0_slot.get().raw() as u32,
+            q0_len.get().raw() as u32,
+        );
+        r
+    }
+
+    /// A frame that lands in the cycle the driver acknowledges the one
+    /// queued is kept, whichever comes first (#2052): with the store's
+    /// end swept across the acknowledgement, the new frame is always
+    /// the one left at the front, slot 1 and 20 bytes, and only it.
+    #[test]
+    fn an_arrival_in_the_cycle_of_an_acknowledgement_is_kept() {
+        for d in 1..16 {
+            assert_eq!(arrive(true, d).end, (1, 1, 20), "B ending at {d}");
+        }
+    }
+
+    /// With one frame queued, the slots are full in the cycle a second
+    /// lands, not only once it is counted (#2052): `FrameIn` reads
+    /// `rx_full` as it starts a frame, so a third frame starting then
+    /// would land on the slot the driver has not released.
+    #[test]
+    fn the_slots_are_full_as_a_second_frame_lands() {
+        let r = arrive(false, 4);
+        // Full while B is stored with A queued, and so in the cycle B
+        // lands, the one before it is counted.
+        let two = r.queued.iter().position(|&q| q == 2).expect("two");
+        assert!(r.full[two - 1], "not full as B lands: {:?}", r.full);
+        assert!(!r.full[0], "full with only A queued: {:?}", r.full);
+        assert!(r.full[two..].iter().all(|&f| f), "and full once two are");
     }
 }
