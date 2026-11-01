@@ -1049,10 +1049,12 @@ mod tests {
     /// offer the second with the first's and none would see it.
     #[test]
     fn two_frames_held_keep_their_own_lengths() {
-        let frames = vec![frame(100), frame(64)];
-        let (got, dropped) = wire_in(&frames, 12, 1, 5);
-        assert_eq!(dropped, 0, "nothing dropped");
-        assert_eq!(got, frames);
+        for frames in [vec![frame(100), frame(64)], vec![frame(64), frame(100)]]
+        {
+            let (got, dropped) = wire_in(&frames, 12, 1, 5);
+            assert_eq!(dropped, 0, "nothing dropped");
+            assert_eq!(got, frames);
+        }
     }
 
     /// A good frame with `rx_er` raised on one of its bytes is not
@@ -1060,11 +1062,12 @@ mod tests {
     /// check sequence may not.
     #[test]
     fn a_frame_the_phy_flagged_is_dropped() {
-        let lines = vec![wire_bytes(&frame(64)), wire_bytes(&frame(64))];
+        let lines = vec![wire_bytes(&frame(64)), wire_bytes(&frame(100))];
         // A byte of the first frame's data, past the preamble.
         let seen = wire_lines_er(&lines, 12, 1, 1, Some(30));
-        assert_eq!(seen.got, vec![frame(64)], "only the second");
+        assert_eq!(seen.got, vec![frame(100)], "only the second");
         assert_eq!(seen.dropped, 1);
+        assert_eq!(seen.causes, [0, 1, 0], "counted as a failed check");
     }
 
     /// A receiver that joins the line in the middle of a frame skips
@@ -1078,5 +1081,6 @@ mod tests {
         let seen = wire_lines(&lines, 12, 1, 1);
         assert_eq!(seen.got, vec![frame(64)]);
         assert_eq!(seen.causes, [0, 0, 0], "nothing counted");
+        assert_eq!(seen.dropped, 0);
     }
 }
