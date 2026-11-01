@@ -473,11 +473,12 @@ mod tests {
 
     /// Each tail, of one, two or three bytes, lands in the low lanes of
     /// its word with nothing above it, where the store engine's strobe
-    /// expects it (#2049). A frame of 1514 bytes, a full one, ends in
-    /// a tail of two.
+    /// expects it (#2049), whether it is a frame's only word or follows
+    /// a whole one. A frame of 1514 bytes, a full one, ends in a tail of
+    /// two.
     #[test]
     fn frame_in_puts_every_tail_in_the_low_lanes() {
-        for n in 4..=8usize {
+        for n in 1..=8usize {
             let bytes: Vec<u8> = (0..n).map(|i| 0x11 * (i as u8 + 1)).collect();
             let want: Vec<u32> = bytes
                 .chunks(4)
@@ -493,7 +494,7 @@ mod tests {
 
     /// A frame offered while the store engine is still busy with the
     /// one before waits for it (#2049): `store` stays low and `count`
-    /// keeps the old frame's length until `hold` falls, since the
+    /// keeps its old value, here none, until `hold` falls, since the
     /// register block reads both when the engine goes idle.
     #[test]
     fn frame_in_waits_for_the_store_before() {
@@ -506,26 +507,29 @@ mod tests {
         let (store_out, store) = signal::<Bit, DefaultClock>();
         let (which_out, _which) = signal::<U<1>, DefaultClock>();
         let (drops_out, _drops) = signal::<U<32>, DefaultClock>();
-        // The cycles, counted from the frame's offer, in which `store`
-        // was high, and `count` in each.
-        let seen: Rc<RefCell<Vec<(u32, u16)>>> = Rc::default();
+        // Each cycle, counted from the frame's offer: `store`, and
+        // `count`.
+        let seen: Rc<RefCell<Vec<(bool, u16)>>> = Rc::default();
         let log = seen.clone();
         let client = async move {
             hold_out.set(Bit::One);
             len_out.set(U::from(6u16));
-            DefaultClock::rising().await;
-            in_tx.send(EthByte {
-                data: U::from(0x5au8),
-                last: Bit::Zero,
-            });
-            for t in 0..40u32 {
+            let mut bytes = (0..6u8).peekable();
+            for t in 0..60u32 {
                 DefaultClock::rising().await;
                 if t == 20 {
                     hold_out.set(Bit::Zero);
                 }
-                if store.get().to_bool() {
-                    log.borrow_mut().push((t, count.get().raw() as u16));
+                if in_tx.ready().to_bool() {
+                    if let Some(b) = bytes.next() {
+                        in_tx.send(EthByte {
+                            data: U::from(b),
+                            last: Bit::from_bool(bytes.peek().is_none()),
+                        });
+                    }
                 }
+                let at = (store.get().to_bool(), count.get().raw() as u16);
+                log.borrow_mut().push(at);
             }
         };
         let sink = async move {
@@ -546,8 +550,12 @@ mod tests {
             sim.cycle();
         }
         let seen = seen.borrow();
-        let first = seen.first().expect("the frame starts once hold falls");
-        assert!(first.0 > 20, "started under hold, at {}", first.0);
-        assert_eq!(first.1, 6, "the new frame's length, once started");
+        assert!(
+            seen[..=20].iter().all(|&(s, c)| !s && c == 0),
+            "nothing started under hold: {:?}",
+            &seen[..=20]
+        );
+        let first = seen.iter().position(|&(s, _)| s).expect("starts");
+        assert_eq!(seen[first].1, 6, "the new frame's length, once started");
     }
 }
