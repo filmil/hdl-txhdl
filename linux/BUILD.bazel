@@ -64,8 +64,8 @@ genrule(
     tools = _TOOLS,
 )
 
-# OpenSBI's ELF names no directory of the sandbox it was built in, so
-# two builds in two sandboxes give the same bytes (issue 2023). Manual,
+# OpenSBI's ELF names no directory of the sandbox it was built in: such
+# paths made two builds in two sandboxes differ (issue 2023). Manual,
 # as the OpenSBI build is:
 #
 #   bazel test //linux:opensbi_paths_test

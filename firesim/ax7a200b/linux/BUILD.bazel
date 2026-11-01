@@ -134,8 +134,8 @@ genrule(
     tools = LINUX_TOOLS,
 )
 
-# The payload names no directory of the sandbox it was built in, so two
-# builds in two sandboxes give the same bytes (issue 2023). Manual, as
+# The payload names no directory of the sandbox it was built in: such
+# paths made two builds in two sandboxes differ (issue 2023). Manual, as
 # the payload is.
 sh_test(
     name = "rocket_linux_paths_test",
