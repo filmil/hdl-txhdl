@@ -80,6 +80,14 @@ export KBUILD_BUILD_TIMESTAMP="1970-01-01 00:00:00 UTC"
 export KBUILD_BUILD_USER="txhdl"
 export KBUILD_BUILD_HOST="txhdl"
 jobs=$(nproc)
+# OpenSBI compiles the sources it generates, the .carray.c files, from
+# its output directory under this sandbox, and the ELF kept their
+# absolute paths, so builds in two sandboxes differed (issue 2023).
+# The map writes them relative to here. OpenSBI's Makefile sets CFLAGS
+# with "=", so a CFLAGS given to make would replace its flags; it adds
+# platform-genflags-y to its C and assembler flags, and no platform or
+# firmware here sets that.
+sbi_prefix_map="-ffile-prefix-map=$root=."
 
 case $what in
 kernel)
@@ -199,6 +207,7 @@ opensbi)
     PLATFORM_RISCV_XLEN=32 PLATFORM_RISCV_ISA=rv32ima_zicsr_zifencei \
     PLATFORM_RISCV_ABI=ilp32 FW_TEXT_START=0x40080000 \
     FW_JUMP=y FW_JUMP_ADDR=0x40400000 \
+    platform-genflags-y="$sbi_prefix_map" \
     -j"$jobs"
   cp "$out/platform/generic/firmware/fw_jump.bin" "$bin_out"
   cp "$out/platform/generic/firmware/fw_jump.elf" "$elf_out"
@@ -222,6 +231,7 @@ payload)
     PLATFORM_RISCV_XLEN=64 PLATFORM_RISCV_ISA=rv64imac_zicsr_zifencei \
     PLATFORM_RISCV_ABI=lp64 FW_TEXT_START=0x80000000 \
     FW_PAYLOAD=y FW_PAYLOAD_PATH="$root/$kernel" \
+    platform-genflags-y="$sbi_prefix_map" \
     -j"$jobs"
   cp "$out/platform/generic/firmware/fw_payload.elf" "$elf_out"
   chmod u+w "$elf_out"
