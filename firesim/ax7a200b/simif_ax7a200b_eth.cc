@@ -322,9 +322,10 @@ simif_ax7a200b_eth_t::~simif_ax7a200b_eth_t() {
     if (k.sock >= 0 &&
         getsockopt(k.sock, SOL_PACKET, PACKET_STATISTICS, &st, &len) == 0 &&
         getsockopt(k.sock, SOL_SOCKET, SO_RCVBUF, &buf, &blen) == 0) {
+      // The kernel counts the dropped frames among those it saw.
       fprintf(stdout,
-              "simif_ax7a200b_eth: %s socket received %u frames, dropped %u "
-              "(receive buffer %d bytes)\n",
+              "simif_ax7a200b_eth: %s socket saw %u frames and dropped %u "
+              "of them (receive buffer %d bytes)\n",
               k.what, st.tp_packets, st.tp_drops, buf);
     }
   }
