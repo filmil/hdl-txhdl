@@ -900,10 +900,22 @@ mod tests {
         take: usize,
         of: usize,
     ) -> Seen {
+        wire_lines_er(lines, gap, take, of, None)
+    }
+
+    /// [`wire_lines`] with `rx_er` raised on the wire's byte `er_at`,
+    /// counted from the first byte of the first line.
+    fn wire_lines_er(
+        lines: &[Vec<u8>],
+        gap: usize,
+        take: usize,
+        of: usize,
+        er_at: Option<usize>,
+    ) -> Seen {
         let (out_tx, out_rx) = chan::<EthByte, DefaultClock>();
         let (rxd_out, rxd) = signal::<U<8>, DefaultClock>();
         let (dv_out, dv) = signal::<Bit, DefaultClock>();
-        let (_er_out, er) = signal::<Bit, DefaultClock>();
+        let (er_out, er) = signal::<Bit, DefaultClock>();
         let (rxlen_out, _rxlen) = signal::<U<16>, DefaultClock>();
         let (counts_out, counts) = signal::<U<48>, DefaultClock>();
         let mut mac_rx = EthRx::default();
@@ -929,6 +941,7 @@ mod tests {
             let b = line.get(t).copied().flatten();
             rxd_out.set(U::from(b.unwrap_or(0)));
             dv_out.set(Bit::from_bool(b.is_some()));
+            er_out.set(Bit::from_bool(er_at == Some(t)));
             let taken = if t % of < take { out_rx.recv() } else { None };
             if let Some(b) = taken {
                 got.last_mut().unwrap().push(b.data.raw() as u8);
@@ -1028,5 +1041,42 @@ mod tests {
         let (_, got, dropped) = loopback(&frames, None, 900);
         assert_eq!(got, vec![frames[0].clone(), frames[1].clone()]);
         assert_eq!(dropped, 1);
+    }
+
+    /// Two frames of different lengths held at once, read slowly: each
+    /// comes out with its own length (#2051). Every other test that
+    /// holds two frames gives them one length, so the receiver could
+    /// offer the second with the first's and none would see it.
+    #[test]
+    fn two_frames_held_keep_their_own_lengths() {
+        let frames = vec![frame(100), frame(64)];
+        let (got, dropped) = wire_in(&frames, 12, 1, 5);
+        assert_eq!(dropped, 0, "nothing dropped");
+        assert_eq!(got, frames);
+    }
+
+    /// A good frame with `rx_er` raised on one of its bytes is not
+    /// delivered, and is counted (#2051): the PHY saw an error the
+    /// check sequence may not.
+    #[test]
+    fn a_frame_the_phy_flagged_is_dropped() {
+        let lines = vec![wire_bytes(&frame(64)), wire_bytes(&frame(64))];
+        // A byte of the first frame's data, past the preamble.
+        let seen = wire_lines_er(&lines, 12, 1, 1, Some(30));
+        assert_eq!(seen.got, vec![frame(64)], "only the second");
+        assert_eq!(seen.dropped, 1);
+    }
+
+    /// A receiver that joins the line in the middle of a frame skips
+    /// the rest of it without a word, even where its data holds the
+    /// start delimiter's byte, and takes the next frame whole (#2051).
+    #[test]
+    fn a_frame_joined_in_the_middle_is_skipped() {
+        let part = wire_bytes(&frame(64))[28..].to_vec();
+        assert_eq!(part[10], 0xd5, "a delimiter's byte in it");
+        let lines = vec![part, wire_bytes(&frame(64))];
+        let seen = wire_lines(&lines, 12, 1, 1);
+        assert_eq!(seen.got, vec![frame(64)]);
+        assert_eq!(seen.causes, [0, 0, 0], "nothing counted");
     }
 }
