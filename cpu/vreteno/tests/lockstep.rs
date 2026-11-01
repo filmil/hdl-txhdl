@@ -1481,14 +1481,26 @@ fn debug_csrs_trap_outside_debug_mode() {
 /// the program knows it is its second start and halts (issue 419).
 #[test]
 fn a_reset_puts_the_csrs_back_and_keeps_the_registers() {
+    use vreteno32::isa::{
+        CSR_MCOUNTEREN, CSR_MEDELEG, CSR_MIDELEG, CSR_SCOUNTEREN, CSR_STVEC,
+    };
     let p = [
         addi(2, 2, 1), // starts, in a register the reset leaves alone
         addi(3, 0, 2),
-        beq(2, 3, 8 * 4), // the second start halts
+        beq(2, 3, 15 * 4), // the second start halts
         lui(4, 0x40000),
         csrrw(0, CSR_MTVEC, 4),
         addi(5, 0, 0x80),
         csrrs(0, CSR_MIE, 5),
+        // The delegation and the supervisor's registers as well
+        // (#2057), each left nonzero for the reset to put back.
+        addi(6, 0, 0x100),
+        csrrw(0, CSR_MEDELEG, 6),
+        addi(6, 0, 0x222),
+        csrrw(0, CSR_MIDELEG, 6),
+        csrrw(0, CSR_STVEC, 4),
+        csrrwi(0, CSR_MCOUNTEREN, 7),
+        csrrwi(0, CSR_SCOUNTEREN, 7),
         csrrsi(0, CSR_MSTATUS, 8),
         addi(1, 1, 1),
         jal(0, -4),
@@ -1502,6 +1514,12 @@ fn a_reset_puts_the_csrs_back_and_keeps_the_registers() {
     assert_eq!(m.csr.mie, 0, "the enables are clear");
     assert_eq!(m.csr.mstatus, 0, "interrupts are disabled");
     assert_eq!(m.mtimecmp, u64::MAX, "the timer's compare is all ones");
+    assert_eq!(
+        [m.csr.medeleg, m.csr.mideleg, m.csr.stvec],
+        [0, 0, 0],
+        "nothing delegated"
+    );
+    assert_eq!([m.csr.mcounteren, m.csr.scounteren], [0, 0]);
 }
 
 /// A load from an address nothing decodes is refused by the router,
@@ -1721,13 +1739,16 @@ fn user_and_supervisor_modes_trap_where_they_are_sent() {
     a.wide(csrrw(0, CSR_STVEC, 31));
     a.wide(addi(5, 0, 0x104)); // ecall from U and an illegal instruction
     a.wide(csrrw(0, CSR_MEDELEG, 5));
-    a.wide(csrrwi(0, CSR_MCOUNTEREN, 4)); // instret, not cycle
-                                          // mstatush: a write is ignored and a read is zero (issue 1076).
+    // instret for both; cycle in mcounteren but not scounteren, and
+    // time the other way round, so the user's read of each is refused
+    // by one of the two alone (#2057).
+    a.wide(csrrwi(0, CSR_MCOUNTEREN, 5));
+    // mstatush: a write is ignored and a read is zero (issue 1076).
     a.wide(addi(12, 0, -1));
     a.wide(csrrc(0, CSR_MSTATUSH, 12));
     a.wide(csrrw(13, CSR_MSTATUSH, 12));
     a.wide(csrrs(14, CSR_MSTATUSH, 0));
-    a.wide(csrrwi(0, CSR_SCOUNTEREN, 4));
+    a.wide(csrrwi(0, CSR_SCOUNTEREN, 6));
     a.wide(lui(5, 1));
     a.wide(addi(5, 5, -0x800)); // x5 = 0x800, MPP = supervisor
     a.wide(csrrw(0, CSR_MSTATUS, 5));
@@ -1748,7 +1769,8 @@ fn user_and_supervisor_modes_trap_where_they_are_sent() {
     // Into x0: a counter's value is the pipeline's and not the
     // model's to know, so only that the read is legal is checked.
     a.wide(csrrs(0, CSR_INSTRET, 0));
-    a.wide(csrrs(11, CSR_CYCLE, 0)); // not enabled
+    a.wide(csrrs(11, CSR_CYCLE, 0)); // not enabled by scounteren
+    a.wide(csrrs(10, CSR_TIME, 0)); // not enabled by mcounteren
     a.wide(wfi()); // illegal in user mode
     a.wide(sret()); // and so is this
     a.wide(ecall());
@@ -1775,14 +1797,151 @@ fn user_and_supervisor_modes_trap_where_they_are_sent() {
     a.wide(halt());
     let m = lockstep(&a.words(), &[], "modes", None, None, None);
     assert_eq!(m.halted, Some(Halt::Break));
-    assert_eq!(m.x[8], 5, "mstatus, cycle, wfi, sret and the ecall");
+    assert_eq!(m.x[8], 6, "mstatus, cycle, time, wfi, sret and the ecall");
     assert_eq!(m.x[22], 8, "the last the supervisor saw: ecall from U");
     assert_eq!(m.x[21], 9, "machine mode saw the supervisor's ecall");
     assert_eq!(m.x[25] >> 11 & 3, 1, "MPP says supervisor");
     assert_eq!(m.x[7], 0, "the illegal read wrote nothing");
     assert_eq!(m.x[11], 0, "nor the disabled counter");
+    assert_eq!(m.x[10], 0, "nor the other");
     assert_eq!(m.prv, 3, "ending in machine mode");
     assert_eq!([m.x[13], m.x[14]], [0, 0], "mstatush holds nothing");
+}
+
+/// The writes the specification narrows (#2057), each read back where
+/// a program can see it: `mepc` keeps no bit 0; an MPP of 2, a mode the
+/// core does not have, is written as user mode; `sret` clears MPRV even
+/// from machine mode; and the supervisor's `sie` writes only the enables
+/// `mideleg` gives it, so all ones there over the machine timer's enable
+/// leave `mie` at 0x2a2.
+#[test]
+fn csr_writes_keep_only_what_the_specification_allows() {
+    use vreteno32::isa::*;
+    use vreteno32::program::Asm;
+    let mut a = Asm::default();
+    let (mh, s_code) = (a.label(), a.label());
+    a.abs(mh, |h| addi(31, 0, h as i32));
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    a.wide(addi(5, 0, -1));
+    a.wide(csrrw(0, CSR_MEPC, 5));
+    a.wide(csrrs(10, CSR_MEPC, 0));
+    a.wide(lui(5, 1)); // MPP = 2
+    a.wide(csrrw(0, CSR_MSTATUS, 5));
+    a.wide(csrrs(11, CSR_MSTATUS, 0));
+    a.wide(addi(5, 0, 0x222));
+    a.wide(csrrw(0, CSR_MIDELEG, 5));
+    a.wide(addi(5, 0, 0x80));
+    a.wide(csrrw(0, CSR_MIE, 5)); // the machine timer's enable
+    a.wide(lui(5, 0x20));
+    a.wide(addi(5, 5, 0x100)); // MPRV and SPP = supervisor
+    a.wide(csrrw(0, CSR_MSTATUS, 5));
+    a.abs(s_code, |s| addi(31, 0, s as i32));
+    a.wide(csrrw(0, CSR_SEPC, 31));
+    a.wide(sret());
+    // Supervisor mode.
+    a.place(s_code);
+    a.wide(addi(6, 0, -1));
+    a.wide(csrrw(0, CSR_SIE, 6));
+    a.wide(ecall());
+    // Never reached; machine mode's handler follows.
+    a.wide(halt());
+    a.align();
+    a.place(mh);
+    a.wide(csrrs(12, CSR_MSTATUS, 0));
+    a.wide(csrrs(13, CSR_MIE, 0));
+    a.wide(csrrs(14, CSR_MCAUSE, 0));
+    a.wide(halt());
+    let m = lockstep(&a.words(), &[], "csr writes", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[10], 0xffff_fffe, "mepc keeps no bit 0");
+    assert_eq!(m.x[11] >> 11 & 3, 0, "an MPP of 2 is user mode");
+    assert_eq!(m.x[14], 9, "the supervisor's ecall");
+    assert_eq!(m.x[12] >> 17 & 1, 0, "sret cleared MPRV");
+    assert_eq!(m.x[13], 0x2a2, "sie wrote only what mideleg gives");
+}
+
+/// A delegated interrupt is taken in user mode whatever `SIE` says
+/// (#2057): the supervisor's software interrupt, pending as `mret`
+/// enters user mode with `SIE` clear, reaches the supervisor's handler
+/// before the user's code runs on to its `ecall`.
+#[test]
+fn a_delegated_interrupt_is_taken_in_user_mode() {
+    use vreteno32::isa::*;
+    use vreteno32::program::Asm;
+    let mut a = Asm::default();
+    let (mh, sh, u_code) = (a.label(), a.label(), a.label());
+    a.wide(addi(8, 0, 0));
+    a.abs(mh, |h| addi(31, 0, h as i32));
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    a.abs(sh, |h| addi(31, 0, h as i32));
+    a.wide(csrrw(0, CSR_STVEC, 31));
+    a.wide(csrrwi(0, CSR_MIDELEG, 2));
+    a.wide(csrrwi(0, CSR_MIE, 2));
+    a.wide(csrrw(0, CSR_MSTATUS, 0)); // MPP = user, SIE clear
+    a.abs(u_code, |u| addi(31, 0, u as i32));
+    a.wide(csrrw(0, CSR_MEPC, 31));
+    a.wide(csrrsi(0, CSR_MIP, 2)); // the supervisor's software interrupt
+    a.wide(mret());
+    a.place(u_code);
+    a.wide(addi(9, 0, 7));
+    a.wide(ecall());
+    a.align();
+    a.place(sh);
+    a.wide(csrrs(22, CSR_SCAUSE, 0));
+    a.wide(addi(8, 8, 1));
+    a.wide(csrrci(0, CSR_SIP, 2));
+    a.wide(sret());
+    a.align();
+    a.place(mh);
+    a.wide(csrrs(21, CSR_MCAUSE, 0));
+    a.wide(halt());
+    let m = lockstep(&a.words(), &[], "delegated in user", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[8], 1, "taken once");
+    assert_eq!(m.x[22], CAUSE_SSOFT, "as the supervisor's software one");
+    assert_eq!(m.x[9], 7, "and the user's code ran after");
+    assert_eq!(m.x[21], CAUSE_ECALL_U, "then called machine mode");
+}
+
+/// A machine interrupt is taken below machine mode whatever `MIE`
+/// says (#2057), as under a firmware that runs the supervisor with
+/// `MIE` clear: supervisor code raises the machine's software
+/// interrupt by writing `msip`, and machine mode takes it before the
+/// supervisor reaches its `ecall`.
+#[test]
+fn a_machine_interrupt_is_taken_below_machine_mode() {
+    use vreteno32::isa::*;
+    use vreteno32::program::Asm;
+    let mut a = Asm::default();
+    let (mh, s_code) = (a.label(), a.label());
+    a.abs(mh, |h| addi(31, 0, h as i32));
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    a.wide(addi(5, 0, 8));
+    a.wide(csrrw(0, CSR_MIE, 5)); // MSOFT
+    a.wide(lui(5, 1));
+    a.wide(addi(5, 5, -0x800)); // MPP = supervisor, MPIE and MIE clear
+    a.wide(csrrw(0, CSR_MSTATUS, 5));
+    a.abs(s_code, |s| addi(31, 0, s as i32));
+    a.wide(csrrw(0, CSR_MEPC, 31));
+    a.wide(mret());
+    a.place(s_code);
+    a.wide(lui(4, CLINT_BASE >> 12));
+    a.wide(addi(3, 0, 1));
+    a.wide(sw(3, 4, 0)); // msip = 1
+    for _ in 0..8 {
+        a.wide(addi(0, 0, 0));
+    }
+    a.wide(ecall());
+    a.align();
+    a.place(mh);
+    a.wide(csrrs(21, CSR_MCAUSE, 0));
+    a.wide(sw(0, 4, 0)); // msip = 0
+    a.wide(csrrs(25, CSR_MSTATUS, 0));
+    a.wide(halt());
+    let m = lockstep(&a.words(), &[], "machine below", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[21], CAUSE_MSOFT, "the software interrupt, not ecall");
+    assert_eq!(m.x[25] >> 11 & 3, 1, "taken from supervisor mode");
 }
 
 /// The counters that count nothing here (issue 1460): machine mode
