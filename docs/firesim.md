@@ -115,7 +115,7 @@ It passes when the console shows `txhdl: userspace is up on Rocket`, the driver 
 On 2026-10-30 the whole run took 4 min 36 s and 288,686,162 target cycles: 4 min 22 s to load the ELF's 3.45 MB, and 13 s from OpenSBI's banner to the power-off.
 The load was slow because FireSim writes the memory four bytes per register write, and each write waited for its answer, one round trip on the cable of about 0.3 ms.
 
-Since #2019 the driver keeps up to eight register writes in flight, and the same boot takes 46.0 s, twice in a row on 2026-10-31.
+Since #2019 the driver keeps register writes in flight, eight at first (the default is now 32, below), and the same boot took 46.0 s, twice in a row on 2026-10-31.
 The boot itself is unchanged, 288,686,162 target cycles and about 13 s, so the load takes about 33 s, against 4 min 22 s before.
 This works because `LiteMaster` on the board now performs an ask only when its tag follows the last one it performed, and answers any other ask from the last answer it kept:
 
@@ -136,7 +136,8 @@ The link reads one byte per 50 MHz cycle, half the cable's rate, and the MAC hol
 So a window sent again after a timeout lost all but its first few asks, and each loss set off another.
 On srv the counters showed it: in a window-32 boot on 2026-11-01, before the fix, the adapter sent 4.38 million asks and received 3.12 million answers, and every answer reached the driver.
 The crossing now holds 2048 bytes, 34 asks of 60 bytes.
-That is enough for a window of 128 because a burst is not a whole window: in steady state the driver sends one ask per answer, and a burst is what the adapter packs into one USB transfer, a few frames at these rates.
+That is enough for a window of 128 in steady state, which is what the runs below measured: there the driver sends one ask per answer, and a burst is what the adapter packs into one USB transfer, a few frames at these rates.
+A window the driver sends again after a timeout or a lost ask is one burst of the whole window, 7,680 bytes at 128, more than three times what the crossing holds, so a resend that large can still lose asks.
 On 2026-11-01 the boot took 46.6 s at 8, 24.8 s at 32, 23.9 s at 64 and 23.5 s at 128, with no ask sent again at any of them, and srv's sent and received counts were equal.
 The default window is 32, and the load takes about 12 s.
 `hello` and `bench` pass at the same cycles.
@@ -166,6 +167,7 @@ So the change is the target's software only:
   `build.sh` builds that driver into `drivers/block` from a tree of hard links, so the fetched kernel tree is never written.
   Its command line mounts `/dev/iceblk` read-only as an ext2 root and runs `/init` from it.
 * `//firesim/ax7a200b/linux:blk_root` is that root, a 4 MiB ext2 image of BusyBox and `blk_init`, written by `genext2fs` (`//third_party/genext2fs`) with every owner root and every time stamp at the epoch, so it is the same bytes from the same inputs.
+Its `-q` also clears the group and other permission bits, so the image holds 0700 and 0600; the kernel and init run as root.
 * `//firesim/ax7a200b/linux:rocket_blk_linux` is OpenSBI around that kernel, the ELF the driver loads.
 
 To repeat it, with the board programmed and the driver set up as above:
