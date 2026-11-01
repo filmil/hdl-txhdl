@@ -302,6 +302,99 @@ mod tests {
         assert!(!reset_i.get().to_bool());
     }
 
+    /// Sends `n` control writes back to back, as a window of `n` goes
+    /// out, to a register file that answers each write `stall` cycles
+    /// after taking it, as a register on FPGATop's control port does.
+    /// Returns the writes that reached the bus, address and word, in
+    /// order, and the tags of the answers, in order.
+    fn burst(n: u8, stall: usize) -> (Vec<(u32, u32)>, Vec<u8>) {
+        let (host, per) = link::<LitePort![ADDR = 32, DATA = 32, STRB = 4]>();
+        let (in_tx, in_rx) = chan::<EthByte, DefaultClock>();
+        let (out_tx, out_rx) = chan::<EthByte, DefaultClock>();
+        let (aw_tx, _aw_rx) = chan::<Aw<64, 4>, DefaultClock>();
+        let (ar_tx, _ar_rx) = chan::<Ar<64, 4>, DefaultClock>();
+        let (w_tx, _w_rx) = chan::<W<128, 16>, DefaultClock>();
+        let (_b_tx, b_rx) = chan::<B<4>, DefaultClock>();
+        let (_r_tx, r_rx) = chan::<R<128, 4>, DefaultClock>();
+        let (reset_o, _reset_i) = signal::<Bit, DefaultClock>();
+        let mut unit = RocketLink::<DEVICE>::default();
+        let writes = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let seen = writes.clone();
+        let ports = async move {
+            let mut wait = 0usize;
+            loop {
+                DefaultClock::rising().await;
+                if wait > 0 {
+                    wait -= 1;
+                    if wait == 0 {
+                        per.b.send(LiteB { resp: Resp::Okay });
+                    }
+                } else if per.aw.peek().is_some() && per.w.peek().is_some() {
+                    let a = per.aw.recv().unwrap().addr.raw() as u32;
+                    let d = per.w.recv().unwrap().data.raw() as u32;
+                    seen.borrow_mut().push((a, d));
+                    wait = stall;
+                }
+            }
+        };
+        let mut sim = Running::new(join2(
+            unit.run(
+                (in_rx, b_rx, r_rx),
+                (out_tx, host, aw_tx, ar_tx, w_tx, reset_o),
+            ),
+            ports,
+        ));
+        // The frames back to back, one byte a cycle, as the clock
+        // crossing gives them when the wire brings them faster.
+        let bytes: Vec<(u8, bool)> = (1..=n)
+            .flat_map(|t| {
+                let f = control(t, true, 0x100 + 4 * t as u32, t as u32);
+                let k = f.len();
+                f.into_iter().enumerate().map(move |(i, b)| (b, i == k - 1))
+            })
+            .collect();
+        let (mut i, mut cur, mut tags) = (0, Vec::new(), Vec::new());
+        for _ in 0..(n as usize) * (stall + 200) + 2000 {
+            if i < bytes.len() && in_tx.ready().to_bool() {
+                in_tx.send(EthByte {
+                    data: U::from(bytes[i].0),
+                    last: Bit::from(bytes[i].1),
+                });
+                i += 1;
+            }
+            if let Some(b) = out_rx.recv() {
+                cur.push(b.data.raw() as u8);
+                if b.last.to_bool() {
+                    tags.push(answer(&cur).1);
+                    cur.clear();
+                }
+            }
+            sim.cycle();
+        }
+        let w = writes.borrow().clone();
+        (w, tags)
+    }
+
+    #[test]
+    fn a_window_of_writes_back_to_back_is_performed_in_order() {
+        // A window's asks reach the link one after another, one byte a
+        // cycle, and a register answers each write in a few cycles: every
+        // write reaches the bus once and in order, and each is answered in
+        // turn. The bursts srv's USB adapter sends are a few frames; 64
+        // covers them with room (#2026, #2032).
+        for (n, stall) in [(8u8, 4usize), (64, 4)] {
+            let (writes, tags) = burst(n, stall);
+            let want: Vec<(u32, u32)> =
+                (1..=n as u32).map(|t| (0x100 + 4 * t, t)).collect();
+            assert_eq!(writes, want, "writes, window {n}");
+            assert_eq!(
+                tags,
+                (1..=n).collect::<Vec<u8>>(),
+                "answers, window {n}"
+            );
+        }
+    }
+
     /// A reset frame for `dev`, padded as the MAC pads it.
     fn reset_frame(dev: u8) -> Vec<u8> {
         let mut f = vec![0xffu8; 6];
