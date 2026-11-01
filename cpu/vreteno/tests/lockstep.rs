@@ -1854,6 +1854,90 @@ fn csr_writes_keep_only_what_the_specification_allows() {
     assert_eq!(m.x[13], 0x222, "sie wrote only what mideleg gives");
 }
 
+/// A delegated interrupt is taken in user mode whatever `SIE` says
+/// (#2057): the supervisor's software interrupt, pending as `mret`
+/// enters user mode with `SIE` clear, reaches the supervisor's handler
+/// before the user's code runs on to its `ecall`.
+#[test]
+fn a_delegated_interrupt_is_taken_in_user_mode() {
+    use vreteno32::isa::*;
+    use vreteno32::program::Asm;
+    let mut a = Asm::default();
+    let (mh, sh, u_code) = (a.label(), a.label(), a.label());
+    a.wide(addi(8, 0, 0));
+    a.abs(mh, |h| addi(31, 0, h as i32));
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    a.abs(sh, |h| addi(31, 0, h as i32));
+    a.wide(csrrw(0, CSR_STVEC, 31));
+    a.wide(csrrwi(0, CSR_MIDELEG, 2));
+    a.wide(csrrwi(0, CSR_MIE, 2));
+    a.wide(csrrw(0, CSR_MSTATUS, 0)); // MPP = user, SIE clear
+    a.abs(u_code, |u| addi(31, 0, u as i32));
+    a.wide(csrrw(0, CSR_MEPC, 31));
+    a.wide(csrrsi(0, CSR_MIP, 2)); // the supervisor's software interrupt
+    a.wide(mret());
+    a.place(u_code);
+    a.wide(addi(9, 0, 7));
+    a.wide(ecall());
+    a.align();
+    a.place(sh);
+    a.wide(csrrs(22, CSR_SCAUSE, 0));
+    a.wide(addi(8, 8, 1));
+    a.wide(csrrci(0, CSR_SIP, 2));
+    a.wide(sret());
+    a.align();
+    a.place(mh);
+    a.wide(csrrs(21, CSR_MCAUSE, 0));
+    a.wide(halt());
+    let m = lockstep(&a.words(), &[], "delegated in user", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[8], 1, "taken once");
+    assert_eq!(m.x[22], CAUSE_SSOFT, "as the supervisor's software one");
+    assert_eq!(m.x[9], 7, "and the user's code ran after");
+    assert_eq!(m.x[21], CAUSE_ECALL_U, "then called machine mode");
+}
+
+/// A machine interrupt is taken below machine mode whatever `MIE`
+/// says (#2057), as under a firmware that runs the supervisor with
+/// `MIE` clear: supervisor code raises the machine's software
+/// interrupt by writing `msip`, and machine mode takes it before the
+/// supervisor reaches its `ecall`.
+#[test]
+fn a_machine_interrupt_is_taken_below_machine_mode() {
+    use vreteno32::isa::*;
+    use vreteno32::program::Asm;
+    let mut a = Asm::default();
+    let (mh, s_code) = (a.label(), a.label());
+    a.abs(mh, |h| addi(31, 0, h as i32));
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    a.wide(addi(5, 0, 8));
+    a.wide(csrrw(0, CSR_MIE, 5)); // MSOFT
+    a.wide(lui(5, 1));
+    a.wide(addi(5, 5, -0x800)); // MPP = supervisor, MPIE and MIE clear
+    a.wide(csrrw(0, CSR_MSTATUS, 5));
+    a.abs(s_code, |s| addi(31, 0, s as i32));
+    a.wide(csrrw(0, CSR_MEPC, 31));
+    a.wide(mret());
+    a.place(s_code);
+    a.wide(lui(4, CLINT_BASE >> 12));
+    a.wide(addi(3, 0, 1));
+    a.wide(sw(3, 4, 0)); // msip = 1
+    for _ in 0..8 {
+        a.wide(addi(0, 0, 0));
+    }
+    a.wide(ecall());
+    a.align();
+    a.place(mh);
+    a.wide(csrrs(21, CSR_MCAUSE, 0));
+    a.wide(sw(0, 4, 0)); // msip = 0
+    a.wide(csrrs(25, CSR_MSTATUS, 0));
+    a.wide(halt());
+    let m = lockstep(&a.words(), &[], "machine below", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[21], CAUSE_MSOFT, "the software interrupt, not ecall");
+    assert_eq!(m.x[25] >> 11 & 3, 1, "taken from supervisor mode");
+}
+
 /// The counters that count nothing here (issue 1460): machine mode
 /// writes ones to the first and the last of `mhpmevent`, `mhpmcounter`
 /// and its upper halves, and to `mcountinhibit`, then reads each back
