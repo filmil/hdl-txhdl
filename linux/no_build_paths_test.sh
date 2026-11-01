@@ -13,13 +13,16 @@ if [ $# -eq 0 ]; then
   echo "no_build_paths_test.sh: no ELF to check" >&2
   exit 2
 fi
+pat='/(execroot|sandbox)/|[^.[:space:][:cntrl:]]/\.[sp]out/'
 bad=0
 for elf in "$@"; do
   # grep -a reads the binary file as text. -q decides, so no pipe can
   # hide a match; the paths are printed apart, as printable runs.
-  if grep -a -q -E '/(execroot|sandbox)/' "$elf"; then
+  # Besides Bazel's own directories, an absolute path to build.sh's
+  # output directories, .sout and .pout: the mapped ones start "./".
+  if grep -a -q -E "$pat" "$elf"; then
     echo "$elf names a build directory:" >&2
-    grep -a -o -E '[[:graph:]]*/(execroot|sandbox)/[[:graph:]]*' "$elf" |
+    grep -a -o -E "[[:graph:]]*($pat)[[:graph:]]*" "$elf" |
       sed -n 1,3p >&2 || true
     bad=1
   fi

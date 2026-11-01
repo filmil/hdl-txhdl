@@ -93,7 +93,8 @@ sbi_prefix_map="-ffile-prefix-map=$root=."
 sbi_make() {
   local src=$1
   shift
-  if grep -R -l --include='*.mk' 'platform-genflags-y' "$root/$src" >&2; then
+  if grep -R -l -E --include='*.mk' --include='Makefile*' \
+    '^[[:space:]]*platform-genflags-y[[:space:]]*[:+?]?=' "$root/$src" >&2; then
     echo "build.sh: OpenSBI sets platform-genflags-y; pass the prefix map another way (issue 2023)" >&2
     exit 2
   fi
