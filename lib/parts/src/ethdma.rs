@@ -415,7 +415,7 @@ mod tests {
     /// leaves `FrameOut` waiting for a word that never comes.
     #[test]
     fn frame_out_asks_for_every_word_of_the_frame() {
-        for n in 0..=9u16 {
+        for n in (0..=9u16).chain(1514..=1522) {
             assert_eq!(nwords_for(n), n.div_ceil(4), "for {n} bytes");
         }
     }
@@ -509,11 +509,13 @@ mod tests {
         let (store_out, store) = signal::<Bit, DefaultClock>();
         let (which_out, _which) = signal::<U<1>, DefaultClock>();
         let (drops_out, _drops) = signal::<U<32>, DefaultClock>();
-        // Each cycle: `store`, `count`, and whether a byte waits.
-        let seen: Rc<RefCell<Vec<(bool, u16, bool)>>> = Rc::default();
+        // Each cycle: `store`, `count`, whether a byte waits, and the
+        // words handed on so far.
+        let seen: Rc<RefCell<Vec<(bool, u16, bool, usize)>>> = Rc::default();
         let log = seen.clone();
         let got: Rc<RefCell<Vec<u32>>> = Rc::default();
         let words = got.clone();
+        let so_far = got.clone();
         let client = async move {
             let a = [0x01u8, 0x02, 0x03];
             let b = [0x10u8, 0x11, 0x12, 0x13, 0x14, 0x15];
@@ -544,8 +546,12 @@ mod tests {
                 if !waiting && !queue.is_empty() {
                     in_tx.send(queue.remove(0));
                 }
-                let at =
-                    (store.get().to_bool(), count.get().raw() as u16, waiting);
+                let at = (
+                    store.get().to_bool(),
+                    count.get().raw() as u16,
+                    !in_tx.ready().to_bool(),
+                    so_far.borrow().len(),
+                );
                 log.borrow_mut().push(at);
             }
         };
@@ -569,13 +575,16 @@ mod tests {
             sim.cycle();
         }
         let seen = seen.borrow();
-        let under = &seen[32..=60];
+        // From the cycle after B is offered until hold falls: nothing
+        // started, count still A's, and only A's word handed on; and
+        // once the channel's room is used, B's bytes left waiting.
+        let under = &seen[31..=60];
         assert!(
-            under.iter().all(|&(s, c, _)| !s && c == 3),
-            "B started under hold, or count moved: {under:?}"
+            under.iter().all(|&(s, c, _, n)| !s && c == 3 && n == 1),
+            "B taken under hold: {under:?}"
         );
-        assert!(under.iter().any(|&(_, _, w)| w), "a byte of B waits");
-        assert!(seen[61..].iter().any(|&(s, c, _)| s && c == 6), "B goes");
+        assert!(seen[32..=60].iter().all(|&(_, _, w, _)| w), "B waits");
+        assert!(seen[61..].iter().any(|&(s, c, _, _)| s && c == 6), "B goes");
         assert_eq!(*got.borrow(), vec![0x0003_0201, 0x1312_1110, 0x1514]);
     }
 }
