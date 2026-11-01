@@ -191,6 +191,10 @@ int main() {
     w.start(9, 0, 100);
     w.write(0, 1);
     expect(b.writes.size() == 1, "the first write once");
+    // The board performs a write once however often it is sent, so the
+    // count of writes cannot see a resend (#2034): the window's own
+    // count says it.
+    expect(w.resends == 0, "the first write not sent again");
   }
   for (int seed = 1; seed <= 20; seed++) {
     // One frame in ten lost each way.
@@ -266,6 +270,13 @@ int main() {
     b.lose_answer = 1;
     expect(stops([&] {
              w.write(0x200000, 1); // refused, and its answer lost
+             // The board takes an ask only as its clock runs, so run it
+             // until it has taken the refused write while its answers are
+             // still lost (#2034); then only the count in the next
+             // write's answer can say the bus refused it.
+             Answer none;
+             expect(!b.receive(1, &none), "the refused write's answer lost");
+             expect(b.fails == 1, "the board refused the write");
              b.lose_answer = 0;
              w.write(0x14, 2);
              w.flush();
