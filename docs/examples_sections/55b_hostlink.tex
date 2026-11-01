@@ -8,7 +8,7 @@ machine asks, and the design's bus does what it asks. The program
 puts an \code{Ask} in an Ethernet frame. \code{HostLink} takes the
 frame off the wire and hands the \code{Ask} on. \code{LiteMaster}
 performs it as an AXI-Lite host on the design's bus, and the
-\code{Answer} goes back the same way, in a frame. The two directions
+\code{HostAnswer} goes back the same way, in a frame. The two directions
 share the frame of \code{RemoteLink}, at the same offsets, with two
 kinds of their own, so they can share a wire and a program, and
 neither takes the other's frames for its own.
