@@ -624,7 +624,8 @@ mod tests {
         let mut slots = EthSlots::<0x4100_0000>::default();
         let (queued, q0_slot, q0_len) =
             (slots.queued, slots.q0_slot, slots.q0_len);
-        // Set when B's store begins, and the cycle the ack starts.
+        // Set when B's store begins; the driver and the record start
+        // from it.
         let at: Rc<RefCell<Option<u32>>> = Rc::default();
         let at_w = at.clone();
         let frames = async move {
@@ -719,8 +720,9 @@ mod tests {
     #[test]
     fn the_slots_are_full_as_a_second_frame_lands() {
         let r = arrive(false, 4);
-        let full = r.full.iter().position(|&f| f).expect("full");
+        // Full while B is stored with A queued, and so in the cycle B
+        // lands, the one before it is counted.
         let two = r.queued.iter().position(|&q| q == 2).expect("two");
-        assert!(full <= two, "full at {full}, two counted at {two}");
+        assert!(r.full[two - 1], "not full as B lands: {:?}", r.full);
     }
 }
