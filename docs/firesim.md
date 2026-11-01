@@ -134,7 +134,7 @@ They were lost on the board's receive side (#2026).
 srv's USB Ethernet adapter, a Realtek RTL8153, packs the frames waiting for it into one USB transfer, so a window's asks reach the cable back to back, whatever the driver's spacing.
 The link reads one byte per 50 MHz cycle, half the cable's rate, and the MAC holds two frames, behind a clock crossing that held 16 bytes.
 So a window sent again after a timeout lost all but its first few asks, and each loss set off another.
-On srv the counters showed it: in a window-32 boot the adapter sent 4.38 million asks and received 3.12 million answers, and every answer reached the driver.
+On srv the counters showed it: in a window-32 boot on 2026-11-01, before the fix, the adapter sent 4.38 million asks and received 3.12 million answers, and every answer reached the driver.
 The crossing now holds 2048 bytes, 34 asks of 60 bytes, and the queue between `HostLink` and `LiteMaster` holds 128, so an ask waits while a slow register on FPGATop's control port answers rather than being dropped.
 On 2026-11-01 the boot took 46.4 s at 8, 24.8 s at 32, 24.4 s at 64 and 24.2 s at 128, with no ask sent again at any of them, and srv's sent and received counts were equal.
 The default window is 32, and the load takes about 12 s.
