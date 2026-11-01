@@ -601,4 +601,83 @@ mod tests {
         let want: Vec<u32> = (0..300).map(|i| 0x0f80 + 4 * i).collect();
         assert_eq!(got, want, "every word, in order");
     }
+
+    /// The strobes of every beat `LineStore` sends for a run of
+    /// `bytes`, from a stand-in host that grants each burst, takes
+    /// every beat and answers the burst when its last beat is in.
+    fn store_strobes(bytes: u32) -> Vec<u8> {
+        let (grant_tx, grant) = chan::<Grant<2>, DefaultClock>();
+        let (done_tx, done) = chan::<Done<2>, DefaultClock>();
+        let (inp_tx, inp) = chan::<U<32>, DefaultClock>();
+        let (issue, issue_rx) = chan::<Issue<16>, DefaultClock>();
+        let (wbeat, wbeat_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (release, release_rx) = chan::<Grant<2>, DefaultClock>();
+        let (base_o, base) = signal::<U<16>, DefaultClock>();
+        let (bytes_o, nbytes) = signal::<U<16>, DefaultClock>();
+        let (go_o, go) = signal::<Bit, DefaultClock>();
+        let (running, _running) = signal::<Bit, DefaultClock>();
+        base_o.set(U::from(0x100u32));
+        bytes_o.set(U::from(bytes));
+        go_o.set(Bit::One);
+        let strobes: Rc<RefCell<Vec<u8>>> = Rc::default();
+        let log = strobes.clone();
+        let host = async move {
+            let mut word = 0u32;
+            loop {
+                DefaultClock::rising().await;
+                let _ = release_rx.recv();
+                if issue_rx.recv().is_some() {
+                    grant_tx.send(Grant { id: U::from(1u8) });
+                }
+                if inp_tx.ready().to_bool() {
+                    inp_tx.send(U::from(word));
+                    word += 1;
+                }
+                if let Some(b) = wbeat_rx.recv() {
+                    log.borrow_mut().push(b.strb.raw() as u8);
+                    if b.last.to_bool() {
+                        done_tx.send(Done {
+                            id: U::from(1u8),
+                            resp: Resp::Okay,
+                        });
+                    }
+                }
+            }
+        };
+        let mut store =
+            <LineStore![ADDR = 16, ID = 2, BEATS = 16, COUNT = 16]>::default();
+        let mut sim = Running::new(join2(
+            store.run(
+                (grant, done, inp, base, nbytes, go),
+                (issue, wbeat, release, running),
+            ),
+            host,
+        ));
+        for _ in 0..3 {
+            sim.cycle();
+        }
+        go_o.set(Bit::Zero);
+        for _ in 0..1000 {
+            sim.cycle();
+        }
+        let s = strobes.borrow().clone();
+        s
+    }
+
+    /// A run's last beat writes only the bytes the count names: one,
+    /// two, three or all four of its last word (#2050). Every beat
+    /// before it writes all four, and a run of `bytes` is
+    /// `div_ceil(bytes, 4)` beats.
+    #[test]
+    fn the_last_beat_strobes_only_the_tail() {
+        for (bytes, tail) in [(253, 0x1), (254, 0x3), (255, 0x7), (256, 0xf)] {
+            let s = store_strobes(bytes);
+            assert_eq!(s.len() as u32, bytes.div_ceil(4), "beats of {bytes}");
+            assert!(
+                s[..s.len() - 1].iter().all(|&b| b == 0xf),
+                "whole words before the last, for {bytes}"
+            );
+            assert_eq!(s[s.len() - 1], tail, "the last strobe of {bytes}");
+        }
+    }
 }
