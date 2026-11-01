@@ -116,8 +116,9 @@ and their \code{vsim} twins.
 \subsection*{Used by}
 
 \code{ex\_stream}, and \code{//firesim/ax7a200b}'s \code{rocket\_link},
-where \code{EthShare} sends the control frames to a \code{HostBridge}
-and every other frame to a \code{StreamBridge<5>}, the stream port of
+where \code{EthShare} sends the control frames to a \code{HostLink}
+with a \code{LiteMaster} behind it, the two parts a \code{HostBridge}
+joins, and every other frame to a \code{StreamBridge<5>}, the stream port of
 FireSim's Rocket design on the AX7A200B (issue 1988).
 
 \subsection*{Limits}

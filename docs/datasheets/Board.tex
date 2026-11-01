@@ -58,7 +58,8 @@ before the answer goes back; hart 1 is told nothing while
 The debug transport, \code{dtm}, runs on the cable's
 clock behind the top's \code{BSCANE2}, and \code{dreq} and
 \code{dans} transfer its accesses across to the board's clock and back.
-The data memory and the timer each sit behind an \code{AxiPer}. Ten
+The timer sits behind an \code{AxiPer}, and the data memory behind
+its two halves, \code{AxiPerReq} and \code{AxiPerRsp}. Ten
 small peripherals share the page at \code{0x3000} behind the AXI-Lite
 bridge \code{LiteBridge<10, ..>}, a sixteenth of the page each: the
 serial port at

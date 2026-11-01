@@ -147,23 +147,26 @@ Verilator: \code{//docs:axi\_arbiter\_sim\_axi\_arbiter\_tb\_test} and
 
 \subsection*{Used by}
 
-\code{Board}, three times. As \code{arb}, an
+\code{Board}, four times. As \code{arb}, an
 \code{Arbiter<8, 32, 32, 4, 2, 5, 0, 1, SCAN\_PRIO>} in front of the
 exclusive monitor and the router, with the hold built and
 \code{SCAN\_PRIO} eight, naming no host (issue 1523), it takes
 the core's tracker on port 0; on port 1 \code{jarb}, which shares it
 between the JTAG master's pins (issue 241) and the debug transport's
-bridge (issue 154); the Ethernet port's fetch and store engines on
-ports 2 and 3 (issue 151); the video scanout's fetch on port 4 (issue
+bridge (issue 154); on port 2 \code{etharb}, the Ethernet port's
+fetch and store engines (issue 1634); on port 3 the board top's host
+(issue 1634); the video scanout's fetch on port 4 (issue
 151); on port 5 \code{sdarb}, the SD card host's two engines
 (issue 912); on port 6 Razboj's rasteriser (issue 985); and on port 7
 the second hart's tracker, \code{host1} (issue 1408). Its peripheral
 side has five bits of identifier, two for a host's own and three for
 the port, so the eight hosts fit without widening anything past it
-(issue 1022). \code{jarb} and \code{sdarb}
+(issue 1022). \code{jarb}, \code{etharb} and \code{sdarb}
 are each an \code{Arbiter2<32, 32, 4, 1, 2, 0>}, giving their two hosts
 one bit of identifier each. The SD engines never offer at the same
-time, so neither takes a turn from the other.
+time, so neither takes a turn from the other; the Ethernet fetch engine
+only reads and the store engine only writes, and the arbiter keeps the
+turns of reads and writes apart.
 
 \subsection*{Limits}
 

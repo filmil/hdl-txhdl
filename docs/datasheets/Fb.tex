@@ -49,7 +49,7 @@ The tables use \code{Fb<16, 2, 1024>}, the framebuffer of
 \subsection*{Address map}
 
 The word a burst names is its address shifted down by two, cut to
-sixteen bits, and masked with \code{WORDS}~$-$~1. The memory itself gives
+24 bits, and masked with \code{WORDS}~$-$~1. The memory itself gives
 no word a meaning. In \code{//gpu/razboj:trace} and the tests of
 \code{gpu/razboj/src/sim.rs}, with \code{WORDS} of 1024:
 
@@ -60,7 +60,7 @@ Byte address & What \code{sim.rs} puts there \\
 \midrule
 \code{0x000} & The framebuffer, sixteen by sixteen pixels, a word
 each. \\
-\code{0x400} & The display list, eight words an instruction. \\
+\code{0x400} & The display list, sixteen words an instruction. \\
 \code{0x600} & The count of instructions, written last. \\
 \bottomrule
 \end{tabular}
@@ -71,9 +71,11 @@ each. \\
 \subsection*{Behaviour}
 
 \begin{itemize}
-\item A read is taken when \code{bus\_r} has room and no write is waiting
-for its beat. It is answered on \code{bus\_r} in the cycle it is taken,
-with the word from \code{px}, \code{OKAY} and \code{last} set.
+\item A read is taken when \code{bus\_r} has room, no write is waiting
+for its beat and no read burst is being answered. Its first beat is
+answered on \code{bus\_r} in the cycle it is taken, with the word from
+\code{px} and \code{OKAY}, and \code{last} is set on the burst's last
+beat.
 \item A write is taken when no write is held. Its first word and its
 identifier go into \code{paddr} and \code{pid}, \code{pend} is set,
 and \code{wbursts} counts it.
@@ -126,5 +128,5 @@ It holds one write at a time and takes no read while it does, and a
 read burst's beats are answered a cycle apart. A write burst's beats
 are taken as they come; its length is not read, and its last beat ends
 it. The
-word index is sixteen bits wide, so the framebuffer reaches at most
-65536 words.
+word index is 24 bits wide, so the framebuffer reaches at most
+$2^{24}$ words.

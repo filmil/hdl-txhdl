@@ -129,7 +129,8 @@ triangle & bits 25 to 2: colour \\
 6 to 14 & \multicolumn{2}{l}{a shaded triangle's red, green and blue
 planes: value, step right, step down} \\
 15 & bits 7 to 0: alpha & bit 8: depth; 11 to 9: its comparison;
-12: its write; 13: the pixel's state; 14: textured \\
+12: its write; 13: the pixel's state; 14: textured; 15: a second
+texture unit \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -156,6 +157,10 @@ GL's sixteen \\
 23 to 16: its mask; 31 to 24: its write mask \\
 11 & bits 2 to 0: the operation on a stencil failure; 5 to 3: on a
 depth failure; 8 to 6: on a pass \\
+12 to 14 & The alpha plane: \code{a0}, \code{adx}, \code{ady}
+(issue 1520) \\
+15 & bit 0: the alpha plane, a shaded triangle's alpha interpolated as
+its colour is \\
 \bottomrule
 \end{tabular}
 \end{center}

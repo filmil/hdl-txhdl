@@ -32,8 +32,8 @@ answers once, after the last beat (issue 1208).
 Parameter & Meaning \\
 \midrule
 \code{ID} & The width of the AXI identifier on \code{bus\_req},
-\code{bus\_ans} and \code{bus\_r}, in bits. The tables use 4, as the board
-does since its bus has two hosts behind an arbiter (issue 241). \\
+\code{bus\_ans} and \code{bus\_r}, in bits. The tables use 4; the board uses 5, the
+identifier past its arbiter of eight ports (issue 1022). \\
 \code{ADDR} & The bits that number the words, 10 by default. \\
 \code{WORDS} & The words, \code{1 << ADDR}, 1024 by default. \\
 \bottomrule
