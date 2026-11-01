@@ -86,11 +86,14 @@ long as the base lies above those bits. A write at
 \subsection*{Verification}
 
 \begin{itemize}
-\item Two tests in \code{bus::wb}, in \code{//lib/parts:parts\_test},
+\item Three tests in \code{bus::wb}, in \code{//lib/parts:parts\_test},
 run the bridge on a link, behind \code{AxiHost} and \code{AxiPer},
 against \code{WbMem}, a simulated Wishbone memory. The first,
 \code{a\_read\_gets\_what\_a\_write\_put}, writes and reads one word.
-The second, \code{slow\_answers\_and\_a\_calibration}, writes and
+The second, \code{a\_burst\_is\_served\_word\_by\_word}, writes and
+reads back a burst of sixteen words each way, and counts the beats
+answered (issue 471).
+The third, \code{slow\_answers\_and\_a\_calibration}, writes and
 reads back 24 words at pseudorandom addresses, against a memory that
 stalls for its first 40 cycles and answers after 5.
 \item \code{ex\_axi\_wb} writes three words and reads them back, against

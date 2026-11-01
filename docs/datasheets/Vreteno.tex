@@ -26,8 +26,8 @@ the instruction memory the fetch reads from the bus, into a buffer of
 two words, and the words of the data memory and of DDR3 through an
 instruction cache (issue 1021): sixteen kilobytes, 1024 lines of
 four words, one way, looked up after translation and so indexed and
-tagged by the physical address (issue 1290), in \code{ic\_data} and
-\code{ic\_tag}. A hit fills both words of the buffer when the line
+tagged by the physical address (issue 1290), in \code{ic\_tag} and
+the two banks of words \code{ic\_even} and \code{ic\_odd} (issue 1303). A hit fills both words of the buffer when the line
 holds the next one, and the buffer shifts its second word into the
 first at the clock edge, as the program counter moves into it
 (issues 1187 and 1279).
@@ -407,12 +407,9 @@ module's system bus access, Razboj or a DMA engine, so a debugger
 reads it through the core. A fetch from the window is refused.
 
 A trap handler must start at a whole word: \code{mtvec} keeps no
-bits 1 and 0. The core has machine mode only and the fourteen control
-registers above, in three kinds: eight it keeps, \code{mhalt}, which
-is its own, and five that say what the machine is and hold nothing. A
-write to one of the four whose number begins \code{0xf} is an illegal
-instruction, which is what read only means in the specification;
-\code{misa} is writable and ignores what is written. The two counters answer as well:
+bits 1 and 0. The core has machine, supervisor and user modes, and
+the control registers of the table above; \code{misa} is writable
+and ignores what is written. The two counters answer as well:
 \code{mcycle} at \code{0xb00} with its high half at \code{0xb80},
 and \code{minstret} at \code{0xb02} with \code{0xb82}, each 64 bits
 and each writable. \code{mcycle} counts while the core runs and stops

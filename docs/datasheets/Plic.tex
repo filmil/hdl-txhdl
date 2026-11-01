@@ -54,7 +54,7 @@ Parameter & Meaning \\
 pending bits holds. Nothing checks it. \\
 \code{EDGE} & A bit per source: bit \textit{i} set makes source
 \textit{i} ask on a rising edge rather than while its line is high.
-Bit 0 and bits above \textit{N} are ignored. The tables use 0, as the
+Bit 0 and bits above \code{SOURCES} are ignored. The tables use 0, as the
 board does. \\
 \bottomrule
 \end{tabular}
@@ -73,7 +73,7 @@ the board the base is \code{0x0c00\_0000}.
 Offset & Word & Access \\
 \midrule
 \code{0x4} $\times$ \textit{i} & Source \textit{i}'s priority, 3 bits &
-Read and write, for \textit{i} from 1 to \textit{N}. \\
+Read and write, for \textit{i} from 1 to \code{SOURCES}. \\
 \code{0x1000} & The pending bits, bit \textit{i} for source \textit{i} &
 Read only. \\
 \code{0x2000} & Hart 0's machine target's enable bits, the same way &
@@ -134,7 +134,7 @@ candidate's number, or 0 for none, and clears that source's
 enabled for several targets is served by whichever claims first, and
 the others then find it no longer pending. One read is taken a cycle,
 so no two targets claim together.
-\item \textbf{A complete.} A write of a number from 0 to \textit{N} to
+\item \textbf{A complete.} A write of a number from 0 to \code{SOURCES} to
 any of the four claim words clears that source's \code{active} bit,
 whichever target claimed it. A larger number changes nothing. A level
 source whose line is still high then asks again at once.
