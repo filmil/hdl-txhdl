@@ -658,14 +658,21 @@ mod tests {
 
     #[test]
     fn other_frames_are_ignored() {
-        // Another device, the control frames' type, and a short frame.
+        // Another device, the control frames' type, a type wrong in its
+        // first byte alone, another kind (#2042), and a short frame:
+        // each of the four bytes checked, wrong by itself.
         let other = ask_frame(6, 1, true, 0x40, BEAT, 0xffff);
         let mut control = ask_frame(5, 1, true, 0x40, BEAT, 0xffff);
         control[13] = 0xb5;
+        let mut first = ask_frame(5, 1, true, 0x40, BEAT, 0xffff);
+        first[12] = 0x08;
+        let mut kind = ask_frame(5, 1, true, 0x40, BEAT, 0xffff);
+        kind[14] = (KIND_STREAM_ASK ^ 1) as u8;
         let mut short = ask_frame(5, 1, true, 0x40, BEAT, 0xffff);
         short.truncate(STREAM_FRAME_LEN as usize);
         let good = ask_frame(5, 9, false, 0x40, 0, 0);
-        let (got, seen) = serve(&[other, control, short, good], vec![BEAT]);
+        let (got, seen) =
+            serve(&[other, control, first, kind, short, good], vec![BEAT]);
         assert_eq!(got, vec![(5, 9, BEAT, false)]);
         assert!(seen.borrow().writes.is_empty());
     }
