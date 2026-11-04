@@ -2998,7 +2998,8 @@ impl<
                     i_req: Bit::Zero,
                     x_req: Bit::Zero
                 },
-                vctx & self.f_wait & !f_resp & !c_end ? f_drop: Bit::One,
+                vctx & ((self.f_wait & !f_resp & !c_end) | f_send) ?
+                    f_drop: Bit::One,
                 p_send ? p_wait: Bit::One,
                 p_resp ? p_wait: Bit::Zero,
                 flush: flush_go,
