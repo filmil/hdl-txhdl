@@ -157,7 +157,6 @@ program() {
       --hostport localhost:3122 --device "*/xilinx_tcf/Digilent/*"
   fi
 }
-stamp() { while IFS= read -r l; do printf '%s %s\n' "$(date -u +%T.%3N)Z" "$l"; done; }
 
 program
 after_fastboot=""
@@ -173,9 +172,12 @@ for d in "${demos[@]}"; do
   fi
   echo "$name: $target ($how, ${seconds}s)"
   [[ -n "$dry" ]] && continue
+  # The loader stamps its lines on the board server as it reads them
+  # (--stamp), so a stall between there and here does not count as the
+  # demo's time (#2046, #2058).
   if [[ "$how" == serial ]]; then
-    "$load" --server="$server" --reset --image="$image" \
-      --seconds="$seconds" </dev/null 2>&1 | stamp >"$log" || true
+    "$load" --server="$server" --reset --stamp --image="$image" \
+      --seconds="$seconds" </dev/null >"$log" 2>&1 || true
     start="$(grep -am1 ' ok 40000000' "$log" | cut -c1-13 || true)"
     after_fastboot=""
   else
@@ -186,8 +188,8 @@ for d in "${demos[@]}"; do
     ssh -n -o BatchMode=yes "$server" \
       "mkdir -p $fbdir/demos && rm -f $fbdir/demos/$name.bin"
     scp -q -o BatchMode=yes "$image" "$server:$fbdir/demos/$name.bin"
-    ( "$load" --server="$server" --reset --image="$fastboot_bin" \
-        --seconds=$((seconds + 120)) </dev/null 2>&1 | stamp >"$log" ) &
+    ( "$load" --server="$server" --reset --stamp --image="$fastboot_bin" \
+        --seconds=$((seconds + 120)) </dev/null >"$log" 2>&1 ) &
     reader=$!
     for _ in $(seq 1 150); do
       if grep -q 'listening on port' "$log" 2>/dev/null; then break; fi
