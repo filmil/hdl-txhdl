@@ -2492,6 +2492,60 @@ fn sv32_translates_and_faults_where_the_tables_say() {
 /// the instruction cache, and a load's and a store's within a cycle each,
 /// twice it together, since the fetch's overlap moves a cycle between
 /// them with where the loop lies on its lines.
+/// An `sret` to user mode drops the translation the fetch holds
+/// (#2057): the supervisor's code, on a page user mode may not run,
+/// returns to user mode at the very next instruction on that page,
+/// which the fetch already holds, and that is an instruction page
+/// fault taken to machine mode, not the instruction run as user code.
+#[test]
+fn an_sret_to_user_mode_refetches_under_the_users_rights() {
+    use txhdl_parts::mmu::pte::{to, A, R, V, X};
+    use vreteno32::isa::*;
+    use vreteno32::program::Asm;
+    const CODE: u32 = 0x8000_0000;
+    let mut a = Asm::default();
+    let (mh, s_code, after) = (a.label(), a.label(), a.label());
+    // The root table at 0x1000: the code's four megabytes, at 0, for
+    // the supervisor only.
+    a.wide(lui(3, 2));
+    a.wide(addi(3, 3, -0x800));
+    li(&mut a, 5, to(0, V | R | X | A));
+    a.wide(sw(5, 3, 4 * 0x200 - 0x800));
+    li(&mut a, 5, txhdl_parts::mmu::satp(0x1000));
+    a.wide(csrrw(0, CSR_SATP, 5));
+    la(&mut a, 31, mh, 0);
+    a.wide(csrrw(0, CSR_MTVEC, 31));
+    li(&mut a, 5, 0x800); // MPP = supervisor
+    a.wide(csrrw(0, CSR_MSTATUS, 5));
+    a.wide(addi(9, 0, 0));
+    la(&mut a, 31, s_code, CODE);
+    a.wide(csrrw(0, CSR_MEPC, 31));
+    a.wide(mret());
+    // Supervisor mode, at a virtual address.
+    a.place(s_code);
+    a.wide(addi(5, 0, 0x100));
+    a.wide(csrrc(0, CSR_SSTATUS, 5)); // SPP = user
+    la(&mut a, 30, after, CODE);
+    a.wide(csrrw(0, CSR_SEPC, 30));
+    a.wide(sret());
+    a.place(after);
+    a.wide(addi(9, 0, 7)); // user mode must not run this
+    a.wide(ecall());
+    // Machine mode's handler, untranslated.
+    a.align();
+    a.place(mh);
+    a.wide(csrrs(21, CSR_MCAUSE, 0));
+    a.wide(csrrs(22, CSR_MTVAL, 0));
+    a.wide(csrrs(23, CSR_MSTATUS, 0));
+    a.wide(halt());
+    let m = lockstep(&a.words(), &[], "sret refetch", None, None, None);
+    assert_eq!(m.halted, Some(Halt::Break));
+    assert_eq!(m.x[21], CAUSE_FETCH_PAGE, "a fetch page fault");
+    assert_eq!(m.x[22], m.x[30], "at the instruction after sret");
+    assert_eq!(m.x[23] >> 11 & 3, 0, "taken from user mode");
+    assert_eq!(m.x[9], 0, "which did not run");
+}
+
 #[test]
 fn translation_costs_the_core_what_the_timing_mode_charges() {
     use txhdl_parts::mmu::pte::{to, A, D, R, V, W, X};
