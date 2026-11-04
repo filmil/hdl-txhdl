@@ -335,7 +335,9 @@ pub struct Model {
     /// length in bytes (#1679).
     pub mkind: std::cell::Cell<u8>,
     pub ilen: std::cell::Cell<u32>,
-    /// Whether the step was a backward branch (#1752).
+    /// Whether the step was an unconditional jump or return, or a backward
+    /// branch (#1752, #1918).
+    pub jump: std::cell::Cell<bool>,
     pub back: std::cell::Cell<bool>,
     pub reads: std::cell::Cell<(u32, u32)>,
     pub loaded: std::cell::Cell<u32>,
@@ -349,10 +351,12 @@ pub struct Model {
     /// AMO; `sc.w` and each AMO are translated once, as a store.
     pub xlate_stores: std::cell::Cell<u32>,
     pub ifence: std::cell::Cell<bool>,
-    /// Whether the step was a `fence`, and the cycle count at the last
-    /// store into the DDR3 (issue 1561).
+    /// Whether the step was a `fence`, and the cycle counts at which the
+    /// last four stores into the DDR3 complete (issue 1561, #1918).
     pub fenced: std::cell::Cell<bool>,
     pub stored_at: u64,
+    pub stores: [u64; 4],
+    pub line_fell: bool,
 }
 
 /// What the instruction cache costs in the timing mode, in cycles more
@@ -561,11 +565,18 @@ impl Timing {
     /// is two loads that miss. From the translation and scanout blocks on
     /// the board (issue 1561, costs image 96910caf, flagship 93a1e1c6): a
     /// translated store waits 2, and a load that fills a data line while
-    /// the scanout shows costs 7 more, 1.74 a word.
+    /// the scanout shows costs 7 more, 1.74 a word. From the one-line and
+    /// two-line compressed loops on the board (#1918, flagship 96003be7):
+    /// a load the data cache holds costs 1 more (`loop1-lw` 10.10 against
+    /// `loop1-nop` 9.10), a posted store into the DDR3 costs 0 more while
+    /// the four write slots have room (`loop1-sw` 9.10), and crossing into
+    /// a held line or redirecting from a compressed branch whose next word
+    /// needs no lookup in the same cycle takes 2 and 3 rather than 3 and 4
+    /// (`loop2-cross` 11.20, `loop2-copy` 12.20).
     pub fn board_cached() -> Self {
         let mut t = Timing {
-            hit: Some(2),
-            excl: (40, 15, 55),
+            hit: Some(1),
+            excl: (38, 17, 53),
             mul: 2,
             div: 34,
             load_use: 1,
@@ -585,12 +596,12 @@ impl Timing {
             xlate_amo: 0,
             scan_fill: 7,
             fence: 14,
-            fence_alone: 1,
+            fence_alone: 0,
             ..Self::board()
         };
         for r in &mut t.regions {
             if r.0 == 0x4000_0000 {
-                (r.2, r.3) = (37, 2);
+                (r.2, r.3) = (39, 0);
             }
         }
         t
@@ -655,6 +666,7 @@ impl Default for Model {
             ic_fills: 0,
             mkind: std::cell::Cell::new(0),
             ilen: std::cell::Cell::new(4),
+            jump: std::cell::Cell::new(false),
             back: std::cell::Cell::new(false),
             reads: std::cell::Cell::new((0, 0)),
             loaded: std::cell::Cell::new(0),
@@ -665,6 +677,8 @@ impl Default for Model {
             ifence: std::cell::Cell::new(false),
             fenced: std::cell::Cell::new(false),
             stored_at: 0,
+            stores: [0; 4],
+            line_fell: false,
             dcsr: 0x4000_0003,
             step_armed: false,
             stepped: false,
@@ -762,6 +776,12 @@ fn cached(pa: u32) -> bool {
 /// Whether a data access at addr is the data RAM's (issue 1275).
 fn in_dram(addr: u32) -> bool {
     addr.wrapping_sub(DRAM_BASE) < DRAM_BYTES
+}
+
+/// Whether the instruction after a taken transfer at `next_pc` is 32 bits
+/// wide (#1918).
+fn next_is_32(fetch: impl FnOnce() -> Option<(u32, u32)>) -> bool {
+    matches!(fetch(), Some((_, 4)))
 }
 
 impl Model {
@@ -1463,6 +1483,7 @@ impl Model {
         self.wfi_now.set(false);
         self.mkind.set(0);
         self.ilen.set(4);
+        self.jump.set(false);
         self.back.set(false);
         self.reads.set((0, 0));
         self.loaded.set(0);
@@ -1473,12 +1494,44 @@ impl Model {
         self.fenced.set(false);
         let pc = self.pc;
         self.execute(imem, interrupt);
+        let len = self.ilen.get();
+        let next_pc = pc.wrapping_add(len);
+        let taken = self.jump.get()
+            || (self.pc != pc.wrapping_add(4) && self.pc != pc.wrapping_add(2));
+        // A 32-bit instruction at the odd halfword after a taken transfer
+        // (`need1`) asks for the word after `next_pc`: at offset 14 that word
+        // is in the next line, and at offsets 6 or 10 its in-line lookup holds
+        // the redirect for a cycle (#1918).
+        let after_32 = taken
+            && (next_pc & 2) != 0
+            && next_is_32(|| self.fetch_at(imem, next_pc));
+        let span = if after_32 && (next_pc & 15) == 14 {
+            2
+        } else {
+            0
+        };
         let t = self.timing.as_ref().expect("timing");
         let mut c = t.base;
-        let taken =
-            self.pc != pc.wrapping_add(4) && self.pc != pc.wrapping_add(2);
         if taken {
-            c += t.taken;
+            c += if t.icache.is_none() {
+                t.taken
+            } else if (pc & 15) == 4
+                && len == 4
+                && self.pc == pc.wrapping_add(8)
+            {
+                if self.jump.get() {
+                    t.taken.saturating_sub(3)
+                } else {
+                    t.taken.saturating_sub(2)
+                }
+            } else if len == 2
+                && (next_pc & 15) != 4
+                && (!after_32 || (next_pc & 15) == 14)
+            {
+                t.taken.saturating_sub(1)
+            } else {
+                t.taken
+            };
         } else if self.back.get() {
             c += t.guessed;
         }
@@ -1507,15 +1560,25 @@ impl Model {
                     }
                     self.ic[slot] = line + 1;
                     self.ic_fills += 1;
+                    self.line_fell = false;
                 } else if self.fell {
-                    c += step;
+                    c += step.saturating_sub(1);
+                    self.line_fell = step > 0;
+                } else {
+                    self.line_fell = false;
                 }
                 self.last_line = line;
+            } else if self.line_fell
+                && ((pc & 15) == 4 || (pc & 15) == 6)
+                && len == 4
+            {
+                c += 1;
+                self.line_fell = false;
             }
             // The word after a jump, fetched as it executes (#1679): its
             // line is looked up when it is not the jump's, and filled, and
             // kept, when it is a line not held.
-            let next = pc.wrapping_add(self.ilen.get()) >> 4;
+            let next = next_pc.wrapping_add(span) >> 4;
             let slot = (next & 1023) as usize;
             if taken && next != line {
                 if self.ic[slot] == next + 1 {
@@ -1557,16 +1620,16 @@ impl Model {
         if self.ifence.get() {
             self.ic.clear();
             self.last_line = u32::MAX;
+            self.line_fell = false;
         }
         // A fence waits for a store into the DDR3 still on its way.
         if self.fenced.get() {
-            c += t.fence_alone
-                + t.fence.saturating_sub(self.cycles - self.stored_at);
-        }
-        if let Some((addr, true)) = self.access.get() {
-            if cached(addr) {
-                self.stored_at = self.cycles + c;
-            }
+            let wait = if t.hit.is_some() {
+                self.stores[3].saturating_sub(self.cycles)
+            } else {
+                t.fence.saturating_sub(self.cycles - self.stored_at)
+            };
+            c += t.fence_alone + wait;
         }
         let busy = self.contended as u64;
         let (hit, excl, contention) = (t.hit, t.excl, t.contention);
@@ -1586,12 +1649,26 @@ impl Model {
             let line = (addr >> 4) + 1;
             let slot = ((addr >> 4) & 255) as usize;
             let held = cached(addr) && self.dc.get(slot) == Some(&line);
+            if hit.is_some() && !store && (!held || !cached(addr)) {
+                c += self.stores[3].saturating_sub(self.cycles + c);
+            }
             c += match hit {
                 Some(h) if !store && held => h,
                 _ => t.access(addr, store),
             };
             if store && cached(addr) {
                 c += busy * contention.0;
+                if hit.is_some() {
+                    let now = self.cycles + c;
+                    let wait = self.stores[0].saturating_sub(now);
+                    c += wait;
+                    let done = (now + wait + t.fence).max(self.stores[3] + 5);
+                    self.stores =
+                        [self.stores[1], self.stores[2], self.stores[3], done];
+                    self.stored_at = done;
+                } else {
+                    self.stored_at = self.cycles + c;
+                }
             }
             if hit.is_some() && !store && !held && cached(addr) && self.scan_on
             {
@@ -1665,6 +1742,7 @@ impl Model {
         let d = decode(w);
         if self.timing.is_some() {
             self.reads.set((d.rs1, d.rs2));
+            self.jump.set(matches!(d.kind, Kind::Jal | Kind::Jalr));
             self.back.set(
                 matches!(
                     d.kind,
@@ -2713,5 +2791,93 @@ mod tests {
         assert_eq!(on[5] - off[5], t.xlate_store, "sc.w, a store");
         let board = Timing::board_cached();
         assert_eq!((board.xlate_store, board.xlate_amo), (2, 0), "the RTL's");
+    }
+
+    /// The compressed one-line and two-line copy loops (`costs.rs`'s
+    /// `loop1` and `loop2`, #1918): warm, a one-line round of six
+    /// compressed instructions takes 9 cycles with no-ops or a posted DDR3
+    /// store and 10 with a cached load or both, and the two-line layout of
+    /// `ethperf.rs`'s `copy_in` adds the 2-cycle lookup of the second line
+    /// for 11 and 12 cycles a round.
+    #[test]
+    fn the_two_line_copy_loop_takes_the_boards_cycles() {
+        const C_LW: u32 = 0x4218;
+        const C_ADD_A2: u32 = 0x0611;
+        const C_SW: u32 = 0xc398;
+        const C_ADD_A5: u32 = 0x0791;
+        const C_DEC_A1: u32 = 0x15fd;
+        const C_BNEZ_A1: u32 = 0xf9fd;
+        const C_NOP: u32 = 0x0001;
+        let pair = |lo: u32, hi: u32| lo | (hi << 16);
+        let round = |two_lines: bool, [a, b, c, d]: [u32; 4]| {
+            let nop = addi(0, 0, 0);
+            let mut imem = vec![
+                addi(11, 0, 64),
+                lui(12, 0x40101),
+                lui(15, 0x40102),
+                crate::isa::lw(14, 12, 0),
+            ];
+            if two_lines {
+                imem.extend([
+                    nop,
+                    nop,
+                    nop,
+                    pair(a, b),
+                    pair(c, d),
+                    pair(C_DEC_A1, C_BNEZ_A1),
+                    halt(),
+                    nop,
+                ]);
+            } else {
+                imem.extend([
+                    pair(a, b),
+                    pair(c, d),
+                    pair(C_DEC_A1, C_BNEZ_A1),
+                    halt(),
+                ]);
+            }
+            let mut m = Model {
+                timing: Some(Timing::board_cached()),
+                ..Model::default()
+            };
+            while m.halted.is_none() {
+                m.step(&imem, None);
+            }
+            // Warm run of the 64 rounds.
+            (m.pc, m.halted, m.fell) = (0, None, false);
+            let mut warm = vec![];
+            for _ in 0..2 {
+                (m.pc, m.halted, m.fell) = (0, None, false);
+                let t0 = m.cycles;
+                while m.halted.is_none() {
+                    m.step(&imem, None);
+                }
+                warm.push(m.cycles - t0);
+            }
+            warm[1]
+        };
+        let nops = [C_NOP, C_NOP, C_NOP, C_NOP];
+        let lw_only = [C_LW, C_NOP, C_NOP, C_NOP];
+        let sw_only = [C_NOP, C_NOP, C_SW, C_NOP];
+        let copy = [C_LW, C_ADD_A2, C_SW, C_ADD_A5];
+        let one_nop = round(false, nops);
+        assert_eq!(round(false, sw_only), one_nop, "posted store: 0 more");
+        assert_eq!(round(false, lw_only) - one_nop, 64, "cached load: 1 more");
+        assert_eq!(
+            round(false, copy) - one_nop,
+            64,
+            "copy in one line: 1 more"
+        );
+        let two_nop = round(true, nops);
+        // Three leading no-ops and the extra line's crossing add 4 once;
+        // each of the 64 rounds adds the 2-cycle lookup of the second line.
+        assert_eq!(
+            two_nop - one_nop,
+            4 + 2 * 64,
+            "line crossing: 2 more a round"
+        );
+        assert_eq!(round(true, sw_only), two_nop, "two-line store: 0 more");
+        assert_eq!(round(true, lw_only) - two_nop, 64, "two-line load: 1 more");
+        assert_eq!(round(true, copy) - two_nop, 64, "two-line copy: 1 more");
     }
 }

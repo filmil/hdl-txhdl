@@ -18,10 +18,10 @@
 #
 # The machine charges the data cache by default since #1561, and the
 # board has had one since 7b9e9482, so `--no-dcache` here holds the
-# costs to the fit they came from rather than to today's board. The
-# cached model does not fit the copies yet: today's board copies a
-# frame in 4578 cycles and 60 bytes in 206 (the nightly of 10-23,
-# main 2a501c4a), where the model gives 6474 and 283 (#1918).
+# costs to the fit they came from rather than to today's board. With
+# the data cache (#1918), the model copies a frame in 4580 cycles and
+# 60 bytes in 208, against today's board at 4578 and 206 (the nightly
+# of 11-01, main 96003be7).
 #
 # A change to the costs moves these, which is what this test is for: it
 # says so, and the comment above is updated with the new fit.
@@ -47,7 +47,7 @@ grep -qE "^tx copy 1514 .* cycles/frame 20144\$" "$out" ||
 grep -qE "^tx copy 60 .* cycles/frame 852\$" "$out" ||
   { echo "FAIL: tx copy 60 is not 852 cycles a frame" >&2; fail=1; }
 # The default, with the data cache, is pinned too, so that a change to
-# it says so: cpi 7092 warm, and the copies 6474 and 283, which today's
+# it says so: cpi 7092 warm, and the copies 4580 and 208, which today's
 # board does in 4578 and 206 (#1918).
 "$machine" --image "$PWD/$cpi" --at 0x40000000 --steps 20000000 --timing \
   >"$out" 2>&1 || true
@@ -59,9 +59,9 @@ done
 "$machine" --image "$PWD/$ethperf" --at 0x40000000 --steps 40000000 \
   --timing >"$out" 2>&1 || true
 grep "^tx" "$out"
-grep -qE "^tx copy 1514 .* cycles/frame 6474\$" "$out" ||
-  { echo "FAIL: cached, tx copy 1514 is not 6474 cycles a frame" >&2; fail=1; }
-grep -qE "^tx copy 60 .* cycles/frame 283\$" "$out" ||
-  { echo "FAIL: cached, tx copy 60 is not 283 cycles a frame" >&2; fail=1; }
+grep -qE "^tx copy 1514 .* cycles/frame 4580\$" "$out" ||
+  { echo "FAIL: cached, tx copy 1514 is not 4580 cycles a frame" >&2; fail=1; }
+grep -qE "^tx copy 60 .* cycles/frame 208\$" "$out" ||
+  { echo "FAIL: cached, tx copy 60 is not 208 cycles a frame" >&2; fail=1; }
 [ "$fail" -eq 0 ] && echo "PASS: the timing mode gives the calibrated cycles"
 exit "$fail"
