@@ -3064,13 +3064,14 @@ fn three_from_rise(c: u64) -> bool {
 }
 
 /// The core decides whether to take an interrupt a cycle before it
-/// takes it (issue 1331). An instruction that clears `MIE` as the line
-/// rises must not be followed by the interrupt it was decided on: the
-/// decision is dropped after a write of the enables. The program sets
-/// and clears `MIE` over and over while the line, the supervisor's
-/// external one kept in machine mode, rises for three cycles at each
-/// point in turn; every interrupt the core takes must be one `MIE`
-/// allows where it is taken, which the run checks against the model.
+/// takes it (issue 1331). An instruction that clears `MIE` or `mie` as
+/// the line rises must not be followed by the interrupt it was decided
+/// on: the decision is dropped after a write of the enables (#2057).
+/// The program sets and clears `MIE` and `mie` over and over while the
+/// line, the supervisor's external one kept in machine mode, rises for
+/// three cycles at each point in turn; every interrupt the core takes
+/// must be one `MIE` and `mie` allow where it is taken, which the run
+/// checks against the model.
 #[test]
 fn an_interrupt_is_not_taken_after_mie_is_cleared() {
     use vreteno32::isa::*;
@@ -3084,9 +3085,13 @@ fn an_interrupt_is_not_taken_after_mie_is_cleared() {
     a.wide(csrrw(0, CSR_MIE, 5));
     for _ in 0..48 {
         a.wide(csrrsi(0, CSR_MSTATUS, 8));
-        a.wide(csrrci(0, CSR_MSTATUS, 8));
+        a.wide(csrrc(0, CSR_MIE, 5));
         // Not a CSR access: one would stall a cycle on entry and
         // hide what this looks for.
+        a.wide(addi(9, 9, 1));
+        a.wide(addi(9, 9, 1));
+        a.wide(csrrs(0, CSR_MIE, 5));
+        a.wide(csrrci(0, CSR_MSTATUS, 8));
         a.wide(addi(9, 9, 1));
         a.wide(addi(9, 9, 1));
     }
