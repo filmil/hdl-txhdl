@@ -887,24 +887,34 @@ unregistered. The second request is the other host's write.}
 printed when the build ran it: the cycle each burst was answered on
 each path.},label={lst:a-halves-out}]{out_axi_halves.txt}
 
-Joined so, the router's two halves answer in the cycles the router
-does, with one difference. The router takes no second address phase to
-a hole while it still owes the first one's answer. The request half
-owes an answer only until it is in \code{eb} or \code{er}, which hold
-two beats each, so when the host is not taking answers it may take the
-next such address phase up to two beats sooner; the answers still go
-up whole and in order. The unit tests in
-\code{lib/parts/src/bus/router.rs} run the same bursts through the
-router and through its halves and compare the cycle of every answer,
-and run a read through the whole units, through the halves with
-registered channels, and through the halves with every channel
-unregistered.
+With \code{eb} and \code{er} unregistered and the request half joined
+first, as in \code{PathU}, the router's two halves answer a burst to a
+peripheral in the cycles the router would with the same channels
+around it, and a burst to a hole too while nothing holds its answer
+up. They differ where the router waits. The router takes no second
+address phase to a hole while it still owes the first one's answer.
+The request half owes an answer only until it is in \code{eb} or
+\code{er}, which hold two beats each. So while the answer half is in a
+peripheral's read burst, or the host is not taking answers, the next
+address phase to a hole can be taken sooner than the router would take
+it, and its answer can follow the first one's without the gap the
+router leaves; the answers still go up whole and in order.
 
-An unregistered hop is not free in time. On the unregistered path an
-address is decoded by the arbiter's choice and then by the router's
-ranges within one cycle, and an answer is chosen twice on its way
-back. Which hops a design can afford is for its timing to say; the
-halves make the choice possible.
+The unit tests in \code{lib/parts/src/bus/router.rs} run the same
+bursts through the router and through its halves and compare the cycle
+of every answer; drive each half by hand, for a read burst that has to
+stay whole, the order of the write responses, two holes one behind the
+other, and a peripheral's write that passes while a hole's answer is
+owed; and run a read through the whole units, through the halves with
+registered channels, and through the halves with every channel
+unregistered. The arbiter's own tests in
+\code{lib/parts/src/bus/arbiter.rs} run a second time on its halves.
+
+An unregistered hop is not free in time. On the unregistered path a
+request is chosen by the arbiter, decoded by the router and passed on
+by the tracker within one cycle, and an answer passes the same three
+units on its way back. Which hops a design can afford is for its
+timing to say; the halves make the choice possible.
 
 \section{AXI-Lite and the Bridge}
 \label{sec:a-lite}

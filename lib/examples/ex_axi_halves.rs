@@ -24,9 +24,10 @@
 //! registered here.
 //!
 //! An unregistered hop is not free in time: on the unregistered path a
-//! request's address is decoded twice and an answer chosen twice
-//! within one cycle. Which hops a design can afford is its timing's to
-//! say; the halves only make the choice possible.
+//! request is chosen by the arbiter, decoded by the router and passed
+//! on by the tracker within one cycle, and an answer passes the same
+//! three units on its way back. Which hops a design can afford is its
+//! timing's to say; the halves only make the choice possible.
 use std::cell::RefCell;
 use std::future::Future;
 use std::rc::Rc;
@@ -252,7 +253,8 @@ impl Unit for PathU {
 // end{paths}
 
 /// The peripheral's client: a read is answered with its own address in
-/// every word, a write with `Okay`.
+/// every word, and a write, which has to be the one the second host
+/// sends, with `Okay`.
 fn memory(per: End) -> impl Future<Output = ()> {
     serve(per, 2, move |x: Job| async move {
         match x {
@@ -263,7 +265,11 @@ fn memory(per: End) -> impl Future<Output = ()> {
                     .collect();
                 rd.data(&words).await
             }
-            Xact::Write(wr) => wr.ok().await,
+            Xact::Write(wr) => {
+                assert_eq!(wr.addr().raw(), 0x1004, "the write's address");
+                assert_eq!(wr.data()[0].raw(), 0xa5, "the write's word");
+                wr.ok().await
+            }
         }
     })
 }
