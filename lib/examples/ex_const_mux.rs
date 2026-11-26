@@ -16,9 +16,10 @@
 //! width of its own, a bare number or the sum `(b + b)`, which takes its
 //! width from the other. A `bool` constant is a one-bit literal
 //! wherever it is written, by its type, so its negation chooses as the
-//! run does (issue 2083); `q` reads it bare. An `if` statement on the
-//! flag is folded, as before, and a check holds the flag. The netlists compute what the
-//! run computes, and nvc accepts every line.
+//! run does (issue 2083); each bit of `q` is one form of it. An `if`
+//! statement on the flag is folded, as before, and a check holds the
+//! flag. The netlists compute what the run computes, and nvc accepts
+//! every line.
 //!
 //! `Both` holds the unit twice, once for each value of the flag, with
 //! ports of its own for each. The build checks the netlist of `Both`
@@ -100,15 +101,30 @@ impl<C: PickConfig> Unit for Pick<C> {
             let inner = mux(mux(first, Bit::One, Bit::Zero), b.get(), a.get());
             let last = mux(!first, inner, b.get());
             o.set(mux(first & Bit::One, same, last));
-            // The flag's negation written bare: behind a `let`, under
-            // `&&` and `==`, and as a branch of a choice. Each is one
-            // bit, so `q` is 0 in the first and `b` in the second; read
-            // as a number, `!` would be 32 bits and true, and `q` would
-            // be `a` in both (issue 2083).
+            // The flag written bare, each form a bit of `q` from the
+            // top: its negation under `&&` behind a `let`, compared
+            // with `true`, as either branch of a choice, through an
+            // alias; the flag against a comparison by `!=`; a `match`
+            // on its negation. Each is one bit and has the run's value;
+            // read as a number, `!` would be 32 bits and true (issue
+            // 2083).
             let p = !C::FIRST && a.get() != b.get();
             let e = !C::FIRST == true;
-            let r = if a.get() != b.get() { e } else { false };
-            q.set(mux(r, b.get(), mux(p, a.get(), U::from(0u8))));
+            let r = if a.get() != b.get() { e } else { !C::FIRST };
+            let k = C::FIRST;
+            let pe = Bit::from(p)
+                .zext::<1>()
+                .concat::<_, 2>(Bit::from(e).zext::<1>());
+            let rk = Bit::from(r)
+                .zext::<1>()
+                .concat::<_, 2>(Bit::from(!k).zext::<1>());
+            let ne = C::FIRST != (a.get() == b.get());
+            let mt = match !C::FIRST {
+                false => Bit::One,
+                _ => Bit::Zero,
+            };
+            let nm = Bit::from(ne).zext::<1>().concat::<_, 2>(mt.zext::<1>());
+            q.set(pe.concat::<_, 4>(rk).concat::<_, 6>(nm).zext::<8>());
             // An `if` statement on the flag, folded as before.
             s.set(self.r.get());
             if C::FIRST {
@@ -204,7 +220,12 @@ fn main() {
         ),
     ));
     for c in 0..4u8 {
-        let (x, y) = (U::from(10 + c), U::from(20 + c));
+        // The third cycle drives `a` and `b` equal, so that `r` takes
+        // its other branch.
+        let (x, y) = (
+            U::from(10 + c),
+            U::from(if c == 2 { 10 + c } else { 20 + c }),
+        );
         fa_out.set(x);
         fb_out.set(y);
         sa_out.set(x);
@@ -213,7 +234,7 @@ fn main() {
         println!(
             "a {} b {}: first {} {} {:03x} {} {} {}; {} {} {:03x} {} {} {}",
             10 + c,
-            20 + c,
+            y.raw(),
             fm.get().raw(),
             fi.get().raw(),
             fk.get().raw(),

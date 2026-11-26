@@ -288,11 +288,64 @@ fn both<U: Fn(&str) -> txhdl::netlist::Lowered>(f: U) -> (String, String) {
     (l.vhdl(), l.verilog())
 }
 
-/// No comparison of two bare one-bit literals is left in the VHDL:
-/// nvc refused `('1' = '1')` as ambiguous.
+/// The conditions of a VHDL text: what `when` chooses on, what `if`
+/// tests and what `assert` states.
+fn conditions(h: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in h.lines().map(str::trim) {
+        if line.starts_with("begin if c then") {
+            continue;
+        }
+        if let Some((_, rest)) = line.split_once(" when ") {
+            if let Some((c, _)) = rest.rsplit_once(" else ") {
+                out.push(c.to_string());
+            }
+        } else if let Some(rest) = line.strip_prefix("if ") {
+            if let Some(c) = rest.strip_suffix(" then") {
+                out.push(c.to_string());
+            }
+        } else if let Some(rest) = line.strip_prefix("assert ") {
+            if let Some((c, _)) = rest.split_once(" report ") {
+                out.push(c.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// Whether a condition names a signal: any word left once the words
+/// of VHDL itself and the qualified literals are taken out.
+fn names_a_signal(c: &str) -> bool {
+    let c = c
+        .replace("std_ulogic'('1')", "")
+        .replace("std_ulogic'('0')", "");
+    let c = c.replace("'1'", "").replace("'0'", "");
+    c.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .filter(|w| !w.is_empty())
+        .filter(|w| !w.chars().next().is_some_and(|ch| ch.is_ascii_digit()))
+        .any(|w| {
+            !matches!(
+                w,
+                "not" | "and" | "or" | "xor" | "true" | "false" | "mux"
+            )
+        })
+}
+
+/// Legal VHDL for a constant condition: a condition that names no
+/// signal writes every one-bit literal qualified, since nothing else
+/// types it, and nvc refused `('1' = '1')` as ambiguous (issue 2069).
 fn legal(h: &str) {
-    for bad in ["('1' = '1')", "('0' = '1')", "('1' = '0')", "('0' = '0')"] {
-        assert!(!h.contains(bad), "{bad} in {h}");
+    for c in conditions(h) {
+        if names_a_signal(&c) {
+            continue;
+        }
+        let bare = c
+            .replace("std_ulogic'('1')", "")
+            .replace("std_ulogic'('0')", "");
+        assert!(
+            !bare.contains("'1'") && !bare.contains("'0'"),
+            "an unqualified literal in `{c}`, which names no signal: {h}"
+        );
     }
 }
 
@@ -585,6 +638,299 @@ impl<C: PickConfig> Unit for CastUse<C> {
     }
 }
 
+/// Constants taken from a constant array and a tuple in one: a `bool`
+/// item is a truth value, an integer item beside it a number.
+pub trait ArrConfig: Default {
+    const FLAGS: [bool; 2];
+    const PAIRS: [(bool, u8); 1];
+}
+
+#[derive(Default)]
+pub struct Arr;
+impl ArrConfig for Arr {
+    const FLAGS: [bool; 2] = [false, true];
+    const PAIRS: [(bool, u8); 1] = [(true, 3)];
+}
+
+/// The items as selectors and in a comparison.
+#[derive(Default, Trace)]
+pub struct PickArr<C: ArrConfig> {
+    _c: PhantomData<C>,
+}
+
+#[lower]
+impl<C: ArrConfig> Unit for PickArr<C> {
+    async fn run(
+        &mut self,
+        (a, b): (In<U<8>>, In<U<8>>),
+        (x, y, z): (Out<U<8>>, Out<U<8>>, Out<Bit>),
+    ) {
+        loop {
+            DefaultClock::rising().await;
+            x.set(mux(!C::FLAGS[1], a.get(), b.get()));
+            y.set(mux(!C::PAIRS[0].0, a.get(), b.get()));
+            z.set(Bit::from(a.get() == C::PAIRS[0].1));
+        }
+    }
+}
+
+/// A positive `if` statement on the constant, driving a register.
+#[derive(Default, Trace)]
+pub struct PickReg<C: PickConfig> {
+    r: Reg<U<8>>,
+    _c: PhantomData<C>,
+}
+
+#[lower]
+impl<C: PickConfig> Unit for PickReg<C> {
+    async fn run(&mut self, (a, b): (In<U<8>>, In<U<8>>), out: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            out.set(self.r.get());
+            if C::FLAG {
+                self.r.set(a.get());
+            } else {
+                self.r.set(b.get());
+            }
+        }
+    }
+}
+
+/// The constant compared with a signal by `!=`.
+#[derive(Default, Trace)]
+pub struct PickNe<C: PickConfig> {
+    _c: PhantomData<C>,
+}
+
+#[lower]
+impl<C: PickConfig> Unit for PickNe<C> {
+    async fn run(
+        &mut self,
+        (a, b, x): (In<U<8>>, In<U<8>>, In<Bit>),
+        out: Out<U<8>>,
+    ) {
+        loop {
+            DefaultClock::rising().await;
+            out.set(mux(C::FLAG != x.get().to_bool(), a.get(), b.get()));
+        }
+    }
+}
+
+/// The constant bound by `let`, then negated: an alias of a constant,
+/// which the lowering keeps apart from a loop's index.
+#[derive(Default, Trace)]
+pub struct PickAlias<C: PickConfig> {
+    _c: PhantomData<C>,
+}
+
+#[lower]
+impl<C: PickConfig> Unit for PickAlias<C> {
+    async fn run(&mut self, (a, b): (In<U<8>>, In<U<8>>), out: Out<U<8>>) {
+        loop {
+            DefaultClock::rising().await;
+            let k = C::FLAG;
+            out.set(mux(!k, a.get(), b.get()));
+        }
+    }
+}
+
+/// A register whose reset value is the constant.
+#[derive(Trace)]
+pub struct PickRst<C: PickConfig> {
+    r: Reg<Bit>,
+    _c: PhantomData<C>,
+}
+
+impl<C: PickConfig> Default for PickRst<C> {
+    fn default() -> Self {
+        Self {
+            r: Reg::new(Bit::from(C::FLAG)),
+            _c: PhantomData,
+        }
+    }
+}
+
+#[lower]
+impl<C: PickConfig> Unit for PickRst<C> {
+    async fn run(&mut self, x: In<Bit>, out: Out<Bit>) {
+        loop {
+            DefaultClock::rising().await;
+            out.set(self.r.get());
+            self.r.set(self.r.get() ^ x.get());
+        }
+    }
+}
+
+/// `legal` itself: it refuses the line nvc refused.
+#[test]
+#[should_panic(expected = "an unqualified literal")]
+fn legal_refuses_the_line_nvc_refused() {
+    legal("  out_rw <= a when ('1' = '1') else b;");
+}
+
+/// The text each form writes, in both languages, for both values: the
+/// VHDL line, then the Verilog line. Each was checked by hand against
+/// the run's choice.
+#[test]
+fn every_form_writes_the_text_that_chooses_as_the_run_does() {
+    let q = |b: &str| format!("std_ulogic'('{b}')");
+    let cases: Vec<(&str, Lowered, String, String)> = vec![
+        (
+            "PickAnd<Yes>",
+            PickAnd::<Yes>::lowered("p"),
+            format!(
+                "out_rw <= a when (({} and {}) = {}) else b;",
+                q("1"),
+                q("1"),
+                q("1")
+            ),
+            "assign out_rw = ((1'b1 & 1'b1) ? a : b);".into(),
+        ),
+        (
+            "PickAnd<No>",
+            PickAnd::<No>::lowered("p"),
+            format!(
+                "out_rw <= a when (({} and {}) = {}) else b;",
+                q("0"),
+                q("1"),
+                q("1")
+            ),
+            "assign out_rw = ((1'b0 & 1'b1) ? a : b);".into(),
+        ),
+        (
+            "PickMatch<Yes>",
+            PickMatch::<Yes>::lowered("p"),
+            format!("v <= a when ({} = {}) else b;", q("1"), q("1")),
+            "assign v = ((1'b1 == 1'b1) ? a : b);".into(),
+        ),
+        (
+            "PickMatch<No>",
+            PickMatch::<No>::lowered("p"),
+            format!("v <= a when ({} = {}) else b;", q("0"), q("1")),
+            "assign v = ((1'b0 == 1'b1) ? a : b);".into(),
+        ),
+        (
+            "PickNotIn<Yes>",
+            PickNotIn::<Yes>::lowered("p"),
+            "out_rw <= a when (not true) else b;".into(),
+            "assign out_rw = ((~1'b1) ? a : b);".into(),
+        ),
+        (
+            "PickNotIn<No>",
+            PickNotIn::<No>::lowered("p"),
+            "out_rw <= a when (not false) else b;".into(),
+            "assign out_rw = ((~1'b0) ? a : b);".into(),
+        ),
+        (
+            "PickNotBare<Yes>",
+            PickNotBare::<Yes>::lowered("p"),
+            "out_rw <= a when (not true) else b;".into(),
+            "assign out_rw = ((~1'b1) ? a : b);".into(),
+        ),
+        (
+            "PickNotBare<No>",
+            PickNotBare::<No>::lowered("p"),
+            "out_rw <= a when (not false) else b;".into(),
+            "assign out_rw = ((~1'b0) ? a : b);".into(),
+        ),
+        (
+            "PickIfNot<Yes>",
+            PickIfNot::<Yes>::lowered("p"),
+            "v <= a when (not true) else b;".into(),
+            "assign v = ((~1'b1) ? a : b);".into(),
+        ),
+        (
+            "PickIfNot<No>",
+            PickIfNot::<No>::lowered("p"),
+            "v <= a when (not false) else b;".into(),
+            "assign v = ((~1'b0) ? a : b);".into(),
+        ),
+        (
+            "PickNotOr<Yes>",
+            PickNotOr::<Yes>::lowered("p"),
+            "out_rw <= a when (((not '1') or x) = '1') else b;".into(),
+            "assign out_rw = (((~1'b1) | x) ? a : b);".into(),
+        ),
+        (
+            "PickNotOrBool<No>",
+            PickNotOrBool::<No>::lowered("p"),
+            "out_rw <= a when (((not '0') or x) = '1') else b;".into(),
+            "assign out_rw = (((~1'b0) | x) ? a : b);".into(),
+        ),
+        (
+            "PickNotReg<Yes>",
+            PickNotReg::<Yes>::lowered("p"),
+            "if (not true) then".into(),
+            "if ((~1'b1)) begin".into(),
+        ),
+        (
+            "PickNotReg<No>",
+            PickNotReg::<No>::lowered("p"),
+            "if (not false) then".into(),
+            "if ((~1'b0)) begin".into(),
+        ),
+        (
+            "PickNotEq<Yes>",
+            PickNotEq::<Yes>::lowered("p"),
+            format!("out_rw <= a when ((not {}) = {}) else b;", q("1"), q("0")),
+            "assign out_rw = (((~1'b1) == 1'b0) ? a : b);".into(),
+        ),
+        (
+            "PickNotEq<No>",
+            PickNotEq::<No>::lowered("p"),
+            format!("out_rw <= a when ((not {}) = {}) else b;", q("0"), q("0")),
+            "assign out_rw = (((~1'b0) == 1'b0) ? a : b);".into(),
+        ),
+        (
+            "PickNested<Yes>",
+            PickNested::<Yes>::lowered("p"),
+            "c <= (not '1') when (s = '1') else '0';".into(),
+            "assign c = (s ? (~1'b1) : 1'b0);".into(),
+        ),
+        (
+            "PickLetAnd<Yes>",
+            PickLetAnd::<Yes>::lowered("p"),
+            "p <= '1' when ((not true) and (a = b)) else '0';".into(),
+            "assign p = ((~1'b1) && (a == b));".into(),
+        ),
+        (
+            "PickMatchNot<Yes>",
+            PickMatchNot::<Yes>::lowered("p"),
+            format!("v <= a when ((not {}) = {}) else b;", q("1"), q("0")),
+            "assign v = (((~1'b1) == 1'b0) ? a : b);".into(),
+        ),
+        (
+            "CheckNot<Yes>",
+            CheckNot::<Yes>::lowered("p"),
+            "assert rst = '1' or (((not true) or (a = b))) report".into(),
+            "if (!rst) assert (((~1'b1) || (a == b)));".into(),
+        ),
+        (
+            "PickNe<Yes>",
+            PickNe::<Yes>::lowered("p"),
+            "out_rw <= a when ('1' /= x) else b;".into(),
+            "assign out_rw = ((1'b1 != x) ? a : b);".into(),
+        ),
+        (
+            "PickAlias<Yes>",
+            PickAlias::<Yes>::lowered("p"),
+            "out_rw <= a when (not true) else b;".into(),
+            "assign out_rw = ((~1'b1) ? a : b);".into(),
+        ),
+        (
+            "PickAlias<No>",
+            PickAlias::<No>::lowered("p"),
+            "out_rw <= a when (not false) else b;".into(),
+            "assign out_rw = ((~1'b0) ? a : b);".into(),
+        ),
+    ];
+    for (name, l, hl, vl) in cases {
+        let (h, v) = (l.vhdl(), l.verilog());
+        assert!(h.contains(&hl), "{name}: {hl} in {h}");
+        assert!(v.contains(&vl), "{name}: {vl} in {v}");
+    }
+}
+
 /// The constant cast to an integer is the number it stands for, as
 /// it was before a `bool` constant lowered as a one-bit literal: the
 /// same text in a shift, a comparison, an index and a sum.
@@ -613,6 +959,48 @@ fn a_cast_of_the_constant_is_the_number_it_was() {
         }
         assert!(!v.contains("1'b"), "{v}");
     }
+}
+
+/// An item of a constant array or tuple: a `bool` item is a one-bit
+/// literal, and an integer item beside it a number.
+#[test]
+fn an_item_of_a_constant_array_is_typed_too() {
+    let (h, v) = both(PickArr::<Arr>::lowered);
+    assert!(h.contains("x <= a when (not true) else b;"), "{h}");
+    assert!(h.contains("y <= a when (not true) else b;"), "{h}");
+    assert!(h.contains("z <= '1' when (a = to_unsigned(3, 8)) else '0';"));
+    assert!(v.contains("assign x = ((~1'b1) ? a : b);"), "{v}");
+    assert!(v.contains("assign y = ((~1'b1) ? a : b);"), "{v}");
+    assert!(v.contains("assign z = (a == 8'h3);"), "{v}");
+}
+
+/// An `if` statement on the constant folds to the branch it takes.
+#[test]
+fn an_if_statement_on_the_constant_folds() {
+    for (l, kept, gone) in [
+        (PickReg::<Yes>::lowered("p"), "r <= a;", "r <= b;"),
+        (PickReg::<No>::lowered("p"), "r <= b;", "r <= a;"),
+    ] {
+        let (h, v) = (l.vhdl(), l.verilog());
+        assert!(h.contains(kept) && !h.contains(gone), "{h}");
+        assert!(v.contains(kept) && !v.contains(gone), "{v}");
+        assert!(!v.contains("if (1") && !v.contains("if ((~"), "{v}");
+    }
+}
+
+/// A register's reset value taken from the constant.
+#[test]
+fn a_reset_value_from_the_constant_is_its_bit() {
+    let (h, v) = both(PickRst::<Yes>::lowered);
+    assert!(
+        h.contains("r <= '1';") && v.contains("reg r = 1'h1;"),
+        "{h}{v}"
+    );
+    let (h, v) = both(PickRst::<No>::lowered);
+    assert!(
+        h.contains("r <= '0';") && v.contains("reg r = 1'h0;"),
+        "{h}{v}"
+    );
 }
 
 /// Every expression of a lowered unit: its wires and the statements of
@@ -713,6 +1101,14 @@ fn truth_units() -> Vec<(&'static str, Lowered)> {
         ("CheckNot<No>", CheckNot::<No>::lowered("p")),
         ("PickGen<true>", PickGen::<true>::lowered("p")),
         ("PickGen<false>", PickGen::<false>::lowered("p")),
+        ("PickReg<Yes>", PickReg::<Yes>::lowered("p")),
+        ("PickReg<No>", PickReg::<No>::lowered("p")),
+        ("PickNe<Yes>", PickNe::<Yes>::lowered("p")),
+        ("PickNe<No>", PickNe::<No>::lowered("p")),
+        ("PickAlias<Yes>", PickAlias::<Yes>::lowered("p")),
+        ("PickAlias<No>", PickAlias::<No>::lowered("p")),
+        ("PickRst<Yes>", PickRst::<Yes>::lowered("p")),
+        ("PickRst<No>", PickRst::<No>::lowered("p")),
     ]
 }
 

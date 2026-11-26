@@ -16,9 +16,12 @@ with no width of its own, a bare number or a sum such as \code{(b + b)},
 which takes its width from the other operand. A \code{bool} constant
 is a one-bit literal wherever it is written, because its Rust type is
 asked when the unit is lowered, so its negation is one bit wide in
-Verilog as well and chooses as the run does: \code{q} reads it bare,
-under \code{\&\&} and \code{==}, behind a \code{let} and as a
-branch of a choice. An \code{if} statement
+Verilog as well and chooses as the run does. Each bit of \code{q} is
+one form of it: the negation under \code{\&\&} behind a \code{let},
+compared with \code{true}, as either branch of a choice and through an
+alias, the flag against a comparison by \code{!=}, and a \code{match}
+on the negation. The third cycle drives \code{a} and \code{b} equal,
+so that both branches of the choice are taken. An \code{if} statement
 on the constant is folded, and a check holds the constant. The
 netlists compute what the run computes, and nvc accepts every line.
 \code{Both} holds the unit twice, once for each value of the flag, and
