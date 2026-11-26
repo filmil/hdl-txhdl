@@ -1352,6 +1352,20 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# The arbiter and the router in two halves each (issue 2077), so that a
+# link crosses them over unregistered channels both ways:
+#   bazel run //lib/examples:ex_axi_halves
+rust_binary(
+    name = "ex_axi_halves",
+    srcs = ["ex_axi_halves.rs"],
+    edition = "2021",
+    deps = [
+        "//lib:txhdl",
+        "//lib/parts:txhdl_parts",
+    ],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # An AXI4 arbiter, two hosts sharing one memory:
 #   bazel run //lib/examples:ex_axi_arbiter
 rust_binary(
@@ -1648,6 +1662,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_axi_serve.rs",
         "ex_axi_arbiter.rs",
         "ex_axi_router.rs",
+        "ex_axi_halves.rs",
         "ex_axi_lite.rs",
         "ex_i2c.rs",
         "ex_mdio.rs",
