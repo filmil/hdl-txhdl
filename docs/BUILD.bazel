@@ -1136,6 +1136,7 @@ latex_document(
         ":buffer_timing",
         ":wire_run",
         ":wire_timing",
+        ":const_mux_run",
         ":fn_run",
         ":arith_run",
         ":arith_timing",
@@ -2774,6 +2775,23 @@ waveform(
         "//div/counting=>counting",
         "//div/wrap=>wrap",
         "//tick=>tick",
+    ],
+)
+
+# A choice on a configuration constant, in each of the ways a design
+# writes one, for both values of the constant (issue 2069).
+waveform(
+    name = "const_mux",
+    example = "//lib/examples:ex_const_mux",
+    lowered = ("both", "both"),
+    signals = [
+        "//clocks/clk=>clk",
+        "//fa=>fa",
+        "//fb=>fb",
+        "//fm=>fm",
+        "//fo=>fo",
+        "//sm=>sm",
+        "//so=>so",
     ],
 )
 

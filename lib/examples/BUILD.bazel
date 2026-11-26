@@ -922,6 +922,16 @@ rust_binary(
     proc_macro_deps = ["//lib:txhdl_macros"],
 )
 
+# A choice on a configuration constant (issue 2069):
+#   bazel run //lib/examples:ex_const_mux
+rust_binary(
+    name = "ex_const_mux",
+    srcs = ["ex_const_mux.rs"],
+    edition = "2021",
+    deps = ["//lib:txhdl"],
+    proc_macro_deps = ["//lib:txhdl_macros"],
+)
+
 # An internal signal kept as a wire, seen:  bazel run //lib/examples:ex_wire
 rust_binary(
     name = "ex_wire",
@@ -1720,6 +1730,7 @@ SOURCES = [n + ".rs" for n in EXAMPLES] + [
         "ex_map.rs",
         "ex_rename.rs",
         "ex_foreign.rs",
+        "ex_const_mux.rs",
 ]
 
 filegroup(

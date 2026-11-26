@@ -4846,7 +4846,7 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                 c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()
             });
             Ok(if upper && n.chars().any(|c| c.is_ascii_uppercase()) {
-                format!("NlE::Num(({n}) as u128)")
+                konst(&n)
             } else {
                 ename(&n)
             })
@@ -5081,10 +5081,9 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                     return Ok(match f.as_str() {
                         "sra" => ebin(">>>", &v[0], &v[1]),
                         "lt_signed" => ebin("<s", &v[0], &v[1]),
-                        "mux" => format!(
-                            "NlE::Cond(Box::new({}), Box::new({}), Box::new({}))",
-                            v[0], v[1], v[2]
-                        ),
+                        "mux" => {
+                            format!("NlE::cond({}, {}, {})", v[0], v[1], v[2])
+                        }
                         // A function the file does not hold: its own
                         // lowering, from wherever it is (issue 504).
                         other => format!("{other}::lowered({})", v.join(", ")),
@@ -5120,7 +5119,7 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
             // or an unrolled loop's variable, which is a Rust value
             // there (issue 593).
             if assoc_const_item(ts) {
-                return Ok(format!("NlE::Num(({text}) as u128)"));
+                return Ok(konst(&text));
             }
             if text.contains("::") && !last_group {
                 let leaf = text.rsplit("::").next().unwrap_or("");
@@ -5128,7 +5127,7 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                     c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()
                 });
                 if upper {
-                    return Ok(format!("NlE::Num(({text}) as u128)"));
+                    return Ok(konst(&text));
                 }
                 return as_lit(ts, &text, subst);
             }
@@ -5198,9 +5197,7 @@ fn tr_if(
                 .into())
         }
     };
-    Ok(format!(
-        "NlE::Cond(Box::new({c}), Box::new({a}), Box::new({e}))"
-    ))
+    Ok(format!("NlE::cond({c}, {a}, {e})"))
 }
 
 /// `match v { pat => e, pat => { e } .. }` as a chain of conditions,
@@ -5271,8 +5268,7 @@ fn arm_chain(
         return Err(format!("{what} is missing: a `match` needs an arm"));
     };
     for (c, e) in chain.into_iter().rev() {
-        acc =
-            format!("NlE::Cond(Box::new({c}), Box::new({e}), Box::new({acc}))");
+        acc = format!("NlE::cond({c}, {e}, {acc})");
     }
     Ok(acc)
 }
@@ -5326,6 +5322,19 @@ fn range_ends(ts: &[TokenTree]) -> Option<(&[TokenTree], &[TokenTree], bool)> {
         return None;
     }
     Some((&ts[..at], hi, inclusive))
+}
+
+/// A constant of the build, `C::X`, `N` or `M::RANGES[i].0`: a number
+/// Rust works out when `lowered` runs, and a one-bit literal when its
+/// type is `bool`, which Rust answers there too (issue 2083). The text
+/// starts `NlE::Num(` either way, which is what the lowering tests to
+/// find a number.
+fn konst(text: &str) -> String {
+    format!(
+        "NlE::Num(({text}) as u128).typed({{ \
+         use ::txhdl::netlist::konst::{{IsNumber as _, IsTruth as _}}; \
+         (&::txhdl::netlist::konst::Const({text})).is_truth() }})"
+    )
 }
 
 /// One end of a range as the lowering writes a constant.

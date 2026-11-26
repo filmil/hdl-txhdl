@@ -396,6 +396,43 @@ pub const fn has_name(names: &[&str], name: &str) -> bool {
     false
 }
 
+/// What a constant of the build is, asked of its Rust type where the
+/// lowering writes it (issue 2083). A constant lowers as a number, which
+/// has no width; a `bool` constant is a truth value, one bit wide, and
+/// lowers as a one-bit literal instead, so `!C::FLAG` is `~1'b1` in
+/// Verilog wherever it is written and not `~1`, which Verilog widens to
+/// thirty-two bits and reads as true.
+///
+/// The question is answered by method resolution on `(&Const(x))`: the
+/// impl for `Const<bool>` is found first, without a borrow, and
+/// every other type falls through to the impl on `&Const<T>`, so an
+/// integer, a `char` or an enum constant stays a number without each
+/// type being named.
+pub mod konst {
+    /// A constant, wrapped to ask its type.
+    pub struct Const<T>(pub T);
+    /// A `bool` constant: a truth value.
+    pub trait IsTruth {
+        /// True: the constant is a truth value.
+        fn is_truth(&self) -> bool;
+    }
+    impl IsTruth for Const<bool> {
+        fn is_truth(&self) -> bool {
+            true
+        }
+    }
+    /// Any other constant: a number.
+    pub trait IsNumber {
+        /// False: the constant is a number.
+        fn is_truth(&self) -> bool;
+    }
+    impl<T> IsNumber for &Const<T> {
+        fn is_truth(&self) -> bool {
+            false
+        }
+    }
+}
+
 /// A value as an expression: its width and bits.
 pub fn lit<V: Value>(v: V) -> Expr {
     Expr::Bits(V::WIDTH, v.vcd())
@@ -986,10 +1023,70 @@ impl Expr {
             a => Expr::Slice(Box::new(a), lo, len),
         }
     }
+    /// `mux(c, a, b)`. A selector that is a bare literal, nought or one,
+    /// chooses its operand when the unit is lowered, as an `if` on a
+    /// constant does, so the netlist holds the wire the configuration
+    /// chose rather than a mux of a constant (issue 2069). Only when
+    /// the chosen operand brings its own width: a name, a literal, a
+    /// part, a bit, an extension or a cast. A number, or arithmetic,
+    /// would take its width from the operand not chosen, so that choice
+    /// stays, and the writers make it legal. A selector worked out of
+    /// constants, `C::K & Bit::One`, stays a choice too: nothing is
+    /// evaluated here.
+    ///
+    /// The two operands of a choice have one Rust type, so one width and
+    /// one signedness: the operand chosen is never narrower than the one
+    /// dropped. A selector is a `Bit`, one bit; a wider literal is not
+    /// a selector the language writes, and is left as a choice.
+    pub fn cond(c: Expr, a: Expr, b: Expr) -> Expr {
+        let pick = match &c {
+            Expr::Num(0) => Some(false),
+            Expr::Num(1) => Some(true),
+            Expr::Bits(1, v) if v == "0" => Some(false),
+            Expr::Bits(1, v) if v == "1" => Some(true),
+            _ => None,
+        };
+        let sized = |e: &Expr| {
+            matches!(
+                e,
+                Expr::Name(_)
+                    | Expr::Bits(..)
+                    | Expr::Slice(..)
+                    | Expr::Index(..)
+                    | Expr::Sext(..)
+                    | Expr::Zext(..)
+                    | Expr::Cast(..)
+            )
+        };
+        match pick {
+            Some(true) if sized(&a) => a,
+            Some(false) if sized(&b) => b,
+            _ => Expr::Cond(Box::new(c), Box::new(a), Box::new(b)),
+        }
+    }
+    /// A constant of the build as the lowering writes it, `Num(k)`, made
+    /// a one-bit literal when its Rust type is `bool` (see `konst`).
+    pub fn typed(self, truth: bool) -> Expr {
+        match self {
+            Expr::Num(k) if truth => {
+                Expr::Bits(1, if k != 0 { "1" } else { "0" }.to_string())
+            }
+            e => e,
+        }
+    }
     /// `a as uN`: a number keeps its low `n` bits, and anything else
     /// is a cast, which the emitters render once its width is known
     /// (issue 496).
+    ///
+    /// A one-bit literal cast to an integer is the number it stands for,
+    /// as Rust's `true as u8` is `1`: a `bool` constant lowers as a
+    /// one-bit literal (issue 2083), and `C::F as usize` is the number
+    /// it was before, in arithmetic, a comparison, a shift or an index.
     pub fn cast(a: Expr, n: usize) -> Expr {
+        let a = match a {
+            Expr::Bits(1, b) => Expr::Num(u128::from(b == "1")),
+            a => a,
+        };
         match a {
             Expr::Num(k) if n < 128 => Expr::Num(k & ((1u128 << n) - 1)),
             Expr::Num(k) => Expr::Num(k),
@@ -4535,9 +4632,19 @@ fn vexpr(e: &Expr, l: &Lowered) -> String {
 
 /// An expression in VHDL, as a truth value.
 fn hbool(e: &Expr, l: &Lowered) -> String {
+    // A comparison or an operator that reads no signal has nothing to
+    // give its one-bit literals a type: `('1' = '1')` names a bit, a
+    // character and a `std_ulogic`, and nvc refuses it as ambiguous
+    // (issue 2069). Under such a condition every one-bit literal is
+    // written qualified, where it is written; under one that reads a
+    // signal, none is. The value is the one it was.
+    let _typed = Qualify::set(names_nothing(e));
     match e {
-        // A one-bit literal is a truth value outright.
+        // A one-bit literal is a truth value outright, and so is a
+        // number: true when it is not nought, as Verilog reads
+        // `(1 ? a : b)` (issue 2069).
         Expr::Bits(1, b) => (if b == "1" { "true" } else { "false" }).into(),
+        Expr::Num(k) => (if *k != 0 { "true" } else { "false" }).into(),
         Expr::Bin(op @ ("&&" | "||"), a, b) => {
             let w = if *op == "&&" { "and" } else { "or" };
             format!("({} {w} {})", hbool(a, l), hbool(b, l))
@@ -4546,9 +4653,7 @@ fn hbool(e: &Expr, l: &Lowered) -> String {
         Expr::Bin(
             "&" | "|" | "^" | "<<" | ">>" | ">>>" | "+" | "-" | "*" | "%",
             ..,
-        ) => {
-            format!("({} = '1')", hval(e, 1, l))
-        }
+        ) => format!("({} = {})", hval(e, 1, l), hbit("1")),
         Expr::Bin("<s", a, b) => {
             format!("(signed({}) < signed({}))", hval(a, 0, l), hval(b, 0, l))
         }
@@ -4564,7 +4669,59 @@ fn hbool(e: &Expr, l: &Lowered) -> String {
             format!("({} {vop} {})", hval(a, w, l), hval(b, w, l))
         }
         Expr::Not(a) => format!("(not {})", hbool(a, l)),
-        other => format!("({} = '1')", hval(other, 1, l)),
+        other => format!("({} = {})", hval(other, 1, l), hbit("1")),
+    }
+}
+
+thread_local! {
+    /// Whether the condition being written reads no signal, so its
+    /// one-bit literals are written qualified (issue 2069).
+    static QUALIFY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The qualification of one-bit literals for the condition being
+/// written, put back as it was when the condition is done, so that a
+/// condition inside it, such as a kept choice's, decides for itself.
+struct Qualify(bool);
+
+impl Qualify {
+    fn set(q: bool) -> Qualify {
+        Qualify(QUALIFY.with(|c| c.replace(q)))
+    }
+}
+
+impl Drop for Qualify {
+    fn drop(&mut self) {
+        QUALIFY.with(|c| c.set(self.0));
+    }
+}
+
+/// A one-bit literal in VHDL: `'1'`, or `std_ulogic'('1')` under a
+/// condition that reads no signal.
+fn hbit(b: &str) -> String {
+    if QUALIFY.with(|c| c.get()) {
+        format!("std_ulogic'('{b}')")
+    } else {
+        format!("'{b}'")
+    }
+}
+
+/// Whether an expression reads no signal, port or register, so nothing
+/// in it gives a one-bit literal its type. A choice is typed by its two
+/// branches, not by its condition, so only the branches count.
+fn names_nothing(e: &Expr) -> bool {
+    match e {
+        Expr::Name(_) => false,
+        Expr::Num(_) | Expr::Bits(..) => true,
+        Expr::Not(a)
+        | Expr::Slice(a, ..)
+        | Expr::Sext(a, _)
+        | Expr::Zext(a, _)
+        | Expr::Cast(a, _) => names_nothing(a),
+        Expr::Bin(_, a, b) | Expr::Cat(a, b) | Expr::Index(a, b) => {
+            names_nothing(a) && names_nothing(b)
+        }
+        Expr::Cond(_, a, b) => names_nothing(a) && names_nothing(b),
     }
 }
 
@@ -4611,13 +4768,13 @@ fn hint(e: &Expr, l: &Lowered) -> String {
 fn hval(e: &Expr, w: usize, l: &Lowered) -> String {
     match e {
         Expr::Name(n) => n.clone(),
-        Expr::Num(k) if w == 1 => format!("'{}'", if *k == 0 { 0 } else { 1 }),
+        Expr::Num(k) if w == 1 => hbit(if *k == 0 { "0" } else { "1" }),
         // A number a width is known for is written at that width; one
         // in a context with no width stays an integer, which is what
         // VHDL's own arithmetic on a natural wants.
         Expr::Num(k) if w > 1 => hnum(*k, w),
         Expr::Num(k) => k.to_string(),
-        Expr::Bits(bw, b) if *bw == 1 => format!("'{b}'"),
+        Expr::Bits(bw, b) if *bw == 1 => hbit(b),
         Expr::Bits(_, b) => format!("unsigned'(\"{b}\")"),
         // One bit is a `std_logic`, which has no `+`, `-` or `*`. Its
         // arithmetic is modulo two: a sum and a difference are both
@@ -5610,6 +5767,187 @@ mod tests {
         let shl = |k| Expr::bin("<<", one(), Expr::Num(k));
         assert_eq!(hval(&shl(0), 1, &net), "'1'");
         assert_eq!(hval(&shl(1), 1, &net), "'0'");
+    }
+
+    /// A constant's Rust type decides how it lowers: a `bool` is a
+    /// one-bit literal and every other type a number, asked as the
+    /// lowering's generated code asks it (issue 2083). The borrow is
+    /// what makes the question work, as in the generated code.
+    #[allow(clippy::needless_borrow)]
+    #[test]
+    fn a_bool_constant_is_a_one_bit_literal_by_its_type() {
+        use super::konst::{Const, IsNumber as _, IsTruth as _};
+        const ON: bool = true;
+        const OFF: bool = false;
+        const K: u8 = 1;
+        const C: char = 'a';
+        assert!((&Const(ON)).is_truth());
+        assert!(!(&Const(K)).is_truth());
+        assert!(!(&Const(C)).is_truth());
+        let lit = |k: u128, t: bool| Expr::Num(k).typed(t);
+        assert!(matches!(
+            lit(ON as u128, (&Const(ON)).is_truth()),
+            Expr::Bits(1, ref b) if b == "1"
+        ));
+        assert!(matches!(
+            lit(OFF as u128, (&Const(OFF)).is_truth()),
+            Expr::Bits(1, ref b) if b == "0"
+        ));
+        assert!(matches!(
+            lit(K as u128, (&Const(K)).is_truth()),
+            Expr::Num(1)
+        ));
+        assert!(matches!(Expr::name("x").typed(true), Expr::Name(_)));
+    }
+
+    /// A constant number as a condition is a truth value in VHDL, as a
+    /// one-bit literal is: nought false, anything else true, as Verilog
+    /// reads `(1 ? a : b)` (issue 2069).
+    #[test]
+    fn a_constant_number_is_a_truth_value_in_vhdl() {
+        let net = three_regs();
+        assert_eq!(hbool(&Expr::Num(1), &net), "true");
+        assert_eq!(hbool(&Expr::Num(0), &net), "false");
+        assert_eq!(hbool(&Expr::Num(2), &net), "true");
+        let and = Expr::Bin(
+            "&&",
+            Box::new(Expr::Num(1)),
+            Box::new(Expr::name("flag")),
+        );
+        assert_eq!(hbool(&and, &net), "(true and (flag = '1'))");
+        // The issue's line, as a choice in a value: legal now.
+        let c = Expr::Cond(
+            Box::new(Expr::Num(1)),
+            Box::new(Expr::name("count")),
+            Box::new(Expr::name("wide")),
+        );
+        assert!(
+            hval(&c, 8, &net).starts_with("mux(true, "),
+            "{}",
+            hval(&c, 8, &net)
+        );
+        assert!(
+            vexpr(&c, &net).contains(" ? count : "),
+            "{}",
+            vexpr(&c, &net)
+        );
+    }
+
+    /// A comparison or an operator that reads no signal writes its
+    /// one-bit literals qualified, where they are written, so VHDL can
+    /// type them; one that reads a signal is written as it was, also
+    /// inside a condition that reads none (issue 2069).
+    #[test]
+    fn a_comparison_of_literals_is_qualified() {
+        let net = three_regs();
+        let one = || Expr::Bits(1, "1".to_string());
+        let zero = || Expr::Bits(1, "0".to_string());
+        let bin = |op, a, b| Expr::Bin(op, Box::new(a), Box::new(b));
+        let q1 = "std_ulogic'('1')";
+        assert_eq!(
+            hbool(&bin("==", Expr::Num(1), one()), &net),
+            format!("({q1} = {q1})")
+        );
+        assert_eq!(
+            hbool(&bin("&", one(), one()), &net),
+            format!("(({q1} and {q1}) = {q1})")
+        );
+        // A comparison inside a comparison: every literal qualified,
+        // and each once.
+        let h = hbool(&bin("==", bin("==", one(), zero()), one()), &net);
+        let all = h.matches("'1'").count() + h.matches("'0'").count();
+        let typed = h.matches("std_ulogic'('").count();
+        assert!(all > 0 && all == typed, "{h}");
+        assert!(!h.contains("std_ulogic'(std_ulogic"), "{h}");
+        // A signal types the literal: written exactly as before.
+        assert_eq!(
+            hbool(&bin("==", Expr::name("flag"), one()), &net),
+            "(flag = '1')"
+        );
+        assert_eq!(
+            hbool(&bin("&", Expr::name("flag"), one()), &net),
+            "((flag and '1') = '1')"
+        );
+        // A choice of literals is typed by nothing; the condition that
+        // chooses names a signal, and decides for itself.
+        let lit = Expr::Cond(
+            Box::new(Expr::name("flag")),
+            Box::new(one()),
+            Box::new(zero()),
+        );
+        assert_eq!(
+            hbool(&bin("==", lit, one()), &net),
+            format!("(mux((flag = '1'), {q1}, std_ulogic'('0')) = {q1})")
+        );
+        // Outside a condition nothing is qualified.
+        assert_eq!(hval(&one(), 1, &net), "'1'");
+    }
+
+    /// A choice on a bare literal is the operand it chooses when that
+    /// operand brings its own width; otherwise, and for any selector
+    /// worked out of constants, it stays a choice (issue 2069).
+    #[test]
+    fn a_choice_on_a_literal_is_the_operand_it_chooses() {
+        let one = || Expr::Bits(1, "1".to_string());
+        let zero = || Expr::Bits(1, "0".to_string());
+        let pick = |c: Expr| Expr::cond(c, Expr::name("a"), Expr::name("b"));
+        let name = |e: Expr| match e {
+            Expr::Name(n) => n,
+            other => panic!("not folded: {other:?}"),
+        };
+        assert_eq!(name(pick(Expr::Num(1))), "a");
+        assert_eq!(name(pick(Expr::Num(0))), "b");
+        assert_eq!(name(pick(one())), "a");
+        assert_eq!(name(pick(zero())), "b");
+        // Every kind that brings its own width is chosen, and it is
+        // the operand the selector names, not the other; the two
+        // operands are of one type, as Rust makes them.
+        let chose = |e: &Expr, kept: &str, gone: &str| {
+            let d = format!("{e:?}");
+            assert!(d.contains(kept) && !d.contains(gone), "{d}");
+        };
+        let part = |n| Expr::slice(Expr::name(n), 0, 4);
+        let sl = Expr::cond(Expr::Num(1), part("a"), part("b"));
+        assert!(matches!(sl, Expr::Slice(..)), "{sl:?}");
+        chose(&sl, "\"a\"", "\"b\"");
+        let bit =
+            |n| Expr::Index(Box::new(Expr::name(n)), Box::new(Expr::name("i")));
+        let e = Expr::cond(one(), bit("a"), bit("b"));
+        assert!(matches!(e, Expr::Index(..)));
+        chose(&e, "\"a\"", "\"b\"");
+        let lit = |v: &str| Expr::Bits(4, v.to_string());
+        let e = Expr::cond(zero(), lit("0001"), lit("0010"));
+        assert!(matches!(e, Expr::Bits(4, ref v) if v == "0010"), "{e:?}");
+        let sx = |n| Expr::Sext(Box::new(Expr::name(n)), 16);
+        let e = Expr::cond(one(), sx("a"), sx("b"));
+        assert!(matches!(e, Expr::Sext(..)));
+        chose(&e, "\"a\"", "\"b\"");
+        let zx = |n| Expr::Zext(Box::new(Expr::name(n)), 16);
+        let e = Expr::cond(zero(), zx("a"), zx("b"));
+        assert!(matches!(e, Expr::Zext(..)));
+        chose(&e, "\"b\"", "\"a\"");
+        let cast = |n| Expr::Cast(Box::new(Expr::name(n)), 4);
+        let e = Expr::cond(one(), cast("a"), cast("b"));
+        assert!(matches!(e, Expr::Cast(..)));
+        chose(&e, "\"a\"", "\"b\"");
+        // Not a bare literal: stays a choice.
+        let bin = |op, x, y| Expr::Bin(op, Box::new(x), Box::new(y));
+        for c in [
+            Expr::Num(2),
+            Expr::name("sel"),
+            Expr::Bits(2, "01".to_string()),
+            bin("&", Expr::Num(1), one()),
+            bin("==", Expr::Num(1), one()),
+            Expr::Not(Box::new(zero())),
+        ] {
+            assert!(matches!(pick(c.clone()), Expr::Cond(..)), "{c:?}");
+        }
+        // An operand with no width of its own: stays a choice.
+        let n = Expr::cond(Expr::Num(1), Expr::Num(0), Expr::name("x"));
+        assert!(matches!(n, Expr::Cond(..)), "{n:?}");
+        let sum = bin("+", Expr::name("b"), Expr::name("b"));
+        let n = Expr::cond(Expr::Num(0), Expr::name("x"), sum);
+        assert!(matches!(n, Expr::Cond(..)), "{n:?}");
     }
 
     /// A bit or a part of a literal is a literal, so no netlist indexes
