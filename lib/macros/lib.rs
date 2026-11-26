@@ -4846,7 +4846,7 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                 c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()
             });
             Ok(if upper && n.chars().any(|c| c.is_ascii_uppercase()) {
-                format!("NlE::Num(({n}) as u128)")
+                konst(&n)
             } else {
                 ename(&n)
             })
@@ -5120,7 +5120,7 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
             // or an unrolled loop's variable, which is a Rust value
             // there (issue 593).
             if assoc_const_item(ts) {
-                return Ok(format!("NlE::Num(({text}) as u128)"));
+                return Ok(konst(&text));
             }
             if text.contains("::") && !last_group {
                 let leaf = text.rsplit("::").next().unwrap_or("");
@@ -5128,7 +5128,7 @@ fn tr(ts: &[TokenTree], subst: &[(String, String)]) -> Result<String, String> {
                     c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()
                 });
                 if upper {
-                    return Ok(format!("NlE::Num(({text}) as u128)"));
+                    return Ok(konst(&text));
                 }
                 return as_lit(ts, &text, subst);
             }
@@ -5326,6 +5326,19 @@ fn range_ends(ts: &[TokenTree]) -> Option<(&[TokenTree], &[TokenTree], bool)> {
         return None;
     }
     Some((&ts[..at], hi, inclusive))
+}
+
+/// A constant of the build, `C::X`, `N` or `M::RANGES[i].0`: a number
+/// Rust works out when `lowered` runs, and a one-bit literal when its
+/// type is `bool`, which Rust answers there too (issue 2083). The text
+/// starts `NlE::Num(` either way, which is what the lowering tests to
+/// find a number.
+fn konst(text: &str) -> String {
+    format!(
+        "NlE::Num(({text}) as u128).typed({{ \
+         use ::txhdl::netlist::konst::{{IsNumber as _, IsTruth as _}}; \
+         (&::txhdl::netlist::konst::Const({text})).is_truth() }})"
+    )
 }
 
 /// One end of a range as the lowering writes a constant.

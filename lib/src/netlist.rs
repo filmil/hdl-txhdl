@@ -396,6 +396,43 @@ pub const fn has_name(names: &[&str], name: &str) -> bool {
     false
 }
 
+/// What a constant of the build is, asked of its Rust type where the
+/// lowering writes it (issue 2083). A constant lowers as a number, which
+/// has no width; a `bool` constant is a truth value, one bit wide, and
+/// lowers as a one-bit literal instead, so `!C::FLAG` is `~1'b1` in
+/// Verilog wherever it is written and not `~1`, which Verilog widens to
+/// thirty-two bits and reads as true.
+///
+/// The question is answered by method resolution on `(&Const(x))`: the
+/// impl for `Const<bool>` is found first, without a borrow, and
+/// every other type falls through to the impl on `&Const<T>`, so an
+/// integer, a `char` or an enum constant stays a number without each
+/// type being named.
+pub mod konst {
+    /// A constant, wrapped to ask its type.
+    pub struct Const<T>(pub T);
+    /// A `bool` constant: a truth value.
+    pub trait IsTruth {
+        /// True: the constant is a truth value.
+        fn is_truth(&self) -> bool;
+    }
+    impl IsTruth for Const<bool> {
+        fn is_truth(&self) -> bool {
+            true
+        }
+    }
+    /// Any other constant: a number.
+    pub trait IsNumber {
+        /// False: the constant is a number.
+        fn is_truth(&self) -> bool;
+    }
+    impl<T> IsNumber for &Const<T> {
+        fn is_truth(&self) -> bool {
+            false
+        }
+    }
+}
+
 /// A value as an expression: its width and bits.
 pub fn lit<V: Value>(v: V) -> Expr {
     Expr::Bits(V::WIDTH, v.vcd())
@@ -984,6 +1021,16 @@ impl Expr {
         match a {
             Expr::Slice(inner, ilo, _) => Expr::Slice(inner, ilo + lo, len),
             a => Expr::Slice(Box::new(a), lo, len),
+        }
+    }
+    /// A constant of the build as the lowering writes it, `Num(k)`, made
+    /// a one-bit literal when its Rust type is `bool` (see `konst`).
+    pub fn typed(self, truth: bool) -> Expr {
+        match self {
+            Expr::Num(k) if truth => {
+                Expr::Bits(1, if k != 0 { "1" } else { "0" }.to_string())
+            }
+            e => e,
         }
     }
     /// `a as uN`: a number keeps its low `n` bits, and anything else
@@ -5610,6 +5657,37 @@ mod tests {
         let shl = |k| Expr::bin("<<", one(), Expr::Num(k));
         assert_eq!(hval(&shl(0), 1, &net), "'1'");
         assert_eq!(hval(&shl(1), 1, &net), "'0'");
+    }
+
+    /// A constant's Rust type decides how it lowers: a `bool` is a
+    /// one-bit literal and every other type a number, asked as the
+    /// lowering's generated code asks it (issue 2083). The borrow is
+    /// what makes the question work, as in the generated code.
+    #[allow(clippy::needless_borrow)]
+    #[test]
+    fn a_bool_constant_is_a_one_bit_literal_by_its_type() {
+        use super::konst::{Const, IsNumber as _, IsTruth as _};
+        const ON: bool = true;
+        const OFF: bool = false;
+        const K: u8 = 1;
+        const C: char = 'a';
+        assert!((&Const(ON)).is_truth());
+        assert!(!(&Const(K)).is_truth());
+        assert!(!(&Const(C)).is_truth());
+        let lit = |k: u128, t: bool| Expr::Num(k).typed(t);
+        assert!(matches!(
+            lit(ON as u128, (&Const(ON)).is_truth()),
+            Expr::Bits(1, ref b) if b == "1"
+        ));
+        assert!(matches!(
+            lit(OFF as u128, (&Const(OFF)).is_truth()),
+            Expr::Bits(1, ref b) if b == "0"
+        ));
+        assert!(matches!(
+            lit(K as u128, (&Const(K)).is_truth()),
+            Expr::Num(1)
+        ));
+        assert!(matches!(Expr::name("x").typed(true), Expr::Name(_)));
     }
 
     /// A bit or a part of a literal is a literal, so no netlist indexes
