@@ -824,6 +824,98 @@ earlier one; and after a failed \code{sc} of another word the
 reservation is gone. Every run checks that no watched host sent a
 write under the identifier its exclusive write's answer will carry.
 
+\section{The Router and the Arbiter in Two Halves}
+\label{sec:a-halves}
+
+A read on its way to a memory behind an arbiter and a router crosses a
+channel at every unit, and again at every unit on the way back, and a
+registered channel costs a cycle. A unit of units can mark a channel
+\code{\#[unregistered]}, so that a transaction crosses it in the cycle
+it is offered, but the receiver of such a channel has to run after its
+sender in the step. A router carries the requests down and the answers
+back, so it would have to run both before the peripheral's tracker and
+after it, and one unit cannot. With the units whole, the requests can
+be unregistered from end to end and the answers cannot cross the
+router or the arbiter.
+
+So each is also two units (issue 2077), as \code{AxiPer} is
+\code{AxiPerReq} and \code{AxiPerRsp}. \code{ArbiterReq} grants and
+tags the address phases and keeps the write data channel to one burst
+at a time; \code{ArbiterRsp} gives each answer to the host its
+identifier names, and keeps nothing. \code{RouterReq} decodes each
+address phase and sends the write beats after theirs; \code{RouterRsp}
+merges the answers. The router's own answers, for an address that is
+nobody's, are raised by the request half and merged by the answer
+half, so they travel between the two on a link of their own, the
+channels \code{eb} and \code{er}, which the design makes with the
+others. \code{Arbiter} and \code{Router} themselves are unchanged, one
+unit each.
+
+A design joins the request halves in the order a request passes them
+and the answer halves in the order an answer does, as
+Listing~\ref{lst:a-halves-paths} does in \code{PathU}; \code{Path} is
+the same path with the units whole and every channel registered.
+
+\lstinputlisting[rangebeginprefix=//\ begin\{,rangebeginsuffix=\},%
+rangeendprefix=//\ end\{,rangeendsuffix=\},includerangemarker=false,%
+linerange=paths-paths,caption={The same path twice: the units whole
+and the channels registered, and the units in halves with every
+channel between them unregistered, each sender joined before its
+receiver. From \code{lib/examples/ex\_axi\_halves.rs}.},%
+label={lst:a-halves-paths}]{lib/examples/ex_axi_halves.rs}
+
+The example gives both paths the same three bursts from two hosts: a
+read of the peripheral, a write to it, and a read of an address that
+is nobody's. Each is answered sooner on the unregistered path, the
+read of the peripheral by four cycles, one for each channel it no
+longer waits at: arbiter to router and router to tracker on the way
+down, and the same two on the way back
+(Figure~\ref{fig:a-halves}, Listing~\ref{lst:a-halves-out}). Both
+netlists are checked against this run under both simulators.
+
+\begin{figure*}[t]
+\centering
+\input{axi_halves_timing.tex}
+\caption{The first host's read on both paths: its address phase into
+the path, the request reaching the client, the client's beat and the
+answer out, four cycles sooner from the path whose channels are
+unregistered. The second request is the other host's write.}
+\label{fig:a-halves}
+\end{figure*}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_axi\_halves}
+printed when the build ran it: the cycle each burst was answered on
+each path.},label={lst:a-halves-out}]{out_axi_halves.txt}
+
+With \code{eb} and \code{er} unregistered and the request half joined
+first, as in \code{PathU}, the router's two halves answer a burst to a
+peripheral in the cycles the router would with the same channels
+around it, and a burst to a hole too while nothing holds its answer
+up. They differ where the router waits. The router takes no second
+address phase to a hole while it still owes the first one's answer.
+The request half owes an answer only until it is in \code{eb} or
+\code{er}, which hold two beats each. So while the answer half is in a
+peripheral's read burst, or the host is not taking answers, the next
+address phase to a hole can be taken sooner than the router would take
+it, and its answer can follow the first one's without the gap the
+router leaves; the answers still go up whole and in order.
+
+The unit tests in \code{lib/parts/src/bus/router.rs} run the same
+bursts through the router and through its halves and compare the cycle
+of every answer; drive each half by hand, for a read burst that has to
+stay whole, the order of the write responses, two holes one behind the
+other, and a peripheral's write that passes while a hole's answer is
+owed; and run a read through the whole units, through the halves with
+registered channels, and through the halves with every channel
+unregistered. The arbiter's own tests in
+\code{lib/parts/src/bus/arbiter.rs} run a second time on its halves.
+
+An unregistered hop is not free in time. On the unregistered path a
+request is chosen by the arbiter, decoded by the router and passed on
+by the tracker within one cycle, and an answer passes the same three
+units on its way back. Which hops a design can afford is for its
+timing to say; the halves make the choice possible.
+
 \section{AXI-Lite and the Bridge}
 \label{sec:a-lite}
 
