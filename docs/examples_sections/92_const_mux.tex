@@ -1,0 +1,30 @@
+% SPDX-License-Identifier: Apache-2.0
+\section{A Choice on a Constant}
+\label{sec:x-const-mux}
+
+A unit generic over its configuration may choose between two values on
+a constant of the configuration. A \code{mux} or an \code{if} that
+yields a value, on the constant itself, folds when the unit is lowered
+if the operand it chooses brings its own width: the netlist holds that
+operand and no mux, and the input not chosen stays a port of the unit,
+read by nothing. A choice on a choice on the constant folds too, since
+the inner one folds to a bit.
+
+The other forms stay a mux whose condition is a constant: a selector
+worked out of the constant with \code{!}, \code{\&} or \code{==}, and an operand
+with no width of its own, a bare number or a sum such as \code{(b + b)},
+which takes its width from the other operand. A \code{bool} constant
+is a one-bit literal wherever it is written, because its Rust type is
+asked when the unit is lowered, so its negation is one bit wide in
+Verilog as well and chooses as the run does: \code{q} reads it bare,
+under \code{\&\&} and \code{==}, behind a \code{let} and as a
+branch of a choice. An \code{if} statement
+on the constant is folded, and a check holds the constant. The
+netlists compute what the run computes, and nvc accepts every line.
+\code{Both} holds the unit twice, once for each value of the flag, and
+its netlist is replayed against the trace under nvc and Verilator, so
+both lowerings are compiled by both simulators.
+
+\lstinputlisting[caption={\code{ex\_const\_mux.rs}. Run with \code{bazel run //lib/examples:ex\_const\_mux}.},label={lst:x-const-mux}]{lib/examples/ex_const_mux.rs}
+
+\lstinputlisting[style=ascii,caption={What \code{ex\_const\_mux} printed when the build ran it: the outputs of the two configurations, then the lines of each lowering that drive them.},label={lst:x-const-mux-out}]{out_const_mux.txt}

@@ -256,3 +256,13 @@ rust_test(
     proc_macro_deps = [":txhdl_macros"],
     deps = [":txhdl"],
 )
+
+# A choice on a configuration constant: folded when its selector is a
+# bare literal, legal VHDL when it is not (issue 2069).
+rust_test(
+    name = "const_mux_test",
+    srcs = ["tests/const_mux.rs"],
+    edition = "2021",
+    proc_macro_deps = [":txhdl_macros"],
+    deps = [":txhdl"],
+)
