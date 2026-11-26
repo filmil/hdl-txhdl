@@ -560,6 +560,61 @@ impl<const F: bool> Unit for PickGen<F> {
     }
 }
 
+/// The constant cast to an integer: a number, as it was before a
+/// `bool` constant lowered as a one-bit literal, in a shift, a
+/// comparison, an index and a sum.
+#[derive(Default, Trace)]
+pub struct CastUse<C: PickConfig> {
+    _c: PhantomData<C>,
+}
+
+#[lower]
+impl<C: PickConfig> Unit for CastUse<C> {
+    async fn run(
+        &mut self,
+        a: In<U<8>>,
+        (s, e, i, p): (Out<U<8>>, Out<Bit>, Out<Bit>, Out<U<8>>),
+    ) {
+        loop {
+            DefaultClock::rising().await;
+            s.set(a.get() << (C::FLAG as u8));
+            e.set(Bit::from(a.get() == (C::FLAG as u8)));
+            i.set(a.get().bit(C::FLAG as usize));
+            p.set(a.get() + U::from(C::FLAG as u8));
+        }
+    }
+}
+
+/// The constant cast to an integer is the number it stands for, as
+/// it was before a `bool` constant lowered as a one-bit literal: the
+/// same text in a shift, a comparison, an index and a sum.
+#[test]
+fn a_cast_of_the_constant_is_the_number_it_was() {
+    for (l, k) in [
+        (CastUse::<Yes>::lowered("p"), 1),
+        (CastUse::<No>::lowered("p"), 0),
+    ] {
+        let (h, v) = (l.vhdl(), l.verilog());
+        for line in [
+            format!("s <= shift_left(a, {k});"),
+            format!("e <= '1' when (a = to_unsigned({k}, 8)) else '0';"),
+            format!("i <= a({k});"),
+            format!("p <= (a + to_unsigned({k}, 8));"),
+        ] {
+            assert!(h.contains(&line), "{line} in {h}");
+        }
+        for line in [
+            format!("assign s = (a << 8'h{k});"),
+            format!("assign e = (a == 8'h{k});"),
+            format!("assign i = a[{k}];"),
+            format!("assign p = (a + 8'h{k});"),
+        ] {
+            assert!(v.contains(&line), "{line} in {v}");
+        }
+        assert!(!v.contains("1'b"), "{v}");
+    }
+}
+
 /// Every expression of a lowered unit: its wires and the statements of
 /// its processes, conditions included.
 fn exprs(l: &Lowered) -> Vec<&Expr> {

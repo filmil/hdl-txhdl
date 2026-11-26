@@ -1077,7 +1077,16 @@ impl Expr {
     /// `a as uN`: a number keeps its low `n` bits, and anything else
     /// is a cast, which the emitters render once its width is known
     /// (issue 496).
+    ///
+    /// A one-bit literal cast to an integer is the number it stands for,
+    /// as Rust's `true as u8` is `1`: a `bool` constant lowers as a
+    /// one-bit literal (issue 2083), and `C::F as usize` is the number
+    /// it was before, in arithmetic, a comparison, a shift or an index.
     pub fn cast(a: Expr, n: usize) -> Expr {
+        let a = match a {
+            Expr::Bits(1, b) => Expr::Num(u128::from(b == "1")),
+            a => a,
+        };
         match a {
             Expr::Num(k) if n < 128 => Expr::Num(k & ((1u128 << n) - 1)),
             Expr::Num(k) => Expr::Num(k),
