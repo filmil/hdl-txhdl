@@ -334,13 +334,17 @@ impl<
 /// and the answer half after them, and makes `eb` and `er` between the
 /// two. [`Router`] itself is one unit, as it was.
 ///
-/// Joined so, with `eb` and `er` unregistered, the two answer as
-/// [`Router`] does, cycle for cycle, with one difference. The router
-/// takes no second address phase to a hole while it still owes the
-/// first one's answer. This half owes an answer only until the answer
-/// is in `eb` or `er`, which hold two beats, so when the host is not
-/// taking answers it may take the next such address phase up to two
-/// beats sooner. The answers still go up whole and in order.
+/// Joined so, with `eb` and `er` unregistered, the two answer a burst
+/// to a peripheral in the cycles [`Router`] does, and a burst to a hole
+/// too while nothing holds its answer up. They differ where the router
+/// waits: it takes no second address phase to a hole while it still
+/// owes the first one's answer. This half owes an answer only until it
+/// is in `eb` or `er`, which hold two beats each. So while the answer
+/// half is in a peripheral's read burst, or the host is not taking
+/// answers, the next address phase to a hole can be taken sooner than
+/// the router would take it, and its answer can follow the first one's
+/// without the gap the router leaves. The answers still go up whole
+/// and in order.
 #[named_type_params(reuse(crate::bus::named::Map), path = crate::bus::router)]
 #[derive(Trace)]
 pub struct RouterReq<
@@ -891,7 +895,9 @@ mod tests {
     use super::{RouterReq, RouterRsp};
     use crate::bus::arbiter::{Arbiter2, ArbiterReq, ArbiterRsp};
     use crate::bus::axi::{Ar, Aw, AxiPerReq, AxiPerRsp, B, R, W};
-    use txhdl::comp::{chan, chan_unregistered, now, Clock, DefaultClock};
+    use txhdl::comp::{
+        chan, chan_unregistered, now, Clock, DefaultClock, Rx, Tx,
+    };
     use txhdl::types::Bit;
 
     type Req2 = RouterReq![
@@ -1160,6 +1166,266 @@ mod tests {
             sim.cycle();
         }
         assert_eq!(got, vec![2, 2, 2, 3, 3, 3, 1, 1, 1]);
+    }
+
+    /// The answer half again: the request half's own burst stays whole
+    /// too when its beats come with a gap and a peripheral offers in the
+    /// gap.
+    #[test]
+    fn the_answer_half_keeps_the_request_halfs_burst_whole() {
+        let (_b0_tx, b0_rx) = chan::<B<3>, DefaultClock>();
+        let (_b1_tx, b1_rx) = chan::<B<3>, DefaultClock>();
+        let (r0_tx, r0_rx) = chan::<R<32, 3>, DefaultClock>();
+        let (_r1_tx, r1_rx) = chan::<R<32, 3>, DefaultClock>();
+        let (_eb_tx, eb_rx) = chan::<B<3>, DefaultClock>();
+        let (er_tx, er_rx) = chan::<R<32, 3>, DefaultClock>();
+        let (b_tx, _b_rx) = chan::<B<3>, DefaultClock>();
+        let (r_tx, r_rx) = chan::<R<32, 3>, DefaultClock>();
+        let mut rsp = Rsp2::default();
+        let mut sim =
+            Running::new(rsp.run(
+                ([b0_rx, b1_rx], [r0_rx, r1_rx], eb_rx, er_rx),
+                (b_tx, r_tx),
+            ));
+        let beat = |id: u8, k: usize| R {
+            id: U::<3>::from(id),
+            data: U::<32>::from(k as u32),
+            resp: Resp::Okay,
+            last: Bit::from(k == 2),
+        };
+        let (mut k0, mut ke) = (0usize, 0usize);
+        let mut got = Vec::new();
+        for t in 0..24 {
+            // The request half's first beat, then nothing from it for
+            // four cycles, in which the first peripheral offers.
+            let gap = (1..5).contains(&t);
+            if !gap && ke < 3 && er_tx.ready().to_bool() {
+                er_tx.send(beat(3, ke));
+                ke += 1;
+            }
+            if t >= 1 && k0 < 3 && r0_tx.ready().to_bool() {
+                r0_tx.send(beat(1, k0));
+                k0 += 1;
+            }
+            if let Some(x) = r_rx.recv() {
+                got.push(x.id.raw() as u8);
+            }
+            sim.cycle();
+        }
+        assert_eq!(got, vec![3, 3, 3, 1, 1, 1]);
+    }
+
+    /// The answer half's write responses: the request half's own goes
+    /// first, then the lowest peripheral's, and none is lost while the
+    /// host takes nothing.
+    #[test]
+    fn the_answer_half_orders_the_write_responses() {
+        let (b0_tx, b0_rx) = chan::<B<3>, DefaultClock>();
+        let (b1_tx, b1_rx) = chan::<B<3>, DefaultClock>();
+        let (_r0_tx, r0_rx) = chan::<R<32, 3>, DefaultClock>();
+        let (_r1_tx, r1_rx) = chan::<R<32, 3>, DefaultClock>();
+        let (eb_tx, eb_rx) = chan::<B<3>, DefaultClock>();
+        let (_er_tx, er_rx) = chan::<R<32, 3>, DefaultClock>();
+        let (b_tx, b_rx) = chan::<B<3>, DefaultClock>();
+        let (r_tx, _r_rx) = chan::<R<32, 3>, DefaultClock>();
+        let mut rsp = Rsp2::default();
+        let mut sim =
+            Running::new(rsp.run(
+                ([b0_rx, b1_rx], [r0_rx, r1_rx], eb_rx, er_rx),
+                (b_tx, r_tx),
+            ));
+        let resp = |id: u8, resp: Resp| B {
+            id: U::<3>::from(id),
+            resp,
+        };
+        // All three offer in the same cycle, the highest peripheral's
+        // written first.
+        b1_tx.send(resp(2, Resp::Okay));
+        b0_tx.send(resp(1, Resp::Okay));
+        eb_tx.send(resp(3, Resp::DecErr));
+        let mut got = Vec::new();
+        for t in 0..16 {
+            // The host takes nothing in cycles 2 to 5.
+            if !(2..6).contains(&t) {
+                if let Some(x) = b_rx.recv() {
+                    got.push((x.id.raw() as u8, x.resp));
+                }
+            }
+            sim.cycle();
+        }
+        assert_eq!(
+            got,
+            vec![(3, Resp::DecErr), (1, Resp::Okay), (2, Resp::Okay)]
+        );
+    }
+
+    /// The request half alone, its ports driven by hand, and one unit
+    /// of it with its channels' ends.
+    #[allow(clippy::type_complexity)]
+    fn request_half() -> (
+        Tx<Aw<16, 3>>,
+        Tx<Ar<16, 3>>,
+        Tx<W<32, 4>>,
+        [Rx<Aw<16, 3>>; 2],
+        [Rx<Ar<16, 3>>; 2],
+        [Rx<W<32, 4>>; 2],
+        Rx<B<3>>,
+        Rx<R<32, 3>>,
+        impl std::future::Future<Output = ()>,
+    ) {
+        let (aw_tx, aw_rx) = chan::<Aw<16, 3>, DefaultClock>();
+        let (ar_tx, ar_rx) = chan::<Ar<16, 3>, DefaultClock>();
+        let (w_tx, w_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (aw0_tx, aw0_rx) = chan::<Aw<16, 3>, DefaultClock>();
+        let (aw1_tx, aw1_rx) = chan::<Aw<16, 3>, DefaultClock>();
+        let (ar0_tx, ar0_rx) = chan::<Ar<16, 3>, DefaultClock>();
+        let (ar1_tx, ar1_rx) = chan::<Ar<16, 3>, DefaultClock>();
+        let (w0_tx, w0_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (w1_tx, w1_rx) = chan::<W<32, 4>, DefaultClock>();
+        let (eb_tx, eb_rx) = chan::<B<3>, DefaultClock>();
+        let (er_tx, er_rx) = chan::<R<32, 3>, DefaultClock>();
+        let run = async move {
+            let mut req = Req2::default();
+            req.run(
+                (aw_rx, ar_rx, w_rx),
+                (
+                    [aw0_tx, aw1_tx],
+                    [ar0_tx, ar1_tx],
+                    [w0_tx, w1_tx],
+                    eb_tx,
+                    er_tx,
+                ),
+            )
+            .await
+        };
+        (
+            aw_tx,
+            ar_tx,
+            w_tx,
+            [aw0_rx, aw1_rx],
+            [ar0_rx, ar1_rx],
+            [w0_rx, w1_rx],
+            eb_rx,
+            er_rx,
+            run,
+        )
+    }
+
+    /// Two reads of a hole, one behind the other, with nobody taking
+    /// the answers at first: the request half takes the second only
+    /// when the first one's beats are on their way, holds the second
+    /// one's while its link is full, and the beats come out whole and
+    /// in order, each burst ended by its last beat.
+    #[test]
+    fn the_request_half_answers_two_holes_in_order() {
+        let (_aw, ar, _w, _aws, ars, _ws, _eb, er, run) = request_half();
+        let mut sim = Running::new(Box::pin(run));
+        let hole = |id: u8| Ar {
+            id: U::<3>::from(id),
+            addr: U::<16>::from(0x7000u32),
+            len: U::<8>::from(1u8),
+            ..Default::default()
+        };
+        let mut sent = 0u8;
+        let mut got = Vec::new();
+        for t in 0..40 {
+            if sent < 2 && ar.ready().to_bool() {
+                ar.send(hole(sent + 1));
+                sent += 1;
+            }
+            // Nobody takes an answer in the first sixteen cycles.
+            if t >= 16 {
+                if let Some(x) = er.recv() {
+                    got.push((x.id.raw() as u8, x.last.to_bool(), x.resp));
+                }
+            }
+            assert!(ars[0].recv().is_none(), "nothing for a peripheral");
+            assert!(ars[1].recv().is_none(), "nothing for a peripheral");
+            sim.cycle();
+        }
+        assert_eq!(
+            got,
+            vec![
+                (1, false, Resp::DecErr),
+                (1, true, Resp::DecErr),
+                (2, false, Resp::DecErr),
+                (2, true, Resp::DecErr),
+            ]
+        );
+    }
+
+    /// Writes to a hole whose answers nobody takes: the third one's
+    /// answer finds its link full and stays owed. While it is owed, a
+    /// write to a peripheral still goes through, and a fourth write to
+    /// a hole waits. When the answers are taken, all four come, in
+    /// order.
+    #[test]
+    fn a_peripherals_write_passes_while_a_holes_answer_is_owed() {
+        let (aw, _ar, w, aws, _ars, ws, eb, _er, run) = request_half();
+        let mut sim = Running::new(Box::pin(run));
+        let phase = |id: u8, addr: u32| Aw {
+            id: U::<3>::from(id),
+            addr: U::<16>::from(addr),
+            ..Default::default()
+        };
+        let beat = W {
+            data: U::<32>::from(9u32),
+            strb: U::<4>::from(0xfu8),
+            last: Bit::One,
+        };
+        // Three to a hole, one to the first peripheral, one to a hole.
+        let plan = [
+            (1u8, 0x7000u32),
+            (2, 0x7000),
+            (3, 0x7000),
+            (4, 0x1000),
+            (5, 0x7000),
+        ];
+        let (mut ia, mut iw) = (0usize, 0usize);
+        let mut to_per = Vec::new();
+        let mut beats_to_per = 0usize;
+        let mut answers = Vec::new();
+        for t in 0..80 {
+            if ia < plan.len() && aw.ready().to_bool() {
+                aw.send(phase(plan[ia].0, plan[ia].1));
+                ia += 1;
+            }
+            if iw < plan.len() && w.ready().to_bool() {
+                w.send(beat);
+                iw += 1;
+            }
+            if let Some(x) = aws[0].recv() {
+                to_per.push(x.id.raw() as u8);
+            }
+            if ws[0].recv().is_some() {
+                beats_to_per += 1;
+            }
+            assert!(aws[1].recv().is_none(), "nothing for the other one");
+            if t == 30 {
+                // Nobody has taken an answer yet: two are in the link,
+                // the third is owed, and the fifth write waits.
+                assert_eq!(to_per, vec![4], "the peripheral's write passed");
+                assert_eq!(beats_to_per, 1, "with its beat");
+                assert_eq!(ia, 5, "every address phase was offered");
+            }
+            if t >= 30 {
+                if let Some(x) = eb.recv() {
+                    answers.push((x.id.raw() as u8, x.resp));
+                }
+            }
+            sim.cycle();
+        }
+        assert_eq!(
+            answers,
+            vec![
+                (1, Resp::DecErr),
+                (2, Resp::DecErr),
+                (3, Resp::DecErr),
+                (5, Resp::DecErr),
+            ]
+        );
+        assert_eq!(to_per, vec![4]);
+        assert_eq!(beats_to_per, 1);
     }
 
     /// How the path of `a_read_across` is built.

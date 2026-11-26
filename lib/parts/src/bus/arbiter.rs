@@ -773,7 +773,7 @@ impl<const N: usize, const D: usize, const I: usize, const J: usize> Unit
 /// host is starved while another keeps asking.
 #[cfg(test)]
 mod tests {
-    use super::{Arbiter, Arbiter4};
+    use super::{Arbiter, Arbiter4, ArbiterReq, ArbiterRsp};
     use crate::bus::axi::{
         axi, AxiHost, AxiPer, Host, Per, Rd, Resp, Wr, Xact,
     };
@@ -828,6 +828,12 @@ mod tests {
         })
     }
 
+    thread_local! {
+        /// Whether `two_with` builds the arbiter as its two halves.
+        static HALVES: std::cell::Cell<bool> =
+            const { std::cell::Cell::new(false) };
+    }
+
     /// Two hosts, an arbiter between them and one memory. Each host's
     /// client is built by the caller; the run is `n` cycles.
     fn two(
@@ -853,31 +859,39 @@ mod tests {
         let mut h1 = HostUnit::default();
         let mut pu = PerUnit::default();
         let mut arb = Arbiter::<2, 16, 32, 4, 2, 5, 0, HOLD>::default();
-        let timeouts = arb.htimeouts;
+        // The same arbiter as its two halves (issue 2077), which a
+        // test asks for by setting `HALVES`.
+        let mut areq = ArbiterReq::<2, 16, 32, 4, 2, 5, 0, HOLD>::default();
+        let mut arsp = ArbiterRsp::<2, 32, 2, 5>::default();
+        let halves = HALVES.with(|h| h.get());
+        let timeouts = if halves {
+            areq.htimeouts
+        } else {
+            arb.htimeouts
+        };
+        let aws = [l0.per_in.0, l1.per_in.0];
+        let ars = [l0.per_in.1, l1.per_in.1];
+        let ws = [l0.per_in.2, l1.per_in.2];
+        let bs = [l0.per_out.2, l1.per_out.2];
+        let rs = [l0.per_out.3, l1.per_out.3];
+        let (xaw, xar, xw) = (lp.host_out.0, lp.host_out.1, lp.host_out.2);
+        let (xb, xr) = (lp.host_in.2, lp.host_in.3);
+        let arbiter: std::pin::Pin<
+            Box<dyn std::future::Future<Output = ()> + '_>,
+        > = if halves {
+            Box::pin(join2(
+                areq.run((aws, ars, ws), (xaw, xar, xw)),
+                arsp.run((xb, xr), (bs, rs)),
+            ))
+        } else {
+            Box::pin(arb.run((aws, ars, ws, xb, xr), (xaw, xar, xw, bs, rs)))
+        };
         let hardware = join2(
             join2(
                 h0.run(l0.host_in, l0.host_out),
                 h1.run(l1.host_in, l1.host_out),
             ),
-            join2(
-                pu.run(lp.per_in, lp.per_out),
-                arb.run(
-                    (
-                        [l0.per_in.0, l1.per_in.0],
-                        [l0.per_in.1, l1.per_in.1],
-                        [l0.per_in.2, l1.per_in.2],
-                        lp.host_in.2,
-                        lp.host_in.3,
-                    ),
-                    (
-                        lp.host_out.0,
-                        lp.host_out.1,
-                        lp.host_out.2,
-                        [l0.per_out.2, l1.per_out.2],
-                        [l0.per_out.3, l1.per_out.3],
-                    ),
-                ),
-            ),
+            join2(pu.run(lp.per_in, lp.per_out), arbiter),
         );
         let clients = join2(a(l0.host), b(l1.host));
         let mut sim = Running::new(join2(
@@ -1188,5 +1202,18 @@ mod tests {
             most - least <= 1,
             "and none was starved while another kept asking: {got:?}"
         );
+    }
+    /// The arbiter's rules again with the arbiter as its two halves
+    /// (issue 2077): the exclusive hold and its running out, every
+    /// answer going home, and write beats that do not interleave. The
+    /// request half is the arbiter's own request logic, so what holds
+    /// for one has to hold for the other.
+    #[test]
+    fn the_halves_keep_the_arbiters_rules() {
+        HALVES.with(|h| h.set(true));
+        an_exclusive_pair_holds_the_other_hosts_writes();
+        a_hold_without_its_write_runs_out();
+        each_answer_goes_home();
+        write_beats_do_not_interleave();
     }
 }
