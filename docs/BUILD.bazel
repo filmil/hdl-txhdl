@@ -1760,6 +1760,31 @@ waveform(
     until = 109,
 )
 
+# The arbiter and the router in two halves each (issue 2077): one path
+# with the units whole and its channels registered, and the same path
+# in halves with every channel between them unregistered, both
+# netlists checked against the run.
+waveform(
+    name = "axi_halves",
+    example = "//lib/examples:ex_axi_halves",
+    lowered = [
+        ("axi_halves_path", "path"),
+        ("axi_halves_path_u", "pathu"),
+    ],
+    signals = [
+        "//clocks/clk=>clk",
+        "//ar0/tx_valid=>ar",
+        "//req/tx_valid=>req",
+        "//rb/tx_valid=>rb",
+        "//r0/tx_valid=>r",
+        "//ar0u/tx_valid=>ar_u",
+        "//requ/tx_valid=>req_u",
+        "//rbu/tx_valid=>rb_u",
+        "//r0u/tx_valid=>r_u",
+    ],
+    until = 40,
+)
+
 # An AXI4 arbiter: two hosts writing four beats each at the same
 # time, the write data channel held for one burst and then the other,
 # and each answer going home by the tag above its identifier.
@@ -4134,6 +4159,8 @@ latex_document(
         ":axi_arbiter_timing",
         ":axi_router_run",
         ":axi_router_timing",
+        ":axi_halves_run",
+        ":axi_halves_timing",
         ":axi_wb_run",
         ":axi_wb_timing",
         ":axi_reg_run",
