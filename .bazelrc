@@ -97,9 +97,13 @@ build:ci --//docs:stamp=off
 build:ci --@rules_rust//:extra_exec_rustc_flag=-Clto=off
 build:ci --@rules_rust//:extra_exec_rustc_flag=-Ccodegen-units=256
 
-# Shared caches on the hdlfactory hosts, where the file exists; a no-op
-# elsewhere. The repository cache there already holds the installer.
-try-import /data/cache/ci.bazelrc
+# The settings of the hdlfactory hosts' shared remote cache are not
+# imported here (issue 2091): imported, they made every build by hand on
+# those hosts write to that cache. Continuous integration needs no import,
+# since its runners give each job the same file as Bazel's system rc.
+# A build by hand that wants them asks in `user.bazelrc`, below, with
+# `try-import /data/cache/ci.bazelrc`; to read the cache and not write to
+# it, follow that line with `build --noremote_upload_local_results`.
 
 # The machine the board is attached to, with its programming cable and
 # its serial bridge: the one place that names it. The remote programmer

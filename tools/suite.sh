@@ -9,10 +9,10 @@
 #
 # A test's result is kept by its inputs, by content, so "cached" is
 # only as old as those inputs, and it can come from three places: run
-# here, this output base's own cache, or the disk cache every
-# worktree on this host and CI share (/data/cache/ci.bazelrc, which
-# .bazelrc imports). A suite that finishes in seconds after a rebase
-# is usually the third: somebody already tested these exact inputs.
+# here, this output base's own cache, or a cache shared with others,
+# where an rc file in force names one, as the one continuous integration
+# runs with does. A suite that finishes in seconds after a rebase may be
+# the third: somebody already tested these exact inputs.
 # This says which it was, so a green result is read for what it is
 # rather than guessed at from its speed (issue 618).
 set -euo pipefail
