@@ -97,9 +97,21 @@ build:ci --//docs:stamp=off
 build:ci --@rules_rust//:extra_exec_rustc_flag=-Clto=off
 build:ci --@rules_rust//:extra_exec_rustc_flag=-Ccodegen-units=256
 
-# Shared caches on the hdlfactory hosts, where the file exists; a no-op
-# elsewhere. The repository cache there already holds the installer.
-try-import /data/cache/ci.bazelrc
+# The hdlfactory hosts' settings file for the shared caches,
+# `/data/cache/ci.bazelrc`, is not imported here (issue 2091): imported, it
+# made every build by hand on those hosts write to the shared remote cache.
+# Continuous integration needs no import, since its runners give each job
+# that file as Bazel's system rc.
+#
+# A build by hand that wants the file asks in `user.bazelrc`, below, with
+# `try-import /data/cache/ci.bazelrc`. That brings all of it: the remote
+# cache, read and written; its timeout; only the top-level outputs fetched,
+# so that the others are not under `bazel-bin`; Vivado's actions kept out
+# of the remote cache; the hosts' shared repository cache, where what a
+# build fetches is written; and an import of `/tmp/.bazelrc.slot`, where
+# that exists. To read the remote cache and not write to it, follow the
+# import with `build --noremote_upload_local_results`. That flag does not
+# cover the repository cache.
 
 # The machine the board is attached to, with its programming cable and
 # its serial bridge: the one place that names it. The remote programmer
